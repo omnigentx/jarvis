@@ -67,6 +67,13 @@ responses:
       category: "service.github"
       items: []
 
+  # Services tab: Project Repository (jarvis_repo) status — nothing on file.
+  "GET /api/settings/service.jarvis_repo":
+    status: 200
+    json:
+      category: "service.jarvis_repo"
+      items: []
+
   # User clicks "Connect Google" → POST /start returns the consent URL.
   # Frontend will window.open() this URL — spec stubs window.open so it
   # never actually navigates.

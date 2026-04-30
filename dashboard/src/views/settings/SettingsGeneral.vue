@@ -22,6 +22,7 @@ const store = useSettingsStore()
 const { confirm } = useConfirm()
 
 const LOG_LEVELS = ['DEBUG', 'INFO', 'WARNING', 'ERROR']
+const SUPPORTED_TIMEZONES = Intl.supportedValuesOf('timeZone')
 
 // ─── Auth rotation ─────────────────────────────────────────────────────
 const newKey = ref('')
@@ -99,6 +100,16 @@ const systemSuccess = ref(false)
 const logDirty = computed(() => logLevel.value !== initialLog.value)
 const sessionDirty = computed(() => String(sessionWindow.value) !== String(initialSession.value))
 const timezoneDirty = computed(() => timezone.value.trim() !== initialTimezone.value)
+
+// If the saved value is an alias not in the IANA list, prepend it so the
+// current selection stays valid in the dropdown.
+const timezoneOptions = computed(() => {
+  const current = timezone.value
+  if (current && !SUPPORTED_TIMEZONES.includes(current)) {
+    return [current, ...SUPPORTED_TIMEZONES]
+  }
+  return SUPPORTED_TIMEZONES
+})
 
 async function refreshSystem() {
   await store.fetchAll().catch(() => {})
@@ -488,12 +499,9 @@ onMounted(refreshSystem)
           <span class="hint">IANA timezone used by all time tools (e.g. Asia/Ho_Chi_Minh, America/New_York, Europe/London). Takes effect after backend restart.</span>
         </div>
         <div class="setting-control">
-          <input
-            type="text"
-            placeholder="Asia/Ho_Chi_Minh"
-            v-model="timezone"
-            style="min-width: 200px;"
-          />
+          <select v-model="timezone" style="min-width: 200px;">
+            <option v-for="tz in timezoneOptions" :key="tz" :value="tz">{{ tz }}</option>
+          </select>
           <button
             type="button"
             class="btn primary small"

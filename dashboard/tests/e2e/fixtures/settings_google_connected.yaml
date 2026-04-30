@@ -67,6 +67,12 @@ responses:
       category: "service.github"
       items: []
 
+  "GET /api/settings/service.jarvis_repo":
+    status: 200
+    json:
+      category: "service.jarvis_repo"
+      items: []
+
   # User clicks Disconnect → confirm modal → confirm → DELETE fires.
   "DELETE /api/oauth/google":
     status: 200

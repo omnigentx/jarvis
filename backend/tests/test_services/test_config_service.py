@@ -82,6 +82,35 @@ class TestPlainRoundTrip:
         assert svc.get("llm", "model") == "gpt-4o"
 
 
+class TestEnvFallbackOptOut:
+    """``env_fallback=False`` makes the DB the single source of truth.
+
+    Used by callers like ``services.repo_config`` that must never silently
+    consume an env var standing in for a missing DB row.
+    """
+
+    def test_db_hit_unaffected(self, svc, monkeypatch):
+        svc.set("llm", "MODEL", "gpt-db")
+        monkeypatch.setenv("MODEL", "gpt-env")
+        assert svc.get("llm", "MODEL", env_fallback=False) == "gpt-db"
+
+    def test_db_miss_skips_env(self, svc, monkeypatch):
+        monkeypatch.setenv("MODEL", "gpt-env")
+        assert svc.get("llm", "MODEL", env_fallback=False) is None
+
+    def test_db_miss_returns_explicit_default(self, svc, monkeypatch):
+        monkeypatch.setenv("MODEL", "gpt-env")
+        assert (
+            svc.get("llm", "MODEL", default="gpt-default", env_fallback=False)
+            == "gpt-default"
+        )
+
+    def test_default_keeps_legacy_env_fallback(self, svc, monkeypatch):
+        # No regression for the 22 existing call sites that expect env to win.
+        monkeypatch.setenv("MODEL", "gpt-env")
+        assert svc.get("llm", "MODEL") == "gpt-env"
+
+
 # ---- Secret values -----------------------------------------------------------
 
 
@@ -117,16 +146,24 @@ class TestSecretRoundTrip:
         assert entry.value == SECRET_PLACEHOLDER
         assert entry.has_value is True
 
-    def test_undecryptable_secret_falls_back_to_env(self, svc, monkeypatch, caplog):
+    def test_undecryptable_secret_raises(self, svc, monkeypatch):
+        """Decryption failure must surface loudly, not silently substitute env.
+
+        The pre-refactor behaviour fell through to ``os.environ`` so a user
+        wasn't "locked out" after a master-key rotation. That hid two real
+        bugs: (1) post-rotation cleanup never ran, leaving the DB stuffed
+        with dead ciphertext; (2) an unrelated env var with the same name
+        could leak in as the answer to a totally different question. Now
+        we refuse and tell the user to re-set the value.
+        """
         svc.set("auth", "api_key", "sk-original", is_secret=True)
         # Rotate master key so the ciphertext can no longer be read.
         monkeypatch.setenv("JARVIS_API_KEY", "rotated-master-key-yyyyyy")
         secrets_crypto.reload_master_key()
+        # Even with a tempting env var present, we must NOT consume it.
         monkeypatch.setenv("api_key", "sk-from-env")
-        with caplog.at_level("WARNING"):
-            assert svc.get("auth", "api_key") == "sk-from-env"
-        assert any("undecryptable" in r.message or "could not be decrypted" in r.message
-                   for r in caplog.records)
+        with pytest.raises(RuntimeError, match="could not be decrypted"):
+            svc.get("auth", "api_key")
 
 
 # ---- Delete ------------------------------------------------------------------
