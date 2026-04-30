@@ -74,7 +74,8 @@ jarvis_v3/
 │   │   ├── pregen_stream.py    # TTS pre-gen SSE stream helper
 │   │   ├── library_manager.py  # Book library CRUD + progress tracking
 │   │   ├── pricing.py          # LLM token pricing calculations
-│   │   └── history.py          # TTS cache management
+│   │   ├── history.py          # TTS cache management
+│   │   └── repo_config.py      # Resolve project repo URL (config_service DB only)
 │   ├── core/                   # Infrastructure
 │   │   ├── auth.py             # API key authentication (Bearer + query param)
 │   │   ├── database.py         # SQLite database schema + migrations

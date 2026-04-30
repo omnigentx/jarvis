@@ -2,13 +2,17 @@
 /**
  * Step 3 — External Services.  Non-critical: user can skip entirely.
  *
- * Phase 1f ships with a static list of well-known integrations.  Per service
- * the user expands the card and fills the relevant key/secret pairs; on
- * Continue we call POST /api/setup/services with whatever they configured
- * (may be empty) so the wizard can advance.
- *
- * Google OAuth lives in Phase 3b and appears disabled here — surfaced so
- * the user sees what's coming without being blocked.
+ * - Project Repository (jarvis_repo): rendered as a dedicated, always-open
+ *   panel above everything else.  This URL is what powers Jarvis evolving
+ *   itself — agile-team agents (Dev, DSO, ...) inject it into their system
+ *   prompt and use it as the target for clone/push/issue-filing.  Without
+ *   it, "work on jarvis" prompts have nowhere to land.  Submitted in the
+ *   same payload as the other services on Continue.
+ * - Google OAuth (Gmail + Calendar): handled by the shared GoogleOAuthCard
+ *   component (same UX as Settings → Services).  Wizards can't punt to
+ *   Settings since /settings is gated mid-setup.
+ * - Other services (Roborock, GitHub): collected as field values then sent
+ *   in a single POST /api/setup/services payload on Continue.
  */
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
@@ -27,6 +31,12 @@ const store = useSetupStore()
 //
 // Roborock + GitHub keep the simple field-based mode — those are just
 // secret pairs the wizard collects and POSTs at submit time.
+
+// ─── Project Repository — pulled out of SERVICES because it is the
+// pivot for Jarvis self-improvement. Rendered as its own always-open
+// panel above the optional integrations.
+const JARVIS_REPO_ID = 'jarvis_repo'
+const JARVIS_REPO_URL_KEY = 'JARVIS_REPO_URL'
 const SERVICES = [
   {
     id: 'roborock',
@@ -105,6 +115,12 @@ const payload = computed(() => {
   // Only include services where the user filled *something*; skip empty rows
   // to avoid spurious DB writes.
   const out = {}
+  // jarvis_repo lives outside SERVICES (rendered as a dedicated section)
+  // but still rides the same /api/setup/services payload.
+  const repoUrl = (values.value[JARVIS_REPO_ID]?.[JARVIS_REPO_URL_KEY] || '').trim()
+  if (repoUrl) {
+    out[JARVIS_REPO_ID] = { [JARVIS_REPO_URL_KEY]: repoUrl }
+  }
   for (const svc of SERVICES) {
     if (svc.mode !== 'fields') continue
     const raw = values.value[svc.id] || {}
@@ -173,6 +189,56 @@ function onBack() { router.push({ name: 'SetupLLM' }) }
     step-label="Step 3 of 5  ·  Optional"
     width="820px"
   >
+    <!-- ─── Project Repository — promoted, always open ─── -->
+    <div class="wizard-service-card jarvis-repo-card" data-testid="wizard-service-jarvis-repo">
+      <div class="row">
+        <div style="flex: 1;">
+          <div class="repo-title-row">
+            <h3>Project Repository</h3>
+            <span class="recommended-badge" title="Required for Jarvis self-improvement workflows">
+              Recommended
+            </span>
+          </div>
+          <div class="desc">
+            <strong>Jarvis uses this to evolve itself.</strong> Agile-team agents
+            (Dev, DSO, ...) inject this URL into their system prompt — so when you
+            tell them <em>"work on jarvis"</em>, this is the repo they clone, push
+            commits to, and file issues against. Without it, self-improvement
+            prompts have nowhere to land.
+          </div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <span
+            class="badge"
+            :class="{ connected: !!(values[JARVIS_REPO_ID]?.[JARVIS_REPO_URL_KEY] || '').trim() }"
+          >
+            {{
+              (values[JARVIS_REPO_ID]?.[JARVIS_REPO_URL_KEY] || '').trim()
+                ? 'Will configure'
+                : 'Not configured'
+            }}
+          </span>
+        </div>
+      </div>
+
+      <div class="fields">
+        <div class="wizard-field">
+          <label :for="`${JARVIS_REPO_ID}-${JARVIS_REPO_URL_KEY}`">
+            Repository URL (e.g. https://github.com/&lt;user&gt;/jarvis)
+          </label>
+          <input
+            :id="`${JARVIS_REPO_ID}-${JARVIS_REPO_URL_KEY}`"
+            class="wizard-input"
+            type="text"
+            autocomplete="off"
+            placeholder="https://github.com/your-user/jarvis.git"
+            :value="getField(JARVIS_REPO_ID, JARVIS_REPO_URL_KEY)"
+            @input="setField(JARVIS_REPO_ID, JARVIS_REPO_URL_KEY, $event.target.value)"
+          />
+        </div>
+      </div>
+    </div>
+
     <!-- Google OAuth — full credential paste + consent flow lives in the
          shared component (same UX as Settings → Services). -->
     <div class="wizard-service-card" data-testid="wizard-service-google">
@@ -323,5 +389,42 @@ function onBack() { router.push({ name: 'SetupLLM' }) }
   padding: 8px 12px;
   border-radius: 8px;
   font-size: 13px;
+}
+
+/* Promoted "Project Repository" card — visually distinct from the other
+   service cards so users can't miss it on initial setup. */
+.jarvis-repo-card {
+  border: 1px solid rgba(110, 168, 254, 0.45);
+  background: linear-gradient(
+    180deg,
+    rgba(110, 168, 254, 0.08) 0%,
+    rgba(110, 168, 254, 0.02) 100%
+  );
+  box-shadow: 0 0 0 1px rgba(110, 168, 254, 0.08) inset;
+}
+.repo-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.recommended-badge {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: rgba(110, 168, 254, 0.18);
+  color: #6ea8fe;
+  border: 1px solid rgba(110, 168, 254, 0.45);
+}
+.jarvis-repo-card .desc strong {
+  color: var(--text-primary, #f0f2f5);
+}
+.jarvis-repo-card .desc em {
+  font-style: italic;
+  color: var(--text-primary, #f0f2f5);
 }
 </style>

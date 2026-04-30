@@ -126,6 +126,7 @@ class ConfigService:
         *,
         default: Optional[str] = None,
         env_var: Optional[str] = None,
+        env_fallback: bool = True,
     ) -> Optional[str]:
         """Return the resolved value (DB → env → default).
 
@@ -134,24 +135,36 @@ class ConfigService:
             key: Setting name. Conventionally an env-var-style identifier.
             default: Returned when no value is found anywhere.
             env_var: Env var to consult when DB is empty. Defaults to ``key``.
+            env_fallback: When ``False``, skip the env step entirely. New
+                callers that treat the DB as the single source of truth
+                should set this to ``False`` so an unintentionally-set env
+                var can never mask a missing/empty DB row.
+
+        Raises:
+            RuntimeError: A secret row is present in the DB but cannot be
+                decrypted (e.g. master key rotated without re-encrypting
+                stored secrets). Surfaces loudly so the user fixes the
+                state instead of silently consuming a stale env value.
         """
         row = self._fetch(category, key)
         if row is not None and row.value is not None:
             decoded = self._decode(row.value, row.is_secret, category, key)
             if decoded is not None:
                 return decoded
-            # Secret stored but undecryptable — fall through to env so the user
-            # is not locked out after a key rotation.
-            logger.warning(
-                "[CONFIG] %s/%s: stored secret could not be decrypted; falling back to env",
-                category,
-                key,
+            # Secret stored but undecryptable — refuse to fall through. A
+            # silent fallback to env or default would hide a real corruption
+            # / key-rotation issue and could substitute a wrong value.
+            raise RuntimeError(
+                f"{category}/{key}: stored secret could not be decrypted "
+                "(master key rotated without re-encrypting?); re-set the "
+                "value via Settings or the Setup Wizard."
             )
 
-        env_name = env_var if env_var is not None else key
-        env_value = os.getenv(env_name)
-        if env_value is not None:
-            return env_value
+        if env_fallback:
+            env_name = env_var if env_var is not None else key
+            env_value = os.getenv(env_name)
+            if env_value is not None:
+                return env_value
         return default
 
     def get_entry(self, category: str, key: str) -> Optional[ConfigEntry]:

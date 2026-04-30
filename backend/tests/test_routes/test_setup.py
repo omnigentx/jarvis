@@ -302,6 +302,56 @@ class TestServicesStep:
         )
         assert resp.status_code == 400
 
+    def test_jarvis_repo_resolves_immediately_after_wizard(
+        self, client, monkeypatch
+    ):
+        """Wizard → DB → ``get_repo_url()`` works without restart.
+
+        Regression guard: before this PR, ``get_repo_url`` only read
+        ``os.environ`` and would either raise or trip the (now-removed)
+        git-remote fallback right after a successful wizard write.
+        """
+        from services import config_service as config_module
+        from services import repo_config
+
+        # repo_config bound the singleton at import time — point it at the
+        # same instance that the route's ``set_many`` call writes through.
+        monkeypatch.setattr(repo_config, "config_service", config_module.config_service)
+        # Hard-cut: any ambient env var must not paper over a failure.
+        monkeypatch.delenv("JARVIS_REPO_URL", raising=False)
+
+        client.post("/api/setup/auth", json={})
+        resp = client.post(
+            "/api/setup/services",
+            json={
+                "services": {
+                    "jarvis_repo": {
+                        "JARVIS_REPO_URL": "https://github.com/owner/jarvis.git"
+                    }
+                }
+            },
+            headers=_auth_headers(),
+        )
+        assert resp.status_code == 200
+        assert repo_config.get_repo_url() == "https://github.com/owner/jarvis.git"
+
+    def test_get_repo_url_raises_when_wizard_skipped(self, client, monkeypatch):
+        from services import config_service as config_module
+        from services import repo_config
+
+        monkeypatch.setattr(repo_config, "config_service", config_module.config_service)
+        monkeypatch.delenv("JARVIS_REPO_URL", raising=False)
+
+        client.post("/api/setup/auth", json={})
+        # Wizard runs but doesn't include jarvis_repo.
+        client.post(
+            "/api/setup/services",
+            json={"services": {"github": {"token": "ghp_xxx"}}},
+            headers=_auth_headers(),
+        )
+        with pytest.raises(RuntimeError, match="not configured"):
+            repo_config.get_repo_url()
+
 
 # ---- /api/setup/verify -------------------------------------------------------
 

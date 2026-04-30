@@ -43,29 +43,24 @@ from core.database import init_db
 # defer this to the lifespan, YAML is already parsed with empty values and
 # every MCP subprocess spawned later inherits empty creds.
 def _bootstrap_env_from_db() -> None:
-    try:
-        init_db()
-        from services.config_service import config_service
-        from services.runtime_config import apply_master_key, reconcile_service_env
+    init_db()
+    from services.config_service import config_service
+    from services.runtime_config import apply_master_key, reconcile_service_env
 
-        if not os.environ.get("JARVIS_API_KEY"):
-            stored_master = config_service.get("auth", "JARVIS_API_KEY")
-            if stored_master:
-                apply_master_key(stored_master)
-                logger.info("[BOOTSTRAP] Restored JARVIS_API_KEY from DB (pre-agent)")
+    if not os.environ.get("JARVIS_API_KEY"):
+        stored_master = config_service.get("auth", "JARVIS_API_KEY")
+        if stored_master:
+            apply_master_key(stored_master)
+            logger.info("[BOOTSTRAP] Restored JARVIS_API_KEY from DB (pre-agent)")
 
-        seeded = reconcile_service_env(config_service)
-        if seeded:
-            logger.info("[BOOTSTRAP] Seeded %d service env entr%s (pre-agent)",
-                        seeded, "y" if seeded == 1 else "ies")
+    seeded = reconcile_service_env(config_service)
+    if seeded:
+        logger.info("[BOOTSTRAP] Seeded %d service env entr%s (pre-agent)",
+                    seeded, "y" if seeded == 1 else "ies")
 
-        from services import google_oauth
-        if google_oauth.seed_client_from_env():
-            logger.info("[BOOTSTRAP] Migrated Google OAuth client from env to DB (client_type=desktop)")
-    except Exception as exc:
-        # Never block startup — the lifespan bootstrap below runs again as
-        # a safety net and will surface the underlying error there.
-        logger.warning("Pre-agent env bootstrap skipped: %s", exc)
+    from services import google_oauth
+    if google_oauth.seed_client_from_env():
+        logger.info("[BOOTSTRAP] Migrated Google OAuth client from env to DB (client_type=desktop)")
 
 
 _bootstrap_env_from_db()

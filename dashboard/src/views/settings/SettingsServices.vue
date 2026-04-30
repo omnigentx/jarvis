@@ -269,6 +269,133 @@ async function resetCredentials() {
   }
 }
 
+// ─── Project Repository (jarvis_repo) ───────────────────────────────────
+// Single field: service.jarvis_repo / JARVIS_REPO_URL. Stored non-secret on
+// purpose — a public git URL is not sensitive, and surfacing the current
+// value in the UI is the whole point (so users can verify which repo their
+// agents are about to clone/push to). The setup wizard's bulk endpoint
+// hardcodes is_secret=true today; saving from here re-stores as non-secret
+// so subsequent reads show the URL in clear.
+
+const JARVIS_REPO_CATEGORY = 'service.jarvis_repo'
+const JARVIS_REPO_URL_KEY = 'JARVIS_REPO_URL'
+
+const jarvisRepoStatus = ref({
+  url_set: false,
+  // null when unconfigured OR when the row is still encrypted from the
+  // wizard (config_service masks secret values). Drives the "encrypted —
+  // re-save to display" hint in the template.
+  current_url: null,
+})
+const jarvisRepoLoading = ref(true)
+const jarvisRepoStatusError = ref('')
+const jarvisRepoEditing = ref(false)
+const jarvisRepoUrl = ref('')
+const jarvisRepoSaving = ref(false)
+const jarvisRepoSaved = ref(false)
+const jarvisRepoError = ref('')
+
+const jarvisRepoConfigured = computed(() => jarvisRepoStatus.value.url_set)
+
+async function fetchJarvisRepoStatus() {
+  jarvisRepoLoading.value = true
+  jarvisRepoStatusError.value = ''
+  try {
+    const resp = await apiFetch(`/api/settings/${JARVIS_REPO_CATEGORY}`)
+    const items = resp?.items || []
+    const row = items.find((i) => i.key === JARVIS_REPO_URL_KEY)
+    // value is the literal string from the backend; it's masked ('***')
+    // when is_secret=true. Treat the placeholder the same as "no plaintext
+    // available" so we never render a `***` URL.
+    const plain =
+      row && !row.is_secret && typeof row.value === 'string' && row.value.length > 0
+        ? row.value
+        : null
+    jarvisRepoStatus.value = {
+      url_set: !!(row && row.has_value),
+      current_url: plain,
+    }
+  } catch (err) {
+    jarvisRepoStatusError.value = err?.body?.detail || err?.message || String(err)
+  } finally {
+    jarvisRepoLoading.value = false
+  }
+}
+
+async function saveJarvisRepo() {
+  const url = jarvisRepoUrl.value.trim()
+  if (!url) {
+    jarvisRepoError.value = 'Repository URL cannot be empty.'
+    return
+  }
+  jarvisRepoSaving.value = true
+  jarvisRepoError.value = ''
+  jarvisRepoSaved.value = false
+  try {
+    await apiFetch('/api/settings/bulk', {
+      method: 'POST',
+      body: JSON.stringify({
+        items: [
+          {
+            category: JARVIS_REPO_CATEGORY,
+            key: JARVIS_REPO_URL_KEY,
+            value: url,
+            is_secret: false,
+          },
+        ],
+      }),
+    })
+    jarvisRepoSaved.value = true
+    jarvisRepoUrl.value = ''
+    jarvisRepoEditing.value = false
+    await fetchJarvisRepoStatus()
+  } catch (err) {
+    jarvisRepoError.value = err?.body?.detail || err?.message || String(err)
+  } finally {
+    jarvisRepoSaving.value = false
+  }
+}
+
+async function removeJarvisRepo() {
+  if (
+    !(await confirm({
+      title: 'Clear repository URL',
+      message:
+        'Agile-team agents will lose the project repo reference and refuse to clone/push until a new URL is set.',
+      confirmText: 'Clear',
+      variant: 'danger',
+    }))
+  ) {
+    return
+  }
+  try {
+    await apiFetch('/api/settings/bulk', {
+      method: 'POST',
+      body: JSON.stringify({
+        items: [
+          {
+            category: JARVIS_REPO_CATEGORY,
+            key: JARVIS_REPO_URL_KEY,
+            value: null,
+            is_secret: false,
+          },
+        ],
+      }),
+    })
+    jarvisRepoSaved.value = false
+    jarvisRepoEditing.value = false
+    await fetchJarvisRepoStatus()
+  } catch (err) {
+    jarvisRepoError.value = err?.body?.detail || err?.message || String(err)
+  }
+}
+
+function cancelJarvisRepoEdit() {
+  jarvisRepoEditing.value = false
+  jarvisRepoUrl.value = ''
+  jarvisRepoError.value = ''
+}
+
 // ─── Roborock (Vacuum) ───────────────────────────────────────────────────
 // Stored under config_service category "service.roborock". The setup wizard
 // persists both fields as secrets, so on load we only get a has_value flag
@@ -531,6 +658,7 @@ const expiresText = computed(() => {
 onMounted(() => {
   window.addEventListener('message', onMessage)
   fetchGoogleStatus()
+  fetchJarvisRepoStatus()
   fetchRoborockStatus()
   fetchGithubStatus()
 })
@@ -749,6 +877,93 @@ onBeforeUnmount(() => {
 
       <div v-if="connectError" class="error-msg">{{ connectError }}</div>
       <div v-if="connectSuccess" class="success-msg">Google connected.</div>
+    </section>
+
+    <!-- Project Repository (jarvis_repo) -->
+    <section class="panel-card">
+      <header>
+        <div class="icon-circle">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-7l-2-2H5a2 2 0 0 0-2 2z" />
+            <circle cx="12" cy="14" r="2" />
+            <path d="M12 12V9" />
+          </svg>
+        </div>
+        <div>
+          <h2>Project Repository</h2>
+          <p>Git URL of your jarvis fork. Agile-team agents (Dev, DSO, …) read this when they're told to "work on jarvis" so they know which repo to clone, push to, and file issues against.</p>
+        </div>
+        <span
+          class="badge"
+          :class="{ on: jarvisRepoConfigured, off: !jarvisRepoConfigured }"
+        >{{ jarvisRepoConfigured ? 'Configured' : 'Not Configured' }}</span>
+      </header>
+
+      <div v-if="jarvisRepoLoading" class="muted">Loading…</div>
+      <div v-else-if="jarvisRepoStatusError" class="error-msg">{{ jarvisRepoStatusError }}</div>
+
+      <!-- Form: shown when nothing on file or the user clicked "Update". -->
+      <div
+        v-if="!jarvisRepoLoading && (!jarvisRepoConfigured || jarvisRepoEditing)"
+        class="client-form"
+      >
+        <p class="muted">
+          Stored as plain text — a public git URL is not sensitive, and surfacing
+          it here lets you confirm exactly which repo your agents will touch.
+        </p>
+        <input
+          class="text-input"
+          placeholder="https://github.com/&lt;user&gt;/jarvis.git"
+          autocomplete="off"
+          v-model="jarvisRepoUrl"
+          @keydown.enter="saveJarvisRepo"
+        />
+        <div class="action-row">
+          <button
+            type="button"
+            class="btn primary"
+            :disabled="jarvisRepoSaving"
+            @click="saveJarvisRepo"
+          >{{ jarvisRepoSaving ? 'Saving…' : 'Save URL' }}</button>
+          <button
+            v-if="jarvisRepoEditing"
+            type="button"
+            class="btn"
+            :disabled="jarvisRepoSaving"
+            @click="cancelJarvisRepoEdit"
+          >Cancel</button>
+        </div>
+        <div v-if="jarvisRepoError" class="error-msg">{{ jarvisRepoError }}</div>
+        <div v-if="jarvisRepoSaved" class="success-msg">Repository URL saved.</div>
+      </div>
+
+      <!-- Configured — show the URL + rotate/clear controls. -->
+      <div
+        v-if="!jarvisRepoLoading && jarvisRepoConfigured && !jarvisRepoEditing"
+        class="connection-row"
+      >
+        <div class="meta meta-info">
+          <div v-if="jarvisRepoStatus.current_url">
+            <code>{{ jarvisRepoStatus.current_url }}</code>
+          </div>
+          <div v-else class="muted" style="font-size: 12px;">
+            URL is on file but stored encrypted from the setup wizard. Save again here
+            to re-store as plain text and display it.
+          </div>
+        </div>
+        <div class="controls">
+          <button
+            type="button"
+            class="btn"
+            @click="jarvisRepoEditing = true"
+          >Update URL</button>
+          <button
+            type="button"
+            class="btn ghost-danger"
+            @click="removeJarvisRepo"
+          >Clear</button>
+        </div>
+      </div>
     </section>
 
     <!-- Roborock (Vacuum) -->
