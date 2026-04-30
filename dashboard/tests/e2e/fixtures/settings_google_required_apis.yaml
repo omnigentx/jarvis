@@ -60,3 +60,9 @@ responses:
     json:
       category: "service.github"
       items: []
+
+  "GET /api/settings/service.jarvis_repo":
+    status: 200
+    json:
+      category: "service.jarvis_repo"
+      items: []

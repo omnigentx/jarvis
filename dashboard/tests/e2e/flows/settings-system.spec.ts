@@ -48,21 +48,23 @@ test('Timezone — initial value renders, change saves via PUT and pill warns ab
     .locator('.setting-row')
     .filter({ has: page.getByText('Timezone', { exact: true }) })
 
-  // Wait for the initial fetch to populate. The placeholder doubles as a
-  // stable hook because the input has no aria-label.
-  const tzInput = tzRow.locator('input[placeholder="Asia/Ho_Chi_Minh"]')
-  await expect(tzInput).toHaveValue('Asia/Ho_Chi_Minh')
+  // Timezone is a <select> populated by Intl.supportedValuesOf('timeZone')
+  // — there is exactly one select in this row, so the unscoped locator is
+  // unambiguous and survives any future label/aria changes on the row.
+  const tzSelect = tzRow.locator('select')
+  await expect(tzSelect).toHaveValue('Asia/Ho_Chi_Minh')
 
   // Pill: must say "Requires Restart" (NOT "Hot Reload" — easy regression
   // if someone copy-pastes the log-level row's pill class).
   await expect(tzRow.getByText('Requires Restart', { exact: true })).toBeVisible()
 
-  // Save button is disabled until the input diverges from the saved value.
+  // Save button is disabled until the selection diverges from the saved value.
   const saveBtn = tzRow.getByRole('button', { name: 'Save', exact: true })
   await expect(saveBtn).toBeDisabled()
 
-  // Type a new value and verify Save unlocks.
-  await tzInput.fill('America/New_York')
+  // Pick a new timezone and verify Save unlocks. selectOption matches by
+  // value attribute (which is the IANA name itself).
+  await tzSelect.selectOption('America/New_York')
   await expect(saveBtn).toBeEnabled()
 
   // Click + wait for PUT. We assert the URL pattern AND the body —
@@ -87,9 +89,9 @@ test('Timezone — initial value renders, change saves via PUT and pill warns ab
   // PUT we just asserted is the only one that fired).
   await expect(page.getByText('Saved.', { exact: true })).toBeVisible()
 
-  // After refreshEntry the input now reflects the persisted value, and
-  // the Save button locks again because input == initialTimezone.
-  await expect(tzInput).toHaveValue('America/New_York')
+  // After refreshEntry the select now reflects the persisted value, and
+  // the Save button locks again because selection == initialTimezone.
+  await expect(tzSelect).toHaveValue('America/New_York')
   await expect(saveBtn).toBeDisabled()
 
   expect(backend.unexpected.length).toBe(0)
