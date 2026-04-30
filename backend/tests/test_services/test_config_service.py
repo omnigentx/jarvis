@@ -56,25 +56,11 @@ class TestPlainRoundTrip:
         svc.set("llm", "model", "gpt-4o-mini")
         assert svc.get("llm", "model") == "gpt-4o-mini"
 
-    def test_get_missing_returns_default(self, svc):
+    def test_get_missing_returns_none(self, svc):
+        assert svc.get("llm", "nope") is None
+
+    def test_get_missing_returns_explicit_default(self, svc):
         assert svc.get("llm", "nope", default="fallback") == "fallback"
-
-    def test_get_falls_back_to_env(self, svc, monkeypatch):
-        monkeypatch.setenv("LLM_TEMP", "0.7")
-        assert svc.get("llm", "LLM_TEMP") == "0.7"
-
-    def test_get_env_var_override_name(self, svc, monkeypatch):
-        monkeypatch.setenv("OPENAI_API_BASE", "https://api.openai.com")
-        # Key is "base_url" but env var is different.
-        assert (
-            svc.get("llm", "base_url", env_var="OPENAI_API_BASE")
-            == "https://api.openai.com"
-        )
-
-    def test_db_takes_precedence_over_env(self, svc, monkeypatch):
-        monkeypatch.setenv("LLM_MODEL", "gpt-env")
-        svc.set("llm", "LLM_MODEL", "gpt-db")
-        assert svc.get("llm", "LLM_MODEL") == "gpt-db"
 
     def test_set_overwrites_existing(self, svc):
         svc.set("llm", "model", "gpt-3.5")
@@ -82,33 +68,40 @@ class TestPlainRoundTrip:
         assert svc.get("llm", "model") == "gpt-4o"
 
 
-class TestEnvFallbackOptOut:
-    """``env_fallback=False`` makes the DB the single source of truth.
+class TestNoEnvFallback:
+    """DB is the single source of truth — env vars are never consulted.
 
-    Used by callers like ``services.repo_config`` that must never silently
-    consume an env var standing in for a missing DB row.
+    The pre-refactor ``get()`` had an opaque ``DB → env → default`` chain
+    that could silently substitute an unrelated env value of the same
+    name for a missing DB row. These tests pin the no-fallback contract
+    so a future "convenience" tweak can't quietly reintroduce it.
     """
 
-    def test_db_hit_unaffected(self, svc, monkeypatch):
+    def test_db_miss_does_not_fall_back_to_env(self, svc, monkeypatch):
+        monkeypatch.setenv("MODEL", "gpt-env")
+        assert svc.get("llm", "MODEL") is None
+
+    def test_db_miss_with_env_set_still_uses_explicit_default(
+        self, svc, monkeypatch
+    ):
+        monkeypatch.setenv("MODEL", "gpt-env")
+        assert svc.get("llm", "MODEL", default="gpt-default") == "gpt-default"
+
+    def test_db_hit_with_conflicting_env_returns_db(self, svc, monkeypatch):
         svc.set("llm", "MODEL", "gpt-db")
         monkeypatch.setenv("MODEL", "gpt-env")
-        assert svc.get("llm", "MODEL", env_fallback=False) == "gpt-db"
+        assert svc.get("llm", "MODEL") == "gpt-db"
 
-    def test_db_miss_skips_env(self, svc, monkeypatch):
-        monkeypatch.setenv("MODEL", "gpt-env")
-        assert svc.get("llm", "MODEL", env_fallback=False) is None
+    def test_get_rejects_legacy_env_var_kwarg(self, svc):
+        # The old ``env_var=`` kwarg was the explicit hook for env-fallback.
+        # It's gone — calling code that still passes it must fail loudly so
+        # the migration is mechanical, not silent.
+        with pytest.raises(TypeError):
+            svc.get("llm", "base_url", env_var="OPENAI_API_BASE")  # type: ignore[call-arg]
 
-    def test_db_miss_returns_explicit_default(self, svc, monkeypatch):
-        monkeypatch.setenv("MODEL", "gpt-env")
-        assert (
-            svc.get("llm", "MODEL", default="gpt-default", env_fallback=False)
-            == "gpt-default"
-        )
-
-    def test_default_keeps_legacy_env_fallback(self, svc, monkeypatch):
-        # No regression for the 22 existing call sites that expect env to win.
-        monkeypatch.setenv("MODEL", "gpt-env")
-        assert svc.get("llm", "MODEL") == "gpt-env"
+    def test_get_rejects_legacy_env_fallback_kwarg(self, svc):
+        with pytest.raises(TypeError):
+            svc.get("llm", "MODEL", env_fallback=False)  # type: ignore[call-arg]
 
 
 # ---- Secret values -----------------------------------------------------------

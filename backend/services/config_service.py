@@ -3,8 +3,10 @@
 Responsibilities
 ----------------
 
-* Apply the precedence chain **DB → env var → caller-supplied default** when
-  reading a value (YAML files are handled separately by the YAML editor).
+* Read a value from the DB only — no env-var fallback chain. The DB is the
+  single source of truth (YAML files are handled separately by the YAML
+  editor). Callers may pass an explicit ``default``; if they need to also
+  consult an env var, they must do it visibly at the call site.
 * Encrypt/decrypt secret values transparently using :mod:`core.secrets_crypto`.
 * Append an audit row to ``config_history`` on every mutation. Secret values
   are masked (``***``) in history so we never persist ciphertext that might
@@ -20,7 +22,6 @@ bugs.
 from __future__ import annotations
 
 import logging
-import os
 import threading
 from dataclasses import dataclass
 from datetime import datetime
@@ -125,47 +126,42 @@ class ConfigService:
         key: str,
         *,
         default: Optional[str] = None,
-        env_var: Optional[str] = None,
-        env_fallback: bool = True,
     ) -> Optional[str]:
-        """Return the resolved value (DB → env → default).
+        """Return the DB value, or ``default`` if no row exists.
+
+        DB is the single source of truth. There is no env-var fallback
+        chain inside this method on purpose — a silent ``os.getenv``
+        lookup would mask a missing/empty DB row with an unrelated env
+        value of the same name. Callers that genuinely need to consult an
+        env var (typically only first-boot bootstrap helpers) must do so
+        explicitly with ``os.getenv(...)`` at the call site so the read
+        is visible in the diff.
 
         Args:
             category: Logical grouping (``'auth'``, ``'llm'``, ``'service.github'``, ...).
-            key: Setting name. Conventionally an env-var-style identifier.
-            default: Returned when no value is found anywhere.
-            env_var: Env var to consult when DB is empty. Defaults to ``key``.
-            env_fallback: When ``False``, skip the env step entirely. New
-                callers that treat the DB as the single source of truth
-                should set this to ``False`` so an unintentionally-set env
-                var can never mask a missing/empty DB row.
+            key: Setting name.
+            default: Returned when no DB row is present.
 
         Raises:
             RuntimeError: A secret row is present in the DB but cannot be
                 decrypted (e.g. master key rotated without re-encrypting
                 stored secrets). Surfaces loudly so the user fixes the
-                state instead of silently consuming a stale env value.
+                state instead of silently consuming a stale value.
         """
         row = self._fetch(category, key)
-        if row is not None and row.value is not None:
-            decoded = self._decode(row.value, row.is_secret, category, key)
-            if decoded is not None:
-                return decoded
-            # Secret stored but undecryptable — refuse to fall through. A
-            # silent fallback to env or default would hide a real corruption
-            # / key-rotation issue and could substitute a wrong value.
-            raise RuntimeError(
-                f"{category}/{key}: stored secret could not be decrypted "
-                "(master key rotated without re-encrypting?); re-set the "
-                "value via Settings or the Setup Wizard."
-            )
-
-        if env_fallback:
-            env_name = env_var if env_var is not None else key
-            env_value = os.getenv(env_name)
-            if env_value is not None:
-                return env_value
-        return default
+        if row is None or row.value is None:
+            return default
+        decoded = self._decode(row.value, row.is_secret, category, key)
+        if decoded is not None:
+            return decoded
+        # Secret stored but undecryptable — refuse to fall through. A
+        # silent fallback to default would hide a real corruption /
+        # key-rotation issue and could substitute a wrong value.
+        raise RuntimeError(
+            f"{category}/{key}: stored secret could not be decrypted "
+            "(master key rotated without re-encrypting?); re-set the "
+            "value via Settings or the Setup Wizard."
+        )
 
     def get_entry(self, category: str, key: str) -> Optional[ConfigEntry]:
         """Metadata-rich read for a single key (no env fallback)."""

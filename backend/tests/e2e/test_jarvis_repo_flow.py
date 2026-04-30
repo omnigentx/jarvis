@@ -149,8 +149,10 @@ async def test_resolution_survives_simulated_restart(client, monkeypatch):
     assert repo_config.get_repo_url() == "https://github.com/owner/jarvis.git"
 
     # Sanity: the singleton actually read from DB and not memoization.
+    # ``ConfigService.get`` is DB-only by contract — the env value set
+    # above must not leak in here either.
     row = config_module.config_service.get(
-        "service.jarvis_repo", "JARVIS_REPO_URL", env_fallback=False
+        "service.jarvis_repo", "JARVIS_REPO_URL"
     )
     assert row == "https://github.com/owner/jarvis.git"
 

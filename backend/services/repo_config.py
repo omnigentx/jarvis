@@ -20,7 +20,7 @@ KEY = "JARVIS_REPO_URL"
 
 
 def get_repo_url() -> str:
-    value = config_service.get(CATEGORY, KEY, env_fallback=False)
+    value = config_service.get(CATEGORY, KEY)
     if value is None or not value.strip():
         raise RuntimeError(
             f"{CATEGORY}/{KEY} is not configured. "
