@@ -1,0 +1,86 @@
+# Settings → Services tab, Google not connected (web-app OAuth client).
+#
+# Client credentials are on file (client_type: "web") but no tokens yet.
+# In this state SettingsServices.vue renders the "Connect Google" button.
+# Clicking it POSTs /api/oauth/google/start which returns a consent URL +
+# an opaque state token the popup flow will echo back.
+#
+# The Services tab also queries /api/settings/service.roborock and
+# /api/settings/service.github on mount for their respective status cards —
+# both are stubbed empty here (no creds on file). GET /api/settings is the
+# initial SettingsGeneral mount before the user clicks the Services tab.
+
+backend_source:
+  - "backend/routes/oauth.py::status"
+  - "backend/routes/oauth.py::start"
+  - "backend/routes/oauth.py::set_client"
+  - "backend/routes/settings.py::list_category"
+  - "backend/routes/settings.py::list_all"
+  - "backend/services/google_oauth.py::build_consent_url"
+  - "dashboard/src/views/settings/SettingsServices.vue::startConnect, saveClient"
+  - "dashboard/src/views/settings/SettingsGeneral.vue::refreshSystem (mount GET /api/settings)"
+
+notes: |
+  status.client_type is "web" so the UI renders branch C (popup flow) and
+  shows the "Connect Google" button. POST /start returns the consent URL —
+  the frontend then window.open()s it and flips the button label to
+  "Waiting for consent…". We stub window.open in the spec so the popup
+  never hits real Google.
+
+  The save-credential error test reuses this same fixture: from branch C
+  the user clicks "Change credentials" to reveal the credentials form,
+  fills it, and submits. PUT /api/oauth/google/client is stubbed to 400
+  so the UI must surface err.body.detail instead of silently succeeding.
+
+responses:
+  # SettingsGeneral mounts first (default tab) and calls store.fetchAll().
+  "GET /api/settings":
+    status: 200
+    json:
+      categories: {}
+
+  # Services tab: Google OAuth status — client saved, not yet connected.
+  "GET /api/oauth/google/status":
+    status: 200
+    json:
+      client_configured: true
+      client_type: "web"
+      desktop_redirect_uri: null
+      connected: false
+      scopes: []
+      expires_at: null
+      has_refresh_token: false
+      project_number: "123456789012"
+      required_apis: []
+
+  # Services tab: Roborock status — nothing on file.
+  "GET /api/settings/service.roborock":
+    status: 200
+    json:
+      category: "service.roborock"
+      items: []
+
+  # Services tab: GitHub status — nothing on file.
+  "GET /api/settings/service.github":
+    status: 200
+    json:
+      category: "service.github"
+      items: []
+
+  # User clicks "Connect Google" → POST /start returns the consent URL.
+  # Frontend will window.open() this URL — spec stubs window.open so it
+  # never actually navigates.
+  "POST /api/oauth/google/start":
+    status: 200
+    json:
+      url: "https://accounts.google.com/o/oauth2/v2/auth?client_id=fake&state=test-state-abc"
+      state: "test-state-abc"
+      redirect_uri: "http://localhost:3003/oauth/callback"
+      client_type: "web"
+
+  # Used by the save-credential error test: backend rejects the PUT with
+  # a 400. SettingsServices.vue surfaces err.body.detail in .error-msg.
+  "PUT /api/oauth/google/client":
+    status: 400
+    json:
+      detail: "Invalid client_id — must be a Google OAuth web-app client."

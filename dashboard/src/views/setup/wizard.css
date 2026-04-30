@@ -1,0 +1,207 @@
+/* Shared styling for wizard inputs & buttons.  Scoped via `.wizard-*` prefix
+   so these classes don't leak into the rest of the dashboard. */
+
+.wizard-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.wizard-field label {
+  font-size: 12px;
+  font-weight: 500;
+  color: #94a3b8;
+  letter-spacing: 0.02em;
+}
+.wizard-input {
+  width: 100%;
+  background: #0f172a;
+  border: 1px solid #243244;
+  border-radius: 10px;
+  padding: 12px 14px;
+  color: #e5eef8;
+  font-size: 14px;
+  font-family: inherit;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.wizard-input:focus {
+  outline: none;
+  border-color: #5b8cff;
+  box-shadow: 0 0 0 3px rgba(91, 140, 255, 0.18);
+}
+.wizard-input::placeholder { color: #555872; }
+.wizard-input[disabled] { opacity: 0.6; cursor: not-allowed; }
+
+.wizard-input-group {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.wizard-input-group .wizard-input { padding-right: 44px; }
+.wizard-input-group .icon-btn {
+  position: absolute;
+  right: 8px;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  color: #94a3b8;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.wizard-input-group .icon-btn:hover { color: #e5eef8; background: rgba(255,255,255,0.04); }
+
+.wizard-help { font-size: 12px; color: #64748b; line-height: 1.4; }
+.wizard-error {
+  font-size: 13px;
+  color: #ef4444;
+  padding: 10px 12px;
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 8px;
+  line-height: 1.4;
+}
+.wizard-callout {
+  display: flex;
+  gap: 12px;
+  padding: 14px 16px;
+  background: rgba(91, 140, 255, 0.08);
+  border: 1px solid rgba(91, 140, 255, 0.3);
+  border-radius: 10px;
+  font-size: 13px;
+  color: #c4c8d4;
+  line-height: 1.5;
+}
+.wizard-callout.warn {
+  background: rgba(245, 158, 11, 0.08);
+  border-color: rgba(245, 158, 11, 0.3);
+}
+.wizard-callout.success {
+  background: rgba(34, 197, 94, 0.08);
+  border-color: rgba(34, 197, 94, 0.3);
+}
+.wizard-callout strong { color: #e5eef8; }
+
+.wizard-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 18px;
+  border-radius: 10px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #94a3b8;
+  transition: all 0.15s ease;
+}
+.wizard-btn:hover:not([disabled]) { color: #e5eef8; background: rgba(255,255,255,0.04); }
+.wizard-btn[disabled] { opacity: 0.5; cursor: not-allowed; }
+.wizard-btn.ghost { color: #94a3b8; }
+.wizard-btn.primary {
+  background: #5b8cff;
+  color: #ffffff;
+  border-color: #5b8cff;
+  box-shadow: 0 4px 12px rgba(91, 140, 255, 0.25);
+}
+.wizard-btn.primary:hover:not([disabled]) {
+  background: #4a7bee;
+  border-color: #4a7bee;
+  color: #ffffff;
+}
+.wizard-btn.danger { color: #ef4444; }
+.wizard-btn.danger:hover:not([disabled]) { background: rgba(239, 68, 68, 0.08); color: #ef4444; }
+
+.wizard-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+.wizard-choice {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 16px 12px;
+  background: #0f172a;
+  border: 1.5px solid #243244;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  text-align: center;
+}
+.wizard-choice:hover { border-color: #2e4668; }
+.wizard-choice.selected {
+  border-color: #5b8cff;
+  background: rgba(91, 140, 255, 0.08);
+}
+.wizard-choice .choice-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #94a3b8;
+}
+.wizard-choice.selected .choice-title { color: #e5eef8; }
+.wizard-choice .choice-sub {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.wizard-service-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+  background: #0f172a;
+  border: 1px solid #243244;
+  border-radius: 12px;
+}
+.wizard-service-card .row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+.wizard-service-card h3 {
+  font-size: 16px;
+  font-weight: 600;
+  color: #e5eef8;
+}
+.wizard-service-card .desc { font-size: 13px; color: #94a3b8; line-height: 1.5; }
+.wizard-service-card .badge {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.1);
+  color: #94a3b8;
+}
+.wizard-service-card .badge.connected {
+  background: rgba(34, 197, 94, 0.12);
+  color: #22c55e;
+}
+
+.wizard-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 20px 24px;
+  background: #0f172a;
+  border: 1px solid #243244;
+  border-radius: 12px;
+}
+.wizard-summary .row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid #1a2332;
+}
+.wizard-summary .row:last-child { border-bottom: none; }
+.wizard-summary .label { font-size: 14px; color: #94a3b8; }
+.wizard-summary .value { font-size: 14px; font-weight: 500; color: #e5eef8; }
+.wizard-summary .value.ok { color: #22c55e; }
+.wizard-summary .value.muted { color: #64748b; }

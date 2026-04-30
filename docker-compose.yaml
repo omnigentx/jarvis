@@ -1,0 +1,63 @@
+services:
+  jarvis-backend:
+    build: ./backend
+    image: felixnguyen95/jarvis-backend:latest
+    container_name: jarvis_backend
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./backend:/app
+      - /app/.venv
+      - /var/run/docker.sock:/var/run/docker.sock
+      # --- Secrets & Credentials ---
+      # fastagent.secrets.yaml is mounted read-write from the persistent host
+      # directory so Setup Wizard edits (via /api/yaml/secrets) and
+      # llm_provider_sync writes survive CD redeploys.
+      # Falls back to workspace-local path for local dev (JARVIS_PERSIST_DIR unset).
+      - ${JARVIS_PERSIST_DIR:-./backend}/fastagent.secrets.docker.yaml:/app/fastagent.secrets.yaml
+      - ./backend/config/credentials:/app/config/credentials:ro
+      # --- Persistent data ---
+      - jarvis-data:/app/data
+      # --- Agent runtime (sessions, state, logs) ---
+      - jarvis-sessions:/app/.fast-agent/sessions
+      - jarvis-runtime:/app/.runtime
+      - jarvis-logs:/app/logs
+    environment:
+      - PYTHONUNBUFFERED=1
+      - LOG_CONSOLE_LEVEL=${LOG_CONSOLE_LEVEL:-INFO}
+      - TTS_PROVIDER=${TTS_PROVIDER:-edge}
+      # Point git at the config that services/git_credential_sync.py
+      # regenerates from the DB on every boot, so ``git clone/pull/push``
+      # from the agent shell picks up credential.helper without touching
+      # $HOME. The file itself lives in the container workspace — the DB
+      # (persisted via ``jarvis-data`` volume) is the source of truth.
+      - GIT_CONFIG_GLOBAL=/app/gitconfig
+      # Fail git commands loudly instead of hanging on an interactive prompt.
+      # Dev agents run in a subprocess with no TTY — without this, an
+      # unauthenticated clone would block on the username prompt forever.
+      # Also important because the old ``:ro`` bind-mount that prevented
+      # ``credential.helper = store`` from appending prompt-captured input
+      # back to the credentials file is gone; GIT_TERMINAL_PROMPT=0 closes
+      # the same loophole at the fail-loud side.
+      - GIT_TERMINAL_PROMPT=0
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  jarvis-web:
+    build: ./dashboard
+    image: felixnguyen95/jarvis-web:latest
+    container_name: jarvis_web
+    ports:
+      - "127.0.0.1:80:80"
+    depends_on:
+      - jarvis-backend
+    restart: unless-stopped
+
+volumes:
+  jarvis-data:
+  jarvis-sessions:
+  jarvis-runtime:
+  jarvis-logs:

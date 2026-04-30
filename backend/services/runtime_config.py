@@ -1,0 +1,293 @@
+"""Runtime-config synchronisation shim.
+
+Some startup-time state is cached in module globals and cannot be picked up
+by re-reading the environment.  When the Setup Wizard or Settings UI writes
+a new value to the DB, those caches need to be refreshed in-process or the
+rest of the code keeps using the stale copy.
+
+Two entry points are provided:
+
+* **Imperative apply_*** functions.  Callable directly from routes that just
+  wrote a value and want the change to take effect inside the same request
+  (e.g. the master key rotation in ``routes/settings.py``).
+* **register_config_listeners()**.  Subscribes to
+  :class:`~services.config_service.ConfigService` change events and fans
+  them out to the matching ``apply_*`` function.  Wired once at app
+  startup from ``server.py`` so changes made anywhere in the codebase —
+  including the Setup Wizard, bulk updates, or direct ``config_service.set``
+  calls from other services — hot-reload without the caller having to know
+  about this module.
+
+D2 scope (Phase 3a) covers:
+
+* ``auth/JARVIS_API_KEY``         — master key rotation
+* ``system/LOG_CONSOLE_LEVEL``    — console log verbosity
+* ``system/TTS_PROVIDER``         — rebuild TTS provider
+* ``system/EDGE_TTS_VOICE``
+* ``system/EDGE_TTS_RATE``
+
+Values that require a full restart (e.g. ``system/SESSION_HISTORY_WINDOW``
+and ``system/CORS_ORIGINS``) are intentionally *not* wired here; the UI
+surfaces a "Requires Restart" pill instead of pretending the change is
+live.
+"""
+from __future__ import annotations
+
+import logging
+import os
+import re
+from typing import Callable, Optional
+
+from core import auth as core_auth
+from core import secrets_crypto
+from services.llm_provider_sync import apply_llm_provider_change, parse_llm_key
+
+logger = logging.getLogger(__name__)
+
+
+_VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+_DEFAULT_TIMEZONE = "Asia/Ho_Chi_Minh"
+
+# Service config keys that look like env var names (UPPER_SNAKE_CASE, starting
+# with a letter) are exported to ``os.environ`` so MCP subprocesses spawned
+# later inherit them.  Keeps the wizard's "Services" step useful end-to-end:
+# fill the form → restart the relevant tool subprocess → it picks up the value.
+_ENV_SHAPED_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]{1,63}$")
+
+
+# ---- Imperative apply_* -----------------------------------------------------
+
+
+def apply_master_key(api_key: str) -> str:
+    """Propagate a new ``JARVIS_API_KEY`` to env, auth module, and crypto.
+
+    Returns the new Fernet key fingerprint so the caller can log or surface it.
+    """
+    if not isinstance(api_key, str) or not api_key.strip():
+        raise ValueError("api_key must be a non-empty string")
+
+    os.environ["JARVIS_API_KEY"] = api_key
+    # ``core.auth`` reads its module-global inside the verify dependency at
+    # call-time, so mutating the attribute is enough.
+    core_auth.JARVIS_API_KEY = api_key
+    fingerprint = secrets_crypto.reload_master_key()
+    logger.info("[RUNTIME] Master key applied (fingerprint=%s)", fingerprint)
+    return fingerprint
+
+
+def apply_log_console_level(level: Optional[str]) -> str:
+    """Retune the console handler attached to the root logger.
+
+    ``level=None`` falls back to ``WARNING`` — the historical default from
+    :mod:`core.logging_config`.  The file handler's level is left untouched
+    so on-disk logs keep their full resolution regardless of UI changes.
+    """
+    normalised = (level or "WARNING").strip().upper()
+    if normalised not in _VALID_LOG_LEVELS:
+        raise ValueError(
+            f"LOG_CONSOLE_LEVEL must be one of {sorted(_VALID_LOG_LEVELS)}; got {level!r}"
+        )
+
+    os.environ["LOG_CONSOLE_LEVEL"] = normalised
+    numeric = getattr(logging, normalised)
+    root = logging.getLogger()
+    touched = 0
+    for handler in root.handlers:
+        # Only the pure StreamHandler (stdout) — FileHandler and its
+        # rotating subclass inherit from StreamHandler so we must exclude
+        # them explicitly.
+        if isinstance(handler, logging.StreamHandler) and not isinstance(
+            handler, logging.FileHandler
+        ):
+            handler.setLevel(numeric)
+            touched += 1
+    if touched == 0:
+        logger.debug("[RUNTIME] No console handler found; level %s stored in env only", normalised)
+    else:
+        logger.info("[RUNTIME] Console log level set to %s (%d handler(s))", normalised, touched)
+    return normalised
+
+
+def apply_timezone(tz: Optional[str]) -> str:
+    """Validate and set JARVIS_TIMEZONE in env.
+
+    MCP subprocesses already running under fast-agent use stdio transport
+    and cannot be reconnected after a kill/respawn.  The new timezone takes
+    effect for any subprocess spawned *after* this call — in practice, on
+    the next backend restart.  The UI shows a "Requires Restart" pill to
+    communicate this constraint.
+    """
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+    normalised = (tz or _DEFAULT_TIMEZONE).strip()
+    try:
+        ZoneInfo(normalised)
+    except ZoneInfoNotFoundError:
+        raise ValueError(f"Unknown timezone: {normalised!r}") from None
+    os.environ["JARVIS_TIMEZONE"] = normalised
+    logger.info("[RUNTIME] Timezone set to %s — restart backend for MCP tools to pick up", normalised)
+    return normalised
+
+
+def apply_tts_config(
+    *,
+    provider: Optional[str] = None,
+    voice: Optional[str] = None,
+    rate: Optional[str] = None,
+) -> str:
+    """Rebuild the shared TTS provider with updated env.
+
+    Any argument left as ``None`` is not touched so partial updates
+    (e.g. just the voice) don't clobber the other values.  The new
+    :class:`~services.tts.TTSProvider` instance is swapped into
+    :mod:`services.shared_state` atomically (Python attribute assignment
+    is a single bytecode op).
+    """
+    if provider is not None:
+        os.environ["TTS_PROVIDER"] = provider
+    if voice is not None:
+        os.environ["EDGE_TTS_VOICE"] = voice
+    if rate is not None:
+        os.environ["EDGE_TTS_RATE"] = rate
+
+    # Imported lazily so unit tests can patch the module without pulling
+    # edge-tts into every import graph.
+    from services import shared_state
+    from services.tts import TTSFactory
+
+    new_provider = TTSFactory.get_provider()
+    shared_state.tts_provider = new_provider
+    logger.info(
+        "[RUNTIME] TTS provider rebuilt: %s (voice=%s, rate=%s)",
+        type(new_provider).__name__,
+        os.environ.get("EDGE_TTS_VOICE"),
+        os.environ.get("EDGE_TTS_RATE"),
+    )
+    return type(new_provider).__name__
+
+
+# ---- Listener bridge --------------------------------------------------------
+
+
+def _on_config_change(event) -> None:
+    """Dispatch a :class:`ConfigChangeEvent` to the right ``apply_*``.
+
+    Deletes restore the default (or clear the env var) so a user who
+    removes an override gets the built-in behaviour back without needing
+    to restart.
+    """
+    cat, key, new_value, action = (
+        event.category,
+        event.key,
+        event.new_value,
+        event.action,
+    )
+
+    try:
+        if cat == "auth" and key == "JARVIS_API_KEY":
+            if action == "delete":
+                logger.warning("[RUNTIME] Master key deleted — leaving in-process copy untouched")
+                return
+            if new_value:
+                apply_master_key(new_value)
+            return
+
+        if cat == "system":
+            if key == "LOG_CONSOLE_LEVEL":
+                apply_log_console_level(new_value if action != "delete" else None)
+                return
+            if key == "TTS_PROVIDER":
+                apply_tts_config(provider=new_value if action != "delete" else "edge")
+                return
+            if key == "EDGE_TTS_VOICE":
+                apply_tts_config(voice=new_value or "")
+                return
+            if key == "EDGE_TTS_RATE":
+                apply_tts_config(rate=new_value or "")
+                return
+            if key == "TIMEZONE":
+                apply_timezone(new_value if action != "delete" else None)
+                return
+
+        if cat == "llm":
+            parsed = parse_llm_key(key)
+            if parsed is not None:
+                provider, kind = parsed
+                apply_llm_provider_change(provider, kind, new_value, action=action)
+                return
+
+        if cat == "service.github":
+            # GitHub service fields (personal_access_token, user_name, user_email)
+            # don't match the ENV_SHAPED_KEY pattern — they drive file sinks
+            # (git-credentials + gitconfig + fastagent.secrets.yaml) instead of
+            # os.environ. Must run before the generic service.* env branch.
+            from services import git_credential_sync
+            git_credential_sync.apply_change(key, new_value, action=action)
+            return
+
+        if cat.startswith("service.") and _ENV_SHAPED_KEY_RE.match(key):
+            if action == "delete":
+                os.environ.pop(key, None)
+                logger.info("[RUNTIME] Unset %s (service env)", key)
+            elif new_value is not None:
+                os.environ[key] = str(new_value)
+                logger.info("[RUNTIME] Set %s (service env, %d chars)", key, len(str(new_value)))
+            return
+    except Exception:
+        # A listener that raises would be caught by ConfigService._emit, but
+        # we log here too so the failure is obvious in context.
+        logger.exception(
+            "[RUNTIME] Failed to apply runtime change for %s/%s", cat, key
+        )
+
+
+def reconcile_service_env(service) -> int:
+    """Seed ``os.environ`` from every ``service.*/{UPPER_SNAKE}`` row in DB.
+
+    The change-listener keeps env in sync when rows are *mutated* at runtime,
+    but a fresh backend process (Docker restart, CLI relaunch) starts with
+    an empty ``os.environ`` and no "change" ever fires for rows that were
+    written in a previous run. Without this boot-time seed, MCP subprocesses
+    spawned by fast-agent immediately after startup inherit a stale/empty
+    env even though the DB carries perfectly good credentials.
+
+    Only keys shaped like ``UPPER_SNAKE_CASE`` are exported — the same
+    filter the change-listener uses — so free-form service keys stay in
+    DB-only mode.
+
+    Returns the number of env entries populated, so the caller can log a
+    clear audit line at startup.
+    """
+    exported = 0
+    for category, entries in service.list_all().items():
+        if not category.startswith("service."):
+            continue
+        for entry in entries:
+            if not _ENV_SHAPED_KEY_RE.match(entry.key):
+                continue
+            plaintext = service.get(category, entry.key)
+            if plaintext is None or plaintext == "":
+                continue
+            # Respect env that was set explicitly outside the DB (e.g. via
+            # docker-compose ``environment:``) — those represent a deliberate
+            # deployment override, so we shouldn't clobber them.
+            if os.environ.get(entry.key):
+                continue
+            os.environ[entry.key] = str(plaintext)
+            exported += 1
+            logger.info(
+                "[BOOTSTRAP] Seeded %s from %s (%d chars)",
+                entry.key, category, len(str(plaintext)),
+            )
+    return exported
+
+
+def register_config_listeners(service) -> Callable[[], None]:
+    """Wire hot-reload dispatch to the given :class:`ConfigService`.
+
+    Returns the service's unsubscribe callback so tests can detach cleanly.
+    Safe to call multiple times — the dispatcher is idempotent per change
+    (it only mutates state that reflects the new value anyway).
+    """
+    unsubscribe = service.subscribe(_on_config_change)
+    logger.info("[RUNTIME] Config change listeners registered")
+    return unsubscribe

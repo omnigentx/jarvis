@@ -1,0 +1,11 @@
+# Docker build context ignore rules
+# Note: fast-agent/ is in .gitignore but must be in Docker context
+.venv/
+__pycache__/
+*.pyc
+.env
+.git/
+config/credentials/
+*.db
+*.sqlite
+*.sqlite3

@@ -1,0 +1,62 @@
+[project]
+name = "fast-agent-app"
+version = "0.1.0"
+description = "a simple fast-agent application"
+readme = "README.md"
+requires-python = "<3.14,>=3.13.5"
+dependencies = [
+  "edge-tts>=7.2.3",
+  "fast-agent-mcp>=0.5.10",
+  "lunar-python>=1.4.8",
+  "pyaudio>=0.2.14",
+  "pygame>=2.6.1",
+  "speechrecognition>=3.14.4",
+  "python-roborock>=3.9.3",
+  "google-auth-oauthlib>=1.2.3",
+  "google-api-python-client>=2.187.0",
+  "yt-dlp>=2025.11.12",
+  "google-generativeai>=0.8.3",
+  "langchain-text-splitters>=1.0.0",
+  "beautifulsoup4>=4.12.3",
+  "requests>=2.32.3",
+  "aiofiles>=25.1.0",
+  "mutagen>=1.47.0",
+  # Database
+  "sqlalchemy>=2.0.0",
+  # Web scraping & MCP server
+  "scrapling[ai]>=0.4.2",
+  "croniter>=6.2.2",
+  "pyyaml>=6.0.3",
+]
+
+[tool.uv]
+package = true
+
+[tool.uv.sources]
+fast-agent-mcp = { path = "./fast-agent", editable = true }
+
+# Optional convenience entry point if you later package this app:
+[project.scripts]
+fast-agent-app = "agent:main"
+
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["agent"]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.0",
+  "pytest-asyncio>=0.24",
+  "httpx>=0.27",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = [
+  "slow: marks tests that spawn real subprocesses or take >1s",
+]

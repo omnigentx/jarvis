@@ -1,0 +1,278 @@
+import { ref, computed } from 'vue'
+import { defineStore } from 'pinia'
+import { apiFetch } from '../api'
+
+export const useAgentsStore = defineStore('agents', () => {
+  // --- State ---
+  const agents = ref(new Map())
+  const isLoading = ref(false)
+  const error = ref(null)
+  const recentEvents = ref([]) // last 50 events for activity feed
+  const tokenMetrics = ref(new Map()) // per-agent token accumulation from SSE
+
+  // --- Computed ---
+  // Sort priority: running > error > default(Jarvis) > completed > idle
+  const STATUS_PRIORITY = { running: 0, paused: 1, error: 2, completed: 3, idle: 4 }
+  const agentsList = computed(() => {
+    return Array.from(agents.value.values()).sort((a, b) => {
+      const aPri = a.is_default ? 0 : (STATUS_PRIORITY[a.status] ?? 4)
+      const bPri = b.is_default ? 0 : (STATUS_PRIORITY[b.status] ?? 4)
+      if (aPri !== bPri) return aPri - bPri
+      return a.name.localeCompare(b.name)
+    })
+  })
+
+  const stats = computed(() => {
+    const list = agentsList.value
+    return {
+      total: list.length,
+      running: list.filter(a => a.status === 'running').length,
+      paused: list.filter(a => a.status === 'paused').length,
+      idle: list.filter(a => a.status === 'idle').length,
+      error: list.filter(a => a.status === 'error').length,
+      completed: list.filter(a => a.status === 'completed').length,
+    }
+  })
+
+  // --- Actions ---
+  async function fetchAgents() {
+    isLoading.value = true
+    error.value = null
+    try {
+      const data = await apiFetch('/api/agents')
+      const newMap = new Map()
+      for (const agent of data) {
+        // Preserve existing realtime state if available
+        const existing = agents.value.get(agent.name)
+        newMap.set(agent.name, {
+          ...agent,
+          status: existing?.status || agent.status || 'idle',
+          lastAction: existing?.lastAction || null,
+          lastError: existing?.lastError || null,
+        })
+      }
+      agents.value = newMap
+    } catch (e) {
+      error.value = e.message
+      console.error('[Store] Failed to fetch agents:', e)
+    } finally {
+      isLoading.value = false
+    }
+  }
+
+  /**
+   * Fetch persisted activities for ALL agents in one bulk call.
+   * Returns a Map<agentName, Event[]> of persisted events.
+   */
+  async function fetchAllActivities(perAgent = 20) {
+    try {
+      const data = await apiFetch(`/api/agents/activities/recent?per_agent=${perAgent}`)
+      // data is { agentName: [{id, event_type, message, run_id, data, created_at}, ...], ... }
+      return data
+    } catch (e) {
+      console.error('[Store] Failed to fetch activities:', e)
+      return {}
+    }
+  }
+
+  function upsertAgent(name, updates) {
+    const existing = agents.value.get(name) || { name }
+    agents.value.set(name, { ...existing, ...updates })
+    // Trigger reactivity
+    agents.value = new Map(agents.value)
+  }
+
+  function pushEvent(event) {
+    recentEvents.value = [event, ...recentEvents.value].slice(0, 50)
+  }
+
+  /**
+   * Central event processor — ALL SSE events route through here.
+   * @param {Object} event - SSE event payload
+   */
+  function processEvent(event) {
+    const { agent_name, event_type } = event
+    if (!agent_name || !event_type) return
+
+    pushEvent(event)
+
+    switch (event_type) {
+      case 'started':
+      case 'resumed':
+        upsertAgent(agent_name, {
+          status: 'running',
+          lastAction: { message: event.message, timestamp: event.timestamp },
+        })
+        break
+
+      case 'thinking':
+      case 'tool_call':
+      case 'tool_result': {
+        // Don't override 'paused' status — these are in-flight operations
+        // that were queued before the pause checkpoint was hit
+        const current = agents.value.get(agent_name)
+        const newStatus = current?.status === 'paused' ? 'paused' : 'running'
+        upsertAgent(agent_name, {
+          status: newStatus,
+          lastAction: { message: event.message, timestamp: event.timestamp },
+        })
+        break
+      }
+
+      case 'result':
+        upsertAgent(agent_name, {
+          status: 'completed',
+          lastAction: { message: event.message || 'Completed', timestamp: event.timestamp },
+        })
+        break
+
+      case 'error':
+        upsertAgent(agent_name, {
+          status: 'error',
+          lastError: event.data?.message || event.message,
+          lastAction: { message: event.message || 'Error', timestamp: event.timestamp },
+        })
+        break
+
+      case 'idle':
+        upsertAgent(agent_name, {
+          status: 'idle',
+          lastAction: { message: 'Idle', timestamp: event.timestamp },
+        })
+        break
+
+      case 'response':
+        upsertAgent(agent_name, {
+          status: 'idle',
+          lastAction: { message: event.message, timestamp: event.timestamp },
+        })
+        // Reload conversation history from backend — the response was saved
+        // to session but chat-stream SSE may have dropped during long waits
+        import('./chat').then(({ useChatStore }) => {
+          const chatStore = useChatStore()
+          const conv = chatStore.activeConversation
+          if (conv?.backendConversationId && chatStore.activeAgentName === agent_name) {
+            chatStore.fetchHistory(conv.backendConversationId)
+          }
+        }).catch(() => {})
+        break
+
+      case 'agent_added':
+        fetchAgents() // Full re-fetch to get complete agent data
+        break
+
+      case 'agent_removed':
+        agents.value.delete(agent_name)
+        agents.value = new Map(agents.value) // trigger reactivity
+        break
+
+      case 'agent_paused':
+        upsertAgent(agent_name, {
+          status: 'paused',
+          lastAction: { message: event.message || 'Paused', timestamp: event.timestamp },
+        })
+        break
+
+      case 'agent_resumed':
+        upsertAgent(agent_name, {
+          status: 'running',
+          lastAction: { message: event.message || 'Resumed', timestamp: event.timestamp },
+        })
+        break
+
+      case 'token_usage': {
+        // Accumulate token metrics per agent from SSE
+        const d = event.data || {}
+        const prev = tokenMetrics.value.get(agent_name) || {
+          total_tokens: 0, input_tokens: 0, output_tokens: 0,
+          cached_tokens: 0, reasoning_tokens: 0, est_cost: 0, llm_calls: 0,
+        }
+        tokenMetrics.value.set(agent_name, {
+          total_tokens: prev.total_tokens + (d.total_tokens || 0),
+          input_tokens: prev.input_tokens + (d.input_tokens || 0),
+          output_tokens: prev.output_tokens + (d.output_tokens || 0),
+          cached_tokens: prev.cached_tokens + (d.cached_tokens || 0),
+          reasoning_tokens: prev.reasoning_tokens + (d.reasoning_tokens || 0),
+          est_cost: prev.est_cost + (d.est_cost || 0),
+          llm_calls: prev.llm_calls + 1,
+          model: d.model || prev.model,
+        })
+        tokenMetrics.value = new Map(tokenMetrics.value) // trigger reactivity
+        // Also update the agent's tokenCount for card display
+        upsertAgent(agent_name, {
+          tokenCount: formatTokenCount(prev.total_tokens + (d.total_tokens || 0)),
+        })
+        break
+      }
+
+      default:
+        // Forward approval events to approvals store
+        if (event_type.startsWith('approval_')) {
+          import('./approvals').then(({ useApprovalsStore }) => {
+            useApprovalsStore().processApprovalEvent(event)
+          }).catch(e => console.warn('[Store] Failed to forward approval event:', e))
+          break
+        }
+        // Unknown event — still track
+        upsertAgent(agent_name, {
+          lastAction: { message: event.message, timestamp: event.timestamp },
+        })
+    }
+  }
+
+  async function pauseAgent(name) {
+    try {
+      const result = await apiFetch(`/api/agents/${encodeURIComponent(name)}/pause`, { method: 'POST' })
+      if (result.status === 'paused') {
+        upsertAgent(name, {
+          status: 'paused',
+          lastAction: { message: 'Paused by user', timestamp: Date.now() / 1000 },
+        })
+      }
+      return result
+    } catch (e) {
+      console.error('[Store] Failed to pause agent:', e)
+      throw e
+    }
+  }
+
+  async function resumeAgent(name) {
+    try {
+      const result = await apiFetch(`/api/agents/${encodeURIComponent(name)}/resume`, { method: 'POST' })
+      if (result.status === 'resumed') {
+        upsertAgent(name, {
+          status: 'running',
+          lastAction: { message: 'Resumed by user', timestamp: Date.now() / 1000 },
+        })
+      }
+      return result
+    } catch (e) {
+      console.error('[Store] Failed to resume agent:', e)
+      throw e
+    }
+  }
+
+  function formatTokenCount(n) {
+    if (!n || n === 0) return '—'
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
+    return String(n)
+  }
+
+  return {
+    agents,
+    agentsList,
+    stats,
+    isLoading,
+    error,
+    recentEvents,
+    tokenMetrics,
+    fetchAgents,
+    fetchAllActivities,
+    processEvent,
+    upsertAgent,
+    pauseAgent,
+    resumeAgent,
+    formatTokenCount,
+  }
+})

@@ -1,0 +1,10 @@
+[submodule "backend/fast-agent"]
+	path = backend/fast-agent
+	url = https://github.com/omnigentx/fast-agent.git
+	branch = feat/spawn-v2
+[submodule "backend/figma-ui-mcp"]
+	path = backend/figma-ui-mcp
+	url = https://github.com/omnigentx/figma-ui-mcp.git
+[submodule "backend/mcp-atlassian"]
+	path = backend/mcp-atlassian
+	url = https://github.com/omnigentx/mcp-atlassian.git

@@ -1,0 +1,51 @@
+# Fresh-install setup wizard flow — user has never completed setup.
+#
+# The dashboard boots, hits /api/setup/auth/probe (unauthenticated) to decide
+# whether to show "pick a key" vs "confirm existing key", then /api/setup/status
+# to get step progression, then the user submits step 1 (auth).
+
+backend_source:
+  - "backend/routes/setup.py::get_setup_status"
+  - "backend/routes/setup.py::auth_probe"
+  - "backend/routes/setup.py::setup_auth"
+  - "backend/middleware/setup_gate.py::SetupGateMiddleware"
+  - "dashboard/src/stores/setup.js::fetchStatus, submitAuth"
+
+notes: |
+  The wizard calls auth_probe first (unauth) then status (auth-required). Both
+  live outside the setup gate per backend comment. After POST /api/setup/auth
+  the response echoes the fresh SetupStatus — the fixture mirrors that echo so
+  the store advances without re-fetching.
+
+responses:
+  # Step 0: is there already a master key? (unauth probe)
+  "GET /api/setup/auth/probe":
+    status: 200
+    json:
+      configured: false
+
+  # Step 0: full wizard status (auth step pending)
+  "GET /api/setup/status":
+    status: 200
+    json:
+      steps:
+        - { name: "auth",        completed: false, skipped: false }
+        - { name: "llm",         completed: false, skipped: false }
+        - { name: "services",    completed: false, skipped: false }
+        - { name: "yaml_config", completed: false, skipped: false }
+        - { name: "verify",      completed: false, skipped: false }
+      overall_complete: false
+      current_step: "auth"
+
+  # User submits the auth step — backend echoes updated status
+  "POST /api/setup/auth":
+    status: 200
+    json:
+      steps:
+        - { name: "auth",        completed: true,  skipped: false, completed_at: 1714000000.0 }
+        - { name: "llm",         completed: false, skipped: false }
+        - { name: "services",    completed: false, skipped: false }
+        - { name: "yaml_config", completed: false, skipped: false }
+        - { name: "verify",      completed: false, skipped: false }
+      overall_complete: false
+      current_step: "llm"

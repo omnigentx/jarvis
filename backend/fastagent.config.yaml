@@ -1,0 +1,195 @@
+# FastAgent Configuration File
+
+# Default Model Configuration:
+#
+# Takes format:
+#   <provider>.<model_string>.<reasoning_effort?> (e.g. anthropic.claude-3-5-sonnet-20241022 or openai.o3-mini.low)
+# Accepts aliases for Anthropic Models: haiku, haiku3, sonnet, sonnet35, opus, opus3
+# and OpenAI Models: gpt-4.1, gpt-4.1-mini, o1, o1-mini, o3-mini
+#
+# If not specified, defaults to "gpt-5-mini.low".
+# Can be overriden with a command line switch --model=<model>, or within the Agent constructor.
+
+# default_model: codexresponses.gpt-5.4
+# default_model: openresponses.gpt-5.4
+# default_model: openai.coding-agent (combo name in 9router)
+default_model: openai.coding-agent 
+#default_model: gpt-4o-mini
+#default_model: generic.qwen3.5:9b
+
+# Provider endpoints & API keys live in ``fastagent.secrets.yaml`` (gitignored).
+# fast-agent merges secrets into this config at load time, so provider stanzas
+# (openai, anthropic, google, openresponses, ...) are intentionally absent here.
+
+# Session history window - how many sessions to keep before auto-pruning
+# Default is 20, increased for multi-user support
+session_history_window: 200
+# mcp-ui support: disabled, enabled or auto. "auto" opens the web browser on the asset automatically
+# mcp_ui_output_dir: ".fast-agent/ui"  # Where to write MCP-UI HTML files (relative to CWD if not absolute)
+# mcp_ui_mode: enabled
+
+# MCP timeline display (adjust activity window/intervals in MCP UI + fast-agent check)
+mcp_timeline:
+  steps: 20 # number of timeline buckets to render
+  step_seconds: 15 # seconds per bucket (accepts values like "45s", "2m")
+
+shell_execution:
+  # length of time before terminating subprocess
+  timeout_seconds: 300
+  # warning interval if no output seen
+  warning_seconds: 10
+
+# Logging and Console Configuration:
+logger:
+  # level: "debug" | "info" | "warning" | "error"
+  # type: "none" | "console" | "file" | "http"
+  path: "./fastagent.jsonl"
+  streaming: markdown
+
+  # Switch the progress display on or off
+  progress_display: true
+  # Show chat User/Assistant messages on the console
+  show_chat: true
+  # Show tool calls on the console
+  show_tools: true
+  # Truncate long tool responses on the console
+  truncate_tools: true
+  # Streaming renderer for assistant responses: "markdown", "plain", or "none"
+  streaming: markdown
+
+# MCP Servers (FastAgent core format — Pydantic settings)
+mcp:
+  servers:
+    yahoo-finance:
+      command: "uv"
+      args: ["tool", "run", "yahoo-finance-mcp"]
+    google-news:
+      command: "uv"
+      args: ["tool", "run", "google-news-trends-mcp"]
+    time-service:
+      command: "python"
+      args: ["tools/time_server.py"]
+    gmail:
+      command: "python"
+      args: ["tools/gmail_server.py"]
+      env:
+         PYTHONUNBUFFERED: "1"
+         # Needed so services.google_oauth can decrypt the Fernet-encrypted
+         # OAuth tokens in system_config via core.secrets_crypto.
+         JARVIS_API_KEY: "${JARVIS_API_KEY}"
+    calendar:
+      command: "python"
+      args: ["tools/calendar_server.py"]
+      env:
+         PYTHONUNBUFFERED: "1"
+         JARVIS_API_KEY: "${JARVIS_API_KEY}"
+    media-server:
+      command: "python"
+      args: ["tools/media_server.py"]
+      env:
+         PYTHONUNBUFFERED: "1"
+    github:
+      command: "docker"
+      args: ["run", "-i", "--rm", "-e", "GITHUB_PERSONAL_ACCESS_TOKEN", "mcp/github"]
+      env:
+        GITHUB_PERSONAL_ACCESS_TOKEN: "${GITHUB_PERSONAL_ACCESS_TOKEN}"
+    brave-search:
+      command: "npx"
+      args: ["-y", "@modelcontextprotocol/server-brave-search"]
+      env:
+        BRAVE_API_KEY: "${BRAVE_API_KEY}"
+    filesystem:
+      command: "npx"
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "./data", "./jarvis_workspace"]
+    chrome-devtools:
+      command: "npx"
+      args: ["-y", "chrome-devtools-mcp@latest"]
+    serpapi:
+      url: "https://mcp.serpapi.com/${SERPAPI_API_KEY}/mcp"
+    sequential-thinking:
+      command: "npx"
+      args: ["-y", "@modelcontextprotocol/server-sequential-thinking"]
+    iot-control:
+      command: "python"
+      args: ["tools/iot_server.py"]
+      env:
+         PYTHONUNBUFFERED: "1"
+         ROBOROCK_USERNAME: "${ROBOROCK_USERNAME}"
+         ROBOROCK_PASSWORD: "${ROBOROCK_PASSWORD}"
+    scrapling-server:
+      command: "scrapling"
+      args: ["mcp"]
+    story-server:
+      command: "python"
+      args: ["tools/story_server.py"]
+      env:
+         PYTHONUNBUFFERED: "1"
+    library-server:
+      command: "python"
+      args: ["tools/library_server.py"]
+      env:
+         PYTHONUNBUFFERED: "1"
+    # Dynamic Agent Spawn System
+    agent_spawner:
+      command: "python"
+      args: ["-m", "fast_agent.spawn.servers.agent_spawner_server"]
+      env:
+         PYTHONUNBUFFERED: "1"
+         # Forward env vars so spawned agents' MCP servers can resolve ${...} references
+         JARVIS_API_KEY: "${JARVIS_API_KEY}"
+         JARVIS_API_BASE: "${JARVIS_API_BASE}"
+    team_communicate:
+      command: "python"
+      args: ["-m", "fast_agent.spawn.servers.team_communicate_server"]
+      env:
+         PYTHONUNBUFFERED: "1"
+    meeting_room:
+      command: "python"
+      args: ["-m", "fast_agent.spawn.servers.meeting_room_server"]
+      env:
+         PYTHONUNBUFFERED: "1"
+         JARVIS_DB_PATH: "data/jarvis.db"
+    email:
+      command: "python"
+      args: ["-m", "fast_agent.spawn.servers.email_server"]
+      env:
+         PYTHONUNBUFFERED: "1"
+    git:
+      command: "uvx"
+      args: ["mcp-server-git", "--repository", ".."]
+    # GitNexus — code-graph intelligence (impact analysis, call graph, rename).
+    # Server reads registered repos from ~/.gitnexus/registry.json (populated
+    # by `gitnexus analyze` in each target repo). Docker image pre-installs
+    # gitnexus globally so `-y` (auto-download) is a no-op — local dev falls
+    # back to npx download on first use.
+    gitnexus:
+      command: "npx"
+      args: ["-y", "gitnexus", "mcp"]
+    figma-ui-mcp:
+      command: "node"
+      # Docker path (default). Local dev override in fastagent.secrets.yaml
+      args: ["/app/figma-ui-mcp/dist/server.mjs"]
+      env:
+        FIGMA_BRIDGE_HOST: "100.114.26.107"  # MacBook Tailscale IP
+    cron-server:
+      command: "python"
+      args: ["tools/cron_server.py"]
+      env:
+        PYTHONUNBUFFERED: "1"
+    approval-server:
+      command: "python"
+      args: ["tools/approval_server.py"]
+      env:
+        PYTHONUNBUFFERED: "1"
+        JARVIS_API_KEY: "${JARVIS_API_KEY}"
+        JARVIS_API_BASE: "http://127.0.0.1:8000"
+    mcp-atlassian:
+      command: "uv"
+      args: ["run", "--directory", "mcp-atlassian", "mcp-atlassian"]
+      env:
+        JIRA_URL: "${JIRA_URL}"
+        JIRA_USERNAME: "${JIRA_USERNAME}"
+        JIRA_API_TOKEN: "${JIRA_API_TOKEN}"
+        CONFLUENCE_URL: "${CONFLUENCE_URL}"
+        CONFLUENCE_USERNAME: "${CONFLUENCE_USERNAME}"
+        CONFLUENCE_API_TOKEN: "${CONFLUENCE_API_TOKEN}"

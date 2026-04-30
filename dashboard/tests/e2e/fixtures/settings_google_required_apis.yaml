@@ -1,0 +1,62 @@
+# Settings → Services tab, Google connected with required_apis populated.
+#
+# After OAuth consent, /api/oauth/google/status returns the list of Google
+# APIs that the user STILL needs to click "Enable" on in Cloud Console.
+# OAuth alone doesn't activate Gmail/Calendar APIs on a project — the user
+# hits 403 accessNotConfigured at runtime unless they enable each one.
+#
+# SettingsServices.vue renders an "Enable these APIs in Google Cloud
+# Console" panel below the Connected card, listing each api with a deep
+# link pre-filled with the project number parsed from client_id.
+#
+# This fixture verifies:
+#   - Panel visibility gate: client_type != "none" AND required_apis.length > 0
+#   - Each link's href = the backend-supplied enable_url
+#   - Project number is rendered (no "couldn't parse" fallback)
+
+backend_source:
+  - "backend/services/google_oauth.py::required_api_links, project_number"
+  - "backend/routes/oauth.py::status"
+  - "backend/routes/settings.py::list_all, list_category"
+  - "dashboard/src/views/settings/SettingsServices.vue (API enablement panel)"
+
+responses:
+  # SettingsGeneral mounts first (default tab), needs settings list.
+  "GET /api/settings":
+    status: 200
+    json:
+      categories: {}
+
+  # Google OAuth: connected, both required APIs present.
+  "GET /api/oauth/google/status":
+    status: 200
+    json:
+      client_configured: true
+      client_type: "web"
+      desktop_redirect_uri: null
+      connected: true
+      scopes:
+        - "https://www.googleapis.com/auth/gmail.send"
+        - "https://www.googleapis.com/auth/calendar"
+      expires_at: 99999999999
+      has_refresh_token: true
+      project_number: "987654321000"
+      required_apis:
+        - name: "Gmail API"
+          api_id: "gmail.googleapis.com"
+          enable_url: "https://console.cloud.google.com/apis/library/gmail.googleapis.com?project=987654321000"
+        - name: "Google Calendar API"
+          api_id: "calendar-json.googleapis.com"
+          enable_url: "https://console.cloud.google.com/apis/library/calendar-json.googleapis.com?project=987654321000"
+
+  "GET /api/settings/service.roborock":
+    status: 200
+    json:
+      category: "service.roborock"
+      items: []
+
+  "GET /api/settings/service.github":
+    status: 200
+    json:
+      category: "service.github"
+      items: []

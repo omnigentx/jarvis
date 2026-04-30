@@ -1,0 +1,279 @@
+"""Tests for services.runtime_config — hot-reload dispatch."""
+from __future__ import annotations
+
+import logging
+import sys
+
+import pytest
+
+from core import auth as core_auth
+from core import secrets_crypto
+from services import runtime_config, shared_state
+
+
+@pytest.fixture(autouse=True)
+def _restore_env(monkeypatch):
+    # Each test gets a clean env slate for the keys we mutate.
+    for key in (
+        "LOG_CONSOLE_LEVEL",
+        "TTS_PROVIDER",
+        "EDGE_TTS_VOICE",
+        "EDGE_TTS_RATE",
+        "JARVIS_API_KEY",
+        "JARVIS_TIMEZONE",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+
+class TestApplyMasterKey:
+    def test_applies_to_env_and_auth(self, monkeypatch):
+        # Stub the crypto reload so we don't need a real Fernet roundtrip.
+        monkeypatch.setattr(secrets_crypto, "reload_master_key", lambda: "fp-abc")
+        fingerprint = runtime_config.apply_master_key("x" * 32)
+        assert fingerprint == "fp-abc"
+        assert core_auth.JARVIS_API_KEY == "x" * 32
+
+    def test_rejects_empty(self):
+        with pytest.raises(ValueError):
+            runtime_config.apply_master_key("   ")
+
+
+class TestApplyLogConsoleLevel:
+    def test_updates_console_handler(self, monkeypatch):
+        root = logging.getLogger()
+        # Ensure there's exactly one StreamHandler to target.
+        existing = [h for h in root.handlers if isinstance(h, logging.StreamHandler)
+                    and not isinstance(h, logging.FileHandler)]
+        if not existing:
+            handler = logging.StreamHandler(sys.stdout)
+            root.addHandler(handler)
+            existing = [handler]
+
+        runtime_config.apply_log_console_level("DEBUG")
+        assert existing[0].level == logging.DEBUG
+
+        runtime_config.apply_log_console_level("ERROR")
+        assert existing[0].level == logging.ERROR
+
+    def test_stores_in_env(self):
+        runtime_config.apply_log_console_level("info")  # normalised to upper
+        import os
+        assert os.environ["LOG_CONSOLE_LEVEL"] == "INFO"
+
+    def test_invalid_level_rejected(self):
+        with pytest.raises(ValueError):
+            runtime_config.apply_log_console_level("TRACE")
+
+    def test_none_falls_back_to_warning(self):
+        import os
+        runtime_config.apply_log_console_level(None)
+        assert os.environ["LOG_CONSOLE_LEVEL"] == "WARNING"
+
+
+class TestApplyTTSConfig:
+    def test_rebuilds_shared_provider(self, monkeypatch):
+        # Stub TTSFactory to avoid pulling edge-tts.
+        from services import tts as tts_module
+
+        class FakeProvider:
+            pass
+
+        created = []
+
+        def fake_get():
+            p = FakeProvider()
+            created.append(p)
+            return p
+
+        monkeypatch.setattr(tts_module.TTSFactory, "get_provider", staticmethod(fake_get))
+
+        original = shared_state.tts_provider
+        try:
+            runtime_config.apply_tts_config(provider="edge", voice="vi-VN-X", rate="+5%")
+            assert shared_state.tts_provider is created[-1]
+            assert shared_state.tts_provider is not original
+        finally:
+            shared_state.tts_provider = original
+
+    def test_partial_update_preserves_other_env(self, monkeypatch):
+        from services import tts as tts_module
+        monkeypatch.setattr(
+            tts_module.TTSFactory, "get_provider", staticmethod(lambda: object())
+        )
+
+        monkeypatch.setenv("EDGE_TTS_RATE", "+10%")
+        runtime_config.apply_tts_config(voice="new-voice")
+        import os
+        assert os.environ["EDGE_TTS_VOICE"] == "new-voice"
+        assert os.environ["EDGE_TTS_RATE"] == "+10%"  # untouched
+
+
+class TestListenerDispatch:
+    def test_master_key_event_dispatches(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(
+            runtime_config, "apply_master_key", lambda k: calls.append(("key", k)) or "fp"
+        )
+        event = _event("auth", "JARVIS_API_KEY", new_value="newkey", action="update")
+        runtime_config._on_config_change(event)
+        assert calls == [("key", "newkey")]
+
+    def test_log_level_event_dispatches(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(
+            runtime_config,
+            "apply_log_console_level",
+            lambda lvl: calls.append(lvl),
+        )
+        event = _event("system", "LOG_CONSOLE_LEVEL", new_value="DEBUG", action="update")
+        runtime_config._on_config_change(event)
+        assert calls == ["DEBUG"]
+
+    def test_log_level_delete_uses_default(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(
+            runtime_config,
+            "apply_log_console_level",
+            lambda lvl: calls.append(lvl),
+        )
+        event = _event("system", "LOG_CONSOLE_LEVEL", new_value=None, action="delete")
+        runtime_config._on_config_change(event)
+        assert calls == [None]
+
+    def test_tts_voice_event_dispatches(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(
+            runtime_config,
+            "apply_tts_config",
+            lambda **kw: calls.append(kw),
+        )
+        event = _event("system", "EDGE_TTS_VOICE", new_value="vi-VN-Y", action="update")
+        runtime_config._on_config_change(event)
+        assert calls == [{"voice": "vi-VN-Y"}]
+
+    def test_listener_survives_handler_exception(self, monkeypatch):
+        def boom(lvl):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(runtime_config, "apply_log_console_level", boom)
+        event = _event("system", "LOG_CONSOLE_LEVEL", new_value="DEBUG", action="update")
+        # Must not raise — a broken listener shouldn't poison the caller.
+        runtime_config._on_config_change(event)
+
+    def test_unrelated_keys_ignored(self, monkeypatch):
+        sentinel = {"called": False}
+        monkeypatch.setattr(
+            runtime_config,
+            "apply_master_key",
+            lambda *_a, **_kw: sentinel.__setitem__("called", True),
+        )
+        event = _event("llm", "model", new_value="gpt-4o", action="update")
+        runtime_config._on_config_change(event)
+        assert sentinel["called"] is False
+
+
+class TestRegisterConfigListeners:
+    def test_subscribes_and_fires_end_to_end(self, monkeypatch, tmp_path):
+        # Use a real ConfigService wired to a throwaway DB so the commit path
+        # is exercised end-to-end.
+        from core.database import Base
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from services.config_service import ConfigService
+
+        engine = create_engine(f"sqlite:///{tmp_path}/rc.db", future=True)
+        Base.metadata.create_all(engine)
+        Session = sessionmaker(bind=engine, future=True, expire_on_commit=False)
+        service = ConfigService(db_factory=Session)
+
+        calls = []
+        monkeypatch.setattr(
+            runtime_config,
+            "apply_log_console_level",
+            lambda lvl: calls.append(lvl),
+        )
+        unsubscribe = runtime_config.register_config_listeners(service)
+        try:
+            service.set("system", "LOG_CONSOLE_LEVEL", "INFO")
+            assert calls == ["INFO"]
+            service.set("system", "LOG_CONSOLE_LEVEL", "DEBUG")
+            assert calls == ["INFO", "DEBUG"]
+        finally:
+            unsubscribe()
+
+
+class TestReconcileServiceEnv:
+    @pytest.fixture()
+    def service(self, tmp_path, monkeypatch):
+        # A throwaway ConfigService + master key so Fernet can encrypt/decrypt.
+        key = "reconcile-tests-master-key-xxxxx"
+        monkeypatch.setenv("JARVIS_API_KEY", key)
+        monkeypatch.setattr(core_auth, "JARVIS_API_KEY", key)
+        secrets_crypto.reload_master_key()
+
+        from core.database import Base
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from services.config_service import ConfigService
+
+        engine = create_engine(f"sqlite:///{tmp_path}/reconcile.db", future=True)
+        Base.metadata.create_all(engine)
+        Session = sessionmaker(bind=engine, future=True, expire_on_commit=False)
+        return ConfigService(db_factory=Session)
+
+    def test_exports_service_rows_to_env(self, service, monkeypatch):
+        import os
+        monkeypatch.delenv("ROBOROCK_USERNAME", raising=False)
+        monkeypatch.delenv("ROBOROCK_PASSWORD", raising=False)
+        service.set("service.roborock", "ROBOROCK_USERNAME", "alice@example.com", is_secret=True)
+        service.set("service.roborock", "ROBOROCK_PASSWORD", "s3cret", is_secret=True)
+
+        count = runtime_config.reconcile_service_env(service)
+        assert count == 2
+        assert os.environ["ROBOROCK_USERNAME"] == "alice@example.com"
+        assert os.environ["ROBOROCK_PASSWORD"] == "s3cret"
+
+    def test_skips_non_env_shaped_keys(self, service, monkeypatch):
+        import os
+        monkeypatch.delenv("free_form_key", raising=False)
+        service.set("service.roborock", "free_form_key", "value", is_secret=False)
+        count = runtime_config.reconcile_service_env(service)
+        assert count == 0
+        assert "free_form_key" not in os.environ
+
+    def test_skips_non_service_categories(self, service, monkeypatch):
+        import os
+        monkeypatch.delenv("JARVIS_API_KEY", raising=False)
+        service.set("auth", "JARVIS_API_KEY", "should-not-leak", is_secret=True)
+        count = runtime_config.reconcile_service_env(service)
+        assert count == 0
+        assert os.environ.get("JARVIS_API_KEY") != "should-not-leak"
+
+    def test_respects_preexisting_env_override(self, service, monkeypatch):
+        import os
+        monkeypatch.setenv("ROBOROCK_USERNAME", "override-from-docker")
+        service.set("service.roborock", "ROBOROCK_USERNAME", "from-db", is_secret=True)
+        count = runtime_config.reconcile_service_env(service)
+        assert count == 0
+        assert os.environ["ROBOROCK_USERNAME"] == "override-from-docker"
+
+    def test_skips_empty_values(self, service, monkeypatch):
+        import os
+        monkeypatch.delenv("ROBOROCK_USERNAME", raising=False)
+        service.set("service.roborock", "ROBOROCK_USERNAME", "", is_secret=True)
+        count = runtime_config.reconcile_service_env(service)
+        assert count == 0
+        assert "ROBOROCK_USERNAME" not in os.environ
+
+
+def _event(category, key, *, new_value, action):
+    from services.config_service import ConfigChangeEvent
+
+    return ConfigChangeEvent(
+        category=category,
+        key=key,
+        old_value=None,
+        new_value=new_value,
+        is_secret=False,
+        action=action,
+    )

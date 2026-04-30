@@ -1,0 +1,77 @@
+# ─── Python ──────────────────────────────────────
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# ─── Local research / scratch ────────────────────
+.research/
+
+# ─── System / IDE ────────────────────────────────
+.DS_Store
+.idea/
+.vscode/
+.claude
+
+# ─── Secrets & Credentials ───────────────────────
+*.env
+backend/.env
+backend/fastagent.secrets.yaml
+backend/fastagent.secrets.docker.yaml
+backend/git-credentials
+backend/gitconfig
+backend/git-credentials.tmp
+backend/gitconfig.tmp
+backend/credentials.json
+backend/token.json
+backend/token_calendar.json
+backend/token_gmail.json
+backend/firebase-credentials.json
+backend/config/credentials/
+backend/.keys/
+
+# ─── Backend Runtime / Data ──────────────────────
+backend/.runtime/
+backend/.fast-agent/sessions/
+backend/fastagent.jsonl
+backend/roborock_session.json
+backend/temp_audio/
+backend/data/
+
+# ─── Logs ────────────────────────────────────────
+*.log
+build_log*.txt
+
+# ─── Database ────────────────────────────────────
+*.db
+*.sqlite
+*.sqlite3
+backend/data/*.bak.*
+
+# ─── Large / Binary Files ───────────────────────
+*.dmg
+*.zip
+*.iso
+*.tar.gz
+*.apk
+*.aab
+
+# Codex (sensitive credentials)
+backend/.codex/
+backend/meetings/
+
+# antigravity
+
+.agents/
+backend/core/logs/
+.gitnexus
+
+# ─── Onboarding snapshots (contain secrets) ──────
+.onboard-backups/
+
+# ─── Playwright E2E (dashboard) ──────────────────
+dashboard/playwright-report/
+dashboard/test-results/

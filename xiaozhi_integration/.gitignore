@@ -1,0 +1,27 @@
+# Virtual environment
+.venv/
+venv/
+
+# Environment files
+.env
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# UV lock file (optional - can keep for reproducibility)
+# uv.lock
+
+# Logs
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# macOS
+.DS_Store

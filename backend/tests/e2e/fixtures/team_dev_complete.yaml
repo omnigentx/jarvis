@@ -1,0 +1,5 @@
+# Multi-member team fixture — Dev completion turn, no keep-alive.
+# Paired with test_team_multi_member.py to exercise the shared-session
+# snapshot path. Single turn is enough to drive save_agent_context_snapshot.
+turns:
+  - content: "Dev complete: task finished successfully"

@@ -1,0 +1,52 @@
+name: research-team
+description: "Research team: Researcher → Analyst → Writer pipeline."
+
+roles:
+  researcher:
+    instruction: |
+      You are a Researcher. Your job:
+      1. Research the given topic thoroughly using web search
+      2. Collect key facts, statistics, and expert opinions
+      3. Save raw research findings to specs/research_notes.md
+      
+      Be thorough and cite your sources.
+    servers: [fetch, filesystem]
+    model: ""
+
+  analyst:
+    instruction: |
+      You are a Data Analyst. Your job:
+      1. Read the research notes from specs/research_notes.md
+      2. Analyze patterns, trends, and insights
+      3. Create a structured analysis with key findings
+      4. Save analysis to specs/analysis.md
+    servers: [filesystem]
+    model: ""
+
+  writer:
+    instruction: |
+      You are a Technical Writer. Your job:
+      1. Read the research notes and analysis
+      2. Write a polished, well-structured report
+      3. Include executive summary, key findings, and recommendations
+      4. Save final report to docs/report.md
+    servers: [filesystem]
+    model: ""
+
+workflow:
+  - step: research
+    agent: researcher
+    task: "Research the topic: {project_brief}"
+    output_file: specs/research_notes.md
+
+  - step: analysis
+    agent: analyst
+    depends_on: [research]
+    task: "Read specs/research_notes.md and create a detailed analysis in specs/analysis.md"
+    output_file: specs/analysis.md
+
+  - step: writing
+    agent: writer
+    depends_on: [analysis]
+    task: "Read specs/research_notes.md and specs/analysis.md. Write a polished report to docs/report.md"
+    output_file: docs/report.md

@@ -1,0 +1,23 @@
+# Shared noise fixture — requests every page fires on app boot that are
+# orthogonal to the flow being tested. Merge this with any flow fixture:
+#
+#   mockBackend(page, [NOISE, 'flows/foo.yaml'])
+#
+# Keep this list MINIMAL — if a real flow cares about one of these endpoints,
+# override it in the flow's fixture (fixtures merge with later winning).
+
+backend_source:
+  - "dashboard/src/composables/useActivityStream.js::global activity SSE"
+  - "dashboard/src/composables/useRealtimeStream.js::scheduler SSE"
+  - "dashboard/src/stores/notifications.js::unread count badge"
+
+responses:
+  "GET /api/notifications/unread-count":
+    status: 200
+    json: { count: 0 }
+
+sse_streams:
+  "/api/agents/activity-stream":
+    - { event: "ping", data: {} }
+  "/api/scheduler/stream":
+    - { event: "ping", data: {} }

@@ -1,0 +1,72 @@
+# Jarvis Backend — System Base Image
+#
+# Contains all system-level deps that rarely change: Python 3.13, Node 22 + npm 10,
+# uv/uvx, gitnexus CLI, and native libs for audio/video/gcc builds.
+#
+# Published to Docker Hub as `felixnguyen95/jarvis-backend-base:<version>`.
+# The main Dockerfile does `FROM felixnguyen95/jarvis-backend-base:<version>`
+# so every app build skips the slow apt/npm steps.
+#
+# ─── When to rebuild ───
+# Rebuild + bump tag ONLY when system-level deps change:
+#   - apt package list (this file)
+#   - gitnexus pinned version
+#   - npm major version
+#   - uv version pinned from ghcr.io/astral-sh/uv
+#   - Python/Debian major version in the FROM line
+#
+# App-level changes (pyproject.toml, code, fast-agent submodule) do NOT require
+# a base rebuild — they're handled by the main Dockerfile's deps/final stages.
+#
+# ─── Build + Push (multi-arch) ───
+#   export VERSION=1.1.0
+#   docker buildx build --platform linux/amd64,linux/arm64 \
+#     -t felixnguyen95/jarvis-backend-base:${VERSION} \
+#     -t felixnguyen95/jarvis-backend-base:latest \
+#     -f Dockerfile.base --push .
+#
+# Single-arch quick build (amd64 only, faster for local testing):
+#   docker build -t felixnguyen95/jarvis-backend-base:${VERSION} -f Dockerfile.base .
+#   docker push felixnguyen95/jarvis-backend-base:${VERSION}
+#
+# Version log:
+#   1.1.0 — added docker.io (CLI) so MCP servers that wrap `docker run` work
+#   1.0.0 — initial base image
+
+FROM python:3.13-slim
+
+# Node 22 via NodeSource. Debian 13's apt nodejs ships Node 20 + a broken
+# node-gyp path (`from gyp import script_main` fails because the Debian
+# node-gyp package's Python shim is mis-laid out), which breaks native
+# compilation of gitnexus' tree-sitter-* transitive deps. NodeSource bundles
+# a working node-gyp + Python gyp module, so we use it instead of apt nodejs.
+#
+# Gitnexus pin: 1.6.2+ — 1.6.0 published with a broken `file:../gitnexus-shared`
+# workspace dep that ENOENTs during `npm install -g`. 1.6.1 was the fix release;
+# 1.6.2 is the current stable `latest`.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl ca-certificates gnupg \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends \
+        git nodejs portaudio19-dev gcc g++ make python3-dev \
+        alsa-utils flac ffmpeg docker.io \
+        libnspr4 libnss3 libatk1.0-0t64 libatk-bridge2.0-0t64 \
+        libcups2t64 libatspi2.0-0t64 libxcomposite1 libxdamage1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && npm install -g gitnexus@1.6.2 \
+    && npm cache clean --force
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uvx /bin/uvx
+
+# Pre-download Playwright browser binaries into /root/.cache/ms-playwright/ so
+# the app stage's `scrapling install` is a no-op instead of a 1-2min download.
+# Uses uvx to avoid polluting the base with a system-wide scrapling install;
+# only the browser cache survives (persisted in the image layer).
+#
+# Scrapling[ai] pulls Playwright + patchright; `scrapling install` then drops
+# chromium under /root/.cache/ms-playwright. The browser system libs above
+# (libnspr4/libnss3/libatk…) are what Playwright's dependency check requires
+# at runtime — without them the browser binary downloads but won't launch.
+RUN uvx --from "scrapling[ai]" scrapling install \
+    && rm -rf /root/.cache/uv

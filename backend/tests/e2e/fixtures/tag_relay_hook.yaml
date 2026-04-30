@@ -1,0 +1,13 @@
+# Tag relay hook fixture.
+# Turn 1: LLM calls a tool that returns a result with [[[READ_LOCAL:...]]] tag.
+# Turn 2: After tool result + hook-injected SYSTEM reminder, LLM outputs the tag.
+
+turns:
+  - tool_calls:
+      call_1:
+        name: find_story_chapter
+        arguments:
+          story_name: "Tây Du Ký"
+          chapter_number: 3
+
+  - content: "Đang phát Tây Du Ký chương 3. [[[READ_LOCAL:stub]]]"

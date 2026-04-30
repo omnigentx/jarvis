@@ -1,0 +1,14 @@
+# E2E fixture: AudioReaderAgent reads a specific chapter.
+#
+# Turn 1: LLM decides to call find_story_chapter.
+# Turn 2: after the tool result comes back, LLM emits the final tagged response.
+
+turns:
+  - tool_calls:
+      call_1:
+        name: find_story_chapter
+        arguments:
+          story_name: "Tây Du Ký"
+          chapter_number: 3
+
+  - content: "[[[READ_LOCAL:data/stories/Tây Du Ký/003_Tây Du Ký.txt]]]"

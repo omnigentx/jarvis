@@ -1,0 +1,21 @@
+# Multi-tool chain fixture: agent first lists library, then reads a chapter.
+#
+# Guards that two real tools (local_list_stories from library_server +
+# find_story_chapter from story_server) chain correctly through ToolRunner,
+# with args flowing from the LLM decision in turn 2 based on (implicit) turn 1
+# results.
+
+turns:
+  - tool_calls:
+      call_list:
+        name: local_list_stories
+        arguments: {}
+
+  - tool_calls:
+      call_read:
+        name: find_story_chapter
+        arguments:
+          story_name: "Thần Đạo Đan Tôn"
+          chapter_number: 1
+
+  - content: "Đã tìm và bắt đầu phát chương 1 Thần Đạo Đan Tôn."

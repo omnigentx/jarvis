@@ -1,0 +1,133 @@
+name: Build & Deploy (Self-Hosted)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch: # Allow manual trigger
+
+env:
+  PERSIST_DIR: ~/jarvis-data
+
+jobs:
+  build-and-deploy:
+    runs-on: self-hosted
+    steps:
+      - name: Fix workspace permissions
+        run: |
+          # Docker containers run as root, creating files the runner can't delete.
+          # Use Docker to chown as root (no sudo password needed).
+          docker run --rm -v "$GITHUB_WORKSPACE":"$GITHUB_WORKSPACE" busybox \
+            chown -R $(id -u):$(id -g) "$GITHUB_WORKSPACE" || true
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.GH_PAT }}
+          clean: true
+
+      - name: Setup persistent data
+        run: |
+          mkdir -p ${{ env.PERSIST_DIR }}
+
+          # First-run bootstrap: if persistent dir is empty (fresh server or
+          # post-onboard-reset), seed from repo templates so docker compose
+          # bind mounts don't fail. Setup Wizard then writes real values.
+          if [ ! -f ${{ env.PERSIST_DIR }}/.env ]; then
+            JWT_SECRET=$(openssl rand -hex 32)
+            sed "s|change-this-to-a-secure-random-string|$JWT_SECRET|" \
+              backend/.env.example > ${{ env.PERSIST_DIR }}/.env
+            echo "Bootstrapped ${{ env.PERSIST_DIR }}/.env from .env.example"
+          fi
+          # fast-agent validates provider keys at startup and raises
+          # ProviderKeyError for an explicitly-empty api_key — it will NOT
+          # fall back to env vars when the YAML has `api_key: ""`. Seed
+          # (and self-heal existing) with a non-empty placeholder so
+          # fast-agent can boot; Setup Wizard then writes the real key via
+          # llm_provider_sync.
+          if [ ! -f ${{ env.PERSIST_DIR }}/fastagent.secrets.docker.yaml ]; then
+            sed 's|api_key: ""|api_key: "BOOTSTRAP_PLACEHOLDER_CONFIGURE_IN_WIZARD"|g' \
+              backend/fastagent.secrets.yaml.example \
+              > ${{ env.PERSIST_DIR }}/fastagent.secrets.docker.yaml
+            echo "Bootstrapped ${{ env.PERSIST_DIR }}/fastagent.secrets.docker.yaml with placeholder keys"
+          elif grep -q 'api_key: ""' ${{ env.PERSIST_DIR }}/fastagent.secrets.docker.yaml; then
+            sed -i 's|api_key: ""|api_key: "BOOTSTRAP_PLACEHOLDER_CONFIGURE_IN_WIZARD"|g' \
+              ${{ env.PERSIST_DIR }}/fastagent.secrets.docker.yaml
+            echo "Self-healed empty api_key entries in persisted secrets (non-empty real keys untouched)"
+          fi
+          mkdir -p ${{ env.PERSIST_DIR }}/credentials
+
+          # Clean stale Docker bind-mount artifacts (root-owned dirs created
+          # when a bind source was missing in a previous run)
+          docker run --rm -v "$GITHUB_WORKSPACE":"$GITHUB_WORKSPACE" -w "$GITHUB_WORKSPACE" busybox \
+            sh -c "rm -rf backend/.env backend/fastagent.secrets.yaml backend/fastagent.secrets.docker.yaml backend/config" || true
+
+          # Restore from persistent dir into workspace
+          cp ${{ env.PERSIST_DIR }}/.env backend/.env
+          cp ${{ env.PERSIST_DIR }}/fastagent.secrets.docker.yaml backend/fastagent.secrets.docker.yaml
+          if [ -f ${{ env.PERSIST_DIR }}/fastagent.secrets.yaml ]; then
+            cp ${{ env.PERSIST_DIR }}/fastagent.secrets.yaml backend/fastagent.secrets.yaml
+          fi
+          mkdir -p backend/config
+          cp -r ${{ env.PERSIST_DIR }}/credentials backend/config/credentials
+
+      - name: Build & Deploy
+        run: |
+          # JARVIS_PERSIST_DIR is read by docker-compose.yaml to bind-mount
+          # fastagent.secrets.yaml directly from the persistent host dir, so
+          # Setup Wizard / llm_provider_sync writes survive redeploys.
+          export JARVIS_PERSIST_DIR="$HOME/jarvis-data"
+          docker compose build
+          docker compose up -d --force-recreate -V
+          echo "✅ Deployed successfully"
+
+      - name: Health Check
+        run: |
+          # /api/setup/auth/probe is the canonical unauthenticated liveness
+          # endpoint — it exists precisely so bootstrap (CD, wizard step 1)
+          # can verify the process is up without needing a bearer token.
+          # /api/setup/status would work pre-master-key (dev mode) but starts
+          # returning 401 once core_auth.JARVIS_API_KEY is populated.
+          echo "Waiting for backend to start (up to 120s)..."
+          for i in $(seq 1 24); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/api/setup/auth/probe || echo 000)
+            if [ "$code" = "200" ]; then
+              echo "✅ Backend up after $((i*5))s (auth/probe=200)"
+              break
+            fi
+            echo "  Attempt $i/24 — auth/probe=$code, waiting 5s..."
+            sleep 5
+            if [ "$i" -eq 24 ]; then
+              echo "⚠️ Backend not ready after 120s — collecting logs..."
+              echo "--- Docker containers status ---"
+              docker compose ps
+              echo ""
+              echo "--- Backend container logs (last 150 lines) ---"
+              docker compose logs --tail=150 jarvis-backend
+              exit 1
+            fi
+          done
+
+      - name: Verify git credential chain
+        run: |
+          # Fail-loud check that git inside the backend container can read
+          # its config. Catches the class of bug where the rendered gitconfig
+          # ends up at a different path than GIT_CONFIG_GLOBAL points at —
+          # if this breaks, dev agents silently fail to clone private repos.
+          # Runs after Health Check so we know reconcile_from_db has already
+          # fired inside lifespan startup.
+          docker exec jarvis_backend sh -c '
+            set -e
+            echo "GIT_CONFIG_GLOBAL=${GIT_CONFIG_GLOBAL:-<unset>}"
+            echo "GIT_TERMINAL_PROMPT=${GIT_TERMINAL_PROMPT:-<unset>}"
+            [ -n "$GIT_CONFIG_GLOBAL" ] || { echo "::error::GIT_CONFIG_GLOBAL unset"; exit 1; }
+            [ -f "$GIT_CONFIG_GLOBAL" ] || { echo "::error::$GIT_CONFIG_GLOBAL is not a regular file"; ls -la "$GIT_CONFIG_GLOBAL" || true; exit 1; }
+            git config --list --show-origin
+          '
+
+      - name: Summary
+        run: |
+          echo "### 🚀 Deployed on self-hosted runner" >> $GITHUB_STEP_SUMMARY
+          echo "- Commit: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Time: \`$(date)\`" >> $GITHUB_STEP_SUMMARY

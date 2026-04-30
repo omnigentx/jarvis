@@ -1,0 +1,20 @@
+services:
+  jarvis-backend:
+    build: .
+    image: felixnguyen95/jarvis-backend:latest
+    container_name: jarvis_backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./:/app
+      - /app/.venv
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - PYTHONUNBUFFERED=1
+      - LOG_CONSOLE_LEVEL=${LOG_CONSOLE_LEVEL:-INFO}
+      - TTS_PROVIDER=${TTS_PROVIDER:-edge}
+    restart: unless-stopped
+    env_file:
+      - .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

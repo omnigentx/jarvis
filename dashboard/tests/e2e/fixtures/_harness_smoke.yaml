@@ -1,0 +1,9 @@
+# Minimal fixture to smoke-test the harness itself (not a real flow).
+# Real flows use per-flow fixtures; this one only proves the wiring works.
+backend_source:
+  - "harness smoke test — no real backend coupling"
+responses:
+  "GET /api/system/health":
+    status: 200
+    json:
+      status: ok

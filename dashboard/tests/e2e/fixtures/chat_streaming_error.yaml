@@ -1,0 +1,46 @@
+# Chat SSE streaming — error mid-stream (negative control).
+#
+# After emitting one progress event, the backend pushes an `error` event with
+# a human message. useChatStream sees `event.type === 'error'`, breaks out of
+# the read loop, and ChatView dispatches to chatStore.setMessageError — which
+# marks the assistant placeholder `isError = true` and sets `content = errorText`.
+# ChatMessages.vue renders error-flagged bubbles with red text (color: #ef4444).
+#
+# The failure we guard against: a refactor that swallows the error path and
+# leaves the streaming placeholder spinning forever.
+
+backend_source:
+  - "backend/routes/chat.py::chat_stream (progress_manager.push error)"
+  - "dashboard/src/composables/useChatStream.js::send (event.type === 'error')"
+  - "dashboard/src/stores/chat.js::setMessageError"
+  - "dashboard/src/views/ChatView.vue::handleSend (case 'error')"
+
+responses:
+  "GET /api/conversations":
+    status: 200
+    json: []
+
+  "GET /api/agents":
+    status: 200
+    json:
+      - name: "Jarvis"
+        description: "Main orchestrator"
+        status: "idle"
+        is_default: true
+        team_name: null
+
+  "GET /api/agents/activities/recent":
+    status: 200
+    json: {}
+
+sse_streams:
+  "/api/chat-stream":
+    - data:
+        type: "tool_call"
+        tools:
+          - name: "search_tool"
+            args: { query: "boom" }
+        message: "Searching..."
+    - data:
+        type: "error"
+        message: "Agent crashed: upstream model returned 500"

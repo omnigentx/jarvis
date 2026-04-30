@@ -1,0 +1,6 @@
+# Team-member subprocess fixture: single-turn reply, keep-alive loop skipped.
+# Paired with a test that sets TEAM_MY_NAME / TEAM_MY_ROLE / TEAM_SESSION_ID
+# to validate context snapshot round-trip through DB.
+
+turns:
+  - content: "PM reporting in: task acknowledged"

@@ -1,0 +1,5 @@
+# Minimal subprocess E2E fixture: agent replies once and exits.
+# No tool calls — isolates the subprocess boot + LLM wiring path.
+
+turns:
+  - content: "ack from scripted llm"

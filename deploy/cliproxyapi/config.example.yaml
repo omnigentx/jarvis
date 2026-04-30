@@ -1,0 +1,25 @@
+host: ""
+port: 8317
+
+remote-management:
+  allow-remote: false
+  secret-key: "change-me-management-key"
+  disable-control-panel: false
+
+auth-dir: "~/.cli-proxy-api"
+
+api-keys:
+  - "jarvis-proxy-key"
+
+debug: false
+logging-to-file: true
+
+routing:
+  strategy: "round-robin"
+
+request-retry: 3
+max-retry-credentials: 0
+max-retry-interval: 30
+
+usage-statistics-enabled: false
+

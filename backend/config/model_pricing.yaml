@@ -1,0 +1,116 @@
+# Model pricing configuration for token usage cost estimation
+# Format: array of pricing entries matched by regex pattern
+# Prices are per 1M tokens in USD
+#
+# To add a new model: append a new entry with a `pattern` that matches the model name.
+# More specific patterns should come BEFORE generic fallbacks.
+
+models:
+  # --- OpenAI ---
+  - pattern: "gpt-4o-mini"
+    input: 0.15
+    output: 0.60
+    cached_input: 0.075
+
+  - pattern: "gpt-4o"
+    input: 2.50
+    output: 10.00
+    cached_input: 1.25
+
+  - pattern: "gpt-4.1-mini"
+    input: 0.40
+    output: 1.60
+    cached_input: 0.10
+
+  - pattern: "gpt-4.1-nano"
+    input: 0.10
+    output: 0.40
+    cached_input: 0.025
+
+  - pattern: "gpt-4.1"
+    input: 2.00
+    output: 8.00
+    cached_input: 0.50
+
+  - pattern: "o4-mini"
+    input: 1.10
+    output: 4.40
+    cached_input: 0.275
+
+  - pattern: "o3-mini"
+    input: 1.10
+    output: 4.40
+    cached_input: 0.55
+
+  - pattern: "o3"
+    input: 10.00
+    output: 40.00
+    cached_input: 2.50
+
+  - pattern: "o1-mini"
+    input: 3.00
+    output: 12.00
+    cached_input: 1.50
+
+  - pattern: "o1"
+    input: 15.00
+    output: 60.00
+    cached_input: 7.50
+
+  # --- Anthropic ---
+  - pattern: "claude-3-5-sonnet"
+    input: 3.00
+    output: 15.00
+    cached_input: 1.50
+
+  - pattern: "claude-3-5-haiku"
+    input: 0.80
+    output: 4.00
+    cached_input: 0.40
+
+  - pattern: "claude-3-opus"
+    input: 15.00
+    output: 75.00
+    cached_input: 7.50
+
+  - pattern: "claude-sonnet-4"
+    input: 3.00
+    output: 15.00
+    cached_input: 1.50
+
+  - pattern: "claude-4-opus"
+    input: 15.00
+    output: 75.00
+    cached_input: 7.50
+
+  # --- Google ---
+  - pattern: "gemini-2.0-flash"
+    input: 0.10
+    output: 0.40
+    cached_input: 0.025
+
+  - pattern: "gemini-2.5-flash"
+    input: 0.15
+    output: 0.60
+    cached_input: 0.0375
+
+  - pattern: "gemini-2.5-pro"
+    input: 1.25
+    output: 10.00
+    cached_input: 0.3125
+
+  - pattern: "gemini-1.5-pro"
+    input: 1.25
+    output: 5.00
+    cached_input: 0.3125
+
+  - pattern: "gemini-1.5-flash"
+    input: 0.075
+    output: 0.30
+    cached_input: 0.01875
+
+  # --- Fallback (must be last) ---
+  - pattern: ".*"
+    input: 2.50
+    output: 10.00
+    cached_input: 1.25

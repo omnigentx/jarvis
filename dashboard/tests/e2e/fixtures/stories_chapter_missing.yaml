@@ -1,0 +1,33 @@
+# Negative control: the Story Reader requests a chapter that doesn't exist.
+#
+# Backend (backend/routes/stories.py::get_chapter_text) returns 200 with
+# {error: "Not found", content: "Chapter not found."} when the file is
+# absent. The reader's `fetchContent` sets `content.value = data.content
+# || data.error || ''`, so the paragraph area MUST render the error text —
+# catches a refactor that silently swallows `{error: ...}` and leaves the
+# content area blank.
+
+backend_source:
+  - "backend/routes/stories.py::get_chapter_text"
+  - "backend/routes/stories.py::list_story_chapters"
+  - "dashboard/src/views/StoryReaderView.vue::fetchContent"
+  - "dashboard/src/views/StoryReaderView.vue::fetchChapters"
+
+notes: |
+  `get_chapter_text` returns status 200 even on missing file — the error lives
+  in the JSON body. If that backend contract changes to 4xx, this fixture and
+  the reader's fallback chain both need updating.
+
+responses:
+  # Reader's chapter-text fetch — 200 with error body (real backend shape).
+  "GET /api/stories/alpha_story/chapters/9999_missing.txt":
+    status: 200
+    json:
+      error: "Not found"
+      content: "Chapter not found."
+
+  # Reader also fetches the chapter list on mount (for next/prev nav).
+  "GET /api/stories/alpha_story/chapters":
+    status: 200
+    json:
+      - { file: "0001_prologue.txt", preload: "ready" }
