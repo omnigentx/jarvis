@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useAgentsStore } from '../stores/agents'
 import { apiFetch } from '../api'
 import StatusBadge from '../components/StatusBadge.vue'
+import MarkdownRenderer from '../components/MarkdownRenderer.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -438,7 +439,9 @@ function historyBadgeLabel(type) {
                 <h3>Instruction (preview)</h3>
                 <button class="view-all-link" @click="activeTab = 'instruction'">Expand →</button>
               </div>
-              <pre class="instruction-preview">{{ instructionPreview }}</pre>
+              <div class="instruction-preview">
+                <MarkdownRenderer :content="instructionPreview" content-type="markdown" />
+              </div>
               <div v-if="hasMoreInstruction" class="instruction-more">
                 … {{ instructionLineCount - 12 }} more lines
               </div>
@@ -483,7 +486,7 @@ function historyBadgeLabel(type) {
             <!-- Skill Expanded Body: content only (description stays in header) -->
             <div v-if="expandedSkills[skill.name]" class="accordion-body skill-accordion-body">
               <div v-if="skill.content" class="skill-content-block">
-                <pre class="skill-content-pre">{{ skill.content }}</pre>
+                <MarkdownRenderer :content="skill.content" content-type="markdown" />
               </div>
             </div>
           </div>
@@ -545,7 +548,12 @@ function historyBadgeLabel(type) {
       <!-- ===== INSTRUCTION TAB ===== -->
       <div v-else-if="activeTab === 'instruction'" class="animate-fade-in">
         <div class="panel">
-          <pre class="instruction-full">{{ agent.instruction || 'No instruction configured' }}</pre>
+          <div class="instruction-full">
+            <MarkdownRenderer
+              :content="agent.instruction || 'No instruction configured'"
+              :content-type="agent.instruction ? 'markdown' : 'text'"
+            />
+          </div>
         </div>
       </div>
 
@@ -623,7 +631,13 @@ function historyBadgeLabel(type) {
                     </span>
                     <span class="msg-index">#{{ idx + 1 }}</span>
                   </div>
-                  <pre class="msg-content" :class="{ 'msg-content-full': expandedMessages.has(idx) }">{{ expandedMessages.has(idx) ? msg.content : truncateContent(msg.content) }}</pre>
+                  <div class="msg-content" :class="{ 'msg-content-full': expandedMessages.has(idx) }">
+                    <MarkdownRenderer
+                      :content="expandedMessages.has(idx) ? msg.content : truncateContent(msg.content)"
+                      content-type="markdown"
+                      :enable-mermaid="expandedMessages.has(idx)"
+                    />
+                  </div>
                 </div>
               </div>
             </div>

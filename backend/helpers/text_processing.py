@@ -21,11 +21,24 @@ def process_agent_response(response):
 
 
 def clean_text_for_tts(text: str) -> str:
-    """Remove URLs and Markdown links for better TTS experience."""
+    """Strip URLs, links, and markdown formatting so TTS doesn't read the
+    syntax aloud. Agents may freely emit markdown (headings, bullets, code
+    fences, mermaid blocks) for the dashboard renderer; this function is
+    the single point that flattens it for the audio pipeline.
+    """
     if not text: return ""
+    text = re.sub(r"```[\s\S]*?```", "", text)
+    text = re.sub(r"`([^`]+)`", r"\1", text)
     text = re.sub(r"!\[.*?\]\(.*?\)", "", text)
     text = re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", text)
     text = re.sub(r"https?://\S+", "", text)
     text = re.sub(r"www\.\S+", "", text)
+    text = re.sub(r"^\s{0,3}#{1,6}\s+", "", text, flags=re.MULTILINE)
+    text = re.sub(r"\*\*([^*\n]+)\*\*", r"\1", text)
+    text = re.sub(r"(?<![*\w])\*([^*\n]+)\*(?!\*)", r"\1", text)
+    text = re.sub(r"(?<![_\w])_([^_\n]+)_(?!_)", r"\1", text)
+    text = re.sub(r"^\s*[-*+]\s+", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^\s*\d+\.\s+", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^\s*>\s?", "", text, flags=re.MULTILINE)
     text = re.sub(r"\s+", " ", text).strip()
     return text

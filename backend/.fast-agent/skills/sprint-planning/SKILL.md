@@ -47,6 +47,36 @@ Publish to Confluence (NOT workspace MD file):
 | 1 | ...  | Must     | M    | Minh - Dev | JAR-xx | TODO   |
 ```
 
+## Visualizing the sprint
+
+When the sprint timeline or task dependencies need to be reviewed by stakeholders,
+embed a Mermaid diagram alongside the table — the dashboard renders it inline.
+
+**Gantt** for the timeline:
+
+```mermaid
+gantt
+    title Sprint [N] Timeline
+    dateFormat  YYYY-MM-DD
+    section Must-have
+    Task A          :a1, 2026-05-01, 2d
+    Task B          :a2, after a1, 3d
+    section Should-have
+    Task C          :b1, 2026-05-04, 2d
+```
+
+**Flowchart** when tasks have ordering / dependency:
+
+```mermaid
+flowchart LR
+    A[Backlog grooming] --> B[Estimate]
+    B --> C{Priority}
+    C -->|Must| D[Sprint commit]
+    C -->|Could| E[Backlog]
+```
+
+Use a diagram only when it adds clarity beyond the table — skip for tiny sprints.
+
 <planning_rules>
 1. XL tasks MUST be split into M or S tasks — no exceptions
 2. Each sprint should have no more than 5-7 main tasks

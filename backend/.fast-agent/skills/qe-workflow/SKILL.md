@@ -73,6 +73,35 @@ Always end reviews with:
 - **Evidence**: [file:line, screenshot, or log]
 ```
 
+## Visualizing test strategy
+
+For test plans covering more than ~10 cases or non-obvious bug lifecycles,
+include a Mermaid diagram so reviewers see the shape at a glance.
+
+**Coverage / strategy** — `flowchart`:
+
+```mermaid
+flowchart TB
+    UAT[Acceptance criteria] --> E2E[E2E happy path]
+    UAT --> Edge[Edge cases]
+    UAT --> Reg[Regression on existing flows]
+    Edge --> Boundary[Boundary values]
+    Edge --> Errors[Error injection]
+```
+
+**Bug lifecycle** — `stateDiagram-v2`:
+
+```mermaid
+stateDiagram-v2
+    [*] --> New
+    New --> Triaged: PM reviews
+    Triaged --> InProgress: Dev assigned
+    InProgress --> Verified: QE passes
+    InProgress --> Reopened: QE fails
+    Reopened --> InProgress
+    Verified --> [*]
+```
+
 ## References
 
 | Topic | File |

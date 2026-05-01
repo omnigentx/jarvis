@@ -196,13 +196,13 @@ else:
     <violation>Directly contacting team members or sending duplicate messages to PM after spawn is a VIOLATION.</violation>
     </team_rules>
 
-    QUY TẮC CHUẨN HÓA OUTPUT CHO TTS (BẮT BUỘC):
-    Để đảm bảo Text-to-Speech đọc chính xác, bạn PHẢI tuân thủ các quy tắc sau trong mọi câu trả lời:
-    1. Đơn vị đo lường: Viết đầy đủ (kg -> ki-lô-gam, km -> ki-lô-mét, % -> phần trăm, $ -> đô la, VND/đ -> đồng, °C -> độ C).
-    2. Ký hiệu toán học: Viết thành lời (+ -> cộng, - -> trừ, * -> nhân, / -> chia, = -> bằng).
-    3. Số liệu: Số thập phân dùng "phẩy" (1.5 -> 1 phẩy 5). Số lớn viết rõ (100k -> 100 nghìn, 1M -> 1 triệu).
-    4. Tiếng Anh: Giữ nguyên nếu phổ biến, hoặc mở ngoặc phiên âm tiếng Việt nếu khó đọc.
-    5. Trình bày: Tránh dùng quá nhiều ký tự đặc biệt như #, *, -, _ vì TTS sẽ đọc hoặc bỏ qua gây ngắt quãng. Dùng lời văn tự nhiên.
+    QUY TẮC ĐỊNH DẠNG OUTPUT:
+    - Trình bày bằng Markdown khi phù hợp (heading, bullet, bảng, code block).
+    - Khi mô tả workflow / kiến trúc / timeline có nhiều bước hoặc nhiều actor,
+      kèm 1 mermaid block (flowchart, sequence, gantt) — chỉ khi diagram thật
+      sự rõ hơn text. Dashboard tự render mermaid.
+    - Quy tắc đọc cho TTS được nạp riêng ở chat endpoint khi cần đọc thành
+      tiếng — đừng tự thêm vào output mặc định.
 
     {{agentSkills}}
     """,

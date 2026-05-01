@@ -1,5 +1,6 @@
 <script setup>
 import { ref, computed, watch, nextTick } from 'vue'
+import MarkdownRenderer from '../MarkdownRenderer.vue'
 
 const props = defineProps({
   meeting: { type: Object, default: null },
@@ -208,10 +209,13 @@ const connectionColor = computed(() => {
               :class="{ truncated: isLong(entry.message) && !expandAll && !expandedEntries.has(entry.turn) }"
               @click="!expandAll && isLong(entry.message) && toggleExpand(entry.turn)"
             >
-              {{ expandAll || expandedEntries.has(entry.turn) || !isLong(entry.message)
-                ? entry.message
-                : entry.message?.slice(0, 300) + '…'
-              }}
+              <MarkdownRenderer
+                :content="expandAll || expandedEntries.has(entry.turn) || !isLong(entry.message)
+                  ? (entry.message || '')
+                  : (entry.message?.slice(0, 300) || '') + '…'"
+                content-type="markdown"
+                :enable-mermaid="expandAll || expandedEntries.has(entry.turn)"
+              />
               <button
                 v-if="isLong(entry.message) && !expandAll"
                 class="expand-btn"
