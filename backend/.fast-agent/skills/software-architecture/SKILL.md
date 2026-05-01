@@ -47,6 +47,38 @@ description: >
 ## Consequences: [Trade-offs and impacts]
 ```
 
+## Diagrams (Mermaid)
+
+The dashboard renders Mermaid blocks inline. Pick the right shape for the question:
+
+- **Component / context** — `flowchart` (LR or TB):
+
+  ```mermaid
+  flowchart LR
+      Client --> API[(API Gateway)]
+      API --> AuthSvc
+      API --> OrderSvc
+      OrderSvc --> DB[(Postgres)]
+  ```
+
+- **Interaction over time** — `sequenceDiagram`:
+
+  ```mermaid
+  sequenceDiagram
+      participant U as User
+      participant A as API
+      participant D as DB
+      U->>A: POST /orders
+      A->>D: INSERT
+      D-->>A: id
+      A-->>U: 201 Created
+  ```
+
+- **Data shape / aggregate boundaries** — `classDiagram` or `erDiagram`.
+
+Embed at most one diagram per ADR — pick the view that makes the decision
+unambiguous. Skip if a paragraph already does the job.
+
 ## References
 
 | Topic | File |

@@ -30,6 +30,22 @@ description: >
 Push → Lint → Test → Build → Deploy (staging) → Approval → Deploy (prod)
 ```
 
+For pipelines with branching (security gate, manual approval, multi-env)
+include a Mermaid `flowchart` so reviewers see the gates clearly:
+
+```mermaid
+flowchart LR
+    Push --> Lint
+    Lint --> Test
+    Test --> SecScan{Sec scan}
+    SecScan -- pass --> Build
+    SecScan -- fail --> Block[Block + alert]
+    Build --> Staging[Deploy staging]
+    Staging --> Approve{Manual approval}
+    Approve -- yes --> Prod[Deploy prod]
+    Approve -- no --> Hold[Hold]
+```
+
 **Rules:**
 - ❌ KHÔNG hardcode secrets trong code → use GitHub Secrets
 - ✅ Scan dependencies cho vulnerabilities

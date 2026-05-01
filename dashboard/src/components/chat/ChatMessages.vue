@@ -2,6 +2,7 @@
 import { ref, watch, nextTick, computed, reactive } from 'vue'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import { parseYoutubeTags, youtubeEmbedUrl } from '../../utils/youtubeTags'
+import MarkdownRenderer from '../MarkdownRenderer.vue'
 
 const props = defineProps({
   messages: { type: Array, default: () => [] },
@@ -209,6 +210,7 @@ function parsedAgentContent(content) {
             <!-- Content bubble -->
             <div
               v-if="msg.content || msg.isStreaming"
+              class="agent-bubble"
               :style="{
                 padding: '12px 16px',
                 borderRadius: '14px',
@@ -218,7 +220,6 @@ function parsedAgentContent(content) {
                 fontWeight: '400',
                 color: msg.isError ? '#ef4444' : 'var(--text-secondary)',
                 lineHeight: '20px',
-                whiteSpace: 'pre-wrap',
                 wordBreak: 'break-word',
               }"
             >
@@ -228,7 +229,11 @@ function parsedAgentContent(content) {
                 <div class="typing-dot" style="animation-delay: 0.2s;"></div>
                 <div class="typing-dot" style="animation-delay: 0.4s;"></div>
               </div>
-              <template v-else>{{ parsedAgentContent(msg.content).text }}</template>
+              <MarkdownRenderer
+                v-else
+                :content="parsedAgentContent(msg.content).text"
+                content-type="markdown"
+              />
             </div>
 
             <!-- YouTube embeds — rendered when the agent emits [[[PLAY: id]]] -->
@@ -344,7 +349,13 @@ function parsedAgentContent(content) {
                         <!-- Result preview -->
                         <div v-if="g.resultPreview" class="tc-detail-block">
                           <div class="tc-detail-label">Result</div>
-                          <pre class="tc-detail-result">{{ g.resultPreview }}</pre>
+                          <div class="tc-detail-result">
+                            <MarkdownRenderer
+                              :content="g.resultPreview"
+                              content-type="markdown"
+                              :enable-mermaid="false"
+                            />
+                          </div>
                         </div>
                       </div>
                     </transition>

@@ -47,6 +47,24 @@ Before delivering:
 - Are requirements **complete** (no gaps)?
 - Is the **scope** clearly bounded?
 
+## Visualizing user flows
+
+When a requirement involves a multi-step user interaction or branching logic,
+attach a Mermaid diagram to the BRD section — Confluence and the Jarvis
+dashboard both render it.
+
+```mermaid
+flowchart TD
+    Start([User opens checkout]) --> A{Logged in?}
+    A -- No --> B[Redirect to login]
+    A -- Yes --> C[Show cart]
+    C --> D{Items in stock?}
+    D -- No --> E[Show out-of-stock warning]
+    D -- Yes --> F[Proceed to payment]
+```
+
+Use it sparingly: if the requirement is one paragraph, skip the diagram.
+
 ## References
 
 | Topic | File |

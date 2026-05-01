@@ -6,6 +6,12 @@ import { Codemirror } from 'vue-codemirror'
 import { markdown } from '@codemirror/lang-markdown'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { EditorView, lineNumbers } from '@codemirror/view'
+import MarkdownRenderer from '../components/MarkdownRenderer.vue'
+
+// Default to "preview" when the body is markdown so the agent's intended
+// formatting (headings, bullets, mermaid) shows up first; reviewers can
+// flip to source to comment line-by-line.
+const viewMode = ref('preview')
 
 const store = useApprovalsStore()
 const { isMobile } = useBreakpoint()
@@ -369,13 +375,36 @@ const typeLabels = {
           </div>
         </div>
 
-        <!-- CodeMirror Viewer -->
+        <!-- Content Viewer — Preview / Source toggle -->
         <div class="cm-container">
           <div class="cm-toolbar">
             <span class="cm-toolbar-label">📄 Content ({{ detail.content_format || 'text' }})</span>
-            <span class="cm-toolbar-hint">Click line number or select text to comment</span>
+            <div class="view-mode-tabs">
+              <button
+                :class="['view-mode-btn', { active: viewMode === 'preview' }]"
+                @click="viewMode = 'preview'"
+              >Preview</button>
+              <button
+                :class="['view-mode-btn', { active: viewMode === 'source' }]"
+                @click="viewMode = 'source'"
+              >Source</button>
+            </div>
+            <span v-if="viewMode === 'source'" class="cm-toolbar-hint">
+              Click line number or select text to comment
+            </span>
+          </div>
+          <div
+            v-if="viewMode === 'preview'"
+            class="approval-preview"
+            :style="{ maxHeight: isMobile ? '280px' : '400px' }"
+          >
+            <MarkdownRenderer
+              :content="cmContent"
+              :content-type="detail.content_format === 'markdown' ? 'markdown' : 'text'"
+            />
           </div>
           <Codemirror
+            v-else
             :model-value="cmContent"
             :extensions="cmExtensions"
             :style="{ maxHeight: isMobile ? '280px' : '400px' }"
@@ -655,6 +684,29 @@ const typeLabels = {
 }
 .cm-toolbar-label { font-size: 12px; font-weight: 500; }
 .cm-toolbar-hint { font-size: 11px; color: var(--text-muted, #8b8fa3); }
+
+.view-mode-tabs {
+  display: flex; gap: 0; margin-left: auto;
+  background: var(--bg-card, #0c0e15);
+  border: 1px solid var(--border-primary, #1a1d2e);
+  border-radius: 6px; overflow: hidden;
+}
+.view-mode-btn {
+  padding: 4px 12px; font-size: 11px; font-weight: 500;
+  color: var(--text-muted, #8b8fa3);
+  background: transparent; border: none; cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.view-mode-btn.active {
+  color: var(--text-heading, #f0f2f5);
+  background: var(--bg-input, #111318);
+}
+.view-mode-btn:hover:not(.active) { color: var(--text-secondary, #c4c8d4); }
+
+.approval-preview {
+  padding: 12px 16px; overflow-y: auto;
+  background: var(--bg-card, #0c0e15);
+}
 
 /* Comment Popover */
 .comment-popover {
