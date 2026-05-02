@@ -22,9 +22,10 @@ D2 scope (Phase 3a) covers:
 
 * ``auth/JARVIS_API_KEY``         — master key rotation
 * ``system/LOG_CONSOLE_LEVEL``    — console log verbosity
-* ``system/TTS_PROVIDER``         — rebuild TTS provider
-* ``system/EDGE_TTS_VOICE``
-* ``system/EDGE_TTS_RATE``
+* ``voice/tts.chat``              — rebuild chat TTS provider (registry JSON)
+* ``voice/tts.stories``           — rebuild stories TTS provider (Edge schema)
+* ``voice/stt``                   — rebuild STT recorder
+* ``voice/secrets.{engine}.{slot}`` — encrypted API keys
 
 Values that require a full restart (e.g. ``system/SESSION_HISTORY_WINDOW``
 and ``system/CORS_ORIGINS``) are intentionally *not* wired here; the UI
@@ -128,45 +129,6 @@ def apply_timezone(tz: Optional[str]) -> str:
     return normalised
 
 
-def apply_tts_config(
-    *,
-    provider: Optional[str] = None,
-    voice: Optional[str] = None,
-    rate: Optional[str] = None,
-) -> str:
-    """Rebuild the shared TTS provider with updated env.
-
-    Legacy entry point — kept for the ``system/EDGE_TTS_VOICE`` and friends
-    config keys that pre-date the voice JSON schema. Always rebuilds the
-    *chat* provider (and the back-compat ``tts_provider`` alias). Stories
-    provider is untouched so paid-engine settings never bleed into long-form.
-    Hot-reload of the new JSON schema (``voice.tts.chat``) goes through
-    :func:`apply_voice_chat_config` instead.
-    """
-    if provider is not None:
-        os.environ["TTS_PROVIDER"] = provider
-    if voice is not None:
-        os.environ["EDGE_TTS_VOICE"] = voice
-    if rate is not None:
-        os.environ["EDGE_TTS_RATE"] = rate
-
-    # Imported lazily so unit tests can patch the module without pulling
-    # edge-tts into every import graph.
-    from services import shared_state
-    from services.tts import TTSFactory
-
-    new_provider = TTSFactory.get_provider()
-    shared_state.tts_chat_provider = new_provider
-    shared_state.tts_provider = new_provider  # legacy alias
-    logger.info(
-        "[RUNTIME] TTS chat provider rebuilt: %s (voice=%s, rate=%s)",
-        type(new_provider).__name__,
-        os.environ.get("EDGE_TTS_VOICE"),
-        os.environ.get("EDGE_TTS_RATE"),
-    )
-    return type(new_provider).__name__
-
-
 def _get_config_service():
     """Module-level singleton from services.config_service — single source of truth."""
     from services.config_service import config_service
@@ -190,7 +152,6 @@ def apply_voice_chat_config(config: Optional[dict] = None) -> str:
 
     new_provider = build_chat_provider(config, secrets={config.get("engine", "edge"): secrets_for_engine})
     shared_state.tts_chat_provider = new_provider
-    shared_state.tts_provider = new_provider
     logger.info(
         "[RUNTIME] Chat TTS provider rebuilt: engine=%s class=%s",
         config.get("engine"),
@@ -278,15 +239,6 @@ def _on_config_change(event) -> None:
         if cat == "system":
             if key == "LOG_CONSOLE_LEVEL":
                 apply_log_console_level(new_value if action != "delete" else None)
-                return
-            if key == "TTS_PROVIDER":
-                apply_tts_config(provider=new_value if action != "delete" else "edge")
-                return
-            if key == "EDGE_TTS_VOICE":
-                apply_tts_config(voice=new_value or "")
-                return
-            if key == "EDGE_TTS_RATE":
-                apply_tts_config(rate=new_value or "")
                 return
             if key == "TIMEZONE":
                 apply_timezone(new_value if action != "delete" else None)

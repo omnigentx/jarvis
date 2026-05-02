@@ -4,7 +4,11 @@ import logging
 from services.history import TTSCacheManager
 from services.session_service import SessionService
 from services.library_manager import LibraryManager
-from services.tts import TTSFactory
+from services.voice_engine_registry import (
+    default_tts_chat_config,
+    default_tts_stories_config,
+)
+from services.tts_realtime import build_chat_provider, build_stories_provider
 
 logger = logging.getLogger(__name__)
 
@@ -19,15 +23,10 @@ library_manager = LibraryManager()
 #   tts_stories_provider  → locked Edge; story chapters + library books. Never
 #                           swaps to a paid engine even if the user picks one
 #                           for chat — protects long-form quota at code level.
-# Bootstrap to Edge for both; lifespan rebuilds from DB once config_service is
-# available (see runtime_config.apply_voice_chat_config / apply_voice_stories_config).
-tts_chat_provider = TTSFactory.get_provider()
-tts_stories_provider = TTSFactory.get_provider()
-# Back-compat alias: legacy code (and existing tests) read shared_state.tts_provider.
-# Kept pointing at the chat provider so old apply_tts_config callers still affect
-# the chat surface they always meant. Stories provider is intentionally NOT aliased
-# — that's the whole point of the split.
-tts_provider = tts_chat_provider
+# Bootstrap from registry defaults; lifespan rebuilds from DB once config_service
+# is available (see runtime_config.apply_voice_chat_config / apply_voice_stories_config).
+tts_chat_provider = build_chat_provider(default_tts_chat_config())
+tts_stories_provider = build_stories_provider(default_tts_stories_config())
 logger.info(
     "Initialized TTS providers: chat=%s stories=%s",
     type(tts_chat_provider).__name__,

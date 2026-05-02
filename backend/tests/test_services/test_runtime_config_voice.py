@@ -39,8 +39,6 @@ class TestApplyVoiceChatConfig:
                 )
 
         assert shared_state.tts_chat_provider is sentinel
-        # Legacy alias must follow chat — not stories.
-        assert shared_state.tts_provider is sentinel
         # Stories untouched — this is the core protection invariant.
         assert shared_state.tts_stories_provider is original_stories
 

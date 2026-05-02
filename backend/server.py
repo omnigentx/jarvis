@@ -130,13 +130,12 @@ async def lifespan(app: FastAPI):
     logger.info("Database initialized.")
 
     # Wire hot-reload dispatcher so DB-backed config changes (master key,
-    # log level, TTS) take effect without restarting the backend.
+    # log level, voice engines) take effect without restarting the backend.
     try:
         from services.config_service import config_service
         from services.runtime_config import (
             apply_log_console_level,
             apply_master_key,
-            apply_tts_config,
             reconcile_service_env,
             register_config_listeners,
         )
@@ -172,21 +171,10 @@ async def lifespan(app: FastAPI):
             except (ValueError, ZoneInfoNotFoundError) as exc:
                 logger.warning("[RUNTIME] Ignoring invalid stored TIMEZONE: %s", exc)
 
-        if any(
-            config_service.get("system", k) is not None
-            for k in ("TTS_PROVIDER", "EDGE_TTS_VOICE", "EDGE_TTS_RATE")
-        ):
-            apply_tts_config(
-                provider=config_service.get("system", "TTS_PROVIDER"),
-                voice=config_service.get("system", "EDGE_TTS_VOICE"),
-                rate=config_service.get("system", "EDGE_TTS_RATE"),
-            )
-
-        # New JSON-driven voice config (registry-aware). Always run — the
-        # apply_* functions fall back to registry defaults when the DB key
-        # is absent, so this is also the bootstrap path for first-run users.
-        # STT is intentionally NOT eager-loaded here (heavy: torch + whisper);
-        # /ws/voice creates it lazily on first connection.
+        # Voice config (registry-aware, DB-backed JSON). Always run — apply_*
+        # falls back to registry defaults when the DB key is absent, so this
+        # doubles as the bootstrap path for first-run users. STT is NOT
+        # eager-loaded (heavy: torch + whisper); /ws/voice builds it lazily.
         try:
             from services.runtime_config import (
                 apply_voice_chat_config,

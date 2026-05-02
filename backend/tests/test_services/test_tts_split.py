@@ -30,11 +30,13 @@ class TestSharedStateSplit:
         assert hasattr(shared_state, "tts_chat_provider")
         assert hasattr(shared_state, "tts_stories_provider")
 
-    def test_legacy_alias_points_at_chat(self):
-        # The old `tts_provider` lives on as an alias to keep external
-        # callers working — but it must never alias the stories instance,
-        # or paid engines would bleed into long-form on every legacy call.
-        assert shared_state.tts_provider is shared_state.tts_chat_provider
+    def test_legacy_tts_provider_alias_removed(self):
+        # The legacy ``tts_provider`` alias was deleted alongside the env-var
+        # TTSFactory — surfaces should reference tts_chat_provider /
+        # tts_stories_provider explicitly. This test fences the deadcode rule.
+        assert not hasattr(shared_state, "tts_provider"), (
+            "shared_state.tts_provider must stay deleted — use tts_chat_provider"
+        )
 
 
 class TestStoriesFactoryLockedToEdge:
@@ -78,10 +80,10 @@ class TestRouteDispatchSourceLevel:
 
     def test_routes_tts_does_not_import_legacy_tts_provider_directly(self):
         src = _read("routes/tts.py")
-        # The dispatch pulls from _state.* — there should be no direct
-        # `from services.shared_state import tts_provider` so legacy back-
-        # compat alias can't be used by mistake on this hot path.
-        assert "tts_provider" not in src.split("from services.shared_state import")[1].split("\n", 1)[0]
+        # The dispatch pulls from _state.* — the bare ``tts_provider`` alias
+        # is gone, so nothing should import it any more.
+        first_import = src.split("from services.shared_state import")[1].split("\n", 1)[0]
+        assert "tts_provider" not in first_import
 
     def test_pregen_job_still_uses_edge_directly(self):
         # Story pre-gen has always called edge_tts directly; documenting it

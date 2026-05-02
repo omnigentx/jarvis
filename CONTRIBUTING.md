@@ -11,7 +11,7 @@ Thanks for your interest! This project is in active development and contribution
 ## Dev setup
 
 ```bash
-# Clone with submodules (fast-agent, figma-ui-mcp, mcp-atlassian)
+# Clone with submodules (fast-agent, figma-ui-mcp, mcp-atlassian, RealtimeSTT, RealtimeTTS)
 git clone --recurse-submodules https://github.com/<your-user-or-org>/jarvis.git
 cd jarvis
 
@@ -52,7 +52,7 @@ Before requesting review:
 
 ## Submodules
 
-`backend/fast-agent`, `backend/figma-ui-mcp`, and `backend/mcp-atlassian` are pinned submodules. If you need to change code inside a submodule:
+`backend/fast-agent`, `backend/figma-ui-mcp`, `backend/mcp-atlassian`, `backend/RealtimeSTT`, and `backend/RealtimeTTS` are pinned submodules (the last two are forks of `KoljaB/RealtimeSTT` / `KoljaB/RealtimeTTS` under `omnigentx`). If you need to change code inside a submodule:
 
 1. Open a PR in the submodule's own repo.
 2. After it merges, bump the submodule pointer in `jarvis` with a follow-up PR.
