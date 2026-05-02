@@ -9,6 +9,7 @@ import ConversationsPanel from '../components/chat/ConversationsPanel.vue'
 import ChatHeader from '../components/chat/ChatHeader.vue'
 import ChatMessages from '../components/chat/ChatMessages.vue'
 import ChatInput from '../components/chat/ChatInput.vue'
+import VoiceBar from '../components/chat/VoiceBar.vue'
 
 const { isMobile } = useBreakpoint()
 const showMobileConversations = ref(false)
@@ -167,6 +168,9 @@ function handleSwitchAgent(name) {
         @switch-agent="handleSwitchAgent"
         @toggle-conversations="showMobileConversations = !showMobileConversations"
       />
+
+      <!-- Hands-free voice strip (mic toggle + live transcript) -->
+      <VoiceBar />
 
       <!-- Messages -->
       <ChatMessages

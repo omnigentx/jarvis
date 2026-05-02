@@ -19,12 +19,15 @@ def client(tmp_path, monkeypatch):
     # Isolated DB per test so config writes don't leak across cases.
     db_file = tmp_path / "voice_routes.db"
     monkeypatch.setenv("JARVIS_DB_PATH", str(db_file))
-    monkeypatch.setenv("JARVIS_API_KEY", "test-key")
+    monkeypatch.setenv("JARVIS_API_KEY", "voice-routes-test-master-key")
 
     # core_auth caches the env var at import — sync the module attr so
     # verify_api_key sees our test key (matches existing test_setup_gate pattern).
     from core import auth as core_auth
-    monkeypatch.setattr(core_auth, "JARVIS_API_KEY", "test-key")
+    monkeypatch.setattr(core_auth, "JARVIS_API_KEY", "voice-routes-test-master-key")
+    from core import secrets_crypto
+    secrets_crypto._fernet = None
+    secrets_crypto._fingerprint = None
 
     from sqlalchemy import create_engine as _ce
     from sqlalchemy.orm import sessionmaker
@@ -54,7 +57,9 @@ def client(tmp_path, monkeypatch):
     refresh_setup_complete()
 
     from server import app
-    return TestClient(app, headers={"Authorization": "Bearer test-key"})
+    yield TestClient(app, headers={"Authorization": "Bearer voice-routes-test-master-key"})
+    secrets_crypto._fernet = None
+    secrets_crypto._fingerprint = None
 
 
 class TestEnginesEndpoint:
@@ -109,3 +114,67 @@ class TestRequirementsEndpoint:
     def test_unknown_engine_404(self, client):
         resp = client.get("/api/voice/requirements/notreal")
         assert resp.status_code == 404
+
+
+class TestSecretsEndpoint:
+    def test_list_starts_empty_for_engines_with_secrets(self, client):
+        # Edge isn't listed (no secrets); ElevenLabs/OpenAI/Azure all start "not set".
+        body = client.get("/api/voice/secrets").json()
+        assert "edge" not in body["engines"]
+        assert body["engines"]["elevenlabs"] == {"api_key": False}
+        assert body["engines"]["openai"] == {"api_key": False}
+
+    def test_set_then_list_reflects_has_value(self, client):
+        resp = client.post("/api/voice/secrets/elevenlabs/api_key", json={"value": "sk-secret"})
+        assert resp.status_code == 200
+        body = client.get("/api/voice/secrets").json()
+        assert body["engines"]["elevenlabs"]["api_key"] is True
+
+    def test_delete_clears_secret(self, client):
+        client.post("/api/voice/secrets/elevenlabs/api_key", json={"value": "sk-secret"})
+        resp = client.delete("/api/voice/secrets/elevenlabs/api_key")
+        assert resp.status_code == 200
+        body = client.get("/api/voice/secrets").json()
+        assert body["engines"]["elevenlabs"]["api_key"] is False
+
+    def test_undeclared_slot_rejected(self, client):
+        # Edge declares no secrets — POST must 400, not silently accept.
+        resp = client.post("/api/voice/secrets/edge/api_key", json={"value": "x"})
+        assert resp.status_code == 400
+
+
+class TestSTTTestEndpoint:
+    def test_returns_transcript_from_warmup(self, client, monkeypatch):
+        # Real faster-whisper is too heavy for unit tests; we replace
+        # build_stt_service with a fake that returns a known transcript.
+        from services import stt_realtime as stt_mod
+
+        class _FakeRecorder:
+            def feed_audio(self, _): pass
+            def text(self): return "hello jarvis"
+
+        class _FakeService:
+            _recorder = _FakeRecorder()
+            def shutdown(self): pass
+
+        # Patch the symbol the route imports lazily.
+        monkeypatch.setattr(stt_mod, "build_stt_service", lambda cfg: _FakeService())
+
+        resp = client.post("/api/voice/test/stt")
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == {"transcript": "hello jarvis"}
+
+
+class TestEnginesVoicesEndpoint:
+    def test_unknown_engine_returns_404(self, client):
+        resp = client.get("/api/voice/engines/notreal/voices")
+        assert resp.status_code == 404
+
+    def test_known_non_edge_engine_returns_static_options(self, client):
+        # Engines without a live probe path fall back to the registry's
+        # static voice list — useful when the user is offline / has no key.
+        resp = client.get("/api/voice/engines/openai/voices")
+        assert resp.status_code == 200
+        voices = resp.json()["voices"]
+        ids = {v["id"] for v in voices}
+        assert {"alloy", "echo"} <= ids

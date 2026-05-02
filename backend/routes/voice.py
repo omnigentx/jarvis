@@ -148,6 +148,27 @@ async def set_active_config(payload: ActiveConfigPayload, _=Depends(verify_api_k
     return {"status": "ok"}
 
 
+@router.get("/secrets")
+async def list_secrets_status(_=Depends(verify_api_key)):
+    """Per-engine secret status — slot name + has_value bool, no plaintext.
+
+    UI uses this to render "Set" / "Not set" badges on each engine card so
+    the user knows whether they can pick a paid engine without entering keys
+    again.
+    """
+    cs = _config_service()
+    out: dict[str, dict[str, bool]] = {}
+    for engine, spec in registry.list_tts_engines().items():
+        slots = spec.get("secrets", []) or []
+        if not slots:
+            continue
+        out[engine] = {
+            slot: bool(cs.get("voice", f"secrets.{engine}.{slot}"))
+            for slot in slots
+        }
+    return {"engines": out}
+
+
 @router.post("/secrets/{engine}/{slot}")
 async def set_secret(engine: str, slot: str, body: SecretPayload, _=Depends(verify_api_key)):
     cs = _config_service()
@@ -155,6 +176,19 @@ async def set_secret(engine: str, slot: str, body: SecretPayload, _=Depends(veri
         vc.set_engine_secret(cs, engine, slot, body.value)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
+    return {"status": "ok"}
+
+
+@router.delete("/secrets/{engine}/{slot}")
+async def delete_secret(engine: str, slot: str, _=Depends(verify_api_key)):
+    """Clear a previously-set secret — frees the user from manual SQL surgery
+    when rotating away from a paid engine.
+    """
+    spec = registry.get_tts_engine(engine)
+    if not spec or slot not in spec.get("secrets", []):
+        raise HTTPException(400, f"Engine {engine!r} has no declared secret {slot!r}")
+    cs = _config_service()
+    cs.set("voice", f"secrets.{engine}.{slot}", None)  # None deletes the row
     return {"status": "ok"}
 
 
@@ -174,6 +208,58 @@ async def check_requirements(engine: str, _=Depends(verify_api_key)):
         "missing_binaries": missing_bins,
         "secrets_present": secrets_present,
     }
+
+
+@router.post("/test/stt")
+async def test_stt(_=Depends(verify_api_key)):
+    """Quick STT smoke-test — runs the active recorder against its built-in
+    warmup audio (a known-good vi sample shipped with RealtimeSTT) and returns
+    the transcript. Intended for the "Test mic / STT" button in the Voice tab.
+
+    No mic capture happens server-side — the warmup audio path lets users
+    verify the model + language pipeline without granting mic permissions
+    or wiring the WebSocket. For real-mic testing, use the VoiceBar.
+    """
+    from services import shared_state as ss
+    from services import voice_config as _vc
+    cs = _config_service()
+    cfg = _vc.get_stt_config(cs)
+    # Tiny model is enough for the warmup; avoid loading large models for a
+    # quick health probe.
+    cfg = {
+        **cfg,
+        "params": {**(cfg.get("params") or {}), "model": "tiny", "realtime_model_type": "tiny"},
+    }
+    try:
+        from services.stt_realtime import build_stt_service
+        svc = build_stt_service(cfg)
+    except Exception as exc:
+        raise HTTPException(500, f"Failed to build STT service: {exc}")
+    try:
+        # AudioToTextRecorder ships a 'warmup_audio.wav' beside its package;
+        # feeding it via the public API exercises the same code path the WS
+        # uses without requiring a real mic. Use ``__path__[0]`` (the inner
+        # package dir) since the upstream repo also has an empty top-level
+        # __init__.py that shadows __file__ resolution.
+        import wave
+        from pathlib import Path
+        import RealtimeSTT
+        pkg_dir = Path(list(RealtimeSTT.__path__)[0])
+        warmup = pkg_dir / "warmup_audio.wav"
+        if warmup.exists():
+            with wave.open(str(warmup), "rb") as w:
+                frames = w.readframes(w.getnframes())
+            svc.feed_audio(frames)
+        # Ask the recorder for the next final transcript — this blocks until
+        # the worker process produces one. RealtimeSTT exposes .text() which
+        # returns the latest transcript.
+        text = svc._recorder.text()
+        return {"transcript": text or ""}
+    finally:
+        try:
+            svc.shutdown()
+        except Exception:
+            pass
 
 
 @router.post("/test/tts")
