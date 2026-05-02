@@ -20,6 +20,8 @@ from routes.settings import router as settings_router
 from routes.yaml_config import router as yaml_router
 from routes.oauth import router as oauth_router
 from routes.system import router as system_router
+from routes.voice import router as voice_router
+from routes.ws_voice import router as ws_voice_router
 
 all_routers: list[APIRouter] = [
     auth_router,
@@ -41,4 +43,6 @@ all_routers: list[APIRouter] = [
     yaml_router,
     oauth_router,
     system_router,
+    voice_router,
+    ws_voice_router,
 ]

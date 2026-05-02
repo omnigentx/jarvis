@@ -182,6 +182,21 @@ async def lifespan(app: FastAPI):
                 rate=config_service.get("system", "EDGE_TTS_RATE"),
             )
 
+        # New JSON-driven voice config (registry-aware). Always run — the
+        # apply_* functions fall back to registry defaults when the DB key
+        # is absent, so this is also the bootstrap path for first-run users.
+        # STT is intentionally NOT eager-loaded here (heavy: torch + whisper);
+        # /ws/voice creates it lazily on first connection.
+        try:
+            from services.runtime_config import (
+                apply_voice_chat_config,
+                apply_voice_stories_config,
+            )
+            apply_voice_chat_config(None)
+            apply_voice_stories_config(None)
+        except Exception as exc:
+            logger.warning("[BOOTSTRAP] Voice provider bootstrap skipped: %s", exc)
+
         # Per-provider LLM config: migrate any legacy single-slot keys left
         # over from pre-namespaced installs, then push whatever is stored
         # under the new schema into the env + fastagent.secrets.yaml so

@@ -11,10 +11,12 @@ import SettingsGeneral from './settings/SettingsGeneral.vue'
 import SettingsYaml from './settings/SettingsYaml.vue'
 import SettingsServices from './settings/SettingsServices.vue'
 import SettingsLLM from './settings/SettingsLLM.vue'
+import SettingsVoice from './settings/SettingsVoice.vue'
 
 const TABS = [
   { id: 'general', label: 'General' },
   { id: 'llm', label: 'LLM Provider' },
+  { id: 'voice', label: 'Voice' },
   { id: 'services', label: 'Services' },
   { id: 'yaml', label: 'YAML Config' },
 ]
@@ -44,6 +46,7 @@ const active = ref('general')
     <section class="panel">
       <SettingsGeneral v-if="active === 'general'" />
       <SettingsLLM v-else-if="active === 'llm'" />
+      <SettingsVoice v-else-if="active === 'voice'" />
       <SettingsYaml v-else-if="active === 'yaml'" />
       <SettingsServices v-else-if="active === 'services'" />
       <div v-else class="placeholder">

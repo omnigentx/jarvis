@@ -8,3 +8,11 @@
 [submodule "backend/mcp-atlassian"]
 	path = backend/mcp-atlassian
 	url = https://github.com/omnigentx/mcp-atlassian.git
+[submodule "backend/RealtimeSTT"]
+	path = backend/RealtimeSTT
+	url = https://github.com/omnigentx/RealtimeSTT.git
+	branch = master
+[submodule "backend/RealtimeTTS"]
+	path = backend/RealtimeTTS
+	url = https://github.com/omnigentx/RealtimeTTS.git
+	branch = master

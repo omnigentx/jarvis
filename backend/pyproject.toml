@@ -27,6 +27,9 @@ dependencies = [
   "scrapling[ai]>=0.4.2",
   "croniter>=6.2.2",
   "pyyaml>=6.0.3",
+  # Real-time voice (STT + streaming TTS); engines installed via realtimetts extras
+  "realtimestt>=0.3.104",
+  "realtimetts[edge,system,azure,elevenlabs,openai]>=0.6.1",
 ]
 
 [tool.uv]
@@ -34,6 +37,8 @@ package = true
 
 [tool.uv.sources]
 fast-agent-mcp = { path = "./fast-agent", editable = true }
+realtimestt    = { path = "./RealtimeSTT", editable = true }
+realtimetts    = { path = "./RealtimeTTS", editable = true }
 
 # Optional convenience entry point if you later package this app:
 [project.scripts]
@@ -57,6 +62,16 @@ dev = [
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["."]
+norecursedirs = [
+  ".venv",
+  "fast-agent",
+  "mcp-atlassian",
+  "figma-ui-mcp",
+  "RealtimeSTT",
+  "RealtimeTTS",
+  "data",
+  "config",
+]
 markers = [
   "slow: marks tests that spawn real subprocesses or take >1s",
 ]
