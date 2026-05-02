@@ -30,6 +30,27 @@ cd backend && uv run pytest
 cd ../dashboard && npm run test:unit && npm run test:e2e
 ```
 
+### Native dev (no Docker)
+
+Two terminals — the Vite dev server proxies `/api` and `/ws` to the backend.
+
+```bash
+# Terminal 1 — backend (FastAPI + fast-agent)
+cd backend
+uv sync                                      # one-time + after submodule changes
+uv run uvicorn server:app --reload --port 8000
+
+# Terminal 2 — dashboard
+cd dashboard
+npm install                                  # one-time
+npm run dev                                  # → http://localhost:3000
+```
+
+- Backend reads `backend/.env`, DB, and the submodule paths in `pyproject.toml`'s `[tool.uv.sources]` (editable installs of `fast-agent`, `RealtimeSTT`, `RealtimeTTS`).
+- The dashboard auto-reads `VITE_JARVIS_API_KEY` from `dashboard/.env` if present (sets `localStorage.jarvis_api_key` for you on first load); otherwise the Setup Wizard captures it interactively.
+- VoiceBar (`/ws/voice`) needs the `/ws` Vite proxy entry (already in `vite.config.js`). Browsers treat `http://localhost` as a secure context so `getUserMedia` works without HTTPS.
+- After pulling in submodule updates: `git submodule update --init --recursive && (cd backend && uv sync)`.
+
 ## Branch & commit conventions
 
 - Work on a feature branch off `main`. Keep branches focused.
