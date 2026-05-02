@@ -212,54 +212,56 @@ async def check_requirements(engine: str, _=Depends(verify_api_key)):
 
 @router.post("/test/stt")
 async def test_stt(_=Depends(verify_api_key)):
-    """Quick STT smoke-test — runs the active recorder against its built-in
-    warmup audio (a known-good vi sample shipped with RealtimeSTT) and returns
-    the transcript. Intended for the "Test mic / STT" button in the Voice tab.
+    """Quick STT smoke-test — transcribes RealtimeSTT's bundled warmup_audio.wav
+    using faster-whisper directly. Returns the transcript so users can confirm
+    the model + language pipeline before granting mic permissions.
 
-    No mic capture happens server-side — the warmup audio path lets users
-    verify the model + language pipeline without granting mic permissions
-    or wiring the WebSocket. For real-mic testing, use the VoiceBar.
+    Why not go through ``AudioToTextRecorder``: the recorder's ``.text()`` is
+    designed for live mic capture and blocks until VAD detects an
+    end-of-speech transition. Feeding a pre-recorded WAV once doesn't
+    complete that cycle, so the call would hang forever. faster-whisper's
+    ``WhisperModel.transcribe(path)`` is the right primitive for a
+    file-based smoke probe.
     """
-    from services import shared_state as ss
     from services import voice_config as _vc
     cs = _config_service()
     cfg = _vc.get_stt_config(cs)
-    # Tiny model is enough for the warmup; avoid loading large models for a
-    # quick health probe.
-    cfg = {
-        **cfg,
-        "params": {**(cfg.get("params") or {}), "model": "tiny", "realtime_model_type": "tiny"},
-    }
+    params = cfg.get("params") or {}
+    # Force tiny model so the probe stays fast; users can still configure
+    # bigger models for real transcription via the WS path.
+    model_size = "tiny"
+    compute_type = params.get("compute_type") or "int8"
+    language = params.get("language") or "auto"
+    if language == "auto":
+        language = None  # let Whisper auto-detect
+
     try:
-        from services.stt_realtime import build_stt_service
-        svc = build_stt_service(cfg)
-    except Exception as exc:
-        raise HTTPException(500, f"Failed to build STT service: {exc}")
-    try:
-        # AudioToTextRecorder ships a 'warmup_audio.wav' beside its package;
-        # feeding it via the public API exercises the same code path the WS
-        # uses without requiring a real mic. Use ``__path__[0]`` (the inner
-        # package dir) since the upstream repo also has an empty top-level
-        # __init__.py that shadows __file__ resolution.
-        import wave
         from pathlib import Path
         import RealtimeSTT
         pkg_dir = Path(list(RealtimeSTT.__path__)[0])
         warmup = pkg_dir / "warmup_audio.wav"
-        if warmup.exists():
-            with wave.open(str(warmup), "rb") as w:
-                frames = w.readframes(w.getnframes())
-            svc.feed_audio(frames)
-        # Ask the recorder for the next final transcript — this blocks until
-        # the worker process produces one. RealtimeSTT exposes .text() which
-        # returns the latest transcript.
-        text = svc._recorder.text()
+        if not warmup.exists():
+            raise HTTPException(500, f"warmup audio not found at {warmup}")
+
+        # Lazy import — keeps startup time low for non-voice flows.
+        from faster_whisper import WhisperModel
+        import asyncio
+
+        def _transcribe() -> str:
+            # Run sync model load + transcription off the event loop so the
+            # FastAPI worker stays responsive (model cold-load ~2s, hot ~0.5s).
+            # faster-whisper segments come with their own leading whitespace,
+            # so concatenate without an extra separator.
+            model = WhisperModel(model_size, compute_type=compute_type)
+            segments, _info = model.transcribe(str(warmup), language=language)
+            return "".join(s.text for s in segments).strip()
+
+        text = await asyncio.to_thread(_transcribe)
         return {"transcript": text or ""}
-    finally:
-        try:
-            svc.shutdown()
-        except Exception:
-            pass
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(500, f"STT test failed: {exc}")
 
 
 @router.post("/test/tts")

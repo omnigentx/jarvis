@@ -15,7 +15,6 @@ from pydantic import BaseModel
 
 from core.auth import verify_api_key
 from helpers.text_processing import process_agent_response, clean_text_for_tts
-from helpers.tts_rules import prepend_tts_rules
 from helpers.story_reader import handle_read_local, check_pending_read
 from services.shared_state import (
     session_service, library_manager, tts_cache,
@@ -214,7 +213,7 @@ async def chat(request: ChatRequest, raw_request: Request = None, _=Depends(veri
     logger.info(f'[REQUEST] POST /chat cid={request.conversation_id} msg="{_msg_preview}"')
     try:
         raw_response, cid = await session_service.resume_and_send(
-            agent_app, prepend_tts_rules(request.message), request.conversation_id
+            agent_app, request.message, request.conversation_id
         )
         response_text = process_agent_response(raw_response)
         tts_text = response_text
@@ -370,7 +369,7 @@ async def chat_stream(raw_request: Request, _=Depends(verify_api_key)):
                 # Expose conversation_id so spawn tools can auto-capture it
                 _state.current_conversation_id = conversation_id
                 raw_response, cid = await session_service.resume_and_send(
-                    agent_app, prepend_tts_rules(message), conversation_id,
+                    agent_app, message, conversation_id,
                     files_data=files_data if files_data else None,
                     agent_name=agent_name,
                 )
@@ -570,7 +569,7 @@ async def chat_audio(conversation_id: str = None, file: UploadFile = File(...),
                 except: pass
         
         raw_response, cid = await session_service.resume_and_send(
-            agent_app, prepend_tts_rules(text), conversation_id
+            agent_app, text, conversation_id
         )
         response_text = process_agent_response(raw_response)
         tts_text = response_text

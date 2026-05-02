@@ -11,7 +11,7 @@ Thanks for your interest! This project is in active development and contribution
 ## Dev setup
 
 ```bash
-# Clone with submodules (fast-agent, figma-ui-mcp, mcp-atlassian, RealtimeSTT, RealtimeTTS)
+# Clone with submodules (fast-agent, figma-ui-mcp, mcp-atlassian, realtimestt_src, realtimetts_src)
 git clone --recurse-submodules https://github.com/<your-user-or-org>/jarvis.git
 cd jarvis
 
@@ -46,7 +46,7 @@ npm install                                  # one-time
 npm run dev                                  # → http://localhost:3000
 ```
 
-- Backend reads `backend/.env`, DB, and the submodule paths in `pyproject.toml`'s `[tool.uv.sources]` (editable installs of `fast-agent`, `RealtimeSTT`, `RealtimeTTS`).
+- Backend reads `backend/.env`, DB, and the submodule paths in `pyproject.toml`'s `[tool.uv.sources]` (editable installs of `fast-agent`, `realtimestt_src`, `realtimetts_src`).
 - The dashboard auto-reads `VITE_JARVIS_API_KEY` from `dashboard/.env` if present (sets `localStorage.jarvis_api_key` for you on first load); otherwise the Setup Wizard captures it interactively.
 - VoiceBar (`/ws/voice`) needs the `/ws` Vite proxy entry (already in `vite.config.js`). Browsers treat `http://localhost` as a secure context so `getUserMedia` works without HTTPS.
 - After pulling in submodule updates: `git submodule update --init --recursive && (cd backend && uv sync)`.
@@ -73,7 +73,7 @@ Before requesting review:
 
 ## Submodules
 
-`backend/fast-agent`, `backend/figma-ui-mcp`, `backend/mcp-atlassian`, `backend/RealtimeSTT`, and `backend/RealtimeTTS` are pinned submodules (the last two are forks of `KoljaB/RealtimeSTT` / `KoljaB/RealtimeTTS` under `omnigentx`). If you need to change code inside a submodule:
+`backend/fast-agent`, `backend/figma-ui-mcp`, `backend/mcp-atlassian`, `backend/realtimestt_src`, and `backend/realtimetts_src` are pinned submodules (the last two are forks of `KoljaB/RealtimeSTT` / `KoljaB/RealtimeTTS` under `omnigentx`; the path is intentionally not the package name so cwd doesn't shadow the editable install). If you need to change code inside a submodule:
 
 1. Open a PR in the submodule's own repo.
 2. After it merges, bump the submodule pointer in `jarvis` with a follow-up PR.

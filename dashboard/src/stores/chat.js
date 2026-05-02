@@ -305,6 +305,24 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   /**
+   * Remove a (typically streaming-placeholder) message entirely.
+   *
+   * Used when an agent turn ends with no useful output and we'd rather not
+   * leave a "(interrupted)"/"(no response)" bubble cluttering the thread —
+   * e.g. user barge-in cancels the bot before it speaks, or the agent
+   * returns an empty reply. Errors that the user should *see* still go
+   * through ``setMessageError`` instead.
+   */
+  function removeMessage(messageId) {
+    const conv = activeConversation.value
+    if (!conv) return
+    const idx = conv.messages.findIndex(m => m.id === messageId)
+    if (idx === -1) return
+    conv.messages.splice(idx, 1)
+    conv.updatedAt = Date.now()
+  }
+
+  /**
    * Mark a streaming message as errored (in-memory only).
    */
   function setMessageError(messageId, errorText) {
@@ -351,6 +369,7 @@ export const useChatStore = defineStore('chat', () => {
     addAgentMessagePlaceholder,
     pushToolCall,
     finalizeAgentMessage,
+    removeMessage,
     setMessageError,
   }
 })

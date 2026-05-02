@@ -47,8 +47,8 @@ jarvis/
 │   ├── fast-agent/             Submodule — fast-agent framework + spawn system
 │   ├── figma-ui-mcp/           Submodule — Figma MCP server
 │   ├── mcp-atlassian/          Submodule — Atlassian MCP server
-│   ├── RealtimeSTT/            Submodule — fork of KoljaB/RealtimeSTT (hands-free STT)
-│   └── RealtimeTTS/            Submodule — fork of KoljaB/RealtimeTTS (streaming TTS)
+│   ├── realtimestt_src/        Submodule — fork of KoljaB/RealtimeSTT (hands-free STT)
+│   └── realtimetts_src/        Submodule — fork of KoljaB/RealtimeTTS (streaming TTS)
 ├── dashboard/                  Vue 3 + Vite web UI (the active frontend)
 ├── xiaozhi_integration/        Bridges a Xiaozhi ESP32 device to the backend over MCP
 ├── docs/                       Self-hosting and architecture docs

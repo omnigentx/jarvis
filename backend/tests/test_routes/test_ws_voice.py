@@ -41,12 +41,17 @@ class _FakeSTT:
 
 
 class _StubProvider:
-    """Stand-in chat TTS provider — yields one fixed MP3 chunk."""
+    """Stand-in chat TTS provider — emits raw PCM directly so the test
+    sidesteps the production MP3→ffmpeg→PCM transcode pipeline."""
 
-    async def stream_audio(self, text: str):
-        yield b"\xff\xfbSTUB-MP3-" + text.encode("utf-8")[:32]
+    async def stream_audio(self, text: str):  # not used when stream_pcm exists
+        yield b""
 
-    # No stream_pcm → ws code falls back to stream_audio path.
+    async def stream_pcm(self, text: str):
+        # 4 samples of int16 silence — enough that the WS handler routes a
+        # binary frame back to the client, which is what the assertion below
+        # checks.
+        yield b"\x00\x00\x00\x00\x00\x00\x00\x00"
 
 
 @pytest.fixture()
@@ -106,11 +111,13 @@ def test_speak_command_streams_chat_provider_audio_back(ws_client):
     client, _ = ws_client
     with client.websocket_connect("/ws/voice") as ws:
         ws.send_text(json.dumps({"type": "speak", "text": "hi"}))
-        # First frame: tts_start JSON, then binary audio chunk(s), then tts_end.
+        # Order: tts_start JSON → binary PCM chunk(s) → tts_end JSON.
         first = ws.receive_text()
         assert json.loads(first)["type"] == "tts_start"
         audio = ws.receive_bytes()
-        assert audio.startswith(b"\xff\xfb")  # the stub's MP3 magic
+        # WS now emits raw int16 mono PCM (no MP3 magic bytes); just check
+        # we got a non-empty even-length chunk that could be PCM.
+        assert len(audio) > 0 and len(audio) % 2 == 0
         last = ws.receive_text()
         assert json.loads(last)["type"] == "tts_end"
         ws.close()

@@ -108,8 +108,8 @@ jarvis_v3/
 │   ├── fastagent.config.yaml   # fast-agent main config (model, MCP servers, logging)
 │   ├── fastagent.secrets.yaml  # Local dev secrets (API keys, base_url overrides)
 │   ├── fast-agent/             # Git submodule → fast-agent core
-│   ├── RealtimeSTT/            # Git submodule → omnigentx/RealtimeSTT (hands-free STT)
-│   └── RealtimeTTS/            # Git submodule → omnigentx/RealtimeTTS (streaming TTS)
+│   ├── realtimestt_src/        # Git submodule → omnigentx/RealtimeSTT (hands-free STT)
+│   └── realtimetts_src/        # Git submodule → omnigentx/RealtimeTTS (streaming TTS)
 │
 ├── dashboard/                  # Ops Dashboard (Vue 3 + Vite + Tailwind v4)
 │   └── src/
@@ -284,8 +284,8 @@ Dispatch lives in `routes/tts.py`: `_state.tts_chat_provider if is_notification 
 - `services/runtime_config.py::apply_voice_chat_config / apply_voice_stories_config / apply_voice_stt_config` are listener-driven: any UI write to `voice.*` rebuilds **only** the affected provider; chat changes never touch stories.
 
 ### Submodules (omnigentx forks)
-- `backend/RealtimeSTT` — fork of `KoljaB/RealtimeSTT`, faster-whisper based STT with VAD, optional wake word (Porcupine / OpenWakeWord). WS-fed via `use_microphone=False` + `feed_audio()`.
-- `backend/RealtimeTTS` — fork of `KoljaB/RealtimeTTS`, multi-engine streaming TTS. Edge bypasses the library for the legacy MP3 path; other engines run through `RealtimeTTSProvider` with PCM↔MP3 transcode for HTTP and raw PCM for WS.
+- `backend/realtimestt_src` — fork of `KoljaB/RealtimeSTT`, faster-whisper based STT with VAD, optional wake word (Porcupine / OpenWakeWord). WS-fed via `use_microphone=False` + `feed_audio()`. Submodule path differs from the Python package name (`RealtimeSTT`) so the source tree at backend cwd doesn't shadow the editable install via PEP 420 namespace package resolution.
+- `backend/realtimetts_src` — fork of `KoljaB/RealtimeTTS`, multi-engine streaming TTS. Edge bypasses the library for the legacy MP3 path; other engines run through `RealtimeTTSProvider` with PCM↔MP3 transcode for HTTP and raw PCM for WS. Same path-vs-package-name rule as STT.
 - Auth for GET SSE: `?api_key=<key>` query param. Auth for POST SSE: Bearer token in header.
 
 ## Multi-Agent Architecture

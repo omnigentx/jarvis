@@ -145,20 +145,20 @@ class TestSecretsEndpoint:
 
 class TestSTTTestEndpoint:
     def test_returns_transcript_from_warmup(self, client, monkeypatch):
-        # Real faster-whisper is too heavy for unit tests; we replace
-        # build_stt_service with a fake that returns a known transcript.
-        from services import stt_realtime as stt_mod
+        # Real faster-whisper would download a ~75 MB model and run inference
+        # — too heavy for unit tests. We replace WhisperModel with a fake
+        # that mirrors the segments-iterable contract.
+        import faster_whisper
 
-        class _FakeRecorder:
-            def feed_audio(self, _): pass
-            def text(self): return "hello jarvis"
+        class _FakeSegment:
+            def __init__(self, t): self.text = t
 
-        class _FakeService:
-            _recorder = _FakeRecorder()
-            def shutdown(self): pass
+        class _FakeModel:
+            def __init__(self, *_, **__): pass
+            def transcribe(self, _path, language=None):
+                return iter([_FakeSegment(" hello"), _FakeSegment(" jarvis")]), object()
 
-        # Patch the symbol the route imports lazily.
-        monkeypatch.setattr(stt_mod, "build_stt_service", lambda cfg: _FakeService())
+        monkeypatch.setattr(faster_whisper, "WhisperModel", _FakeModel)
 
         resp = client.post("/api/voice/test/stt")
         assert resp.status_code == 200, resp.text

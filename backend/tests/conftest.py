@@ -45,8 +45,13 @@ def mock_agent_app():
 
 
 @pytest.fixture()
-def app_client(mock_agent_app):
+def app_client(mock_agent_app, monkeypatch):
     """Create a test client with mocked FastAgent.
+
+    Pin the API key to a deterministic test value (and patch the module
+    global the ``verify_api_key`` dependency reads at call-time) so the
+    test passes regardless of whatever real ``JARVIS_API_KEY`` the dev
+    environment / DB master-key restore left in ``core_auth``.
 
     Usage::
 
@@ -55,7 +60,15 @@ def app_client(mock_agent_app):
             assert response.status_code == 200
     """
     import httpx
+    # Import server FIRST so its bootstrap (which calls apply_master_key →
+    # writes the real key into core_auth.JARVIS_API_KEY) settles. Only then
+    # do we pin the test value, so it isn't clobbered out from under us.
     from server import app
+
+    TEST_KEY = "app-client-fixture-key"
+    from core import auth as core_auth
+    monkeypatch.setattr(core_auth, "JARVIS_API_KEY", TEST_KEY)
+    monkeypatch.setenv("JARVIS_API_KEY", TEST_KEY)
 
     # Patch shared_state
     import services.shared_state as state
@@ -65,7 +78,7 @@ def app_client(mock_agent_app):
     client = httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
         base_url="http://test",
-        headers={"X-API-Key": os.environ.get("JARVIS_API_KEY", "test-key")},
+        headers={"Authorization": f"Bearer {TEST_KEY}"},
     )
 
     yield client

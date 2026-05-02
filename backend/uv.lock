@@ -747,8 +747,8 @@ requires-dist = [
     { name = "pygame", specifier = ">=2.6.1" },
     { name = "python-roborock", specifier = ">=3.9.3" },
     { name = "pyyaml", specifier = ">=6.0.3" },
-    { name = "realtimestt", editable = "RealtimeSTT" },
-    { name = "realtimetts", extras = ["edge", "system", "azure", "elevenlabs", "openai"], editable = "RealtimeTTS" },
+    { name = "realtimestt", editable = "realtimestt_src" },
+    { name = "realtimetts", extras = ["edge", "system", "azure", "elevenlabs", "openai"], editable = "realtimetts_src" },
     { name = "requests", specifier = ">=2.32.3" },
     { name = "scrapling", extras = ["ai"], specifier = ">=0.4.2" },
     { name = "speechrecognition", specifier = ">=3.14.4" },
@@ -5340,7 +5340,7 @@ wheels = [
 [[package]]
 name = "realtimestt"
 version = "0.3.104"
-source = { editable = "RealtimeSTT" }
+source = { editable = "realtimestt_src" }
 dependencies = [
     { name = "faster-whisper" },
     { name = "halo" },
@@ -5375,7 +5375,7 @@ requires-dist = [
 [[package]]
 name = "realtimetts"
 version = "0.6.1"
-source = { editable = "RealtimeTTS" }
+source = { editable = "realtimetts_src" }
 dependencies = [
     { name = "pyaudio" },
     { name = "pydub" },

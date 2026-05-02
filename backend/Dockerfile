@@ -10,11 +10,13 @@ FROM base AS deps
 WORKDIR /app
 
 # Copy submodules first (rarely change). Voice forks ship our omnigentx
-# customisations to RealtimeSTT/RealtimeTTS — they MUST be installed
-# editable so any local patches surface in the image.
+# customisations to RealtimeSTT/RealtimeTTS — installed editable below.
+# Submodule directory names are intentionally NOT 'RealtimeSTT' /
+# 'RealtimeTTS' so the source tree at cwd doesn't shadow the actual
+# Python packages via PEP 420 namespace package resolution.
 COPY fast-agent /app/fast-agent
-COPY RealtimeSTT /app/RealtimeSTT
-COPY RealtimeTTS /app/RealtimeTTS
+COPY realtimestt_src /app/realtimestt_src
+COPY realtimetts_src /app/realtimetts_src
 
 # Copy dependency files
 COPY pyproject.toml uv.lock ./
@@ -29,16 +31,16 @@ RUN sed -i '/\[tool\.uv\.sources\]/,/^$/d' pyproject.toml \
     && sed -i '/fast-agent-mcp/d;/^  "realtimestt/d;/^  "realtimetts/d' pyproject.toml \
     && uv sync --frozen --no-dev \
     && uv pip install -e ./fast-agent \
-    && uv pip install -e ./RealtimeSTT \
-    && uv pip install -e './RealtimeTTS[edge,system,azure,elevenlabs,openai]'
+    && uv pip install -e ./realtimestt_src \
+    && uv pip install -e './realtimetts_src[edge,system,azure,elevenlabs,openai]'
 
 # ─── Stage 3: Final runtime image ───
 FROM base AS final
 WORKDIR /app
 
 COPY --from=deps /app/fast-agent /app/fast-agent
-COPY --from=deps /app/RealtimeSTT /app/RealtimeSTT
-COPY --from=deps /app/RealtimeTTS /app/RealtimeTTS
+COPY --from=deps /app/realtimestt_src /app/realtimestt_src
+COPY --from=deps /app/realtimetts_src /app/realtimetts_src
 COPY --from=deps /app/.venv /app/.venv
 RUN /app/.venv/bin/scrapling install
 

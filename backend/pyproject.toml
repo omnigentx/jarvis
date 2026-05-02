@@ -37,8 +37,13 @@ package = true
 
 [tool.uv.sources]
 fast-agent-mcp = { path = "./fast-agent", editable = true }
-realtimestt    = { path = "./RealtimeSTT", editable = true }
-realtimetts    = { path = "./RealtimeTTS", editable = true }
+# Submodule paths intentionally differ from the Python package names
+# (RealtimeSTT / RealtimeTTS) so that Python's PathFinder doesn't pick
+# up the submodule directory at cwd as a namespace package and shadow
+# the editable install. See test_voice_imports.py for the regression
+# guard.
+realtimestt    = { path = "./realtimestt_src", editable = true }
+realtimetts    = { path = "./realtimetts_src", editable = true }
 
 # Optional convenience entry point if you later package this app:
 [project.scripts]
@@ -67,8 +72,8 @@ norecursedirs = [
   "fast-agent",
   "mcp-atlassian",
   "figma-ui-mcp",
-  "RealtimeSTT",
-  "RealtimeTTS",
+  "realtimestt_src",
+  "realtimetts_src",
   "data",
   "config",
 ]

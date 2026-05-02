@@ -149,15 +149,28 @@ STT_BACKENDS: dict[str, STTBackendSpec] = {
         "label": "faster-whisper (local)",
         "description": "Local inference via faster-whisper. No API key. CPU works on tiny/base.",
         "badges": ["free", "local", "vi+en"],
+        # Defaults mirror RealtimeVoiceChat's DEFAULT_RECORDER_CONFIG (the
+        # author's own voice-chat reference impl). silero_sensitivity 0.05 is
+        # the critical one: 0.4 (Silero default) was strict enough that
+        # AirPods-level speech (peak ~1200) didn't trigger VAD at all.
         "params": [
             {"key": "model", "type": "select", "label": "Final model", "default": "base", "options": ["tiny", "base", "small", "medium", "large-v2", "large-v3"]},
-            {"key": "realtime_model_type", "type": "select", "label": "Realtime model", "default": "tiny", "options": ["tiny", "base", "small"]},
+            {"key": "realtime_model_type", "type": "select", "label": "Realtime model", "default": "base", "options": ["tiny", "base", "small"]},
             {"key": "language", "type": "select", "label": "Language", "default": "auto", "options": ["auto", "vi", "en"]},
             {"key": "compute_type", "type": "select", "label": "Compute type", "default": "int8", "options": ["int8", "float16", "float32"]},
-            {"key": "silero_sensitivity", "type": "slider", "label": "VAD sensitivity (Silero)", "default": 0.4, "min": 0, "max": 1, "step": 0.05},
+            {"key": "silero_sensitivity", "type": "slider", "label": "VAD sensitivity (Silero)", "default": 0.05, "min": 0, "max": 1, "step": 0.05},
+            {"key": "webrtc_sensitivity", "type": "number", "label": "VAD sensitivity (WebRTC, 0-3)", "default": 3, "min": 0, "max": 3, "step": 1},
             {"key": "post_speech_silence_duration", "type": "number", "label": "End-of-speech silence (s)", "default": 0.7, "min": 0.2, "max": 3.0, "step": 0.1},
-            {"key": "beam_size", "type": "number", "label": "Beam size", "default": 5, "min": 1, "max": 10},
+            {"key": "min_length_of_recording", "type": "number", "label": "Min recording length (s)", "default": 0.5, "min": 0.0, "max": 3.0, "step": 0.1},
+            {"key": "min_gap_between_recordings", "type": "number", "label": "Min gap between recordings (s)", "default": 0, "min": 0.0, "max": 3.0, "step": 0.1},
+            {"key": "beam_size", "type": "number", "label": "Beam size (final)", "default": 3, "min": 1, "max": 10},
+            {"key": "beam_size_realtime", "type": "number", "label": "Beam size (realtime)", "default": 3, "min": 1, "max": 10},
+            {"key": "realtime_processing_pause", "type": "number", "label": "Realtime processing pause (s)", "default": 0.03, "min": 0.0, "max": 1.0, "step": 0.01},
             {"key": "enable_realtime_transcription", "type": "toggle", "label": "Stream partial transcripts", "default": True},
+            {"key": "silero_deactivity_detection", "type": "toggle", "label": "Silero deactivity detection (better end-of-speech)", "default": True},
+            {"key": "silero_use_onnx", "type": "toggle", "label": "Silero ONNX (faster CPU inference)", "default": True},
+            {"key": "faster_whisper_vad_filter", "type": "toggle", "label": "faster-whisper internal VAD filter", "default": False},
+            {"key": "allowed_latency_limit", "type": "number", "label": "Allowed latency limit (chunks)", "default": 500, "min": 50, "max": 5000, "step": 50},
         ],
         "wake_word_backends": {
             "off": {"label": "Disabled", "params": []},
