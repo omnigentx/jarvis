@@ -36,8 +36,8 @@ class TestTTSRegistryShape:
 
 class TestSTTRegistryShape:
     def test_faster_whisper_default(self):
-        # v1 ships only faster-whisper; the wake-word matrix should expose
-        # at least 'off' so the UI can disable the feature.
+        # The default-backend is faster-whisper (multilingual). Its wake-word
+        # matrix must expose at least 'off' so the UI can disable the feature.
         assert "faster_whisper" in reg.STT_BACKENDS
         ww = reg.STT_BACKENDS["faster_whisper"]["wake_word_backends"]
         assert "off" in ww
@@ -50,6 +50,67 @@ class TestSTTRegistryShape:
         # 'auto' = let Whisper detect — required for vi+en code-switching.
         assert cfg["params"]["language"] == "auto"
         assert cfg["wake_word"]["backend"] == "off"
+
+
+class TestGipformerVIBackend:
+    """Plug-and-play smoke test for the Vietnamese-only Gipformer backend."""
+
+    def test_registered(self):
+        assert "gipformer_vi" in reg.STT_BACKENDS
+
+    def test_language_locked_to_vi(self):
+        # The backend is Vietnamese-only; UI relies on language_locked to
+        # hide the language picker. Anything other than 'vi' here would
+        # let the UI offer a setting the engine can't honour.
+        spec = reg.STT_BACKENDS["gipformer_vi"]
+        assert spec.get("language_locked") == "vi"
+
+    def test_wake_word_only_off(self):
+        # No Porcupine/OWW plumbing for sherpa-onnx — the spec should
+        # surface only the 'off' option so the UI never offers a config
+        # the runtime would silently ignore.
+        ww = reg.STT_BACKENDS["gipformer_vi"]["wake_word_backends"]
+        assert set(ww.keys()) == {"off"}
+
+    def test_required_params_present(self):
+        # Each of these keys is read in services/stt_backends/gipformer_vi.py
+        # and the UI form is rendered straight off this list.
+        keys = {p["key"] for p in reg.STT_BACKENDS["gipformer_vi"]["params"]}
+        assert {"quantize", "decoding_method", "num_threads",
+                "silero_sensitivity", "post_speech_silence_duration",
+                "min_speech_duration"} <= keys
+
+
+class TestSTTDispatcher:
+    """``build_stt_service`` dispatches on ``config['backend']``."""
+
+    def test_known_factory_table_matches_registry(self):
+        # Every registry backend must have a factory wired up; otherwise
+        # picking that backend in the UI would crash on first build.
+        from services.stt_realtime import _BACKEND_FACTORIES
+        assert set(_BACKEND_FACTORIES.keys()) == set(reg.STT_BACKENDS.keys())
+
+    def test_unknown_backend_rejected(self):
+        from services.stt_realtime import build_stt_service
+        with pytest.raises(ValueError, match="Unknown STT backend"):
+            build_stt_service({"backend": "nope"})
+
+    def test_dispatcher_calls_factory_for_each_backend(self, monkeypatch):
+        # Patch each backend module's ``build`` so we can confirm dispatch
+        # routes to the right one without actually loading models.
+        from services import stt_realtime
+        from services.stt_backends import faster_whisper as fw_mod
+        from services.stt_backends import gipformer_vi as gv_mod
+
+        called: dict[str, dict] = {}
+        monkeypatch.setattr(fw_mod, "build", lambda c: called.setdefault("fw", c))
+        monkeypatch.setattr(gv_mod, "build", lambda c: called.setdefault("gv", c))
+
+        stt_realtime.build_stt_service({"backend": "faster_whisper", "params": {"a": 1}})
+        stt_realtime.build_stt_service({"backend": "gipformer_vi", "params": {"b": 2}})
+
+        assert called["fw"]["params"]["a"] == 1
+        assert called["gv"]["params"]["b"] == 2
 
 
 class TestStoriesSchemaIsLocked:

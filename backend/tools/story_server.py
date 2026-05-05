@@ -44,12 +44,13 @@ def _get_db():
 
 
 class StoryConfigManager:
-    """Quản lý config website truyện — dùng SQLite (table story_providers).
-    Thay thế hoàn toàn story_providers.json."""
+    """Story-website provider config, persisted to SQLite (table
+    story_providers). Replaces the legacy story_providers.json file."""
 
     @staticmethod
     def load_providers() -> List[Dict]:
-        """Load all providers từ DB, trả về list[dict] tương thích API cũ."""
+        """Load all providers from the DB and return the legacy API
+        shape (``list[dict]``) for back-compat with existing callers."""
         from core.database import StoryProvider
         db = _get_db()
         try:
@@ -125,7 +126,7 @@ class StoryConfigManager:
 
     @staticmethod
     def get_provider_for_url(url: str) -> Optional[Dict]:
-        """Tìm provider phù hợp cho URL."""
+        """Return the provider whose domain matches this URL, or None."""
         providers = StoryConfigManager.load_providers()
         for p in providers:
             if p['domain'] in url:
@@ -134,7 +135,7 @@ class StoryConfigManager:
 
     @staticmethod
     def add_known_story(domain: str, story_name: str, story_url_full: str = None):
-        """Thêm truyện vào danh sách known của provider."""
+        """Append a story to the provider's known-stories list."""
         from core.database import StoryProvider
         from datetime import datetime
         story_name = story_name.strip()
@@ -737,7 +738,7 @@ def get_chapter_content(chapter_url: str) -> str:
 
     except Exception as e:
         logger.error(f"Error fetching content: {e}")
-        return f"Lỗi khi tải chương: {e}"
+        return f"Failed to load chapter: {e}"
 
 @mcp.tool()
 def add_story_provider(domain: str, name: str, content_selector: str, title_selector: str = "h1", next_selector: str = None, list_selector: str = None, search_url: str = None) -> str:

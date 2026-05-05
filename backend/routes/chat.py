@@ -1,16 +1,14 @@
-"""Chat routes: /api/chat, /api/chat-stream, /api/chat-audio, /api/health, /api/background/status."""
+"""Chat routes: /api/chat, /api/chat-stream, /api/health, /api/background/status."""
 import os
 import re
 import uuid
 import json
 import base64
-import shutil
 import asyncio
 import logging
 import time as _time
 
-import speech_recognition as sr
-from fastapi import APIRouter, Request, Depends, UploadFile, File
+from fastapi import APIRouter, Request, Depends
 from pydantic import BaseModel
 
 from core.auth import verify_api_key
@@ -29,8 +27,11 @@ router = APIRouter(prefix="/api", tags=["chat"])
 
 async def _transcribe_audio(audio_bytes: bytes, original_filename: str) -> str | None:
     """Transcribe audio bytes to text via ffmpeg + speech_recognition.
-    
-    Uses the same STT pipeline as /chat-audio endpoint.
+
+    Used by ``/chat-stream`` to fold voice file uploads (e.g. a user
+    drops an audio attachment in the chat input) into the same text
+    message the LLM sees. Local-mic voice goes through ``/ws/voice``
+    instead — that path uses faster-whisper / Gipformer, not Google STT.
     Returns transcribed text or None on failure.
     """
     import subprocess
@@ -511,91 +512,6 @@ async def chat_stream(raw_request: Request, _=Depends(verify_api_key)):
             progress_manager.remove(request_id)
     
     return EventSourceResponse(event_generator())
-
-
-@router.post("/chat-audio", response_model=ChatResponse)
-async def chat_audio(conversation_id: str = None, file: UploadFile = File(...),
-                     raw_request: Request = None,
-                     _=Depends(verify_api_key)):
-    from services.shared_state import agent_app
-    _t0 = _time.time()
-    logger.info(f"[REQUEST] POST /chat-audio cid={conversation_id} file={file.filename}")
-    
-    TEMP_DIR = "temp_audio"
-    os.makedirs(TEMP_DIR, exist_ok=True)
-    
-    temp_filename = os.path.join(TEMP_DIR, f"temp_{uuid.uuid4()}.m4a")
-    wav_filename = os.path.join(TEMP_DIR, f"temp_{uuid.uuid4()}.wav")
-    
-    try:
-        try:
-            with open(temp_filename, "wb") as buffer:
-                shutil.copyfileobj(file.file, buffer)
-                
-            import subprocess
-            try:
-                subprocess.run(["ffmpeg", "-i", temp_filename, "-ac", "1", "-ar", "16000", wav_filename, "-y"], check=True, capture_output=True)
-                
-                import wave
-                import audioop
-                with wave.open(wav_filename, 'rb') as wf:
-                    frames = wf.readframes(wf.getnframes())
-                    rms = audioop.rms(frames, wf.getsampwidth())
-                    if rms < 100:
-                        return ChatResponse(response="Lỗi: Âm thanh quá nhỏ.")
-
-            except subprocess.CalledProcessError as e:
-                logger.error(f"FFmpeg error: {e.stderr.decode()}")
-                return ChatResponse(response="Lỗi xử lý âm thanh.")
-                
-            recognizer = sr.Recognizer()
-            with sr.AudioFile(wav_filename) as source:
-                audio_data = recognizer.record(source)
-                try:
-                    text = recognizer.recognize_google(audio_data, language="vi-VN")
-                    logger.info(f'[STT] Recognized: "{text[:80]}"')
-                    if not text: return ChatResponse(response="Không nghe thấy gì.")
-                except sr.UnknownValueError:
-                    return ChatResponse(response="Xin lỗi, tôi không nghe rõ.")
-                except sr.RequestError as e:
-                    return ChatResponse(response=f"Lỗi STT: {e}")
-        
-        finally:
-            if os.path.exists(temp_filename):
-                try: os.remove(temp_filename)
-                except: pass
-            if os.path.exists(wav_filename):
-                try: os.remove(wav_filename)
-                except: pass
-        
-        raw_response, cid = await session_service.resume_and_send(
-            agent_app, text, conversation_id
-        )
-        response_text = process_agent_response(raw_response)
-        tts_text = response_text
-        book_id = None
-
-        pending = check_pending_read(library_manager, tts_cache, get_chapter_content)
-        if pending:
-            book_id = pending["book_id"]
-            tts_text = pending["tts_text"]
-
-        response_text, tts_text, book_id = _process_response_tags(response_text, tts_text, book_id)
-
-        if tts_text:
-            tts_text = clean_text_for_tts(tts_text)
-
-        base_url = _get_base_url(raw_request) if raw_request else ""
-        audio_url, playback_url, _ = _prepare_audio_url(book_id, tts_text, base_url)
-
-        _duration = _time.time() - _t0
-        logger.info(f"[RESPONSE] POST /chat-audio cid={cid} duration={_duration:.1f}s status=ok")
-        return ChatResponse(response=str(response_text), audio=audio_url, playback_url=playback_url, user_text=text, conversation_id=cid)
-
-    except Exception as e:
-        _duration = _time.time() - _t0
-        logger.error(f"[RESPONSE] POST /chat-audio duration={_duration:.1f}s status=error: {e}", exc_info=True)
-        return ChatResponse(response=f"Error: {str(e)}")
 
 
 @router.get("/health")

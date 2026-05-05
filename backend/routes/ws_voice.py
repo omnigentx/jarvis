@@ -14,8 +14,11 @@ The browser opens ONE WebSocket per hands-free session. Frames:
   ``stable_transcript``, ``final_transcript``, ``vad_start``, ``vad_stop``,
   ``recording_start``, ``recording_stop``, ``wake_word``), TTS events
   (``tts_start``, ``tts_end``, ``tts_interruption``, ``barge_in_ack``),
-  conversation events (``user_message``, ``assistant_message``,
-  ``session``, ``error``), lifecycle events (``stt_loading``, ``stt_ready``).
+  conversation events (``user_message``, ``agent_thinking``,
+  ``assistant_message``, ``session``, ``error``), tool-call events
+  forwarded from the chat progress hooks so the dashboard renders the
+  same tool bubbles as text chat (``tool_request``, ``tool_done``,
+  ``tool_running``), lifecycle events (``stt_loading``, ``stt_ready``).
 * **Server → Client (binary)**: TTS audio bytes (raw PCM 24 kHz int16 for
   RealtimeTTS engines, MP3 for the legacy Edge provider — client sniffs).
 
@@ -43,12 +46,18 @@ import logging
 import os
 import struct
 import time
+import uuid
 import wave
 from typing import Any, Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from services import shared_state as state
+from services.sse_progress import (
+    create_progress_hooks,
+    merge_hooks,
+    progress_manager,
+)
 
 
 def _chunk_rms_peak(pcm_chunk: bytes) -> tuple[int, int]:
@@ -196,8 +205,19 @@ async def voice_ws(ws: WebSocket) -> None:
         # We use ``recording_start`` (RealtimeSTT's "VAD locked-on" signal)
         # rather than ``vad_start`` because the latter can fire on background
         # noise; recording_start has webrtc + silero agreement on speech.
-        if name == "recording_start" and bot_speaking:
-            loop.call_soon_threadsafe(_cancel_inflight, "user_resumed")
+        #
+        # Always log this transition so we can prove (in the log) WHY a
+        # barge-in did or did not fire — the previous silent path made it
+        # impossible to tell whether the VAD missed the user voice or
+        # whether the cancellation logic just didn't run.
+        if name == "recording_start":
+            logger.info(
+                "[ws_voice] recording_start received (bot_speaking=%s) → %s",
+                bot_speaking,
+                "barge-in" if bot_speaking else "no-op",
+            )
+            if bot_speaking:
+                loop.call_soon_threadsafe(_cancel_inflight, "user_resumed")
 
         # Mark a user turn as ready to dispatch on the asyncio side. The
         # actual scheduling happens in the main receive loop so we stay on
@@ -273,16 +293,38 @@ async def voice_ws(ws: WebSocket) -> None:
         """
         nonlocal bot_speaking
         provider = state.tts_chat_provider
+        if provider is None:
+            # Lifespan should have built this; surface a real error rather
+            # than crashing on the next attribute access. Don't toggle
+            # bot_speaking — there's nothing to speak.
+            logger.error("[ws_voice] speak() with no chat TTS provider")
+            await out_queue.put({"type": "error", "detail": "Chat TTS provider not initialised"})
+            return
         stream_pcm = getattr(provider, "stream_pcm", None)
+        path = "stream_pcm" if stream_pcm is not None else "stream_audio+ffmpeg"
         bot_speaking = True
         await out_queue.put({"type": "tts_start"})
+        bytes_sent = 0
+        chunks_sent = 0
+        logger.info(
+            "[ws_voice] speak() start: provider=%s path=%s text_len=%d",
+            type(provider).__name__, path, len(text),
+        )
         try:
             if stream_pcm is not None:
                 async for pcm in stream_pcm(text):
+                    bytes_sent += len(pcm)
+                    chunks_sent += 1
                     await out_queue.put(pcm)
             else:
                 async for pcm in _mp3_stream_to_pcm(provider.stream_audio(text)):
+                    bytes_sent += len(pcm)
+                    chunks_sent += 1
                     await out_queue.put(pcm)
+            logger.info(
+                "[ws_voice] speak() done: chunks=%d bytes=%d",
+                chunks_sent, bytes_sent,
+            )
         except asyncio.CancelledError:
             await out_queue.put({"type": "barge_in_ack"})
             raise
@@ -318,6 +360,36 @@ async def voice_ws(ws: WebSocket) -> None:
                 diag_silent_baseline_rms.clear()
             await out_queue.put({"type": "tts_end"})
 
+    # Whitelist of progress events worth surfacing to voice clients. The
+    # SSE stream pushes many more (``thinking``, ``responding``, ``ping``…)
+    # but the voice UI only wants tool-call lifecycle so it can render the
+    # same compact "X tools used" bubble that text chat shows.
+    _VOICE_PROGRESS_EVENTS = {"tool_request", "tool_done", "tool_running"}
+
+    async def _drain_progress(req_id: str) -> None:
+        """Forward selected progress events from ``progress_manager`` to the
+        WS out queue so the dashboard's ``pushToolCall`` path lights up
+        identically to the /chat-stream POST flow.
+
+        Runs until cancelled by the surrounding turn handler — there is no
+        terminal event here because we send ``assistant_message`` ourselves
+        (the SSE-style ``done`` event isn't pushed for voice turns).
+        """
+        # ``progress_manager.get`` returns the Queue object (sync); await
+        # ``.get()`` on that to pop events as they're pushed.
+        q = progress_manager.get(req_id)
+        if q is None:
+            return
+        try:
+            while True:
+                evt = await q.get()
+                if evt.get("type") in _VOICE_PROGRESS_EVENTS:
+                    await out_queue.put(evt)
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            logger.exception("[ws_voice] progress drain failed (req=%s)", req_id)
+
     async def _handle_user_turn(text: str) -> None:
         """One turn of the conversation: echo user → invoke agent → speak.
 
@@ -325,13 +397,16 @@ async def voice_ws(ws: WebSocket) -> None:
         thinking" placeholder synchronously with the user message:
 
             user_message → agent_thinking → (resume_and_send) →
+            (tool_request / tool_done … per tool call) →
             session (if new) → assistant_message → tts_start → audio chunks
             → tts_end
 
         Cancellation policy: when ``recording_start`` fires while we're in
         flight, the outer scheduler cancels this task. CancelledError
         propagates up; the writer is already draining tts_interruption and
-        the next user_turn task replaces this one.
+        the next user_turn task replaces this one. Whatever progress hooks
+        we attached are restored in the ``finally`` block so a cancelled
+        turn doesn't leak hooks into the next one.
         """
         nonlocal session_id, tts_task
         await out_queue.put({"type": "user_message", "text": text})
@@ -344,18 +419,122 @@ async def voice_ws(ws: WebSocket) -> None:
             # UI looks frozen for the 1–10s the LLM takes to start replying.
             await out_queue.put({"type": "agent_thinking"})
 
-            # Voice + chat both send the user text raw — voice formatting
-            # comes from the chosen TTS provider (configurable in Settings).
-            response, new_session_id = await state.session_service.resume_and_send(
-                state.agent_app,
-                text,
-                session_id,
-                agent_name=agent_name,
-            )
+            # Per-turn request id — same shape as /chat-stream. Lets the
+            # progress queue be scoped to this turn (parallel turns on the
+            # same socket would otherwise mix events).
+            req_id = str(uuid.uuid4())
+            progress_manager.create(req_id)
+            progress_hooks = create_progress_hooks(req_id, session_id=session_id)
+
+            # Snapshot original hooks so we can restore even if the task is
+            # cancelled mid-turn. We also remember the *exact* hook object
+            # we attached so the restore step can detect when a newer
+            # turn (started by a barge-in cancellation) has already swapped
+            # in its own hook chain — restoring blindly in that case would
+            # wipe the new turn's progress hooks and tool events from
+            # the new turn would never reach the WS (the "tool bubble
+            # mất khi user nói chen" regression). The race is real
+            # because ``task.cancel()`` only schedules CancelledError;
+            # the next dispatched turn can attach its hooks before our
+            # ``finally`` actually runs.
+            original_hooks: dict[str, Any] = {}
+            attached_hooks: dict[str, Any] = {}
+            for ag_name, agent in state.agent_app._agents.items():
+                original_hooks[ag_name] = getattr(agent, "tool_runner_hooks", None)
+                existing = original_hooks[ag_name]
+                merged = merge_hooks(existing, progress_hooks) if existing else progress_hooks
+                attached_hooks[ag_name] = merged
+                agent.tool_runner_hooks = merged
+
+            drain_task = asyncio.create_task(_drain_progress(req_id))
+            try:
+                # Voice + chat both send the user text raw — voice formatting
+                # comes from the chosen TTS provider (configurable in Settings).
+                response, new_session_id = await state.session_service.resume_and_send(
+                    state.agent_app,
+                    text,
+                    session_id,
+                    agent_name=agent_name,
+                )
+            finally:
+                # Restore hooks ONLY if our attached chain is still the
+                # current one. If a newer turn beat us to swapping in its
+                # own progress hooks, leave them alone — it owns the
+                # chain now and our "original" snapshot is stale.
+                for ag_name, agent in state.agent_app._agents.items():
+                    if ag_name not in original_hooks:
+                        continue
+                    if getattr(agent, "tool_runner_hooks", None) is attached_hooks[ag_name]:
+                        agent.tool_runner_hooks = original_hooks[ag_name]
+                drain_task.cancel()
+                try:
+                    await drain_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+                progress_manager.remove(req_id)
+
+            # Cancellation absorbed by fast-agent: the OpenAI provider
+            # (and likely others) catches ``asyncio.CancelledError`` from
+            # an interrupted LLM call and returns an empty Prompt with
+            # stop_reason=CANCELLED rather than re-raising. That means
+            # ``await resume_and_send`` *returns* ("", session_id)
+            # instead of propagating the cancellation we issued. Without
+            # the check below, the cancelled turn would proceed past
+            # this point and emit ``assistant_message empty=True`` —
+            # which the frontend's ``_dropPending`` path uses to remove
+            # the in-flight placeholder. By that time ``pendingAgentMsgId``
+            # already points to the *new* turn's placeholder (the
+            # reason we cancelled was a fresh user_message starting a
+            # new turn), so the cleanup code rips out the new turn's
+            # bubble + tool bar. This was the umbrella cause for the
+            # "placeholder mất / tool bubble mất / TTS im" trio.
+            #
+            # ``Task.cancelling()`` returns >0 if cancel() was ever
+            # called on this task, even when the inner await absorbed
+            # the exception. Python 3.11+; we're on 3.13.
+            try:
+                cur = asyncio.current_task()
+                if cur is not None and cur.cancelling() > 0:
+                    logger.info(
+                        "[ws_voice] turn req=%s cancelled mid-LLM "
+                        "— silent exit so the new turn's events stand",
+                        req_id,
+                    )
+                    return
+            except Exception:
+                pass
+
             if new_session_id and new_session_id != session_id:
                 session_id = new_session_id
                 await out_queue.put({"type": "session", "id": session_id})
+
+            # Mirror the chat-stream POST flow: persist the agent's full
+            # message_history snapshot to SQLite so the Agents tab's
+            # Context Window panel actually shows voice turns. Without
+            # this, voice conversations were invisible to the
+            # context-history view ("context window cũng không thấy
+            # save vào db sau khi agent idle"). Best-effort — never
+            # break the speak() path on a save failure.
+            try:
+                from services.context_persistence import save_agent_context
+                target_name = agent_name or "Jarvis"
+                target_agent_obj = state.agent_app._agents.get(target_name)
+                if target_agent_obj:
+                    await save_agent_context(
+                        target_agent_obj,
+                        req_id,
+                        trigger="voice_turn_complete",
+                        agent_name=target_name,
+                        session_id=session_id,
+                    )
+            except Exception:
+                logger.warning("[CONTEXT] voice turn save failed", exc_info=True)
+
             response = (response or "").strip()
+            logger.info(
+                "[ws_voice] turn done req=%s response_len=%d empty=%s",
+                req_id, len(response), not response,
+            )
             if not response:
                 # Empty reply — finalize placeholder with a clear message so
                 # the UI doesn't sit on an invisible streaming bubble.
@@ -381,13 +560,13 @@ async def voice_ws(ws: WebSocket) -> None:
                 # user turn schedule cleanly.
                 return
         except asyncio.CancelledError:
-            # Cancelled before / during agent generation. Surface a clear
-            # signal so the placeholder can show as interrupted instead of
-            # spinning forever.
-            try:
-                out_queue.put_nowait({"type": "tts_interruption", "reason": "user_resumed"})
-            except Exception:
-                pass
+            # Cancelled before / during agent generation. Do NOT emit
+            # another tts_interruption here — ``_cancel_inflight`` already
+            # pushed one when it called ``.cancel()`` on us. Emitting a
+            # second one races against the *new* turn's ``agent_thinking``
+            # event: if it lands after the new placeholder is created, the
+            # frontend's ``_dropPending`` yanks the fresh placeholder out
+            # (the "khi nói chen sửa câu, placeholder ... bị mất" bug).
             raise
         except Exception as exc:
             logger.exception("[ws_voice] agent turn failed")

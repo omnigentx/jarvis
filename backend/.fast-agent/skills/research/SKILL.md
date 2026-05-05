@@ -1,34 +1,35 @@
 ---
 name: research
 description: >
-  Tìm kiếm và tổng hợp thông tin từ internet. Dùng khi user hỏi về tin tức, sự kiện,
-  hoặc cần deep research tổng hợp. Ưu tiên: serpapi → ScraplingServer → chrome-devtools.
+  Search and synthesise information from the internet. Use when the user
+  asks about news, events, or needs deep multi-source research.
+  Tool priority: serpapi → ScraplingServer → chrome-devtools.
 ---
 
-# NGHIÊN CỨU VÀ TÌM KIẾM
+# RESEARCH AND SEARCH
 
-## Skill này vs `scrape-web`
+## This skill vs `scrape-web`
 
-| Tình huống | Dùng skill nào |
-|-----------|---------------|
-| Tìm kiếm thông tin tổng hợp | **research** (skill này) |
-| Truy cập URL cụ thể user đưa | `scrape-web` |
-| Trang bị chặn/cần bypass | `scrape-web` |
+| Situation | Which skill |
+|---|---|
+| Multi-source synthesis search | **research** (this skill) |
+| Visit a specific URL the user provided | `scrape-web` |
+| Page is blocked / needs bypass | `scrape-web` |
 
-## Thứ tự ưu tiên
+## Priority order
 
 ```
-1. serpapi → Nhanh, ổn định. Luôn dùng gl=vn, hl=vi
-   ↓ Không đủ kết quả?
-2. ScraplingServer get → Truy cập trực tiếp URL từ kết quả serpapi
-   ↓ Bị 403?
-3. ScraplingServer fetch/stealthy_fetch → Bypass anti-bot
-   ↓ Cần tương tác (login, click)?
-4. chrome-devtools → PHƯƠNG ÁN CUỐI CÙNG (rất chậm)
+1. serpapi → Fast, reliable. Match the user's locale (e.g. gl=vn, hl=vi for Vietnamese users).
+   ↓ Not enough results?
+2. ScraplingServer get → Hit specific URLs from the serpapi result list.
+   ↓ Got a 403?
+3. ScraplingServer fetch / stealthy_fetch → Bypass anti-bot.
+   ↓ Need interactive flow (login, click)?
+4. chrome-devtools → LAST RESORT (very slow).
 ```
 
-## Quy tắc
-- Luôn trích dẫn nguồn khi có thể
-- Tổng hợp từ nhiều nguồn nếu kết quả serpapi phong phú
-- **KHÔNG** dùng ScraplingServer cho search queries — chỉ dùng để truy cập URL cụ thể
-- **KHÔNG** dùng chrome-devtools trừ khi bắt buộc phải tương tác (click, login)
+## Rules
+- Always cite the source when possible.
+- Synthesise from multiple sources when serpapi returns rich results.
+- DO NOT use ScraplingServer for search queries — only for accessing specific URLs.
+- DO NOT use chrome-devtools unless interaction (click, login) is unavoidable.

@@ -25,14 +25,14 @@ Delegate to existing agents first, spawn new agents only when no existing agent 
 |-------|--------|
 | ResearchAgent | Web search, news, information synthesis |
 | FinanceAgent | Stock prices, gold, crypto, market analysis |
-| PersonalAgent | Email, calendar, reminders (cron scheduler), quản lý cá nhân |
+| PersonalAgent | Email, calendar, reminders (cron scheduler), personal task management |
 | CrawlStoriesAgent | Story crawling from web |
 | IoTAgent | Smart home device control |
 | MusicAgent | Music search and playback |
 | AudioReaderAgent | Story audio playback |
 
-> **Note**: PersonalAgent dùng **cron scheduler** cho reminders/nhắc nhở (KHÔNG dùng Google Calendar).
-> Google Calendar chỉ dùng cho tạo sự kiện/cuộc họp thực sự.
+> **Note**: PersonalAgent uses the **cron scheduler** for reminders, NOT Google Calendar.
+> Google Calendar is only for real events / meetings.
 
 ## Spawn Tool Quick Reference
 

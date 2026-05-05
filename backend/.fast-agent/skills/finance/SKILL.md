@@ -11,22 +11,22 @@ description: >
 ALWAYS call `get_current_time` first to determine if data is current.
 </prerequisite>
 
-## Decision Tree
+## Decision tree
 
 ```
-What does the user ask?
-├── Stock price (VNM, FPT, VCB...) → serpapi: "[ticker] stock price today"
-├── Gold price → serpapi: "giá vàng SJC hôm nay" or "gold price 9999"
-├── Crypto (BTC, ETH...) → serpapi: "[coin] price USD"
-├── Exchange rate → serpapi: "tỷ giá USD VND hôm nay"
-├── Market analysis → serpapi: "vnindex today" + summarize
-└── Unclear → Ask user to be more specific
+What is the user asking?
+├── Stock price (VNM, FPT, VCB...) → serpapi: "<ticker> stock price today"
+├── Gold price                    → serpapi: "<region> gold price today" (use the user's locale)
+├── Crypto (BTC, ETH...)          → serpapi: "<coin> price USD"
+├── Exchange rate                 → serpapi: "<currency pair> exchange rate today"
+├── Market analysis               → serpapi: "<index> today" + summarise
+└── Unclear                       → Ask the user to be more specific
 ```
 
 <rule>
-1. ALWAYS use `gl=vn`, `hl=vi` for serpapi queries
-2. Vietnam stocks: search on HOSE/HNX/UPCOM exchanges
-3. Crypto: search in English (BTC price, ETH price)
+1. Match the serpapi `gl`/`hl` parameters to the user's locale (e.g. `gl=vn`, `hl=vi` when the user is Vietnamese; `gl=us`, `hl=en` for English).
+2. Vietnam-listed stocks live on HOSE / HNX / UPCOM.
+3. Crypto symbols are universal — query in English (BTC price, ETH price).
 </rule>
 
 ## Output Format

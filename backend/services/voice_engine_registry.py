@@ -49,6 +49,10 @@ class STTBackendSpec(TypedDict, total=False):
     badges: list[str]
     params: list[ParamSpec]
     wake_word_backends: dict[str, dict[str, Any]]
+    # If set, the backend supports only this BCP-47 language code. The UI
+    # hides the language picker and the saved config forces this value.
+    # Used by single-language engines (e.g. Gipformer = vi-only).
+    language_locked: str
 
 
 # Voice picker for Edge defaults to common vi/en voices. The list is intentionally
@@ -190,6 +194,31 @@ STT_BACKENDS: dict[str, STTBackendSpec] = {
                 ],
                 "secrets": [],
             },
+        },
+    },
+    "gipformer_vi": {
+        "label": "Gipformer 65M (Vietnamese only)",
+        "description": "Vietnamese-optimised Zipformer-RNNT via sherpa-onnx. ~73 MB int8. MIT-licensed.",
+        "badges": ["free", "local", "vi-only", "MIT"],
+        "language_locked": "vi",
+        "params": [
+            {"key": "quantize", "type": "select", "label": "Quantization", "default": "int8", "options": ["int8", "fp32"]},
+            {"key": "decoding_method", "type": "select", "label": "Decoding", "default": "modified_beam_search", "options": ["greedy_search", "modified_beam_search"]},
+            {"key": "num_threads", "type": "number", "label": "CPU threads", "default": 4, "min": 1, "max": 16, "step": 1},
+            # Default 0.05 mirrors faster-whisper's RVC config — anything
+            # higher (the Silero default 0.5 is the worst offender) makes
+            # the AEC-suppressed user voice during TTS playback fall
+            # below threshold, which kills barge-in entirely.
+            {"key": "silero_sensitivity", "type": "slider", "label": "VAD threshold", "default": 0.05, "min": 0, "max": 1, "step": 0.05},
+            {"key": "post_speech_silence_duration", "type": "number", "label": "End-of-speech silence (s)", "default": 0.7, "min": 0.2, "max": 3.0, "step": 0.1},
+            {"key": "min_speech_duration", "type": "number", "label": "Min speech length (s)", "default": 0.25, "min": 0.05, "max": 2.0, "step": 0.05},
+        ],
+        # Wake-word path is not wired for sherpa-onnx — the loop reads
+        # straight off Silero VAD and there is no Porcupine/OWW callback
+        # plumbing. Surfacing only "off" prevents the UI from offering
+        # a config that would silently be ignored.
+        "wake_word_backends": {
+            "off": {"label": "Disabled", "params": []},
         },
     },
 }

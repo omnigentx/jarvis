@@ -10,10 +10,23 @@
  * chatStore (addUserMessage / addAgentMessagePlaceholder /
  * finalizeAgentMessage), so voice and typed turns share one UI.
  */
-import { computed } from 'vue'
+import { computed, onBeforeUnmount } from 'vue'
 import { useVoiceSession } from '../../composables/useVoiceSession.js'
 
 const session = useVoiceSession()
+
+// Tear down on real unmount so navigating away doesn't leak the mic
+// / WS / AudioContext. Diagnostic-tagged so when the user sees an
+// unexpected "Mic Off" we can tell from the console what triggered
+// it (route nav vs HMR vs explicit stop button).
+onBeforeUnmount(() => {
+  console.debug('[voice] VoiceBar onBeforeUnmount → stop()', {
+    status: session.status.value,
+    hmr: !!import.meta.hot,
+    href: location.href,
+  })
+  Promise.resolve(session.stop()).catch(() => {})
+})
 
 const STATUS_LABELS = {
   idle: 'Off',
@@ -47,7 +60,14 @@ async function toggle() {
       <span class="dot" />
       <span class="label">{{ isOn ? 'Stop' : 'Mic' }}</span>
     </button>
-    <span class="status">{{ statusLabel }}</span>
+    <span
+      class="status-pill"
+      :class="`pill-${session.status.value}`"
+      :title="`Voice status: ${statusLabel}`"
+    >
+      <span v-if="session.status.value === 'thinking' || session.status.value === 'speaking'" class="spinner" />
+      {{ statusLabel }}
+    </span>
     <span class="transcript" :title="session.lastFinalTranscript.value">
       <template v-if="session.partialTranscript.value">{{ session.partialTranscript.value }}</template>
       <template v-else-if="session.lastFinalTranscript.value">"{{ session.lastFinalTranscript.value }}"</template>
@@ -104,11 +124,64 @@ async function toggle() {
   50% { transform: scale(1.4); opacity: 0.6; }
 }
 
-.status {
-  font-weight: 500;
+/* status-pill: prominent so the user can tell at a glance whether the
+   agent is just listening, processing their last utterance, or speaking
+   back. Without this the only signal was a tiny grey label that blended
+   into the bar — easy to miss. */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 12px;
+  white-space: nowrap;
+  border: 1px solid transparent;
+  background: var(--bg-card, #161826);
   color: var(--text-secondary, #c4c8d4);
-  min-width: 80px;
 }
+.status-pill.pill-listening {
+  background: rgba(34, 197, 94, 0.12);
+  color: #22c55e;
+  border-color: rgba(34, 197, 94, 0.3);
+}
+.status-pill.pill-thinking {
+  background: rgba(245, 158, 11, 0.18);
+  color: #fbbf24;
+  border-color: rgba(245, 158, 11, 0.45);
+  animation: pill-pulse 1.4s ease-in-out infinite;
+}
+.status-pill.pill-speaking {
+  background: rgba(59, 130, 246, 0.18);
+  color: #60a5fa;
+  border-color: rgba(59, 130, 246, 0.45);
+  animation: pill-pulse 1.4s ease-in-out infinite;
+}
+.status-pill.pill-loading_stt {
+  background: rgba(148, 163, 184, 0.15);
+  color: #cbd5e1;
+  border-color: rgba(148, 163, 184, 0.3);
+}
+.status-pill.pill-error {
+  background: rgba(239, 68, 68, 0.18);
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.45);
+}
+@keyframes pill-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 currentColor; opacity: 1; }
+  50%      { box-shadow: 0 0 0 4px rgba(255, 255, 255, 0); opacity: 0.85; }
+}
+.spinner {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  animation: spin 0.8s linear infinite;
+  display: inline-block;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
 .transcript {
   flex: 1;
   color: var(--text-primary, #f0f2f5);

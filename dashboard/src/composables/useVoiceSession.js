@@ -40,6 +40,35 @@ export function useVoiceSession() {
   // create the placeholder bubble; finalised on assistant_message; marked
   // as errored on tts_interruption / error.
   let pendingAgentMsgId = null
+  // The id of the last user message we pushed via voice that hasn't
+  // received an ``assistant_message`` reply yet. Tracked SEPARATELY
+  // from ``pendingAgentMsgId`` because ``tts_interruption`` can clear
+  // the placeholder before the next ``user_message`` lands, so we
+  // can't use the placeholder's existence as the "previous turn was
+  // unanswered" signal. Cleared when a real assistant reply arrives.
+  let lastVoiceUserMsgId = null
+  // Set to ``true`` the moment the user (or unmount hook) initiates
+  // teardown. Browsers don't drop the WS instantly — frames already in
+  // flight from the server can fire ``onmessage`` while the socket is
+  // in CLOSING state, and without this guard the late ``user_message``
+  // / ``agent_thinking`` would re-add a chat bubble + placeholder *after*
+  // we already showed the "Off" pill (the screenshot-33 ghost message
+  // bug). Reset on each successful ``start()``.
+  let torn = false
+
+  const ws = shallowRef(null)
+  const stream = shallowRef(null)
+  const audioContext = shallowRef(null)
+  const workletNode = shallowRef(null)
+  const playbackContext = shallowRef(null)
+  const playbackTime = ref(0)
+  // Track every BufferSourceNode currently scheduled so a barge-in or
+  // explicit Interrupt can stop the queued audio mid-playback. Without
+  // this, chunks that were already ``src.start()``-ed would keep playing
+  // after the server cancelled TTS, and the user would hear several
+  // more seconds of bot voice after they tried to talk over it (the
+  // "TTS không dừng khi user nói chen" bug).
+  const playbackSources = new Set()
 
   function _ensureActiveConversation() {
     if (chatStore.activeConversation) return
@@ -72,12 +101,17 @@ export function useVoiceSession() {
     pendingAgentMsgId = null
   }
 
-  const ws = shallowRef(null)
-  const stream = shallowRef(null)
-  const audioContext = shallowRef(null)
-  const workletNode = shallowRef(null)
-  const playbackContext = shallowRef(null)
-  const playbackTime = ref(0)
+  function _flushPlaybackQueue() {
+    for (const src of playbackSources) {
+      try { src.stop() } catch {}
+    }
+    playbackSources.clear()
+    if (playbackContext.value) {
+      // Reset the cursor so the next TTS turn schedules from "now" rather
+      // than the dangling end-time of the cancelled stream.
+      playbackTime.value = playbackContext.value.currentTime
+    }
+  }
 
   function _logEvent(name, payload) {
     events.unshift({ ts: Date.now(), name, payload })
@@ -85,9 +119,29 @@ export function useVoiceSession() {
   }
 
   function _onMessage(ev) {
+    // Late events during socket CLOSING / after stop() must not mutate
+    // chat state. Without this the next mounted VoiceBar sees stale
+    // placeholders + user messages it has no way to clear.
+    if (torn) {
+      if (typeof ev.data === 'string') {
+        try {
+          const m = JSON.parse(ev.data)
+          console.debug('[voice] dropping post-teardown event', m.type)
+        } catch {}
+      }
+      return
+    }
     if (typeof ev.data === 'string') {
       let msg
       try { msg = JSON.parse(ev.data) } catch { return }
+      // Diagnostic so manual voice-flow debugging shows the actual
+      // event sequence + state transitions in browser devtools.
+      // Cheap (just a console.log per event) and quiet enough at
+      // info level to leave on by default.
+      console.debug(
+        '[voice] event %s | status=%s pending=%s lastUserMsg=%s | payload=%o',
+        msg.type, status.value, pendingAgentMsgId, lastVoiceUserMsgId, msg,
+      )
       _logEvent(msg.type, msg)
       switch (msg.type) {
         case 'stt_loading': status.value = 'loading_stt'; break
@@ -108,8 +162,33 @@ export function useVoiceSession() {
           // chat panel — same UI as typed messages, no separate voice log.
           _ensureActiveConversation()
           if (typeof chatStore.addUserMessage === 'function' && msg.text) {
+            // STT-correction coalesce: a fresh user_message arriving while
+            // the previous turn is still in the agent_thinking phase
+            // (pendingAgentMsgId set, no assistant_message yet) means the
+            // backend already cancelled that turn via _cancel_inflight on
+            // recording_start. Leaving the previous user bubble + spinner
+            // in place would surface the half-utterance the user is
+            // correcting — drop them so only the latest stands.
+            if (pendingAgentMsgId) {
+              try { chatStore.removeMessage?.(pendingAgentMsgId) } catch {}
+              pendingAgentMsgId = null
+              const conv = chatStore.activeConversation
+              if (conv) {
+                for (let i = conv.messages.length - 1; i >= 0; i--) {
+                  if (conv.messages[i].role === 'user') {
+                    try { chatStore.removeMessage?.(conv.messages[i].id) } catch {}
+                    break
+                  }
+                }
+              }
+            }
             chatStore.addUserMessage(msg.text)
           }
+          // Voice flow guarantees agent_thinking follows user_message —
+          // flip status here too so the badge transitions instantly even
+          // if the agent_thinking event is delayed by a few ms (avoids
+          // the "is it processing?" confusion the user reported).
+          status.value = 'thinking'
           break
         }
         case 'agent_thinking': {
@@ -122,6 +201,36 @@ export function useVoiceSession() {
           status.value = 'thinking'
           break
         }
+        case 'tool_request': {
+          // Mirror ChatView.vue's text-chat handling so the same compact
+          // "X tools used" bubble renders identically for voice turns.
+          // Falls through quietly if the placeholder hasn't been created
+          // yet (pushToolCall does its own existence check).
+          if (pendingAgentMsgId && typeof chatStore.pushToolCall === 'function') {
+            chatStore.pushToolCall(pendingAgentMsgId, {
+              tool: msg.tools?.[0]?.name || msg.tool || msg.server || 'tool',
+              command: msg.message || '',
+              args: msg.tools?.[0]?.args || null,
+            })
+          }
+          break
+        }
+        case 'tool_done': {
+          if (pendingAgentMsgId && typeof chatStore.pushToolCall === 'function') {
+            chatStore.pushToolCall(pendingAgentMsgId, {
+              tool: msg.tools?.[0]?.name || msg.tool || 'tool',
+              command: msg.message || 'result',
+              isResult: true,
+              duration: msg.duration_ms ? `${(msg.duration_ms / 1000).toFixed(1)}s` : undefined,
+              resultPreview: msg.result_preview || null,
+            })
+          }
+          break
+        }
+        case 'tool_running':
+          // Lifecycle ping ("X is now running tool Y") — already covered
+          // by the tool_request bubble; intentionally not re-rendered.
+          break
         case 'assistant_message': {
           const text = msg.text || ''
           const meta = msg.session_id ? { conversation_id: msg.session_id } : {}
@@ -166,11 +275,22 @@ export function useVoiceSession() {
         case 'wake_word': wakeWordHits.value++; break
         case 'tts_start': status.value = 'speaking'; wasInterrupted.value = false; break
         case 'tts_end':
+          status.value = ws.value?.readyState === 1 ? 'listening' : 'idle'
+          break
         case 'barge_in_ack':
+          // Server confirms it stopped synthesising. Any chunks already
+          // in the playback queue must be cancelled here too — otherwise
+          // the user keeps hearing the bot for several more seconds even
+          // though TTS production stopped.
+          _flushPlaybackQueue()
           status.value = ws.value?.readyState === 1 ? 'listening' : 'idle'
           break
         case 'tts_interruption':
           wasInterrupted.value = true
+          // Same as barge_in_ack: stop any audio that already shipped from
+          // server before the cancellation propagated, so the user's voice
+          // gets the floor instantly instead of competing with bot residue.
+          _flushPlaybackQueue()
           // User barge-in or manual Interrupt — they already know what
           // happened, so silently drop the in-flight placeholder instead of
           // leaving "(interrupted by user)" noise in the chat. The previous
@@ -223,6 +343,10 @@ export function useVoiceSession() {
       // also smooths over jittery delivery).
       const startAt = Math.max(ctx.currentTime + 0.02, playbackTime.value)
       src.start(startAt)
+      // Track for barge-in flush; auto-untrack when the chunk finishes
+      // playing on its own to keep the set bounded.
+      playbackSources.add(src)
+      src.onended = () => playbackSources.delete(src)
       playbackTime.value = startAt + audioBuffer.duration
     } catch (e) {
       console.warn('[voice] audio enqueue failed', e)
@@ -240,6 +364,7 @@ export function useVoiceSession() {
     if (status.value !== 'idle') return
     error.value = ''
     status.value = 'connecting'
+    torn = false
     try {
       const sock = new WebSocket(_wsUrl())
       sock.binaryType = 'arraybuffer'
@@ -249,7 +374,16 @@ export function useVoiceSession() {
         sock.onerror = (e) => reject(new Error('WebSocket failed to open'))
       })
       sock.onmessage = _onMessage
-      sock.onclose = () => {
+      sock.onclose = (ev) => {
+        // Diagnostic: code 1000 = clean close (user/server stop),
+        // 1001 = going away (page nav / browser closing tab),
+        // 1006 = abnormal closure (no close frame — network drop).
+        // Helps distinguish "user clicked Stop" from "connection
+        // dropped" when an unexpected Mic-Off shows up.
+        console.debug('[voice] ws.onclose', {
+          code: ev?.code, reason: ev?.reason, wasClean: ev?.wasClean,
+          torn, status: status.value,
+        })
         // Differentiate clean close (user clicked Stop — drop silently) vs
         // unexpected drop (show error). status==='error' means onerror
         // already surfaced something; otherwise treat as clean close.
@@ -341,13 +475,33 @@ export function useVoiceSession() {
   }
 
   async function stop() {
-    // User-initiated stop while the agent is still thinking — drop the
-    // placeholder silently (no "(voice session closed)" bubble). Network
-    // errors are still surfaced via setMessageError on sock.onerror.
+    // Diagnostic — capture the call site so the next "Mic Off
+    // mystery" report has evidence (was it the user button? an
+    // unmount? Vite HMR? something else?). Cheap and dev-only useful;
+    // production builds keep it for parity in case we need to repro
+    // a bug in deployed UI.
+    try {
+      console.debug(
+        '[voice] stop() called',
+        { status: status.value, hmr: !!import.meta.hot },
+        new Error('voice-stop-trace').stack,
+      )
+    } catch {}
+    // Mark torn-down FIRST so any in-flight WS event arriving while
+    // close() propagates is ignored by ``_onMessage``. Then drop the
+    // placeholder so ``stop()`` followed by a stray late event can't
+    // re-add a "(voice session closed)" ghost bubble.
+    torn = true
     _dropPending()
-    try { ws.value?.send(JSON.stringify({ type: 'stop' })) } catch {}
-    try { ws.value?.close() } catch {}
-    ws.value = null
+    if (ws.value) {
+      // Detach the message handler so even if the browser dispatches a
+      // queued frame after close(), nothing happens. ``torn`` is the
+      // belt; nulling onmessage is the suspenders.
+      try { ws.value.onmessage = null } catch {}
+      try { ws.value.send(JSON.stringify({ type: 'stop' })) } catch {}
+      try { ws.value.close() } catch {}
+      ws.value = null
+    }
     workletNode.value?.disconnect()
     workletNode.value = null
     if (stream.value) {

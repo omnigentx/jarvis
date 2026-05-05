@@ -18,6 +18,7 @@ from routes.approvals import router as approvals_router
 from routes.setup import router as setup_router
 from routes.settings import router as settings_router
 from routes.yaml_config import router as yaml_router
+from routes.skills import router as skills_router
 from routes.oauth import router as oauth_router
 from routes.system import router as system_router
 from routes.voice import router as voice_router
@@ -41,6 +42,7 @@ all_routers: list[APIRouter] = [
     setup_router,
     settings_router,
     yaml_router,
+    skills_router,
     oauth_router,
     system_router,
     voice_router,

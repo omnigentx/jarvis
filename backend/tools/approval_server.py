@@ -47,26 +47,28 @@ async def request_approval(
     impact_downtime: str = None,
     impact_risk: str = None,
 ) -> str:
-    """Yêu cầu user phê duyệt trước khi tiếp tục.
+    """Request human approval before continuing.
 
-    Tool này sẽ BLOCK cho đến khi user approve hoặc reject trên dashboard.
-    Tất cả các agent trong team sẽ bị pause trong lúc chờ.
+    This tool BLOCKS until the user approves or rejects via the dashboard.
+    Every agent in the same team is paused while waiting.
 
     Parameters:
-    - title: Tiêu đề của yêu cầu (ví dụ: "Implementation Plan - Feature X")
-    - content: Nội dung cần duyệt (BRD, plan, architecture, etc.)
-    - agent_name: Tên agent đang yêu cầu
-    - team_name: Tên team (nếu có — cả team sẽ bị pause)
-    - approval_type: Loại duyệt (team_plan, architecture, implementation_plan, budget, deploy, custom)
-    - urgency: Mức độ ưu tiên (low, normal, high, urgent)
-    - content_format: Định dạng nội dung (text, markdown, json)
+    - title: short title for the request (e.g. "Implementation Plan - Feature X")
+    - content: payload to be reviewed (BRD, plan, architecture, etc.)
+    - agent_name: name of the requesting agent
+    - team_name: team name, if any — the whole team is paused
+    - approval_type: one of team_plan / architecture / implementation_plan /
+      budget / deploy / custom
+    - urgency: low / normal / high / urgent
+    - content_format: text / markdown / json
 
-    - impact_files: Số file bị ảnh hưởng
-    - impact_services: Số service bị ảnh hưởng
-    - impact_downtime: Thời gian downtime dự kiến
-    - impact_risk: Mức độ rủi ro (low, medium, high, critical)
+    - impact_files: number of files impacted
+    - impact_services: number of services impacted
+    - impact_downtime: expected downtime
+    - impact_risk: low / medium / high / critical
 
-    Returns: Kết quả phê duyệt với decision, comment, và inline comments từ user.
+    Returns: approval result with decision, comment, and inline comments
+    from the user.
     """
     import httpx
 
@@ -145,7 +147,7 @@ async def _wait_for_resolution_via_sse(approval_id: str) -> dict:
 
     Connects to /api/agents/activity-stream and listens for
     event_type == "approval_resolved" with matching approval_id.
-    On disconnect, throws error (no fallback, dễ debug).
+    On disconnect, throws error (no fallback — keeps debugging simple).
     """
     import httpx
 

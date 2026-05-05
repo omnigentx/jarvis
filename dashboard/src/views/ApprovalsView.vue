@@ -704,8 +704,11 @@ const typeLabels = {
 .view-mode-btn:hover:not(.active) { color: var(--text-secondary, #c4c8d4); }
 
 .approval-preview {
-  padding: 12px 16px; overflow-y: auto;
+  padding: 16px 20px; overflow-y: auto;
   background: var(--bg-card, #0c0e15);
+}
+@media (max-width: 640px) {
+  .approval-preview { padding: 12px 14px; }
 }
 
 /* Comment Popover */

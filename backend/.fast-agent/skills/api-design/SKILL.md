@@ -1,26 +1,26 @@
 ---
 name: api-design
 description: >
-  Thiết kế API contracts và schemas. Dùng khi BA cần định nghĩa interfaces
-  giữa frontend-backend hoặc giữa các services.
+  Design API contracts and schemas. Use when a BA needs to define
+  interfaces between frontend and backend, or between services.
 ---
 
 # API DESIGN
 
-## Quy trình
+## Workflow
 
-1. **Xác định use cases** từ BRD
-2. **Chọn pattern**: REST / WebSocket / gRPC
-3. **Định nghĩa endpoints**
-4. **Viết schema** (request/response types)
-5. **Document** error codes và edge cases
+1. **Identify use cases** from the BRD.
+2. **Pick a pattern**: REST / WebSocket / gRPC.
+3. **Define endpoints**.
+4. **Write schemas** (request/response types).
+5. **Document** error codes and edge cases.
 
-## REST API Template
+## REST API template
 
 ```markdown
 ### [METHOD] /api/v1/resource
 
-**Mô tả**: Làm gì
+**Description**: what it does
 
 **Request**:
 - Headers: `Authorization: Bearer <token>`
@@ -34,7 +34,7 @@ description: >
 { "data": {...}, "message": "success" }
 ```
 
-**Error Codes**:
+**Error codes**:
 | Code | Meaning |
 |------|---------|
 | 400  | Invalid request |
@@ -42,8 +42,8 @@ description: >
 | 404  | Not found |
 ```
 
-## Quy tắc
-- Endpoints dùng danh từ số nhiều (`/users` không phải `/user`)
-- Versioning trong URL (`/api/v1/`)
-- Luôn có error response format thống nhất
-- Pagination cho list endpoints (`?page=1&limit=20`)
+## Rules
+- Endpoint paths use plural nouns (`/users`, not `/user`).
+- Versioning lives in the URL (`/api/v1/`).
+- Always use a single, consistent error-response shape.
+- Paginate list endpoints (`?page=1&limit=20`).

@@ -18,6 +18,12 @@ const routes = [
     meta: { title: 'Agent Detail', back: '/agents' },
   },
   {
+    path: '/skills',
+    name: 'SkillsLibrary',
+    component: () => import('./views/SkillsLibraryView.vue'),
+    meta: { title: 'Skills' },
+  },
+  {
     path: '/monitor',
     name: 'TeamMonitor',
     component: () => import('./views/TeamMonitor.vue'),

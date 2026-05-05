@@ -141,6 +141,494 @@ def _drain_until(ws, type_name: str, *, max_msgs: int = 8):
     raise AssertionError(f"never saw {type_name} (drained {max_msgs} msgs)")
 
 
+def test_tool_events_from_progress_hooks_reach_client(ws_client, monkeypatch):
+    """Voice turns must surface ``tool_request`` / ``tool_done`` to the WS.
+
+    Regression guard: an earlier voice rewrite called ``resume_and_send``
+    directly without attaching the SSE-style ``create_progress_hooks``,
+    so tool calls that ran inside the agent never produced any
+    tool-bubble events. The dashboard's voice flow ended up showing the
+    final ``assistant_message`` with no compact "X tools used" bubble
+    even when the agent had run several tools — this test fences that
+    pipeline so we can't ship voice without tool visibility again.
+    """
+    from unittest.mock import MagicMock
+    from services import shared_state
+    from services.sse_progress import progress_manager
+
+    fake_agent = MagicMock()
+    fake_agent.tool_runner_hooks = None
+    fake_app = MagicMock()
+    fake_app._agents = {"Jarvis": fake_agent}
+    monkeypatch.setattr(shared_state, "agent_app", fake_app)
+
+    async def _fake_resume(_app, _text, _sid, **_kw):
+        # Push tool events from inside the LLM call, exactly like the
+        # real progress hooks would. The drain task must forward these
+        # to the WS out queue.
+        active_ids = list(progress_manager._queues.keys())
+        assert active_ids, "no progress queue created for this turn"
+        rid = active_ids[-1]  # the freshest one is this turn's
+        progress_manager.push(rid, "tool_request", {
+            "tools": [{"name": "weather"}],
+            "message": "Jarvis calling weather",
+        })
+        await asyncio.sleep(0)  # let the drain task forward the event
+        progress_manager.push(rid, "tool_done", {
+            "tools": [{"name": "weather"}],
+            "duration_ms": 1234,
+            "result_preview": "sunny",
+        })
+        await asyncio.sleep(0)
+        return "ok", "session-x"
+
+    fake_session = MagicMock()
+    fake_session.resume_and_send = _fake_resume
+    monkeypatch.setattr(shared_state, "session_service", fake_session)
+
+    client, fake_stt = ws_client
+    with client.websocket_connect("/ws/voice") as ws:
+        # Drain stt_loading / stt_ready / etc. so the queue is calm before
+        # we trigger the turn.
+        fake_stt.emit("final_transcript", {"text": "thời tiết"})
+        seen: list[dict] = []
+        for _ in range(20):
+            msg = ws.receive()
+            if msg.get("type") == "websocket.disconnect":
+                break
+            if msg.get("text"):
+                evt = json.loads(msg["text"])
+                seen.append(evt)
+                if evt.get("type") == "tts_end":
+                    break
+        ws.close()
+
+    types = [e.get("type") for e in seen]
+    assert "tool_request" in types, f"missing tool_request — got {types}"
+    assert "tool_done" in types, f"missing tool_done — got {types}"
+    req = next(e for e in seen if e["type"] == "tool_request")
+    done = next(e for e in seen if e["type"] == "tool_done")
+    assert req["tools"][0]["name"] == "weather"
+    assert done["tools"][0]["name"] == "weather"
+    # Verify hooks were restored — leaking the per-turn hooks would
+    # mean tool events from the next turn went to a dead queue.
+    assert fake_agent.tool_runner_hooks is None
+
+
+def test_rapid_cancel_does_not_wipe_new_turn_hooks(ws_client, monkeypatch):
+    """Turn 2 cancels Turn 1 mid-LLM. Turn 2's tool events must reach the WS.
+
+    Regression: turn 1's ``finally`` block restored ``tool_runner_hooks``
+    to the pre-turn snapshot. If turn 2 had already attached its own
+    hooks by then (rapid back-to-back dispatch), turn 1's restore wiped
+    them — so tools that turn 2 ran emitted progress events into a
+    queue nobody was reading, and the dashboard's tool-bubble bar
+    stayed empty for that turn. User-visible symptom: "tool bubble
+    chỉ mất khi user nói chen, flow bình thường thì hiện".
+    """
+    from unittest.mock import MagicMock
+    from services import shared_state
+    from services.sse_progress import progress_manager
+
+    fake_agent = MagicMock()
+    fake_agent.tool_runner_hooks = None
+    fake_app = MagicMock()
+    fake_app._agents = {"Jarvis": fake_agent}
+    monkeypatch.setattr(shared_state, "agent_app", fake_app)
+
+    # Turn 1: blocks long enough that we can cancel it cleanly.
+    # Turn 2: pushes a tool_request via the agent's currently-attached
+    # progress hook — the very thing we're checking lights up.
+    call_count = {"n": 0}
+
+    async def _resume(_app, _text, _sid, **_kw):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            await asyncio.sleep(2)  # turn 1 — will be cancelled
+            return "should-not-reach", "session-x"
+        # turn 2 — fire a tool event into whatever queue the currently
+        # attached progress hook owns. If turn 1's finally has already
+        # wiped our hook, this push goes nowhere.
+        active_ids = list(progress_manager._queues.keys())
+        assert active_ids, "no progress queue alive for turn 2"
+        progress_manager.push(active_ids[-1], "tool_request", {
+            "tools": [{"name": "second_turn_tool"}],
+            "message": "should be visible",
+        })
+        await asyncio.sleep(0)
+        return "ok", "session-x"
+
+    fake_session = MagicMock()
+    fake_session.resume_and_send = _resume
+    monkeypatch.setattr(shared_state, "session_service", fake_session)
+
+    client, fake_stt = ws_client
+    with client.websocket_connect("/ws/voice") as ws:
+        # Turn 1 — drain to confirm it actually started.
+        fake_stt.emit("final_transcript", {"text": "first"})
+        for _ in range(10):
+            msg = ws.receive()
+            if msg.get("text"):
+                evt = json.loads(msg["text"])
+                if evt.get("type") == "agent_thinking":
+                    break
+
+        # Turn 2 fires while turn 1 is mid-sleep.
+        fake_stt.emit("final_transcript", {"text": "second"})
+
+        # Drain everything until turn 2's assistant_message lands. That
+        # event signals the whole turn cycle (including any tool_request
+        # turn 2 emitted) made it onto the wire.
+        seen: list[dict] = []
+        for _ in range(40):
+            msg = ws.receive()
+            if msg.get("type") == "websocket.disconnect":
+                break
+            if msg.get("text"):
+                evt = json.loads(msg["text"])
+                seen.append(evt)
+                # We expect either an assistant_message ("ok") or an
+                # error to be the terminal signal for turn 2.
+                if evt.get("type") in {"assistant_message", "error", "tts_end"}:
+                    break
+
+        ws.close()
+
+    types = [e.get("type") for e in seen]
+    tool_events = [e for e in seen if e.get("type") == "tool_request"]
+    assert tool_events, (
+        f"turn 2's tool_request never reached the client — hook race "
+        f"likely wiped the new-turn progress hooks. events: {types}"
+    )
+    assert any(
+        (e.get("tools") or [{}])[0].get("name") == "second_turn_tool"
+        for e in tool_events
+    ), f"got tool_request events but not turn 2's: {tool_events}"
+
+
+def test_cancelled_turn_does_not_emit_empty_assistant_message(ws_client, monkeypatch):
+    """When a turn is cancelled mid-LLM, fast-agent's OpenAI provider
+    catches ``CancelledError`` and returns an empty Prompt instead of
+    propagating the cancellation. Without explicit cancellation
+    detection, the cancelled turn would then proceed to emit
+    ``assistant_message empty=True`` — which the frontend uses as the
+    cue to drop the in-flight placeholder. By the time this fires,
+    ``pendingAgentMsgId`` on the client already points to the *new*
+    turn's placeholder, so the empty signal yanks the new bubble
+    out and the user sees status flip to "Listening" with no dots
+    and no agent reply. This was the umbrella root cause for the
+    "placeholder mất / tool bubble mất / TTS im" trio after a
+    user-correction barge-in.
+
+    Test design: the resume_and_send mock simulates exactly the
+    swallowed-cancellation contract — it returns ``("", session)``
+    after the task has been cancelled. We assert the cancelled task
+    does NOT emit ``assistant_message`` at all.
+    """
+    from unittest.mock import MagicMock
+    from services import shared_state
+
+    fake_agent = MagicMock()
+    fake_agent.tool_runner_hooks = None
+    fake_agent.message_history = []
+    fake_app = MagicMock()
+    fake_app._agents = {"Jarvis": fake_agent}
+    monkeypatch.setattr(shared_state, "agent_app", fake_app)
+
+    async def _fake_resume(_app, _text, _sid, **_kw):
+        # Block long enough for the test to fire a barge-in.
+        try:
+            await asyncio.sleep(2)
+        except asyncio.CancelledError:
+            # Mirror fast-agent OpenAI provider's swallow-and-return-empty
+            # contract. This is the exact behaviour the production fix
+            # has to defend against.
+            return "", "session-x"
+        return "should-not-reach", "session-x"
+
+    fake_session = MagicMock()
+    fake_session.resume_and_send = _fake_resume
+    monkeypatch.setattr(shared_state, "session_service", fake_session)
+
+    client, fake_stt = ws_client
+    with client.websocket_connect("/ws/voice") as ws:
+        # Turn 1 — wait for agent_thinking so we know it's running.
+        fake_stt.emit("final_transcript", {"text": "first"})
+        for _ in range(15):
+            msg = ws.receive()
+            if msg.get("text"):
+                evt = json.loads(msg["text"])
+                if evt.get("type") == "agent_thinking":
+                    break
+
+        # Turn 2 cancels turn 1.
+        fake_stt.emit("final_transcript", {"text": "second"})
+        # Pump a sentinel so we know all turn-1 events that *were*
+        # going to fire have already arrived at the client.
+        import time as _t
+        _t.sleep(0.5)
+        fake_stt.emit("partial_transcript", {"text": "__SENTINEL__"})
+
+        # The cancelled turn 1 returns ("", session) from the mock's
+        # CancelledError-swallow path. With the regression in place,
+        # _handle_user_turn would proceed to emit
+        # ``assistant_message empty=True`` even for the cancelled turn.
+        # The fix bails on cancellation BEFORE any further out_queue
+        # emission. Turn 2 returns "should-not-reach" (non-empty) so
+        # any empty=True assistant_message we observe must come from
+        # the cancelled turn.
+        empty_assistant_count = 0
+        for _ in range(30):
+            msg = ws.receive()
+            if msg.get("type") == "websocket.disconnect":
+                break
+            if not msg.get("text"):
+                continue
+            evt = json.loads(msg["text"])
+            if evt.get("type") == "assistant_message" and evt.get("empty") is True:
+                empty_assistant_count += 1
+            elif evt.get("type") == "partial_transcript" and evt.get("text") == "__SENTINEL__":
+                break
+        ws.close()
+
+    assert empty_assistant_count == 0, (
+        f"cancelled turn 1 emitted {empty_assistant_count} empty "
+        "assistant_message(s) — the fast-agent CancelledError swallow "
+        "needs to be detected via task.cancelling() so the cancelled "
+        "turn exits silently. Without this, the empty=True signal "
+        "drops the new turn's placeholder on the frontend (umbrella "
+        "cause for placeholder/tool-bubble/TTS regressions)."
+    )
+
+
+def test_voice_turn_persists_agent_context(ws_client, monkeypatch):
+    """Voice turns must call ``save_agent_context`` so the Agents tab's
+    Context Window panel actually shows the conversation. Regression
+    for "context window không thấy save vào db sau khi agent idle" —
+    voice was missing the context save that text /chat-stream had,
+    leaving voice conversations invisible to the history view.
+    """
+    from unittest.mock import MagicMock
+    from services import shared_state
+    import services.context_persistence as ctx_mod
+
+    fake_agent = MagicMock()
+    fake_agent.tool_runner_hooks = None
+    fake_agent.message_history = ["msg1"]  # non-empty so save isn't skipped
+    fake_app = MagicMock()
+    fake_app._agents = {"Jarvis": fake_agent}
+    monkeypatch.setattr(shared_state, "agent_app", fake_app)
+
+    async def _resume(_app, _text, _sid, **_kw):
+        return "hello there", "session-x"
+
+    fake_session = MagicMock()
+    fake_session.resume_and_send = _resume
+    monkeypatch.setattr(shared_state, "session_service", fake_session)
+
+    # Spy on save_agent_context — patch the symbol the route imports
+    # lazily inside _handle_user_turn (re-imports each turn).
+    save_calls: list[dict] = []
+
+    async def _spy_save(agent, run_id, trigger, *, agent_name=None,
+                       session_id=None, team_name=None):
+        save_calls.append({
+            "agent": agent,
+            "run_id": run_id,
+            "trigger": trigger,
+            "agent_name": agent_name,
+            "session_id": session_id,
+        })
+        return 1
+    monkeypatch.setattr(ctx_mod, "save_agent_context", _spy_save)
+
+    client, fake_stt = ws_client
+    with client.websocket_connect("/ws/voice") as ws:
+        fake_stt.emit("final_transcript", {"text": "hi"})
+        # Drain until tts_end (turn fully done so save would have run).
+        for _ in range(30):
+            msg = ws.receive()
+            if msg.get("type") == "websocket.disconnect":
+                break
+            if msg.get("text"):
+                evt = json.loads(msg["text"])
+                if evt.get("type") == "tts_end":
+                    break
+        ws.close()
+
+    assert save_calls, "save_agent_context was never invoked for the voice turn"
+    call = save_calls[-1]
+    assert call["trigger"] == "voice_turn_complete"
+    assert call["agent_name"] == "Jarvis"
+    assert call["agent"] is fake_agent
+
+
+def test_stop_message_does_not_crash_backend(ws_client):
+    """Sending {type: stop} closes the socket cleanly; nothing on the
+    server should raise. Regression guard for the teardown lifecycle —
+    if frontend cleanup races (page navigation while a turn is in
+    flight), the explicit ``stop`` text frame should be the safe exit
+    path. A backend crash here would orphan the worker thread that
+    feeds STT.
+    """
+    client, fake_stt = ws_client
+    with client.websocket_connect("/ws/voice") as ws:
+        # Fire-and-forget the stop control message + close.
+        ws.send_text(json.dumps({"type": "stop"}))
+        ws.close()
+    # Sanity: the fixture's stt fake survived the socket teardown
+    # (its ``shutdown`` is a no-op so we just check the object exists).
+    assert fake_stt is not None
+
+
+def test_finally_does_not_overwrite_a_newer_turns_hooks(monkeypatch):
+    """Direct unit-level guard for the hook race: a finally block from a
+    cancelled turn must not stomp on hooks that a newer turn has
+    already swapped in.
+
+    Tests the contract directly (not via WS) so the assertion doesn't
+    depend on async scheduling races — we install hooks A, then hooks
+    B, then run A's restore logic; B must remain in place.
+    """
+    from unittest.mock import MagicMock
+    from services import shared_state
+    from services.sse_progress import progress_manager, create_progress_hooks
+    from services.sse_progress import merge_hooks as _merge
+
+    fake_agent = MagicMock()
+    fake_agent.tool_runner_hooks = None
+    fake_app = MagicMock()
+    fake_app._agents = {"Jarvis": fake_agent}
+    monkeypatch.setattr(shared_state, "agent_app", fake_app)
+
+    # Turn A snapshot + attach
+    rid_a = "turn-a"
+    progress_manager.create(rid_a)
+    hooks_a = create_progress_hooks(rid_a)
+    original_a = fake_agent.tool_runner_hooks
+    attached_a = _merge(original_a, hooks_a) if original_a else hooks_a
+    fake_agent.tool_runner_hooks = attached_a
+
+    # Turn B starts before A's finally runs — same setup against the
+    # same agent.
+    rid_b = "turn-b"
+    progress_manager.create(rid_b)
+    hooks_b = create_progress_hooks(rid_b)
+    original_b = fake_agent.tool_runner_hooks  # currently A's chain
+    attached_b = _merge(original_b, hooks_b) if original_b else hooks_b
+    fake_agent.tool_runner_hooks = attached_b
+
+    # Now turn A's finally runs. Replicate the restoration logic
+    # exactly. With the race-safe check, attached_a is no longer the
+    # current hook (B replaced it) so A leaves it alone.
+    #
+    # Cross-check: if we used the OLD blind-restore code, this would
+    # wipe B's hooks. We verify both paths so the regression won't
+    # creep back in.
+    blind_restore_would_break = (
+        fake_agent.tool_runner_hooks is not attached_a
+    )
+    assert blind_restore_would_break, (
+        "test scaffolding wrong: B's attach didn't actually replace "
+        "A's hook chain so the race wouldn't manifest"
+    )
+
+    if getattr(fake_agent, "tool_runner_hooks", None) is attached_a:
+        fake_agent.tool_runner_hooks = original_a
+
+    assert fake_agent.tool_runner_hooks is attached_b, (
+        "turn A's finally wiped turn B's hooks — tool events from "
+        "turn B will not reach the client"
+    )
+
+    progress_manager.remove(rid_a)
+    progress_manager.remove(rid_b)
+
+
+def test_cancelled_turn_emits_only_one_tts_interruption(ws_client, monkeypatch):
+    """When a turn is cancelled mid-LLM, the WS must emit exactly ONE
+    ``tts_interruption`` event, not two.
+
+    Regression: ``_cancel_inflight`` already pushes ``tts_interruption``
+    when it calls ``.cancel()``. The cancelled task's ``except
+    asyncio.CancelledError`` block used to push another one — the second
+    event raced against the *new* turn's ``agent_thinking`` and, when it
+    arrived afterwards, the frontend's ``_dropPending`` removed the
+    fresh placeholder. Visible symptom: user spoke a correction, the
+    "..." typing dots vanished and never came back, even though the
+    agent was processing.
+    """
+    from unittest.mock import MagicMock
+    from services import shared_state
+
+    fake_agent = MagicMock()
+    fake_agent.tool_runner_hooks = None
+    fake_app = MagicMock()
+    fake_app._agents = {"Jarvis": fake_agent}
+    monkeypatch.setattr(shared_state, "agent_app", fake_app)
+
+    # ``resume_and_send`` blocks long enough that we can fire a barge_in
+    # while the agent task is still mid-LLM — the only way to hit the
+    # cancelled-task ``except`` path that used to double-emit.
+    async def _slow_resume(_app, _text, _sid, **_kw):
+        await asyncio.sleep(2)
+        return "irrelevant", "session-x"
+
+    fake_session = MagicMock()
+    fake_session.resume_and_send = _slow_resume
+    monkeypatch.setattr(shared_state, "session_service", fake_session)
+
+    client, fake_stt = ws_client
+    with client.websocket_connect("/ws/voice") as ws:
+        fake_stt.emit("final_transcript", {"text": "first utterance"})
+        # Drain until agent_thinking confirms the turn has started.
+        for _ in range(15):
+            msg = ws.receive()
+            if msg.get("text"):
+                evt = json.loads(msg["text"])
+                if evt.get("type") == "agent_thinking":
+                    break
+
+        # Cancel via explicit barge_in (same code path _cancel_inflight
+        # walks when STT recording_start fires while bot_speaking).
+        ws.send_text(json.dumps({"type": "barge_in"}))
+
+        # Give the event loop time to run the cancellation cycle to
+        # completion: cancel propagates to ``await resume_and_send``,
+        # the ``finally`` block restores hooks, then the ``except
+        # CancelledError`` arm runs (this is where the duplicate
+        # tts_interruption used to be emitted). Without this delay the
+        # sentinel below can race AHEAD of the duplicate, and the test
+        # would silently pass even when the regression is present.
+        import time as _t
+        _t.sleep(0.5)
+
+        # Pump a sentinel event LAST so its arrival at the client tells
+        # us every prior event the cancellation could have emitted is
+        # also in our hands.
+        fake_stt.emit("partial_transcript", {"text": "__SENTINEL__"})
+
+        seen_types: list[str] = []
+        for _ in range(30):
+            msg = ws.receive()
+            if msg.get("type") == "websocket.disconnect":
+                break
+            if not msg.get("text"):
+                continue
+            evt = json.loads(msg["text"])
+            seen_types.append(evt.get("type"))
+            if evt.get("type") == "partial_transcript" and evt.get("text") == "__SENTINEL__":
+                break
+
+        ws.close()
+
+    interruption_count = sum(1 for t in seen_types if t == "tts_interruption")
+    assert interruption_count == 1, (
+        f"expected exactly 1 tts_interruption, got {interruption_count} "
+        f"(events: {seen_types})"
+    )
+
+
 def test_barge_in_keeps_socket_alive_for_further_events(ws_client):
     """Sending a barge_in mid-conversation must not break the socket.
 

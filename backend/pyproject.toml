@@ -30,6 +30,15 @@ dependencies = [
   # Real-time voice (STT + streaming TTS); engines installed via realtimetts extras
   "realtimestt>=0.3.104",
   "realtimetts[edge,system,azure,elevenlabs,openai]>=0.6.1",
+  # Optional STT backend: Gipformer-65M Vietnamese (sherpa-onnx runtime).
+  # Wheel ships prebuilt for macOS/Linux/Windows; only loaded when the
+  # user picks the gipformer_vi backend in the voice settings.
+  # Pin to 1.10.46 — last version that bundles libonnxruntime in the wheel.
+  # 1.12+ wheels drop the bundled dylib and require an external onnxruntime
+  # install whose ABI version exactly matches what sherpa-onnx was built
+  # against (currently 1.24.4), but faster-whisper transitively pulls
+  # onnxruntime>=1.25 — so on Python 3.13 the import always fails.
+  "sherpa-onnx==1.10.46",
 ]
 
 [tool.uv]

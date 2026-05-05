@@ -26,17 +26,15 @@ description: >
 
 `device_name` is optional — omit to target the first / only device.
 
-## Decision Tree
+## Decision tree
 
-```
-What does the user want?
-├── Status / "thế nào" / "ở đâu" → get_robot_status()
-├── Clean / dọn / hút bụi       → start_cleaning()
-├── Stop / dừng / tạm dừng      → stop_cleaning()
-├── Về dock / về sạc            → return_to_dock()
-├── Tìm robot / kêu             → find_robot()
-└── Theo phòng                  → get_room_mapping() → clean_specific_room(id)
-```
+User intent → tool:
+- Status / location / battery → `get_robot_status()`
+- Start cleaning / vacuum     → `start_cleaning()`
+- Stop / pause                → `stop_cleaning()`
+- Return to dock              → `return_to_dock()`
+- Locate / make a sound       → `find_robot()`
+- Clean a specific room       → `get_room_mapping()` → `clean_specific_room(id)`
 
 <prerequisite>
 For any ACTION (start/stop/return/clean_room), call `get_robot_status()` FIRST
@@ -74,7 +72,9 @@ Never ask the user for the OTP — read it from Gmail automatically.
 - Inventing tool names (e.g. `get_status`, `read_gmail`) → VIOLATION; use the exact names above
 </violation>
 
-## ✅ Correct Examples
-- User: "trạng thái robot thế nào?" → call `get_robot_status()` → reply "Robot đang sạc ở dock, pin 92%."
-- User: "hút bụi phòng khách" → `get_robot_status()` → `get_room_mapping()` → `clean_specific_room(room_id=<living-room-id>)`.
-- User: "về sạc đi" → `get_robot_status()` → if online `return_to_dock()` → "Đã cho robot về dock."
+## ✅ Correct examples
+- "What's the robot's status?" → `get_robot_status()` → "Robot is charging at the dock, battery 92%."
+- "Vacuum the living room" → `get_robot_status()` → `get_room_mapping()` → `clean_specific_room(room_id=<living-room-id>)`.
+- "Send it back to the dock" → `get_robot_status()` → if online `return_to_dock()` → "Robot is heading back to the dock."
+
+Mirror the user's language in the reply.

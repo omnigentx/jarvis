@@ -206,66 +206,33 @@ def _patch_torch_hub_trust() -> None:
     torch.hub.load = _trusted_load
 
 
-def build_stt_service(config: dict[str, Any]) -> RealtimeSTTService:
-    """Construct the STT service from a registry config dict.
+# Dispatch table: backend id (matching ``STT_BACKENDS`` keys in the
+# registry) → "module:function" string for the per-backend factory.
+# Each factory takes the config dict and returns an object that
+# duck-types ``RealtimeSTTService`` (feed_audio + set_hook +
+# start_listen_loop + shutdown + the on_* callbacks).
+#
+# Adding a new backend = add 1 entry here + 1 module under
+# services/stt_backends/. Nothing else in this file needs to change.
+_BACKEND_FACTORIES: dict[str, str] = {
+    "faster_whisper": "services.stt_backends.faster_whisper:build",
+    "gipformer_vi":   "services.stt_backends.gipformer_vi:build",
+}
 
-    Heavy imports happen here, not at module load.
+
+def build_stt_service(config: dict[str, Any]):
+    """Dispatch to the per-backend factory selected by ``config["backend"]``.
+
+    Heavy imports happen inside each backend module, not here, so loading
+    this module stays cheap for tests and non-voice routes.
     """
-    _patch_torch_hub_trust()
-    from RealtimeSTT import AudioToTextRecorder
-
-    params = dict(config.get("params") or {})
-    # Map "auto" → None so faster-whisper auto-detects language per chunk.
-    lang = params.pop("language", "auto")
-    if lang == "auto":
-        lang = None
-
-    wake = config.get("wake_word") or {}
-    wake_backend = wake.get("backend", "off")
-    wake_params = wake.get("params") or {}
-
-    kwargs: dict[str, Any] = {
-        "use_microphone": False,  # WS-fed
-        "spinner": False,
-        "language": lang,
-        **{k: v for k, v in params.items() if v not in (None, "")},
-    }
-
-    if wake_backend != "off":
-        kwargs.update({
-            "wakeword_backend": "pvporcupine" if wake_backend == "porcupine" else "oww",
-            **{k: v for k, v in wake_params.items() if v not in (None, "")},
-        })
-
-    # Service is built first so callback closures can reference it before
-    # the recorder construction (which may lazy-load models).
-    holder: dict[str, RealtimeSTTService] = {}
-
-    def _wrap(meth_name: str):
-        def fn(*args, **kwargs):
-            svc = holder.get("svc")
-            if svc is None:
-                return
-            getattr(svc, meth_name)(*args, **kwargs)
-        return fn
-
-    kwargs.setdefault("on_realtime_transcription_update", _wrap("on_partial"))
-    kwargs.setdefault("on_realtime_transcription_stabilized", _wrap("on_stable"))
-    kwargs.setdefault("on_vad_detect_start", _wrap("on_vad_start"))
-    kwargs.setdefault("on_vad_detect_stop", _wrap("on_vad_stop"))
-    # on_recording_start/stop are RealtimeSTT's "VAD locked-on" signals —
-    # we use recording_start as the canonical barge-in trigger (matches
-    # RealtimeVoiceChat's design).
-    kwargs.setdefault("on_recording_start", _wrap("on_recording_start"))
-    kwargs.setdefault("on_recording_stop", _wrap("on_recording_stop"))
-    if wake_backend != "off":
-        kwargs.setdefault("on_wakeword_detected", _wrap("on_wake_word"))
-
-    recorder = AudioToTextRecorder(**kwargs)
-    svc = RealtimeSTTService(recorder, language=lang or "auto")
-    holder["svc"] = svc
-    # Activate the VAD-driven recording cycle. Without this loop the
-    # recorder is in a passive state — audio fed via feed_audio fills the
-    # buffer but nothing ever transcribes (no callbacks fire).
-    svc.start_listen_loop()
-    return svc
+    backend = config.get("backend", "faster_whisper")
+    spec = _BACKEND_FACTORIES.get(backend)
+    if spec is None:
+        raise ValueError(
+            f"Unknown STT backend: {backend!r}. "
+            f"Known backends: {sorted(_BACKEND_FACTORIES)}"
+        )
+    mod_path, fn_name = spec.split(":")
+    module = __import__(mod_path, fromlist=[fn_name])
+    return getattr(module, fn_name)(config)

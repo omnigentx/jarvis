@@ -65,6 +65,17 @@ def _bootstrap_env_from_db() -> None:
 
 _bootstrap_env_from_db()
 
+# Pre-seed the Runtime RPC socket path BEFORE importing agent.py — fast-agent
+# resolves ``${VAR}`` placeholders in fastagent.config.yaml at module load,
+# so the env var must be set already or every spawned MCP subprocess will
+# inherit the literal string and fail to connect. The actual server starts
+# later in the lifespan; the path itself is deterministic so the early seed
+# matches what the lifespan will create.
+os.environ.setdefault(
+    "JARVIS_RUNTIME_RPC_SOCKET",
+    str(Path(".runtime/state/runtime_rpc.sock").resolve()),
+)
+
 from helpers.audio_cache import clean_audio_cache, cleanup_stale_generating
 from agent import fast
 
@@ -107,6 +118,30 @@ async def lifespan(app: FastAPI):
         logger.info("Spawn event socket ready: %s", socket_path)
     except Exception as e:
         logger.warning("Failed to start spawn event socket: %s", e)
+
+    # Start the RuntimeRpcServer — request/response RPC for MCP subprocesses
+    # that need to mutate live backend state (e.g. skill_server delegating to
+    # skill_service so rebuild_agent_instruction runs in this process). Generic
+    # framework: future tools register their own handlers here too.
+    # The socket path was pre-seeded into os.environ before agent.py was
+    # imported (so ${JARVIS_RUNTIME_RPC_SOCKET} placeholders in
+    # fastagent.config.yaml resolve correctly); we reuse the same value here.
+    runtime_rpc_server = None
+    try:
+        from services.runtime_rpc import RuntimeRpcServer
+        from services import skill_rpc_handlers
+
+        rpc_socket_path = os.environ["JARVIS_RUNTIME_RPC_SOCKET"]
+        runtime_rpc_server = RuntimeRpcServer(rpc_socket_path)
+        skill_rpc_handlers.register(runtime_rpc_server)
+        await runtime_rpc_server.start()
+        state.runtime_rpc_server = runtime_rpc_server
+        logger.info(
+            "Runtime RPC bridge ready: %s (methods=%d)",
+            rpc_socket_path, len(runtime_rpc_server.methods()),
+        )
+    except Exception as e:
+        logger.warning("Failed to start Runtime RPC bridge: %s", e)
     
     # Wire meeting events → SSE stream (cross-process via SQLite)
     meeting_watcher_task = None
@@ -508,6 +543,13 @@ async def lifespan(app: FastAPI):
     # Shutdown spawn event socket server
     if event_socket_server:
         await event_socket_server.stop()
+
+    # Shutdown runtime RPC bridge
+    if runtime_rpc_server:
+        try:
+            await runtime_rpc_server.stop()
+        except Exception:
+            logger.exception("Failed to stop runtime RPC server")
     
     # Shutdown meeting event watcher
     if meeting_watcher_task:

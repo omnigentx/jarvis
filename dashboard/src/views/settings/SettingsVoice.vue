@@ -37,8 +37,21 @@ const chatEngineSpec = computed(() => {
   return id ? engines.value.tts?.[id] : null
 })
 const storiesEngineSpec = computed(() => engines.value.tts?.edge || null)
-const sttSpec = computed(() => engines.value.stt?.faster_whisper || null)
+const sttBackendId = computed(() => active.value.stt?.backend || 'faster_whisper')
+const sttSpec = computed(() => engines.value.stt?.[sttBackendId.value] || null)
 const wakeBackends = computed(() => sttSpec.value?.wake_word_backends || {})
+
+function changeSttBackend(id) {
+  const spec = engines.value.stt?.[id]
+  if (!spec) return
+  const defaults = {}
+  for (const p of spec.params || []) if (p.default !== undefined) defaults[p.key] = p.default
+  active.value.stt = {
+    backend: id,
+    params: defaults,
+    wake_word: { backend: 'off', params: {} },
+  }
+}
 const activeWakeBackend = computed({
   get: () => active.value.stt?.wake_word?.backend || 'off',
   set: (v) => {
@@ -391,15 +404,36 @@ function badgesFor(spec) {
           <div>
             <h2>Speech recognition</h2>
             <p>
-              Local <code>faster-whisper</code> for transcription. <code>language: auto</code> handles
-              vi+en code-switching; pin to a specific language only if you hit detection mistakes
-              in noisy rooms.
+              Pick a backend below. <strong>faster-whisper</strong> is multilingual (vi+en
+              code-switching). <strong>Gipformer</strong> is Vietnamese-only but gives better
+              accents on Vietnamese audio.
             </p>
           </div>
         </header>
 
+        <div class="provider-grid">
+          <button
+            v-for="(spec, id) in engines.stt"
+            :key="id"
+            type="button"
+            class="provider-card"
+            :class="{ selected: sttBackendId === id }"
+            @click="changeSttBackend(id)"
+          >
+            <span class="provider-title">{{ spec.label }}</span>
+            <span class="provider-sub">{{ (spec.badges || []).join(' · ') || spec.description }}</span>
+          </button>
+        </div>
+
+        <div v-if="sttSpec" class="provider-hint">
+          <strong>{{ sttSpec.label }}</strong> — {{ sttSpec.description }}
+          <span v-if="sttSpec.language_locked" class="key-status stored">
+            language locked: {{ sttSpec.language_locked }}
+          </span>
+        </div>
+
         <template v-if="sttSpec && active.stt">
-          <div v-for="p in sttSpec.params" :key="p.key" class="field">
+          <div v-for="p in (sttSpec.params || [])" :key="p.key" class="field">
             <label :for="`stt-${p.key}`">
               {{ p.label }}
               <span v-if="p.type === 'slider' || p.type === 'number'" class="range-value">{{ paramValue(active.stt, p.key, p.default) }}</span>
@@ -578,8 +612,23 @@ select.text-input {
   font-family: inherit; font-size: 14px;
 }
 .pwd-input { padding-right: 40px; }
+/* Native <select> chevron sits flush against the right edge across browsers
+   (Chrome/Safari render their own arrow inside the padding box). Strip the
+   native arrow and draw our own SVG so spacing is consistent. */
+select.text-input {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  padding-right: 36px;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b8fa3' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 12px 12px;
+}
+select.text-input:hover { border-color: var(--border-input-hover, #2a3556); }
 .text-input:focus,
-.pwd-input:focus {
+.pwd-input:focus,
+select.text-input:focus {
   outline: none;
   border-color: var(--accent-blue, #3b82f6);
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);

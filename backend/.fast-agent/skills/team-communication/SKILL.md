@@ -1,54 +1,55 @@
 ---
 name: team-communication
 description: >
-  Quy tắc giao tiếp trong team (email, meeting). Dùng khi agent cần gửi email,
-  tham gia meeting, hoặc báo cáo kết quả. Tools: send_email, create_meeting.
+  Communication rules within a team (email, meetings). Use when the agent
+  needs to send an email, join a meeting, or report a result. Tools:
+  send_email, create_meeting.
 ---
 
 # Team Communication Skill
 
 <violation>
-- KHÔNG được đọc file, browse code, hay chạy lệnh terminal để tìm hiểu communication system.
-- KHÔNG dùng read_text_file, execute, grep hay bất kỳ tool nào ngoài communication tools.
-- CHỈ gọi TRỰC TIẾP: `send_email`, `create_meeting`.
-- Nếu vi phạm → request sẽ chậm và tốn token vô ích.
+- DO NOT read files, browse code, or run shell commands to "learn" the communication system.
+- DO NOT use read_text_file, execute, grep, or any tool other than the communication tools.
+- ONLY call directly: `send_email`, `create_meeting`.
+- Violating this wastes tokens and slows the request.
 </violation>
 
-## ⚡ Auto Status Notifications
+## ⚡ Auto status notifications
 
-Kết quả của team members được **auto-delivered** vào inbox khi TẤT CẢ members hoàn thành:
-- Một consolidated report dạng bảng: tên, trạng thái, tóm tắt kết quả
-- **KHÔNG polling.** Tập trung vào task chính, report tự đến khi mọi người xong việc.
-- Nếu bạn cần kết quả chi tiết hơn, dùng `send_email` hoặc `create_meeting` để trao đổi với member cụ thể.
+Team-mate results are **auto-delivered** to your inbox once ALL members finish:
+- A consolidated report (table) with name, status, summary.
+- **Do NOT poll.** Stay focused on your own task; the report arrives when everyone is done.
+- If you need richer detail, use `send_email` or `create_meeting` to engage a specific member.
 
-## 📧 Email — Async, Fire-and-Forget
+## 📧 Email — async, fire-and-forget
 
-- `send_email(to="Name", body="...", subject="...")` — gửi cho người cụ thể
-- `send_email(to="all", body="...")` — broadcast toàn team
-- Emails từ teammates được **auto-delivered** vào context — không cần poll
+- `send_email(to="Name", body="...", subject="...")` — send to a specific person
+- `send_email(to="all", body="...")` — broadcast to the whole team
+- Emails from team-mates are **auto-delivered** into your context — no polling required
 
-## Waiting for Dependencies
+## Waiting for dependencies
 
-Nếu cần output từ teammate:
-1. Gửi request: `send_email(to="Agent Name", body="Please send me [deliverable] when ready", subject="[WAITING] ...")`
-2. Tiếp tục làm việc khác hoặc kết thúc task hiện tại
-3. Khi teammate gửi email, bạn sẽ được auto-wake và nhận nội dung
-4. Nếu cần kết quả từ nhiều members, dùng `create_meeting` để họp nhanh
+If you need a team-mate's output:
+1. Send the request: `send_email(to="Agent Name", body="Please send me <deliverable> when ready", subject="[WAITING] ...")`
+2. Move on to other work or finish your current task.
+3. When the team-mate replies, you are auto-woken with the content.
+4. If you need outputs from several members, call `create_meeting` for a quick sync instead.
 
-## 🎙️ Meeting — Real-time Decisions
+## 🎙️ Meeting — real-time decisions
 
-Khi nhận 🔔 MEETING INVITE → follow skill `meeting-participant` để join và phát biểu.
+When you receive 🔔 MEETING INVITE → follow the `meeting-participant` skill to join and speak.
 
-## Email Discipline
+## Email discipline
 
-- **Tập trung task trước.** Chỉ email khi có deliverable, bị blocked, hoặc phát hiện critical issue. KHÔNG email chỉ để update status hay acknowledge.
-- **Ngắn gọn nhưng đầy đủ.** Include đủ context. Dùng subject prefix: `[DONE]`, `[BLOCKED]`, `[BUG]`, `[REVIEW]`, `[DELIVERABLE]`, `[WAITING]`.
-- **Dùng CC hạn chế.** Chỉ CC người thực sự cần biết.
-- **KHÔNG reply chỉ để acknowledge.** Dùng `no_reply=True` cho FYI messages.
-- **Tránh email ping-pong.** Nếu cần trao đổi qua lại, tạo meeting thay vì email.
+- **Focus on the task first.** Only email when you have a deliverable, are blocked, or spot a critical issue. Do NOT email merely to update status or acknowledge.
+- **Concise but complete.** Include enough context. Use subject prefixes: `[DONE]`, `[BLOCKED]`, `[BUG]`, `[REVIEW]`, `[DELIVERABLE]`, `[WAITING]`.
+- **Use CC sparingly.** Only CC people who genuinely need to know.
+- **Do NOT reply just to acknowledge.** Use `no_reply=True` for FYI messages.
+- **Avoid email ping-pong.** If you need back-and-forth, schedule a meeting instead of emailing.
 
-## Completion Rules (BẮT BUỘC)
+## Completion rules (REQUIRED)
 
-TRƯỚC KHI idle hoặc hoàn thành công việc, BẮT BUỘC phải:
-1. Gửi báo cáo `[DONE]` cho PM: `send_email(to="Linh - PM", subject="[DONE] <tóm tắt deliverables>", body="<danh sách deliverables, files, outcomes, open items>")`
-2. KHÔNG BAO GIỜ idle mà không gửi báo cáo — đây là **BẮT BUỘC**
+BEFORE going idle or completing work, you MUST:
+1. Send a `[DONE]` report to the PM: `send_email(to="Linh - PM", subject="[DONE] <deliverable summary>", body="<list of deliverables, files, outcomes, open items>")`
+2. NEVER go idle without sending the report — this is **required**.

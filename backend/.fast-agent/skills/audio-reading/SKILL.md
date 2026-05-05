@@ -1,41 +1,36 @@
 ---
 name: audio-reading
 description: >
-  Tìm và phát truyện/sách nói từ thư viện local. Dùng khi user yêu cầu: đọc truyện, phát audio truyện,
-  nghe tiếp chương. Bắt buộc list truyện trước để match tên chính xác.
-  Output chứa tag [[[READ_LOCAL]]] hoặc [[[READ_STORY]]].
+  Find and play audiobooks / stories from the local library. Use when
+  the user asks to read a story, play an audiobook, or continue from a
+  specific chapter. List available titles first so you can match the
+  user's request to a real entry.
+  Output must contain a [[[READ_LOCAL]]] or [[[READ_STORY]]] tag.
 ---
 
 <critical_rules>
-<rule>KHÔNG BAO GIỜ đọc hoặc tóm tắt nội dung truyện. Hệ thống sẽ tự đọc và phát audio.</rule>
-<rule>Luôn gọi local_list_stories() TRƯỚC để lấy danh sách truyện có trong thư viện.</rule>
-<rule>So sánh tên user yêu cầu với danh sách, chọn tên truyện CHÍNH XÁC nhất (user có thể đọc sai/ASR nhầm).</rule>
-<rule>CHỈ trả 1 câu ngắn + tag từ kết quả tool. Không giải thích thêm.</rule>
+<rule>NEVER read or summarise the story content yourself. The system will play it as audio.</rule>
+<rule>Call local_list_stories() FIRST so you know what is in the catalogue.</rule>
+<rule>Pick the closest catalogue entry to the user's request (typos, ASR errors, and missing diacritics are normal).</rule>
+<rule>Reply with ONE short sentence plus the tag from the tool result. No extra explanation.</rule>
 </critical_rules>
 
 <workflow>
-## Bước 1: Xác định truyện
-1. Gọi `local_list_stories()` → nhận danh sách tên truyện trong thư viện
-2. So sánh tên user yêu cầu với danh sách (không cần khớp hoàn toàn, chọn gần nhất)
-3. Nếu không chắc → hỏi user xác nhận
+## Step 1: Identify the story
+1. Call `local_list_stories()` → returns the catalogue.
+2. Match the user's request to the closest entry. Ask for confirmation only if it is genuinely ambiguous.
 
-## Bước 2: Lấy chương
-1. Gọi `local_list_chapters(tên_truyện_chính_xác)` → danh sách chương
-2. Tìm chương user yêu cầu hoặc chương tiếp theo
+## Step 2: Pick the chapter
+1. Call `local_list_chapters(<title>)` → returns the chapter list.
+2. Resolve to the chapter the user asked for, or the next one in sequence.
 
-## Bước 3: Phát
-1. Gọi `find_story_chapter(tên_truyện, số_chương)` → nhận tag
-2. Response format: "Đang phát [tên] chương [X]. [[[TAG]]]"
+## Step 3: Play
+1. Call `find_story_chapter(<title>, <chapter_number>)` → returns the tag.
+2. Reply with one sentence plus the tag, e.g. `"Now playing <title> chapter <X>. [[[TAG]]]"`.
+3. Preserve the catalogue's exact title (diacritics included) inside the tag — the playback handler resolves files by exact name.
 </workflow>
 
 <output_format>
-<example>Đang phát Tiên Nghịch chương 5. [[[READ_LOCAL: Tiên Nghịch|005_Tiên Nghịch.txt]]]</example>
-<example>Đang phát Tru Tiên chương 10. [[[READ_STORY: https://truyenfull.vision/tru-tien/chuong-10/]]]</example>
+<example>Now playing &lt;title&gt; chapter 5. [[[READ_LOCAL: &lt;title&gt;|005_&lt;title&gt;.txt]]]</example>
+<example>Now playing &lt;title&gt; chapter 10. [[[READ_STORY: &lt;url&gt;]]]</example>
 </output_format>
-
-<matching_tips>
-- User nói "tiên nghịch" → match "Tiên Nghịch" 
-- User nói "tru tiên 2" → match "Tru Tiên II"
-- User nói "vũ động" → match "Vũ Động Càn Khôn"
-- Không khớp hoàn toàn cũng được, chọn story gần nhất trong danh sách
-</matching_tips>

@@ -55,3 +55,30 @@ class TestRealtimeTTSImport:
     def test_text_to_audio_stream_and_engines_are_importable(self):
         from RealtimeTTS import TextToAudioStream  # noqa: F401
         from RealtimeTTS import EdgeEngine, SystemEngine  # noqa: F401
+
+
+class TestSherpaOnnxImport:
+    """Sherpa-onnx is the runtime for the Gipformer Vietnamese backend.
+
+    Pinned to 1.10.x because 1.12+ wheels stopped bundling
+    ``libonnxruntime`` and require an exact onnxruntime ABI version
+    that conflicts with what faster-whisper transitively pulls in.
+    """
+
+    def test_offline_recognizer_is_importable(self):
+        import sherpa_onnx
+        # Methods the Gipformer backend calls.
+        assert hasattr(sherpa_onnx, "OfflineRecognizer")
+        assert hasattr(sherpa_onnx.OfflineRecognizer, "from_transducer")
+        assert hasattr(sherpa_onnx, "VoiceActivityDetector")
+        assert hasattr(sherpa_onnx, "VadModelConfig")
+        assert hasattr(sherpa_onnx, "SileroVadModelConfig")
+
+    def test_gipformer_backend_module_imports(self):
+        # Loading the backend module must not perform any network IO —
+        # downloads happen lazily inside ``build()``. If module import
+        # ever pulls weights, every unit test session would block on
+        # slow HF downloads.
+        from services.stt_backends import gipformer_vi
+        assert callable(gipformer_vi.build)
+        assert hasattr(gipformer_vi, "GipformerSTTService")

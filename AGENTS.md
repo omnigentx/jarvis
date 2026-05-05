@@ -40,7 +40,7 @@ jarvis_v3/
 │   ├── agent.py                # fast-agent agent definitions (@fast.agent decorators)
 │   ├── routes/                 # API endpoints
 │   │   ├── agents.py           # /api/agents — list, detail, pause/resume, team, skills, context
-│   │   ├── chat.py             # /api/chat, /api/chat-stream (SSE), /api/chat-audio
+│   │   ├── chat.py             # /api/chat (legacy single-shot, used by Xiaozhi), /api/chat-stream (SSE)
 │   │   ├── inject.py           # /api/agents/{name}/inject — prompt injection (MessageBus + resume)
 │   │   ├── agent_timeline.py   # /api/agents/{name}/timeline (SSE)
 │   │   ├── approvals.py        # /api/approvals — human-in-the-loop approval system
@@ -263,7 +263,7 @@ MCP Subprocess (agent)
 ### Provider split (single-source-of-truth invariant)
 | Provider | Where it's used | Engine |
 |----------|-----------------|--------|
-| `tts_chat_provider` (registry-driven) | `/chat`, `/chat-stream`, `/chat-audio`, cron notifications | Edge default; ElevenLabs / OpenAI / Azure / System opt-in via Settings → Voice |
+| `tts_chat_provider` (registry-driven) | `/chat`, `/chat-stream`, `/ws/voice`, cron notifications | Edge default; ElevenLabs / OpenAI / Azure / System opt-in via Settings → Voice |
 | `tts_stories_provider` (locked Edge) | Story chapters, library books, `tts_pregen_job` | Always Edge — protects long-form quota at code level |
 
 Dispatch lives in `routes/tts.py`: `_state.tts_chat_provider if is_notification else _state.tts_stories_provider`. The legacy `tts_provider` attribute aliases the chat provider for back-compat callers; never alias to stories.
@@ -389,7 +389,7 @@ Reference: [fast-agent Tool Runner docs](https://fast-agent.ai/agents/tool_runne
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **jarvis** (28386 symbols, 80863 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **jarvis** (32076 symbols, 89859 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

@@ -12,6 +12,7 @@ import SettingsYaml from './settings/SettingsYaml.vue'
 import SettingsServices from './settings/SettingsServices.vue'
 import SettingsLLM from './settings/SettingsLLM.vue'
 import SettingsVoice from './settings/SettingsVoice.vue'
+import SettingsExperimental from './settings/SettingsExperimental.vue'
 
 const TABS = [
   { id: 'general', label: 'General' },
@@ -19,6 +20,7 @@ const TABS = [
   { id: 'voice', label: 'Voice' },
   { id: 'services', label: 'Services' },
   { id: 'yaml', label: 'YAML Config' },
+  { id: 'experimental', label: 'Experimental' },
 ]
 const active = ref('general')
 </script>
@@ -49,6 +51,7 @@ const active = ref('general')
       <SettingsVoice v-else-if="active === 'voice'" />
       <SettingsYaml v-else-if="active === 'yaml'" />
       <SettingsServices v-else-if="active === 'services'" />
+      <SettingsExperimental v-else-if="active === 'experimental'" />
       <div v-else class="placeholder">
         <p>
           <strong>{{ TABS.find((t) => t.id === active).label }}</strong> —
