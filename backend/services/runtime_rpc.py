@@ -37,6 +37,14 @@ ParseError = -32700
 MethodNotFound = -32601
 InvalidParams = -32602
 InternalError = -32603
+RequestTimeout = -32001  # custom — JSON-RPC reserves -32000..-32099 for server errors
+
+# Soft deadline per dispatch. Defense in depth: a sync handler that hangs
+# (filesystem stuck, infinite loop) would otherwise occupy an executor slot
+# forever and tie up the loop's default thread pool. The default client
+# timeout matches at 30 s so the server errors first with a clean envelope
+# instead of letting the client time out on its own.
+DEFAULT_HANDLER_TIMEOUT = 30.0
 
 
 class RuntimeRpcServer:
@@ -147,12 +155,19 @@ class RuntimeRpcServer:
 
         try:
             if asyncio.iscoroutinefunction(handler):
-                result = await handler(**params)
+                coro = handler(**params)
             else:
                 # Run sync handlers in default executor to avoid blocking the
                 # loop when they do filesystem I/O.
                 loop = asyncio.get_running_loop()
-                result = await loop.run_in_executor(None, lambda: handler(**params))
+                coro = loop.run_in_executor(None, lambda: handler(**params))
+            result = await asyncio.wait_for(coro, timeout=DEFAULT_HANDLER_TIMEOUT)
+        except asyncio.TimeoutError:
+            logger.warning("[RPC] Handler %r exceeded %ss deadline", method, DEFAULT_HANDLER_TIMEOUT)
+            return _err_response(
+                req_id, RequestTimeout,
+                f"Handler exceeded {DEFAULT_HANDLER_TIMEOUT}s deadline",
+            )
         except TypeError as exc:
             return _err_response(req_id, InvalidParams, f"Bad arguments: {exc}")
         except Exception as exc:  # noqa: BLE001

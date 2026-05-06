@@ -56,6 +56,22 @@ def get_stt_config(config_service) -> dict[str, Any]:
     return _load_json(config_service, *VOICE_STT_KEY) or registry.default_stt_config()
 
 
+def validate_chat_config(config: dict[str, Any]) -> None:
+    """Public dry-run validator — same rules as ``set_chat_config`` but
+    without committing to the DB. Lets routes prove every sub-config is
+    valid before mutating any of them (atomic-ish multi-set semantics).
+    """
+    _validate_chat_config(config)
+
+
+def validate_stories_config(config: dict[str, Any]) -> None:
+    _validate_stories_config(config)
+
+
+def validate_stt_config(config: dict[str, Any]) -> None:
+    _validate_stt_config(config)
+
+
 def set_chat_config(config_service, config: dict[str, Any], updated_by: str = "voice_api") -> None:
     _validate_chat_config(config)
     config_service.set("voice", "tts.chat", json.dumps(config), source=updated_by)

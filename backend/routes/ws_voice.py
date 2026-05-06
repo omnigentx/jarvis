@@ -170,8 +170,15 @@ async def voice_ws(ws: WebSocket) -> None:
     # AEC diagnostic — when bot is speaking, we copy incoming mic PCM into
     # this buffer + track RMS so we can prove whether echoCancellation is
     # actually scrubbing the loudspeaker bleed. Dumped to a WAV at tts_end.
+    # Off by default; set JARVIS_VOICE_DIAG=1 to enable. Without the gate,
+    # heavy voice usage piles up unbounded WAV files in data/voice_diag/.
+    diag_enabled = os.environ.get("JARVIS_VOICE_DIAG", "").strip().lower() in ("1", "true", "yes")
     diag_dir = os.path.join("data", "voice_diag")
-    os.makedirs(diag_dir, exist_ok=True)
+    if diag_enabled:
+        os.makedirs(diag_dir, exist_ok=True)
+    # Soft cap on the in-memory buffer so a hung TTS provider can't grow it
+    # forever (16 kHz mono int16 → ~32 KB/s; 60 s cap ≈ 1.9 MB).
+    _DIAG_BUFFER_MAX_BYTES = 60 * 16000 * 2
     diag_during_bot: bytearray = bytearray()
     diag_silent_baseline_rms: list[int] = []  # RMS while bot off + user silent
     diag_during_bot_rms: list[int] = []        # RMS while bot speaking
@@ -334,7 +341,7 @@ async def voice_ws(ws: WebSocket) -> None:
             # so we can listen to what the server saw + compare RMS vs the
             # silent baseline. This is the ground truth for "is AEC working".
             try:
-                if diag_during_bot:
+                if diag_enabled and diag_during_bot:
                     fname = f"during_bot_{int(time.time())}.wav"
                     path = os.path.join(diag_dir, fname)
                     with wave.open(path, "wb") as w:
@@ -585,7 +592,8 @@ async def voice_ws(ws: WebSocket) -> None:
                 # WAV dump at tts_end is the conclusive evidence.
                 rms, peak = _chunk_rms_peak(msg["bytes"])
                 if bot_speaking:
-                    diag_during_bot.extend(msg["bytes"])
+                    if diag_enabled and len(diag_during_bot) < _DIAG_BUFFER_MAX_BYTES:
+                        diag_during_bot.extend(msg["bytes"])
                     diag_during_bot_rms.append(rms)
                 else:
                     if rms < 200:  # only collect "user not talking" frames

@@ -132,19 +132,38 @@ async def get_active_config(_=Depends(verify_api_key)):
 async def set_active_config(payload: ActiveConfigPayload, _=Depends(verify_api_key)):
     """Persist any subset of the active voice config. Hot-reload happens via
     the ConfigService change listener — no manual provider rebuild here.
+
+    Atomic-ish: we validate every sub-config FIRST, then write. The earlier
+    validate-and-write-per-section path could leave the system in a split
+    state if (say) ``tts_chat`` saved but ``tts_stories`` failed validation
+    afterwards. Validation is pure, so the dry-run pass is cheap and the
+    happy path still does each ``set`` exactly once.
     """
     cs = _config_service()
+
+    chat_cfg = payload.tts_chat.model_dump() if payload.tts_chat is not None else None
+    stories_cfg = (
+        {k: v for k, v in payload.tts_stories.model_dump().items() if v is not None}
+        if payload.tts_stories is not None else None
+    )
+    stt_cfg = payload.stt.model_dump() if payload.stt is not None else None
+
     try:
-        if payload.tts_chat is not None:
-            vc.set_chat_config(cs, payload.tts_chat.model_dump())
-        if payload.tts_stories is not None:
-            # Drop None fields so the locked schema stays clean.
-            stories = {k: v for k, v in payload.tts_stories.model_dump().items() if v is not None}
-            vc.set_stories_config(cs, stories)
-        if payload.stt is not None:
-            vc.set_stt_config(cs, payload.stt.model_dump())
+        if chat_cfg is not None:
+            vc.validate_chat_config(chat_cfg)
+        if stories_cfg is not None:
+            vc.validate_stories_config(stories_cfg)
+        if stt_cfg is not None:
+            vc.validate_stt_config(stt_cfg)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
+
+    if chat_cfg is not None:
+        vc.set_chat_config(cs, chat_cfg)
+    if stories_cfg is not None:
+        vc.set_stories_config(cs, stories_cfg)
+    if stt_cfg is not None:
+        vc.set_stt_config(cs, stt_cfg)
     return {"status": "ok"}
 
 
@@ -256,7 +275,20 @@ async def test_stt(_=Depends(verify_api_key)):
             segments, _info = model.transcribe(str(warmup), language=language)
             return "".join(s.text for s in segments).strip()
 
-        text = await asyncio.to_thread(_transcribe)
+        # Cold-load downloads the Whisper model (~75 MB for tiny) on first
+        # call — slow networks would otherwise hang the request until the
+        # uvicorn timeout. 90 s is generous enough for a fresh download on
+        # a moderate connection while still surfacing a clear error if the
+        # network is offline.
+        try:
+            text = await asyncio.wait_for(asyncio.to_thread(_transcribe), timeout=90.0)
+        except asyncio.TimeoutError:
+            raise HTTPException(
+                504,
+                "STT test timed out (90 s) — likely the Whisper model "
+                "is downloading and the network is slow or offline. Retry "
+                "after the model lands in the cache, or check connectivity.",
+            )
         return {"transcript": text or ""}
     except HTTPException:
         raise
