@@ -375,11 +375,14 @@ function isDeletableAgent(agent) {
   return agent.type !== 'builtin'
 }
 
-// Ensure agents are loaded
+// Ensure the full roster is loaded. We can't gate on agentsList.length —
+// SSE events may have already added a partial set of agents to the store
+// (the activity-stream subscription opens at app boot, before this
+// component mounts), and that would mask the need for the REST roster
+// fetch and leave the page showing only the SSE-known subset. Calling
+// fetchAgents() unconditionally is idempotent and a single GET.
 onMounted(() => {
-  if (!store.agentsList.length) {
-    store.fetchAgents()
-  }
+  store.fetchAgents()
 })
 </script>
 
