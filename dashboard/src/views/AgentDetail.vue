@@ -3,8 +3,13 @@ import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAgentsStore } from '../stores/agents'
 import { apiFetch } from '../api'
+import { useConfirm } from '../composables/useConfirm'
 import StatusBadge from '../components/StatusBadge.vue'
 import MarkdownRenderer from '../components/MarkdownRenderer.vue'
+import SkillEditorModal from '../components/agent/SkillEditorModal.vue'
+import SkillDeleteModal from '../components/agent/SkillDeleteModal.vue'
+
+const { confirm } = useConfirm()
 
 const route = useRoute()
 const router = useRouter()
@@ -210,6 +215,177 @@ function toggleMessage(idx) {
     expandedMessages.value.add(idx)
   }
 }
+
+// ----- Skill management (CRUD via /api/skills) ---------------------------
+
+const skillMeta = ref(new Map()) // name -> { is_builtin, used_by[] }
+const skillsMetaFetched = ref(false)
+
+const editorVisible = ref(false)
+const editorMode = ref('edit') // 'edit' | 'create'
+const editorTarget = ref('')
+
+const deleteModalVisible = ref(false)
+const deleteTarget = ref({ name: '', usedBy: [] })
+
+async function fetchSkillsMeta() {
+  try {
+    const data = await apiFetch('/api/skills')
+    const m = new Map()
+    for (const s of data.skills || []) {
+      m.set(s.name, { is_builtin: !!s.is_builtin, used_by: s.used_by || [] })
+    }
+    skillMeta.value = m
+    skillsMetaFetched.value = true
+  } catch (e) {
+    console.error('Failed to load skill metadata:', e)
+  }
+}
+
+// Tri-state guard: until /api/skills has confirmed `is_builtin: false` for a
+// given skill, treat it as builtin. Otherwise the Delete button briefly
+// enables for built-in skills during the initial metadata fetch (small race,
+// but the user IS faster than a network round-trip on a warm connection).
+// This also handles the case where /api/skills failed: deletion stays
+// blocked client-side and the server still returns 403 as defence in depth.
+function isSkillBuiltin(name) {
+  const meta = skillMeta.value.get(name)
+  if (!meta) return true
+  return meta.is_builtin === true
+}
+// Whether we have authoritative metadata for this skill yet — drives a
+// "loading" tooltip on the delete button before the first fetch completes.
+function hasSkillMeta(name) {
+  return skillMeta.value.has(name)
+}
+function skillUsedBy(name) {
+  return skillMeta.value.get(name)?.used_by || []
+}
+
+function openEditSkill(name) {
+  editorMode.value = 'edit'
+  editorTarget.value = name
+  editorVisible.value = true
+}
+function openCreateSkill() {
+  editorMode.value = 'create'
+  editorTarget.value = ''
+  editorVisible.value = true
+}
+function openDeleteSkill(name) {
+  deleteTarget.value = { name, usedBy: skillUsedBy(name) }
+  deleteModalVisible.value = true
+}
+
+async function reloadAgentDetail() {
+  // After CRUD, the agent's resolved skills may have changed (content edits;
+  // create/delete only matter if user manually wired them into agent cards).
+  // Either way, refetch is cheap and keeps the panel honest.
+  try {
+    agentDetail.value = await apiFetch(`/api/agents/${agentName.value}`)
+  } catch (e) {
+    console.error('Failed to refresh agent detail:', e)
+  }
+}
+
+async function onSkillSaved() {
+  await Promise.all([fetchSkillsMeta(), reloadAgentDetail()])
+  // Modal stays open so the user can see the saved state and keep editing.
+}
+async function onSkillDeleted() {
+  deleteModalVisible.value = false
+  // If we were editing the deleted skill, close the editor too.
+  if (editorVisible.value && editorTarget.value === deleteTarget.value.name) {
+    editorVisible.value = false
+  }
+  await Promise.all([fetchSkillsMeta(), reloadAgentDetail()])
+}
+
+// ----- Attach/detach skills to this agent -------------------------------
+
+const attachPickerOpen = ref(false)
+const attachBusy = ref(false)
+const attachToast = ref('')
+
+const isAgentCardBased = computed(() => agent.value?.type === 'card')
+
+const attachableSkills = computed(() => {
+  // Skills in the global library that aren't already attached to this agent.
+  const attached = new Set((agent.value?.skills || []).map((s) => s.name))
+  return [...skillMeta.value.entries()]
+    .filter(([name]) => !attached.has(name))
+    .map(([name, meta]) => ({ name, ...meta }))
+})
+
+async function attachSkill(skillName) {
+  if (attachBusy.value) return
+  if (!isAgentCardBased.value) {
+    const proceed = await confirm({
+      title: `Attach to ${agentName.value}?`,
+      message:
+        `${agentName.value} is defined in code (agent.py). Attaching ` +
+        `'${skillName}' will only apply at runtime and revert when the ` +
+        `backend restarts unless you also add it to ${agentName.value}'s ` +
+        `get_skills(...) call.`,
+      confirmText: 'Attach (runtime only)',
+      variant: 'warning',
+    })
+    if (!proceed) return
+  }
+  attachBusy.value = true
+  attachToast.value = ''
+  try {
+    const res = await apiFetch(
+      `/api/skills/${encodeURIComponent(skillName)}/agents/${encodeURIComponent(agentName.value)}`,
+      { method: 'PUT' },
+    )
+    attachToast.value = res.persisted
+      ? `Attached '${skillName}'.`
+      : `Attached '${skillName}' — runtime only, reverts on restart.`
+    attachPickerOpen.value = false
+    await Promise.all([fetchSkillsMeta(), reloadAgentDetail()])
+    setTimeout(() => (attachToast.value = ''), 4000)
+  } catch (err) {
+    attachToast.value = `Attach failed: ${err?.body?.detail?.message || err?.message || String(err)}`
+  } finally {
+    attachBusy.value = false
+  }
+}
+
+async function detachSkill(skillName) {
+  const message = isAgentCardBased.value
+    ? `'${skillName}' will be removed from ${agentName.value}. The skill itself stays in the library.`
+    : `${agentName.value} is code-based. Detaching only applies at runtime; the skill will reattach on next backend restart unless you remove it from agent.py.`
+  const proceed = await confirm({
+    title: `Detach from ${agentName.value}?`,
+    message,
+    confirmText: 'Detach',
+    variant: 'warning',
+  })
+  if (!proceed) return
+  try {
+    await apiFetch(
+      `/api/skills/${encodeURIComponent(skillName)}/agents/${encodeURIComponent(agentName.value)}`,
+      { method: 'DELETE' },
+    )
+    await Promise.all([fetchSkillsMeta(), reloadAgentDetail()])
+  } catch (err) {
+    attachToast.value = `Detach failed: ${err?.body?.detail?.message || err?.message || String(err)}`
+    setTimeout(() => (attachToast.value = ''), 4000)
+  }
+}
+
+// Lazy-load skill metadata when the Skills tab is opened. Fall back to also
+// pulling on Overview because the panel there shows skills too.
+watch(activeTab, (tab) => {
+  if ((tab === 'skills' || tab === 'overview') && !skillsMetaFetched.value) {
+    fetchSkillsMeta()
+  }
+})
+onMounted(() => {
+  // Kick off a meta fetch alongside the initial detail load.
+  fetchSkillsMeta()
+})
 
 // Per-server tool data for accordion display
 const serverTools = computed(() => {
@@ -452,6 +628,51 @@ function historyBadgeLabel(type) {
 
       <!-- ===== SKILLS TAB ===== -->
       <div v-else-if="activeTab === 'skills'" class="animate-fade-in">
+        <div v-if="!isAgentCardBased" class="code-agent-banner">
+          <strong>This agent is defined in code (agent.py).</strong>
+          Attach/detach changes apply at runtime — they revert on backend
+          restart unless you also edit
+          <code>get_skills(...)</code> in agent.py.
+        </div>
+        <p v-if="attachToast" class="attach-toast">{{ attachToast }}</p>
+        <div class="skills-tab-toolbar">
+          <p class="skills-tab-hint">
+            Skills are shared across agents. Editing one updates every agent that references it.
+          </p>
+          <div class="skills-tab-actions">
+            <div class="attach-wrap">
+              <button
+                class="btn-secondary-skill"
+                @click="attachPickerOpen = !attachPickerOpen"
+                type="button"
+              >+ Attach existing</button>
+              <div v-if="attachPickerOpen" class="attach-menu" @click.stop>
+                <div v-if="!attachableSkills.length" class="attach-empty">
+                  All available skills are already attached.
+                </div>
+                <button
+                  v-for="s in attachableSkills"
+                  :key="s.name"
+                  class="attach-item"
+                  :disabled="attachBusy"
+                  @click="attachSkill(s.name)"
+                >
+                  <span class="attach-skill-name">
+                    {{ s.name }}
+                    <span v-if="s.is_builtin" class="skill-builtin-badge">Built-in</span>
+                  </span>
+                </button>
+              </div>
+            </div>
+            <button class="btn-create-skill" @click="openCreateSkill" type="button">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+                <line x1="12" y1="5" x2="12" y2="19"/>
+                <line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+              New skill
+            </button>
+          </div>
+        </div>
         <div v-if="agent.skills?.length" class="accordion-list">
           <div
             v-for="skill in agent.skills"
@@ -460,38 +681,92 @@ function historyBadgeLabel(type) {
             :class="{ 'accordion-expanded': expandedSkills[skill.name] }"
           >
             <!-- Skill Header -->
-            <button
-              class="accordion-header skill-accordion-header"
-              @click="toggleSkill(skill.name)"
-              :aria-expanded="expandedSkills[skill.name]"
-            >
-              <div class="accordion-header-left">
+            <div class="accordion-header skill-accordion-header">
+              <button
+                class="skill-header-clickable"
+                @click="toggleSkill(skill.name)"
+                :aria-expanded="expandedSkills[skill.name]"
+              >
                 <span class="skill-accordion-icon">⚡</span>
                 <div class="skill-header-info">
-                  <span class="accordion-title">{{ skill.name }}</span>
+                  <span class="accordion-title">
+                    {{ skill.name }}
+                    <span
+                      v-if="hasSkillMeta(skill.name) && isSkillBuiltin(skill.name)"
+                      class="skill-builtin-badge"
+                      title="Ships with Jarvis. Editable, but cannot be deleted."
+                    >Built-in</span>
+                  </span>
                   <span v-if="skill.description" class="skill-header-preview">
                     {{ skill.description }}
                   </span>
                 </div>
-              </div>
+              </button>
               <div class="accordion-header-right">
-                <span class="skill-tag" v-if="skill.type">{{ skill.type }}</span>
-                <span
-                  class="accordion-chevron"
-                  :class="{ 'chevron-open': expandedSkills[skill.name] }"
-                >›</span>
+                <button
+                  class="skill-action-btn"
+                  type="button"
+                  @click.stop="openEditSkill(skill.name)"
+                  title="Edit skill"
+                  aria-label="Edit skill"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                  </svg>
+                </button>
+                <button
+                  class="skill-action-btn"
+                  type="button"
+                  @click.stop="detachSkill(skill.name)"
+                  :title="`Detach from ${agentName}`"
+                  aria-label="Detach skill from this agent"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                    <path d="M18 6L6 18M6 6l12 12"/>
+                  </svg>
+                </button>
+                <button
+                  class="skill-action-btn skill-action-delete"
+                  type="button"
+                  @click.stop="openDeleteSkill(skill.name)"
+                  :disabled="isSkillBuiltin(skill.name)"
+                  :title="!hasSkillMeta(skill.name) ? 'Loading skill metadata…' : (isSkillBuiltin(skill.name) ? 'Built-in skills cannot be deleted' : 'Delete skill from library')"
+                  :aria-label="isSkillBuiltin(skill.name) ? 'Built-in skill, cannot delete' : 'Delete skill'"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                    <polyline points="3 6 5 6 21 6"/>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                  </svg>
+                </button>
+                <button
+                  class="skill-action-btn"
+                  type="button"
+                  @click.stop="toggleSkill(skill.name)"
+                  :aria-label="expandedSkills[skill.name] ? 'Collapse' : 'Expand'"
+                >
+                  <span
+                    class="accordion-chevron"
+                    :class="{ 'chevron-open': expandedSkills[skill.name] }"
+                  >›</span>
+                </button>
               </div>
-            </button>
+            </div>
 
             <!-- Skill Expanded Body: content only (description stays in header) -->
             <div v-if="expandedSkills[skill.name]" class="accordion-body skill-accordion-body">
-              <div v-if="skill.content" class="skill-content-block">
-                <MarkdownRenderer :content="skill.content" content-type="markdown" />
-              </div>
+              <MarkdownRenderer
+                v-if="skill.content"
+                :content="skill.content"
+                content-type="markdown"
+              />
             </div>
           </div>
         </div>
-        <div v-else class="empty-state">No skills configured</div>
+        <div v-else class="empty-state">
+          No skills attached to this agent.
+          <button class="empty-cta" @click="openCreateSkill">Create one →</button>
+        </div>
       </div>
 
       <!-- ===== MCP SERVERS TAB ===== -->
@@ -691,6 +966,21 @@ function historyBadgeLabel(type) {
       <h3 style="color: var(--color-text-primary)">Agent not found</h3>
       <p style="color: var(--color-text-muted)">{{ agentName }}</p>
     </div>
+
+    <SkillEditorModal
+      :visible="editorVisible"
+      :mode="editorMode"
+      :skill-name="editorTarget"
+      @close="editorVisible = false"
+      @saved="onSkillSaved"
+    />
+    <SkillDeleteModal
+      :visible="deleteModalVisible"
+      :skill-name="deleteTarget.name"
+      :used-by="deleteTarget.usedBy"
+      @close="deleteModalVisible = false"
+      @deleted="onSkillDeleted"
+    />
   </div>
 </template>
 
@@ -936,12 +1226,217 @@ function historyBadgeLabel(type) {
   text-overflow: ellipsis;
 }
 
+/* ── Skills Tab Toolbar ── */
+.code-agent-banner {
+  margin-bottom: 12px;
+  padding: 10px 14px;
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.2);
+  border-radius: 8px;
+  color: #fbbf24;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.code-agent-banner strong { color: #fbbf24; }
+.code-agent-banner code {
+  background: rgba(0, 0, 0, 0.3);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+.attach-toast {
+  margin: 0 0 10px;
+  padding: 8px 12px;
+  background: rgba(59, 130, 246, 0.08);
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  border-radius: 8px;
+  color: #93c5fd;
+  font-size: 12px;
+}
+
+.skills-tab-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.btn-secondary-skill {
+  padding: 7px 12px;
+  background: #111318;
+  border: 1px solid #1a1d2e;
+  color: #c4c8d4;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  font-weight: 500;
+}
+.btn-secondary-skill:hover {
+  background: #1e2233;
+  color: #f0f2f5;
+  border-color: #2a3556;
+}
+.attach-wrap { position: relative; }
+.attach-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  min-width: 240px;
+  max-height: 300px;
+  overflow-y: auto;
+  background: #0c0e15;
+  border: 1px solid #1a1d2e;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  z-index: 50;
+}
+.attach-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  color: #c4c8d4;
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+}
+.attach-item:hover:not(:disabled) {
+  background: #1e2233;
+  color: #f0f2f5;
+}
+.attach-item:disabled { opacity: 0.5; cursor: not-allowed; }
+.attach-skill-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+.attach-empty { padding: 12px; color: #555872; font-size: 12px; font-style: italic; }
+
+.skills-tab-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+.skills-tab-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-text-muted, #8b8fa3);
+}
+.btn-create-skill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  background: rgba(59, 130, 246, 0.1);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  color: #60a5fa;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.btn-create-skill:hover {
+  background: rgba(59, 130, 246, 0.18);
+  border-color: rgba(59, 130, 246, 0.5);
+  color: #93c5fd;
+}
+.empty-cta {
+  display: inline-block;
+  margin-left: 8px;
+  background: none;
+  border: none;
+  color: #60a5fa;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+}
+.empty-cta:hover { color: #93c5fd; }
+
 /* ── Skills Tab Accordion ── */
 .skill-accordion-card {
   /* inherits accordion-card styles */
 }
 .skill-accordion-header {
-  /* inherits accordion-header styles */
+  /* Replaces the original <button>: now a flex container hosting a
+     clickable region (title) and per-row action buttons. We can't use a
+     <button> as the wrapper or the nested action buttons would be invalid.
+     Zero out the inherited .accordion-header padding/cursor — the inner
+     .skill-header-clickable owns those now (so hover and click hit-area
+     stay scoped to the title region, not the action buttons). */
+  display: flex !important;
+  align-items: stretch;
+  gap: 0;
+  padding: 0 8px 0 0;
+  cursor: default;
+}
+.skill-accordion-header:hover { background: none; }
+.skill-header-clickable {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: none;
+  border: none;
+  color: inherit;
+  text-align: left;
+  padding: 12px 14px;
+  cursor: pointer;
+  min-width: 0;
+}
+.skill-header-clickable:hover { background: rgba(255, 255, 255, 0.02); }
+.skill-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin: auto 0;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--color-text-muted, #8b8fa3);
+  border-radius: 7px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.skill-action-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--color-text-primary, #f0f2f5);
+  border-color: rgba(255, 255, 255, 0.06);
+}
+.skill-action-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.skill-action-delete:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.25);
+  color: #f87171;
+}
+.skill-action-btn .accordion-chevron {
+  /* Reuse existing chevron styling but inside the action button host. */
+  font-size: 16px;
+  line-height: 1;
+}
+.skill-builtin-badge {
+  display: inline-block;
+  margin-left: 8px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  vertical-align: middle;
 }
 .skill-accordion-icon {
   font-size: 20px;
@@ -982,12 +1477,10 @@ function historyBadgeLabel(type) {
   white-space: pre-wrap;
   word-break: break-word;
 }
-.skill-content-block {
-  background: rgba(0, 0, 0, 0.25);
-  border: 1px solid var(--color-border, #1a1d2e);
-  border-radius: 8px;
-  overflow: hidden;
-}
+/* skill-content-block removed — was a redundant inner box that
+   produced "padding inside padding" against the accordion-body
+   container. Markdown now renders directly with the body's own
+   padding. */
 .skill-content-pre {
   font-family: 'SF Mono', 'JetBrains Mono', 'Cascadia Code', monospace;
   font-size: 12px;
@@ -1031,23 +1524,16 @@ function historyBadgeLabel(type) {
 }
 
 /* ── Instruction ── */
-.instruction-preview, .instruction-full {
-  font-family: 'SF Mono', 'JetBrains Mono', 'Cascadia Code', monospace;
-  font-size: 12px;
-  line-height: 1.7;
-  color: var(--color-text-secondary, #c4c8d4);
-  white-space: pre-wrap;
-  word-break: break-word;
-  margin: 0;
-  background: rgba(0,0,0,0.2);
-  padding: 12px;
-  border-radius: 8px;
+/* No bg/border/padding here — the parent ``.panel`` already provides
+   a card with padding 16px. Adding another bordered+padded layer
+   inside produced the "padding inside padding" double-box look. */
+.instruction-preview {
   max-height: 280px;
   overflow: hidden;
 }
 .instruction-full {
   max-height: none;
-  overflow: auto;
+  overflow: visible;
 }
 .instruction-more {
   font-size: 11px;
@@ -1371,10 +1857,8 @@ function historyBadgeLabel(type) {
   }
 
   /* ── Instruction ── */
-  .instruction-preview {
-    font-size: 11px;
-    max-height: 200px;
-  }
+  .instruction-preview { max-height: 200px; }
+  .skill-accordion-body { padding: 12px; }
 
   /* ── Context Window ── */
   .context-header {

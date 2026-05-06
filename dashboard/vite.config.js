@@ -16,6 +16,14 @@ export default defineConfig({
         target: 'http://localhost:8000',
         changeOrigin: true,
       },
+      // /ws/voice + any future WebSocket route. ws:true is required for the
+      // upgrade handshake; without it the dev frontend can't open a socket
+      // and the VoiceBar mic toggle just spins on "Connecting…".
+      '/ws': {
+        target: 'ws://localhost:8000',
+        ws: true,
+        changeOrigin: true,
+      },
     },
   },
 })

@@ -1,51 +1,52 @@
 ---
 name: debugging-strategies
 description: >
-  Systematic debugging framework. Dùng khi Dev cần tìm root cause của bug,
-  debug performance issues, hoặc phân tích lỗi production.
+  Systematic debugging framework. Use when a developer agent needs to
+  find the root cause of a bug, debug performance issues, or analyse a
+  production failure.
 ---
 
 # SYSTEMATIC DEBUGGING
 
-## 4-Phase Process
+## 4-phase process
 
 ### Phase 1: REPRODUCE
-- Xác nhận bug tồn tại
-- Ghi lại exact steps to reproduce
-- Capture: error message, stack trace, logs
+- Confirm the bug exists.
+- Record the exact steps to reproduce.
+- Capture: error message, stack trace, logs.
 
 ### Phase 2: HYPOTHESIZE
-- Đọc error message kỹ — thường chứa clue
-- Liệt kê 2-3 hypotheses có khả năng nhất
-- Xếp hạng theo likelihood
+- Read the error message carefully — it usually contains a clue.
+- List 2–3 of the most likely hypotheses.
+- Rank them by likelihood.
 
 ### Phase 3: TEST
-- Test hypothesis có likelihood cao nhất TRƯỚC
-- Binary search: chia code thành 2 nửa, test từng nửa
-- Thêm logging tạm ở suspect points
-- **KHÔNG** sửa code trước khi hiểu root cause
+- Test the highest-likelihood hypothesis FIRST.
+- Binary search: split the code in half, test each half.
+- Add temporary logging at suspect points.
+- DO NOT change code before you understand the root cause.
 
 ### Phase 4: FIX & VERIFY
-- Sửa root cause, KHÔNG sửa symptom
-- Viết test reproduce bug TRƯỚC khi fix
-- Verify fix: test case phải PASS
-- Xóa logging tạm
+- Fix the root cause, NOT the symptom.
+- Write a test that reproduces the bug BEFORE the fix.
+- Verify the fix: the new test must pass.
+- Remove temporary logging.
 
-## Decision Tree
+## Decision tree
 
 ```
-Bug loại gì?
-├── Runtime error → Đọc stack trace, tìm line gây lỗi
-├── Logic error → Thêm print/log tại input/output
-├── Performance → Profile: đo thời gian từng phase
-├── Intermittent → Tìm race condition, check timing
-└── Khó reproduce → Thêm defensive logging
+What kind of bug?
+├── Runtime error → Read the stack trace; locate the failing line.
+├── Logic error → Add print/log at input and output points.
+├── Performance → Profile: measure time spent per phase.
+├── Intermittent → Look for race conditions; check timing.
+└── Hard to reproduce → Add defensive logging.
 ```
 
 ## ❌ Anti-patterns
-- Đoán mò → sửa random code → HY VỌNG nó hoạt động
-- Sửa symptom → không fix root cause → bug quay lại
-- Không viết test → same bug tái phát sau refactor
+- Guess → patch random code → hope it works.
+- Fix the symptom → root cause stays → bug returns.
+- Skip writing a test → same bug recurs after a future refactor.
 
-## ✅ Chuẩn
-- Reproduce → Hypothesis → Test → Fix → Verify → Commit with test
+## ✅ Standard
+- Reproduce → Hypothesis → Test → Fix → Verify → Commit with test.

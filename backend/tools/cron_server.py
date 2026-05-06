@@ -123,43 +123,43 @@ def cron_create(
     one_shot: bool = False,
     exec_agent: str = None,
 ) -> str:
-    """Tạo một tác vụ định kỳ mới.
+    """Create a new scheduled job.
 
     Cron expression: minute hour day_of_month month day_of_week
-    - solar: day/month là dương lịch (mặc định)
-    - lunar: day/month là âm lịch (server tự convert)
-    - one_shot=true: chạy 1 lần rồi auto-complete
-    - exec_agent: chỉ định agent thực hiện (bắt buộc khi exec_mode='agent_turn')
-    - exec_payload: nội dung sẽ gửi cho agent khi cron trigger.
-      ⚠️ PHẢI là prompt hành động trực tiếp, KHÔNG copy phần lịch/scheduling của user.
-      ❌ SAI: "Mỗi ngày lúc 7h sáng, hãy kiểm tra thời tiết tại HN"
-      ✅ ĐÚNG: "Kiểm tra thời tiết hôm nay tại Gia Lâm, HN và gửi thông báo cho user"
+    - solar: day/month follow the Gregorian calendar (default)
+    - lunar: day/month follow the lunar calendar (server converts)
+    - one_shot=true: run once then auto-complete
+    - exec_agent: which agent to invoke (required when exec_mode='agent_turn')
+    - exec_payload: the prompt sent to the agent at trigger time.
+      ⚠️ MUST be a direct action prompt; do NOT include the user's scheduling text.
+      ❌ WRONG: "Every day at 7am, check the weather in Hanoi"
+      ✅ RIGHT: "Check today's weather in Gia Lam, Hanoi and send a notification"
 
-    Ví dụ:
-    - "0 9 * * 1-5" → 9h sáng thứ 2 đến thứ 6
-    - "0 7 1 * *" + calendar_type="lunar" → Mùng 1 âm lịch hàng tháng
-    - "0 15 31 3 *" + one_shot=true → 1 lần lúc 3h chiều ngày 31/3
+    Examples:
+    - "0 9 * * 1-5" → 9am Monday through Friday
+    - "0 7 1 * *" + calendar_type="lunar" → 1st of each lunar month
+    - "0 15 31 3 *" + one_shot=true → once at 3pm on March 31
     """
     # Validate
     error = _validate_cron_expr(cron_expr)
     if error:
-        return f"❌ Lỗi: {error}"
+        return f"❌ Error: {error}"
 
     if exec_mode not in ("reminder", "agent_turn"):
-        return "❌ Lỗi: exec_mode phải là 'reminder' hoặc 'agent_turn'"
+        return "❌ Error: exec_mode must be 'reminder' or 'agent_turn'"
 
     if calendar_type not in ("solar", "lunar"):
-        return "❌ Lỗi: calendar_type phải là 'solar' hoặc 'lunar'"
+        return "❌ Error: calendar_type must be 'solar' or 'lunar'"
 
     if exec_mode == "agent_turn" and not exec_agent:
-        return "❌ Lỗi: exec_agent là bắt buộc khi exec_mode='agent_turn'"
+        return "❌ Error: exec_agent is required when exec_mode='agent_turn'"
 
     # Compute next run
     tz_name = "Asia/Ho_Chi_Minh"
     try:
         next_run = _compute_next_run(cron_expr, calendar_type, tz_name)
     except Exception as e:
-        return f"❌ Lỗi tính next_run: {e}"
+        return f"❌ next_run computation failed: {e}"
 
     # Create job
     job_id = str(uuid.uuid4())[:8]
@@ -192,17 +192,17 @@ def cron_create(
         next_str = datetime.fromtimestamp(next_run, tz=tz).strftime("%Y-%m-%d %H:%M %Z")
 
         return (
-            f"✅ Đã tạo job thành công!\n"
+            f"✅ Job created\n"
             f"• ID: {job_id}\n"
-            f"• Tên: {name}\n"
+            f"• Name: {name}\n"
             f"• Cron: {cron_expr} ({calendar_type})\n"
             f"• Mode: {exec_mode}\n"
-            f"• One-shot: {'có' if one_shot else 'không'}\n"
-            f"• Lần chạy tiếp theo: {next_str}"
+            f"• One-shot: {'yes' if one_shot else 'no'}\n"
+            f"• Next run: {next_str}"
         )
     except Exception as e:
         db.rollback()
-        return f"❌ Lỗi tạo job: {e}"
+        return f"❌ Failed to create job: {e}"
     finally:
         db.close()
 
@@ -212,11 +212,11 @@ def cron_list(
     status: str = "active",
     calendar_type: str = None,
 ) -> str:
-    """Liệt kê các tác vụ định kỳ. Trả về danh sách jobs với thông tin chi tiết.
+    """List scheduled jobs. Returns each job's full details.
 
     Parameters:
     - status: 'active' | 'paused' | 'all' | 'disabled' | 'completed'
-    - calendar_type: 'solar' | 'lunar' | None (tất cả)
+    - calendar_type: 'solar' | 'lunar' | None (all)
     """
     db = get_db_session()
     try:
@@ -231,9 +231,9 @@ def cron_list(
         jobs = query.order_by(CronJobModel.next_run_at.asc()).all()
 
         if not jobs:
-            return f"📋 Không có job nào (status={status}, calendar={calendar_type or 'all'})"
+            return f"📋 No jobs found (status={status}, calendar={calendar_type or 'all'})"
 
-        lines = [f"📋 Danh sách jobs ({len(jobs)} kết quả):"]
+        lines = [f"📋 Jobs ({len(jobs)} found):"]
         for job in jobs:
             f = _format_job(job)
             status_emoji = {"active": "🟢", "paused": "⏸️", "disabled": "🔴", "completed": "✅"}.get(
@@ -262,24 +262,24 @@ def cron_update(
     status: str = None,
     exec_agent: str = None,
 ) -> str:
-    """Cập nhật một tác vụ định kỳ. Chỉ truyền các field cần thay đổi.
-    Đổi status thành 'paused' để tạm dừng, 'active' để tiếp tục.
+    """Update a scheduled job. Only pass the fields that should change.
+    Set status='paused' to pause, 'active' to resume.
 
     Parameters:
-    - job_id: ID của job cần cập nhật (bắt buộc)
-    - name: Tên mới
-    - cron_expr: Cron expression mới
-    - exec_payload: Payload mới
+    - job_id: target job id (required)
+    - name: new name
+    - cron_expr: new cron expression
+    - exec_payload: new payload
     - calendar_type: 'solar' | 'lunar'
     - one_shot: true/false
     - status: 'active' | 'paused'
-    - exec_agent: Agent name mới
+    - exec_agent: new agent name
     """
     db = get_db_session()
     try:
         job = db.query(CronJobModel).filter(CronJobModel.id == job_id).first()
         if not job:
-            return f"❌ Không tìm thấy job ID: {job_id}"
+            return f"❌ Job not found: {job_id}"
 
         changes = []
 
@@ -297,7 +297,7 @@ def cron_update(
 
         if calendar_type is not None:
             if calendar_type not in ("solar", "lunar"):
-                return "❌ calendar_type phải là 'solar' hoặc 'lunar'"
+                return "❌ calendar_type must be 'solar' or 'lunar'"
             job.calendar_type = calendar_type
             changes.append(f"calendar → {calendar_type}")
 
@@ -307,7 +307,7 @@ def cron_update(
 
         if status is not None:
             if status not in ("active", "paused"):
-                return "❌ status phải là 'active' hoặc 'paused'"
+                return "❌ status must be 'active' or 'paused'"
             old_status = job.status
             job.status = status
             if status == "active" and old_status in ("paused", "disabled"):
@@ -331,18 +331,18 @@ def cron_update(
                     job.lunar_leap,
                 )
             except Exception as e:
-                return f"❌ Lỗi tính next_run: {e}"
+                return f"❌ next_run computation failed: {e}"
 
         job.updated_at = time.time()
         db.commit()
 
         if not changes:
-            return f"ℹ️ Không có thay đổi nào cho job [{job_id}]"
+            return f"ℹ️ No changes for job [{job_id}]"
 
-        return f"✅ Đã cập nhật job [{job_id}] {job.name}:\n• " + "\n• ".join(changes)
+        return f"✅ Updated job [{job_id}] {job.name}:\n• " + "\n• ".join(changes)
     except Exception as e:
         db.rollback()
-        return f"❌ Lỗi cập nhật: {e}"
+        return f"❌ Update failed: {e}"
     finally:
         db.close()
 
@@ -351,16 +351,16 @@ def cron_update(
 def cron_delete(
     job_id: str,
 ) -> str:
-    """Xóa vĩnh viễn một tác vụ định kỳ.
+    """Permanently delete a scheduled job.
 
     Parameters:
-    - job_id: ID của job cần xóa (bắt buộc)
+    - job_id: target job id (required)
     """
     db = get_db_session()
     try:
         job = db.query(CronJobModel).filter(CronJobModel.id == job_id).first()
         if not job:
-            return f"❌ Không tìm thấy job ID: {job_id}"
+            return f"❌ Job not found: {job_id}"
 
         job_name = job.name
 
@@ -369,10 +369,10 @@ def cron_delete(
         db.delete(job)
         db.commit()
 
-        return f"✅ Đã xóa job [{job_id}] '{job_name}' và toàn bộ lịch sử chạy."
+        return f"✅ Deleted job [{job_id}] '{job_name}' and all run history."
     except Exception as e:
         db.rollback()
-        return f"❌ Lỗi xóa job: {e}"
+        return f"❌ Delete failed: {e}"
     finally:
         db.close()
 

@@ -1,4 +1,4 @@
-"""Tests for services/tts.py — Edge TTS provider + factory."""
+"""Tests for services/tts.py — Edge TTS provider primitives."""
 import os
 from unittest.mock import patch
 
@@ -8,7 +8,6 @@ from services.tts import (
     DEFAULT_EDGE_RATE,
     DEFAULT_EDGE_VOICE,
     EdgeTTSProvider,
-    TTSFactory,
     TTSProvider,
 )
 
@@ -126,48 +125,7 @@ class TestEdgeTTSProviderGenerateAudio:
         assert not any(tmp_path.iterdir()), "temp file not cleaned up after error"
 
 
-class TestTTSFactory:
-    """Factory selects + configures EdgeTTSProvider from env vars."""
-
-    def test_default_returns_edge_provider(self, monkeypatch):
-        monkeypatch.delenv("TTS_PROVIDER", raising=False)
-        monkeypatch.delenv("EDGE_TTS_VOICE", raising=False)
-        monkeypatch.delenv("EDGE_TTS_RATE", raising=False)
-
-        provider = TTSFactory.get_provider()
-        assert isinstance(provider, EdgeTTSProvider)
-        assert isinstance(provider, TTSProvider)
-        assert provider.voice == DEFAULT_EDGE_VOICE
-        assert provider.rate == DEFAULT_EDGE_RATE
-
-    def test_explicit_edge_provider(self, monkeypatch):
-        monkeypatch.setenv("TTS_PROVIDER", "edge")
-        provider = TTSFactory.get_provider()
-        assert isinstance(provider, EdgeTTSProvider)
-
-    def test_unknown_provider_falls_back_to_edge(self, monkeypatch, caplog):
-        monkeypatch.setenv("TTS_PROVIDER", "elevenlabs")
-        with caplog.at_level("WARNING"):
-            provider = TTSFactory.get_provider()
-        assert isinstance(provider, EdgeTTSProvider)
-        assert any("not supported" in r.message for r in caplog.records)
-
-    def test_voice_and_rate_overrides(self, monkeypatch):
-        monkeypatch.setenv("TTS_PROVIDER", "edge")
-        monkeypatch.setenv("EDGE_TTS_VOICE", "vi-VN-HoaiMyNeural")
-        monkeypatch.setenv("EDGE_TTS_RATE", "+10%")
-        provider = TTSFactory.get_provider()
-        assert isinstance(provider, EdgeTTSProvider)
-        assert provider.voice == "vi-VN-HoaiMyNeural"
-        assert provider.rate == "+10%"
-
-    def test_provider_value_is_normalised(self, monkeypatch):
-        # Whitespace + casing must not break the comparison.
-        monkeypatch.setenv("TTS_PROVIDER", "  EDGE  ")
-        provider = TTSFactory.get_provider()
-        assert isinstance(provider, EdgeTTSProvider)
-
-    def test_empty_provider_uses_default(self, monkeypatch):
-        monkeypatch.setenv("TTS_PROVIDER", "")
-        provider = TTSFactory.get_provider()
-        assert isinstance(provider, EdgeTTSProvider)
+# Factory tests live alongside their owners now:
+#   - chat / stories factory routing → tests/test_services/test_tts_split.py
+#   - registry-driven config + listener dispatch → test_runtime_config_voice.py
+# The legacy env-var TTSFactory was removed in favour of DB-backed JSON config.

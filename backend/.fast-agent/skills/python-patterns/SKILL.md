@@ -1,28 +1,28 @@
 ---
 name: python-patterns
 description: >
-  Python best practices và patterns. Dùng khi Dev viết code Python cho Jarvis backend:
-  async/await, typing, pytest, FastAPI patterns.
+  Python best practices and patterns. Use when a Dev writes Python code
+  for the Jarvis backend: async/await, typing, pytest, FastAPI patterns.
 ---
 
-# PYTHON PATTERNS CHO JARVIS
+# PYTHON PATTERNS FOR JARVIS
 
-## Async/Await
+## Async / await
 ```python
-# ✅ Đúng: dùng async cho I/O operations
+# ✅ Correct: use async for I/O operations
 async def fetch_data(url: str) -> dict:
     async with httpx.AsyncClient() as client:
         response = await client.get(url)
         return response.json()
 
-# ❌ Sai: blocking I/O trong async context
+# ❌ Wrong: blocking I/O inside an async context
 def fetch_data(url: str) -> dict:
-    return requests.get(url).json()  # BLOCKS event loop!
+    return requests.get(url).json()  # BLOCKS the event loop!
 ```
 
-## Type Hints
+## Type hints
 ```python
-# ✅ Luôn dùng type hints
+# ✅ Always use type hints
 from typing import Optional
 from pydantic import BaseModel
 

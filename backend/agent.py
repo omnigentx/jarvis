@@ -145,6 +145,17 @@ async def audio_reader_agent(prompt: str):
 _SPAWNER_ENABLED = os.environ.get("DISABLE_AGENT_SPAWNER", "").strip() not in ("1", "true", "yes")
 _JARVIS_SERVERS = ["sequential-thinking", "scrapling-server", "serpapi", "cron-server", "time-service", "approval-server"]
 _JARVIS_TOOLS = {}
+
+# Self-improving Jarvis (experimental).
+# The skill_server is ALWAYS registered with Jarvis. The actual on/off gate
+# lives inside skill_server.py and reads the DB flag
+# `experimental/SELF_IMPROVING_ENABLED` on every tool call — so the toggle
+# in Settings → Experimental hot-reloads without a backend restart.
+# When the flag is off the tools return a structured 503 explaining the
+# disabled state; Jarvis surfaces that to the user verbatim.
+# Note: `skill_server` (underscore) — see fastagent.config.yaml comment for why.
+_JARVIS_SERVERS.append("skill_server")
+
 if _SPAWNER_ENABLED:
     _JARVIS_SERVERS.append("agent_spawner")
     _JARVIS_TOOLS["agent_spawner"] = [

@@ -22,9 +22,10 @@ D2 scope (Phase 3a) covers:
 
 * ``auth/JARVIS_API_KEY``         — master key rotation
 * ``system/LOG_CONSOLE_LEVEL``    — console log verbosity
-* ``system/TTS_PROVIDER``         — rebuild TTS provider
-* ``system/EDGE_TTS_VOICE``
-* ``system/EDGE_TTS_RATE``
+* ``voice/tts.chat``              — rebuild chat TTS provider (registry JSON)
+* ``voice/tts.stories``           — rebuild stories TTS provider (Edge schema)
+* ``voice/stt``                   — rebuild STT recorder
+* ``voice/secrets.{engine}.{slot}`` — encrypted API keys
 
 Values that require a full restart (e.g. ``system/SESSION_HISTORY_WINDOW``
 and ``system/CORS_ORIGINS``) are intentionally *not* wired here; the UI
@@ -128,41 +129,85 @@ def apply_timezone(tz: Optional[str]) -> str:
     return normalised
 
 
-def apply_tts_config(
-    *,
-    provider: Optional[str] = None,
-    voice: Optional[str] = None,
-    rate: Optional[str] = None,
-) -> str:
-    """Rebuild the shared TTS provider with updated env.
+def _get_config_service():
+    """Module-level singleton from services.config_service — single source of truth."""
+    from services.config_service import config_service
+    return config_service
 
-    Any argument left as ``None`` is not touched so partial updates
-    (e.g. just the voice) don't clobber the other values.  The new
-    :class:`~services.tts.TTSProvider` instance is swapped into
-    :mod:`services.shared_state` atomically (Python attribute assignment
-    is a single bytecode op).
+
+def apply_voice_chat_config(config: Optional[dict] = None) -> str:
+    """Rebuild the chat TTS provider from the registry-driven JSON config.
+
+    ``config`` is the parsed ``voice.tts.chat`` value. When ``None``, the
+    function reads from :mod:`services.config_service` itself.
     """
-    if provider is not None:
-        os.environ["TTS_PROVIDER"] = provider
-    if voice is not None:
-        os.environ["EDGE_TTS_VOICE"] = voice
-    if rate is not None:
-        os.environ["EDGE_TTS_RATE"] = rate
-
-    # Imported lazily so unit tests can patch the module without pulling
-    # edge-tts into every import graph.
     from services import shared_state
-    from services.tts import TTSFactory
+    from services.tts_realtime import build_chat_provider
+    from services import voice_config as _vc
 
-    new_provider = TTSFactory.get_provider()
-    shared_state.tts_provider = new_provider
+    cs = _get_config_service()
+    if config is None:
+        config = _vc.get_chat_config(cs)
+    secrets_for_engine = _vc.get_engine_secrets(cs, config.get("engine", "edge"))
+
+    new_provider = build_chat_provider(config, secrets={config.get("engine", "edge"): secrets_for_engine})
+    shared_state.tts_chat_provider = new_provider
     logger.info(
-        "[RUNTIME] TTS provider rebuilt: %s (voice=%s, rate=%s)",
+        "[RUNTIME] Chat TTS provider rebuilt: engine=%s class=%s",
+        config.get("engine"),
         type(new_provider).__name__,
-        os.environ.get("EDGE_TTS_VOICE"),
-        os.environ.get("EDGE_TTS_RATE"),
     )
     return type(new_provider).__name__
+
+
+def apply_voice_stories_config(config: Optional[dict] = None) -> str:
+    """Rebuild the stories TTS provider — always Edge, by design."""
+    from services import shared_state
+    from services.tts_realtime import build_stories_provider
+    from services import voice_config as _vc
+
+    if config is None:
+        config = _vc.get_stories_config(_get_config_service())
+
+    new_provider = build_stories_provider(config)
+    shared_state.tts_stories_provider = new_provider
+    logger.info(
+        "[RUNTIME] Stories TTS provider rebuilt: voice=%s rate=%s",
+        config.get("voice"),
+        config.get("rate"),
+    )
+    return type(new_provider).__name__
+
+
+def apply_voice_stt_config(config: Optional[dict] = None) -> str:
+    """Rebuild the STT recorder from the registry-driven JSON config.
+
+    The recorder is heavy (spawns worker procs for faster-whisper); we lazily
+    create it on first need and tear down the old one on swap.
+    """
+    from services import shared_state
+    from services import voice_config as _vc
+
+    if config is None:
+        config = _vc.get_stt_config(_get_config_service())
+
+    # Lazy import — STT pulls torch/faster-whisper which is heavy.
+    from services.stt_realtime import build_stt_service
+
+    old = shared_state.stt_recorder
+    new_service = build_stt_service(config)
+    shared_state.stt_recorder = new_service
+    if old is not None:
+        try:
+            old.shutdown()
+        except Exception:
+            logger.exception("[RUNTIME] failed to shut down old STT recorder")
+    logger.info(
+        "[RUNTIME] STT service rebuilt: backend=%s wake_word=%s",
+        config.get("backend"),
+        (config.get("wake_word") or {}).get("backend"),
+    )
+    return "stt_ready"
 
 
 # ---- Listener bridge --------------------------------------------------------
@@ -195,17 +240,30 @@ def _on_config_change(event) -> None:
             if key == "LOG_CONSOLE_LEVEL":
                 apply_log_console_level(new_value if action != "delete" else None)
                 return
-            if key == "TTS_PROVIDER":
-                apply_tts_config(provider=new_value if action != "delete" else "edge")
-                return
-            if key == "EDGE_TTS_VOICE":
-                apply_tts_config(voice=new_value or "")
-                return
-            if key == "EDGE_TTS_RATE":
-                apply_tts_config(rate=new_value or "")
-                return
             if key == "TIMEZONE":
                 apply_timezone(new_value if action != "delete" else None)
+                return
+
+        if cat == "voice":
+            # JSON-driven voice config — single source of truth for chat/stories/stt.
+            # Keys: "tts.chat", "tts.stories", "stt", "secrets.{engine}.{slot}"
+            import json as _json
+            if key == "tts.chat":
+                cfg = _json.loads(new_value) if (action != "delete" and new_value) else None
+                apply_voice_chat_config(cfg)
+                return
+            if key == "tts.stories":
+                cfg = _json.loads(new_value) if (action != "delete" and new_value) else None
+                apply_voice_stories_config(cfg)
+                return
+            if key == "stt":
+                cfg = _json.loads(new_value) if (action != "delete" and new_value) else None
+                apply_voice_stt_config(cfg)
+                return
+            if key.startswith("secrets."):
+                # Secret rotation: rebuild chat provider so new key is picked up.
+                # (Stories never uses secrets — Edge has none.)
+                apply_voice_chat_config(None)
                 return
 
         if cat == "llm":

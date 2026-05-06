@@ -1,8 +1,8 @@
 ---
 name: cicd-pipeline
 description: >
-  CI/CD pipeline design và configuration. Dùng khi DSO cần setup GitHub Actions,
-  automated testing, hoặc deployment workflows.
+  CI/CD pipeline design and configuration. Use when a DSO needs to set
+  up GitHub Actions, automated testing, or deployment workflows.
 ---
 
 # CI/CD PIPELINE
@@ -54,11 +54,11 @@ jobs:
 Push → Lint → Test → Build → Deploy (staging) → Approval → Deploy (prod)
 ```
 
-## Security Rules
-- ❌ KHÔNG hardcode secrets trong code
-- ✅ Dùng GitHub Secrets cho API keys
-- ✅ Scan dependencies cho vulnerabilities
-- ✅ Docker image scan trước deploy
+## Security rules
+- ❌ DO NOT hardcode secrets in source.
+- ✅ Use GitHub Secrets for API keys.
+- ✅ Scan dependencies for vulnerabilities.
+- ✅ Scan Docker images before deploying.
 
 ## Deployment
 - Staging: auto-deploy on `develop` branch

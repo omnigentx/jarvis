@@ -16,68 +16,56 @@ mcp = FastMCP("TimeService")
 
 @mcp.tool()
 def get_current_time() -> str:
-    """Get the current time in Vietnam (Gia Lam, Hanoi context)."""
+    """Get the current time (Vietnam timezone by default)."""
     now = datetime.now(_get_tz())
-    return f"Bây giờ là {now.strftime('%H:%M')} ngày {now.strftime('%d/%m/%Y')}."
+    return f"It is {now.strftime('%H:%M')} on {now.strftime('%d/%m/%Y')}."
 
 @mcp.tool()
 def solar_to_lunar(day: int, month: int, year: int) -> str:
-    """Convert Solar date to Lunar date."""
+    """Convert a Solar (Gregorian) date to its Lunar equivalent."""
     solar = Solar.fromYmd(year, month, day)
     lunar = solar.getLunar()
-    return f"Dương lịch {day}/{month}/{year} là Âm lịch {lunar.getDay()}/{lunar.getMonth()}/{lunar.getYear()}"
+    return f"Solar {day}/{month}/{year} is Lunar {lunar.getDay()}/{lunar.getMonth()}/{lunar.getYear()}"
 
 @mcp.tool()
 def lunar_to_solar(day: int, month: int, year: int, leap_month: bool = False) -> str:
-    """Convert Lunar date to Solar date."""
+    """Convert a Lunar date to its Solar (Gregorian) equivalent."""
     # Note: lunar_python uses year, month, day order
     lunar = Lunar.fromYmd(year, month, day)
     solar = lunar.getSolar()
-    return f"Âm lịch {day}/{month}/{year} là Dương lịch {solar.getDay()}/{solar.getMonth()}/{solar.getYear()}"
+    return f"Lunar {day}/{month}/{year} is Solar {solar.getDay()}/{solar.getMonth()}/{solar.getYear()}"
 
 @mcp.tool()
 def get_lunar_date() -> str:
-    """
-    Lấy ngày tháng năm Âm lịch hiện tại.
-    Returns:
-        str: Ngày âm lịch định dạng 'DD/MM/YYYY'
-    """
+    """Return today's Lunar date as 'DD/MM/YYYY'."""
     d = datetime.now(_get_tz())
     lunar = Lunar.fromDate(d)
     return f"{lunar.getDay()}/{lunar.getMonth()}/{lunar.getYear()}"
 
 @mcp.tool()
 def get_solar_date() -> str:
-    """
-    Lấy ngày tháng năm Dương lịch hiện tại.
-    Returns:
-        str: Ngày dương lịch định dạng 'DD/MM/YYYY'
-    """
+    """Return today's Solar (Gregorian) date as 'DD/MM/YYYY'."""
     d = datetime.now(_get_tz())
     return d.strftime("%d/%m/%Y")
 
 @mcp.tool()
 def get_today_info() -> str:
-    """
-    Lấy thông tin chi tiết về ngày hôm nay (Dương lịch và Âm lịch).
-    Returns:
-        str: Thông tin ngày
-    """
+    """Return both Solar and Lunar representations of today's date."""
     solar = get_solar_date()
     lunar = get_lunar_date()
-    return f"Hôm nay là ngày {solar} (Dương lịch), tức ngày {lunar} (Âm lịch)."
+    return f"Today is {solar} (Solar) / {lunar} (Lunar)."
 
 @mcp.tool()
 async def wait_for_seconds(seconds: int) -> str:
-    """
-    Dừng chờ trong một khoảng thời gian (giây).
-    Hữu ích khi cần đợi email đến hoặc đợi thiết bị phản hồi.
+    """Sleep for the given number of seconds. Useful when waiting for an
+    email to arrive or a device to respond.
+
     Args:
-        seconds: Số giây cần chờ.
+        seconds: how long to wait, in seconds.
     """
     import asyncio
     await asyncio.sleep(seconds)
-    return f"Đã chờ {seconds} giây."
+    return f"Waited {seconds} seconds."
 
 if __name__ == "__main__":
     mcp.run()

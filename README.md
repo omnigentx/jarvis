@@ -10,7 +10,8 @@ Self-hostable AI assistant built on [fast-agent](https://github.com/evalstate/fa
 
 - **Multi-agent spawn**: a 7-role agile team (PM, BA, SA, Dev, Designer, QE, DSO) coordinates over inter-agent email and meeting protocols.
 - **MCP-first tools**: filesystem, GitHub, Atlassian, Figma, web scraping (Scrapling), Roborock vacuum, Google Calendar / Gmail, story crawler, TTS — all exposed as MCP servers.
-- **Web dashboard**: Vue + Vite UI for chatting with Jarvis, configuring providers, viewing agent timelines, managing secrets.
+- **Hands-free voice**: real-time STT (faster-whisper, VAD, optional wake word) + streaming TTS (Edge default; ElevenLabs / OpenAI / Azure / System opt-in) over WebSocket, with barge-in. Stories are locked to free Edge so paid engines never burn long-form quota.
+- **Web dashboard**: Vue + Vite UI for chatting with Jarvis, configuring providers, voice engines, viewing agent timelines, managing secrets.
 - **Self-host friendly**: single `docker compose up -d` brings up the whole stack on a Linux box.
 
 ## Quick start
@@ -45,7 +46,9 @@ jarvis/
 │   ├── team_templates/         Agent team definitions (agile_team.yaml)
 │   ├── fast-agent/             Submodule — fast-agent framework + spawn system
 │   ├── figma-ui-mcp/           Submodule — Figma MCP server
-│   └── mcp-atlassian/          Submodule — Atlassian MCP server
+│   ├── mcp-atlassian/          Submodule — Atlassian MCP server
+│   ├── realtimestt_src/        Submodule — fork of KoljaB/RealtimeSTT (hands-free STT)
+│   └── realtimetts_src/        Submodule — fork of KoljaB/RealtimeTTS (streaming TTS)
 ├── dashboard/                  Vue 3 + Vite web UI (the active frontend)
 ├── xiaozhi_integration/        Bridges a Xiaozhi ESP32 device to the backend over MCP
 ├── docs/                       Self-hosting and architecture docs

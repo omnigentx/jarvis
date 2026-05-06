@@ -57,6 +57,18 @@ def _isolate_server_env_mutation():
             os.environ.pop(k, None)
 
 
+@pytest.fixture(autouse=True)
+def _pin_test_api_key(monkeypatch):
+    """Pin ``core.auth.JARVIS_API_KEY`` to match the Bearer token the helper
+    client sends. server.py's import-time bootstrap reads the master key
+    from the dev DB and overwrites ``core_auth.JARVIS_API_KEY`` via
+    ``apply_master_key``; we must import server FIRST then pin so our
+    value isn't clobbered."""
+    from server import app  # noqa: F401  — force bootstrap to settle first
+    from core import auth as core_auth
+    monkeypatch.setattr(core_auth, "JARVIS_API_KEY", "test-key")
+
+
 # ─────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────

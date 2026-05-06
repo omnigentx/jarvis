@@ -57,11 +57,8 @@ cd ~/jarvis
 
 ```bash
 cat > backend/.env << 'EOF'
-# --- TTS (Edge TTS — free, no API key) ---
-TTS_PROVIDER=edge
-# Optional voice/rate overrides:
-# EDGE_TTS_VOICE=vi-VN-NamMinhNeural
-# EDGE_TTS_RATE=+20%
+# Voice config (TTS engines, STT, wake-word) is DB-backed — manage via
+# Settings → Voice in the dashboard. No env var needed for voice.
 
 # --- JWT ---
 JWT_SECRET=THAY_BANG_CHUOI_RANDOM_DAI

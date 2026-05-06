@@ -14,7 +14,7 @@ from core.auth import verify_api_key, verify_optional_api_key
 from helpers.text_processing import clean_text_for_tts
 from helpers.audio_cache import get_audio_cache_path
 from services.shared_state import (
-    tts_cache, library_manager, tts_provider, generation_tasks,
+    tts_cache, library_manager, generation_tasks,
 )
 import services.shared_state as _state
 
@@ -73,6 +73,9 @@ async def tts_endpoint(request_id: str, request: Request, _auth=Depends(verify_o
     book = library_manager.get_book(request_id)
     text = None
     cache_path = None
+    # is_notification = chat audio + cron — uses the registry-driven chat
+    # provider. Books / stories use the locked Edge stories provider.
+    is_notification = not book and not request_id.startswith('story_')
     
     if book:
         logger.debug(f"Streaming from Library: {book.title}")
@@ -181,17 +184,24 @@ async def tts_endpoint(request_id: str, request: Request, _auth=Depends(verify_o
              if book: library_manager.set_status(book.id, "generating")
              logger.debug(f"Starting/Resuming generation for {request_id}...")
              
+             # Provider dispatch — protect stories quota by hardcoding Edge for
+             # story / library audio, while letting chat + cron notifications use
+             # whichever engine the user picked in the registry.
+             provider = (
+                 _state.tts_chat_provider if is_notification else _state.tts_stories_provider
+             )
+
              async def generate_worker(start_idx=0):
                  task_id = request_id
                  generation_tasks[task_id] = asyncio.current_task()
-                 
+
                  try:
                      with open(lock_path, 'w') as lf: lf.write("locked")
                  except: pass
 
                  try:
                      async with aiofiles.open(cache_path, "wb") as f:
-                         async for chunk in tts_provider.stream_audio(text):
+                         async for chunk in provider.stream_audio(text):
                              if chunk:
                                  await f.write(chunk)
                                  await f.flush()
@@ -231,11 +241,10 @@ async def tts_endpoint(request_id: str, request: Request, _auth=Depends(verify_o
             break
         await asyncio.sleep(0.1)
 
-    # For notification TTS (neither story_ nor library book), wait for full generation
-    # to complete before serving. This prevents the browser from firing 'ended' early
-    # due to gaps between EdgeTTS chunks during live streaming.
-    # Story/library requests keep live streaming for fast TTFB (they can be very large).
-    is_notification = not book and not (request_id.startswith('story_'))
+    # For notification TTS, wait for full generation to complete before serving.
+    # Prevents the browser from firing 'ended' early due to gaps between chunks
+    # during live streaming. Story/library requests keep live streaming for fast
+    # TTFB (they can be very large).
     if is_notification and os.path.exists(lock_path):
         logger.debug(f"[TTS] Waiting for full generation before serving notification TTS: {request_id}")
         for _ in range(300):  # up to 30s

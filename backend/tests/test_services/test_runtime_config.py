@@ -16,9 +16,6 @@ def _restore_env(monkeypatch):
     # Each test gets a clean env slate for the keys we mutate.
     for key in (
         "LOG_CONSOLE_LEVEL",
-        "TTS_PROVIDER",
-        "EDGE_TTS_VOICE",
-        "EDGE_TTS_RATE",
         "JARVIS_API_KEY",
         "JARVIS_TIMEZONE",
     ):
@@ -70,42 +67,8 @@ class TestApplyLogConsoleLevel:
         assert os.environ["LOG_CONSOLE_LEVEL"] == "WARNING"
 
 
-class TestApplyTTSConfig:
-    def test_rebuilds_shared_provider(self, monkeypatch):
-        # Stub TTSFactory to avoid pulling edge-tts.
-        from services import tts as tts_module
-
-        class FakeProvider:
-            pass
-
-        created = []
-
-        def fake_get():
-            p = FakeProvider()
-            created.append(p)
-            return p
-
-        monkeypatch.setattr(tts_module.TTSFactory, "get_provider", staticmethod(fake_get))
-
-        original = shared_state.tts_provider
-        try:
-            runtime_config.apply_tts_config(provider="edge", voice="vi-VN-X", rate="+5%")
-            assert shared_state.tts_provider is created[-1]
-            assert shared_state.tts_provider is not original
-        finally:
-            shared_state.tts_provider = original
-
-    def test_partial_update_preserves_other_env(self, monkeypatch):
-        from services import tts as tts_module
-        monkeypatch.setattr(
-            tts_module.TTSFactory, "get_provider", staticmethod(lambda: object())
-        )
-
-        monkeypatch.setenv("EDGE_TTS_RATE", "+10%")
-        runtime_config.apply_tts_config(voice="new-voice")
-        import os
-        assert os.environ["EDGE_TTS_VOICE"] == "new-voice"
-        assert os.environ["EDGE_TTS_RATE"] == "+10%"  # untouched
+# TTS apply tests live in test_runtime_config_voice.py — the registry-driven
+# JSON config replaced the legacy env-var TTSFactory entirely.
 
 
 class TestListenerDispatch:
@@ -139,17 +102,6 @@ class TestListenerDispatch:
         event = _event("system", "LOG_CONSOLE_LEVEL", new_value=None, action="delete")
         runtime_config._on_config_change(event)
         assert calls == [None]
-
-    def test_tts_voice_event_dispatches(self, monkeypatch):
-        calls = []
-        monkeypatch.setattr(
-            runtime_config,
-            "apply_tts_config",
-            lambda **kw: calls.append(kw),
-        )
-        event = _event("system", "EDGE_TTS_VOICE", new_value="vi-VN-Y", action="update")
-        runtime_config._on_config_change(event)
-        assert calls == [{"voice": "vi-VN-Y"}]
 
     def test_listener_survives_handler_exception(self, monkeypatch):
         def boom(lvl):

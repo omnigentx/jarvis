@@ -651,6 +651,42 @@ class SessionService:
             _resp_len = len(str(response)) if response else 0
             logger.debug(f"[SESSION] Response received len={_resp_len} duration={_duration:.1f}s session={session_id} agent={target_agent_name}")
 
+            # Cancellation rollback: fast-agent's OpenAI provider catches
+            # ``asyncio.CancelledError`` from an interrupted LLM call and
+            # returns an empty Prompt instead of re-raising. Without the
+            # check below, ``agent.message_history`` (which fast-agent
+            # appends to *before* invoking the LLM) would keep the user
+            # message + the empty assistant reply, and ``save_history``
+            # would persist that phantom turn. On reload the user would
+            # see their cancelled utterance plus a blank Jarvis bubble —
+            # a "ghost turn" the cancel flow was supposed to erase.
+            #
+            # ``Task.cancelling()`` returns >0 if cancel() was ever called
+            # on this task even when the inner await absorbed it. Python
+            # 3.11+; we run on 3.13.
+            try:
+                cur = asyncio.current_task()
+                cancelling = cur is not None and cur.cancelling() > 0
+            except Exception:
+                cancelling = False
+            if cancelling:
+                # Drop the half-turn from the agent's in-memory history
+                # so the next call (which loads from disk) starts clean.
+                # Fast-agent records the user message + assistant response
+                # on each send — pop both so neither leaks into context.
+                try:
+                    history = getattr(target_agent, "message_history", None)
+                    if isinstance(history, list) and len(history) >= 2:
+                        history.pop()  # the empty assistant message
+                        history.pop()  # the just-appended user message
+                except Exception:
+                    logger.debug("[SESSION] cancellation rollback: history pop failed", exc_info=True)
+                logger.info(
+                    f"[SESSION] turn cancelled — skipping save_history for "
+                    f"session={session_id} (rolled back agent.message_history)"
+                )
+                return response, session_id
+
             # Stamp the primary agent on first send so list_sessions /
             # get_display_history can route follow-up reads without the caller
             # having to pass agent_name each time. We don't overwrite on later

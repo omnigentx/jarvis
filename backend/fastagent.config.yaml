@@ -181,6 +181,18 @@ mcp:
       args: ["tools/approval_server.py"]
       env:
         PYTHONUNBUFFERED: "1"
+    # Self-improving Jarvis (experimental). Subprocess delegates every
+    # mutating operation to the main backend's RuntimeRpcServer over a
+    # Unix domain socket — so `rebuild_agent_instruction` runs in the live
+    # FastAgent process and the running Jarvis instance actually picks up
+    # the change. The socket path is propagated via JARVIS_RUNTIME_RPC_SOCKET
+    # which the backend sets in its own env at boot (see server.py lifespan).
+    skill_server:
+      command: "python"
+      args: ["tools/skill_server.py"]
+      env:
+        PYTHONUNBUFFERED: "1"
+        JARVIS_RUNTIME_RPC_SOCKET: "${JARVIS_RUNTIME_RPC_SOCKET}"
         JARVIS_API_KEY: "${JARVIS_API_KEY}"
         JARVIS_API_BASE: "http://127.0.0.1:8000"
     mcp-atlassian:

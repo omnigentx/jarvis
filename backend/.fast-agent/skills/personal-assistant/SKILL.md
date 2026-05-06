@@ -22,9 +22,9 @@ What does the user want?
 ├── Delete event → (1) list_events → (2) get eid → (3) delete_event(eid)
 ├── Send email → gmail_send(to, subject, body)
 ├── Read email → gmail_list() → gmail_read(id)
-└── Reminder/nhắc nhở → Use cron_create (cron-management skill)
-    └── "nhắc tôi", "đừng quên", "nhắc nhở" → cron_create with exec_mode="reminder"
-    └── KHÔNG dùng Google Calendar cho reminders. Dùng cron scheduler.
+└── Reminder → use cron_create (see the cron-management skill)
+    └── cron_create with exec_mode="reminder"
+    └── DO NOT use Google Calendar for reminders. Use the cron scheduler.
 ```
 
 <rule>

@@ -47,12 +47,12 @@ flowchart LR
 ```
 
 **Rules:**
-- ❌ KHÔNG hardcode secrets trong code → use GitHub Secrets
-- ✅ Scan dependencies cho vulnerabilities
-- ✅ Docker image scan trước deploy
-- Staging: auto-deploy on `develop`
-- Production: manual approval required
-- Rollback: keep 3 previous versions
+- ❌ DO NOT hardcode secrets in source → use GitHub Secrets.
+- ✅ Scan dependencies for vulnerabilities.
+- ✅ Scan Docker images before deploying.
+- Staging: auto-deploy on `develop`.
+- Production: manual approval required.
+- Rollback: keep 3 previous versions.
 
 ## Deliverables
 

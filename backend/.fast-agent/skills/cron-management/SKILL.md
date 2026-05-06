@@ -1,76 +1,78 @@
 ---
 name: cron-management
 description: >
-  Quản lý tác vụ định kỳ (cron jobs). Dùng khi user muốn: tạo/sửa/xóa nhắc nhở, lịch định kỳ,
-  tác vụ tự động (agent_turn). PHẢI gọi get_current_time trước khi tạo one-shot job để biết ngày giờ.
+  Manage scheduled jobs (cron). Use when the user wants to create, edit,
+  or delete a reminder, recurring schedule, or automated agent task
+  (agent_turn). MUST call get_current_time before creating a one-shot
+  job so the absolute date/time is accurate.
 ---
 
 # Cron Management Skill
 
 <violation>
-- KHÔNG được đọc file, browse code, hay chạy lệnh terminal để tìm hiểu cron system.
-- KHÔNG dùng read_text_file, execute, grep hay bất kỳ tool nào ngoài cron tools.
-- CHỈ gọi TRỰC TIẾP: `cron_create`, `cron_list`, `cron_update`, `cron_delete`, `get_current_time`.
-- Nếu vi phạm → request sẽ chậm và tốn token vô ích.
+- DO NOT read files, browse code, or run shell commands to "learn" the cron system.
+- DO NOT use read_text_file, execute, grep, or any tool other than the cron tools.
+- ONLY call directly: `cron_create`, `cron_list`, `cron_update`, `cron_delete`, `get_current_time`.
+- Violating this wastes tokens and slows the request.
 </violation>
 
-Bạn có 4 tools sẵn sàng để gọi NGAY, KHÔNG cần tìm hiểu thêm: `cron_create`, `cron_list`, `cron_update`, `cron_delete`.
+You have 4 ready-to-call tools: `cron_create`, `cron_list`, `cron_update`, `cron_delete`. No discovery needed.
 
-## Quy Tắc Cron Expression (BẮT BUỘC)
+## Cron expression rules (REQUIRED)
 
-Cron expression có 5 fields: `minute hour day_of_month month day_of_week`
+A cron expression has 5 fields: `minute hour day_of_month month day_of_week`.
 
-### Ví dụ phổ biến:
-- `0 9 * * *` → Mỗi ngày 9h sáng
-- `0 9 * * 1-5` → 9h sáng thứ 2 đến thứ 6
-- `*/30 * * * *` → Mỗi 30 phút
-- `0 */4 * * *` → Mỗi 4 tiếng
-- `0 7 27 4 *` → Ngày 27/4 hàng năm lúc 7h sáng
-- `0 15 31 3 *` + one_shot=true → Một lần lúc 3h chiều ngày 31/3
+### Common examples
+- `0 9 * * *` → every day at 9:00
+- `0 9 * * 1-5` → 9:00 Monday through Friday
+- `*/30 * * * *` → every 30 minutes
+- `0 */4 * * *` → every 4 hours
+- `0 7 27 4 *` → April 27 at 7:00 every year
+- `0 15 31 3 *` + one_shot=true → once on March 31 at 15:00
 
-## Phân Biệt Calendar (BẮT BUỘC)
+## Calendar type (REQUIRED)
 
-- **Dương lịch (solar)** — MẶC ĐỊNH: dùng cho mọi ngày/tháng thông thường
-- **Âm lịch (lunar)**: CHỈ dùng khi user đề cập: mùng, rằm, Tết, Vu Lan, Trung Thu, âm lịch, tháng Chạp, giỗ (theo âm lịch)
-  - `0 7 15 * *` + calendar_type="lunar" → Rằm hàng tháng
-  - `0 6 1 * *` + calendar_type="lunar" → Mùng 1 hàng tháng
-  - `0 7 10 3 *` + calendar_type="lunar" → 10/3 âm lịch (Giỗ tổ)
+- **Solar (Gregorian)** — DEFAULT for normal date/month references.
+- **Lunar** — use ONLY when the user explicitly references lunar concepts (1st-of-month, full-moon, Tết, lunar death anniversary, etc.).
+  - `0 7 15 * *` + calendar_type="lunar" → 15th of every lunar month
+  - `0 6 1 * *` + calendar_type="lunar" → 1st of every lunar month
+  - `0 7 10 3 *` + calendar_type="lunar" → 10/3 lunar
 
-## Phân Biệt Exec Mode (BẮT BUỘC)
+## Exec mode (REQUIRED)
 
-| Dấu hiệu | Exec Mode | Ý nghĩa |
-|-----------|-----------|---------|
-| "nhắc tôi", "đừng quên", "reminder" | `reminder` | Gửi notification text cho user |
-| "tổng hợp", "phân tích", "check", "crawl", "tìm" | `agent_turn` | AI tự động thực hiện task |
+| User intent | Exec mode | Meaning |
+|---|---|---|
+| Plain reminder ("remind me") | `reminder` | Send a notification text to the user |
+| Action ("summarise / analyse / check / crawl / find") | `agent_turn` | An agent executes a task automatically |
 
-- `exec_mode = "reminder"` → `exec_payload` = nội dung nhắc nhở. **KHÔNG cần** `exec_agent`.
-- `exec_mode = "agent_turn"` → `exec_payload` = **prompt thực thi trực tiếp**, `exec_agent` = tên agent (BẮT BUỘC). Danh sách agent hợp lệ:
-  - `jarvis` — tổng hợp, phân tích, trả lời câu hỏi phức tạp
-  - `ResearchAgent` — tìm kiếm web, tin tức
-  - `FinanceAgent` — giá cổ phiếu, vàng, crypto
+- `exec_mode = "reminder"` → `exec_payload` is the reminder text. **No** `exec_agent` needed.
+- `exec_mode = "agent_turn"` → `exec_payload` is the **direct execution prompt**, `exec_agent` is the agent name (REQUIRED). Valid agents:
+  - `jarvis` — synthesis, analysis, complex queries
+  - `ResearchAgent` — web search, news
+  - `FinanceAgent` — stock / gold / crypto prices
 
-### ⚠️ Viết exec_payload cho agent_turn (QUAN TRỌNG)
+### ⚠️ Writing exec_payload for agent_turn (IMPORTANT)
 
-`exec_payload` là prompt sẽ được gửi cho agent khi cron trigger — nó phải là **mệnh lệnh thực thi trực tiếp**.
+`exec_payload` is the prompt sent to the agent when the cron triggers — it must be a **direct action prompt**.
 
-**KHÔNG** copy nguyên văn yêu cầu scheduling của user (ví dụ: "Mỗi ngày lúc 7h sáng, hãy...").
-**HÃY** viết lại thành prompt hành động:
+**DO NOT** copy the user's scheduling phrasing verbatim (e.g. "Every day at 7am, please...").
+**DO** rewrite it as an action prompt:
 
-| ❌ SAI (copy scheduling request) | ✅ ĐÚNG (prompt thực thi) |
+| ❌ WRONG (scheduling text copied in) | ✅ RIGHT (action prompt) |
 |---|---|
-| "Mỗi ngày lúc 7h sáng, hãy kiểm tra thời tiết tại HN" | "Kiểm tra thời tiết hôm nay tại Gia Lâm, HN và gửi thông báo cho user" |
-| "Hàng ngày 8h tổng hợp tin AI" | "Tổng hợp tin tức AI nổi bật trong ngày, trình bày dạng bullet points" |
-| "Nhắc tôi mỗi sáng thứ 7 log TAS" | (dùng exec_mode=reminder, không phải agent_turn) |
+| "Every day at 7am, check the weather in HN" | "Check today's weather in Gia Lam, HN and send a notification" |
+| "Daily 8am summarise AI news" | "Summarise the day's notable AI news as bullet points" |
+| "Remind me every Saturday morning to log TAS" | (use exec_mode=reminder, not agent_turn) |
 
-## Pause/Resume
+## Pause / resume
 
-- Tạm dừng: `cron_update(job_id="...", status="paused")`
-- Tiếp tục: `cron_update(job_id="...", status="active")`
+- Pause: `cron_update(job_id="...", status="paused")`
+- Resume: `cron_update(job_id="...", status="active")`
 
-## Luôn Confirm Với User
+## Always confirm with the user
 
-Sau khi tạo job, luôn xác nhận lại:
-- Tên job
-- Lịch chạy (giải thích bằng tiếng Việt)
-- Mode (nhắc nhở hay AI thực thi)
-- Lần chạy tiếp theo
+After creating a job, summarise back:
+- job name
+- schedule (explained in the user's language)
+- mode (reminder vs AI-executed)
+- next run time

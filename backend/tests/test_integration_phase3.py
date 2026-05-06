@@ -57,9 +57,16 @@ def live_app(tmp_path, monkeypatch):
     )
     import routes.settings as rs
     import routes.setup as rsetup
+    from services import google_oauth as goauth_mod
 
     monkeypatch.setattr(rs, "config_service", cs_module.config_service)
     monkeypatch.setattr(rsetup, "config_service", cs_module.config_service)
+    # google_oauth.py does ``from services.config_service import config_service``
+    # at import time — that binding is independent of cs_module's singleton.
+    # Without this patch, OAuth status endpoints still hit the real dev DB
+    # and try to decrypt the previously-stored ``oauth.google/client_id``
+    # with this test's fresh master key → InvalidToken.
+    monkeypatch.setattr(goauth_mod, "config_service", cs_module.config_service)
 
     # Reset setup-gate cache so the middleware re-reads from our tmp DB.
     from middleware import setup_gate

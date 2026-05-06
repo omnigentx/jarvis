@@ -1,13 +1,13 @@
 ---
 name: git-workflow
 description: >
-  Git workflow và conventions. Dùng khi Dev hoặc DSO cần commit, branch,
-  hoặc tạo pull request theo chuẩn.
+  Git workflow and conventions. Use when a Dev or DSO needs to commit,
+  branch, or open a pull request following the team standard.
 ---
 
 # GIT WORKFLOW
 
-## Branch Strategy
+## Branch strategy
 
 ```
 main (production)
@@ -18,12 +18,12 @@ main (production)
 │   └── hotfix/fix-auth-crash
 ```
 
-## Branch Naming
+## Branch naming
 - `feature/<short-description>` — new feature
 - `bugfix/<short-description>` — bug fix
 - `hotfix/<short-description>` — urgent prod fix
 
-## Commit Conventions
+## Commit conventions
 
 ```
 <type>(<scope>): <description>
@@ -32,32 +32,32 @@ Types: feat, fix, docs, refactor, test, chore
 Scope: backend, frontend, skills, infra
 ```
 
-Ví dụ:
+Examples:
 - `feat(backend): add finance decision tree skill`
 - `fix(frontend): fix agent card overflow on mobile`
 - `refactor(skills): merge system-design into architecture`
 
-## Pull Request Template
+## Pull request template
 
 ```markdown
 ## What
-[Mô tả ngắn]
+[Short description]
 
 ## Why
-[Lý do thay đổi]
+[Reason for the change]
 
 ## How
-[Approach/Technical details]
+[Approach / technical details]
 
 ## Testing
 - [ ] Unit tests pass
 - [ ] Manual testing done
 
-## Screenshots (nếu UI)
+## Screenshots (if UI)
 ```
 
-## Quy tắc
-- Commit thường xuyên, message rõ ràng
-- 1 PR = 1 feature/bugfix
-- Rebase trước khi merge (không merge commits)
-- KHÔNG push trực tiếp lên main
+## Rules
+- Commit often, with clear messages.
+- One PR = one feature or bug fix.
+- Rebase before merging (no merge commits).
+- DO NOT push directly to main.

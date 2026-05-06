@@ -75,6 +75,7 @@ function connectNotifSSE() {
 const mainNav = [
   { path: '/overview', label: 'Overview', comingSoon: true },
   { path: '/agents', label: 'Agents' },
+  { path: '/skills', label: 'Skills' },
   { path: '/monitor', label: 'Team Monitor' },
   { path: '/chat', label: 'Chat' },
   { path: '/runs', label: 'Runs', comingSoon: true },

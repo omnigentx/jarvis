@@ -1,15 +1,15 @@
 ---
 name: flutter-patterns
 description: >
-  Flutter/Dart best practices. Dùng khi Dev viết code cho Jarvis frontend:
-  state management, Material Design, widget patterns.
+  Flutter / Dart best practices. Use when a Dev writes Jarvis frontend
+  code: state management, Material Design, widget patterns.
 ---
 
-# FLUTTER PATTERNS CHO JARVIS
+# FLUTTER PATTERNS FOR JARVIS
 
-## Widget Structure
+## Widget structure
 ```dart
-// ✅ StatelessWidget cho UI tĩnh
+// ✅ StatelessWidget for static UI
 class AgentCard extends StatelessWidget {
   final String name;
   final String status;
@@ -69,6 +69,6 @@ FutureBuilder<List<Agent>>(
 ```
 
 ## Styling
-- Dùng `Theme.of(context)` thay vì hardcode colors
+- Use `Theme.of(context)` instead of hard-coded colors
 - Responsive: `LayoutBuilder` + `MediaQuery`
 - Material 3 design tokens

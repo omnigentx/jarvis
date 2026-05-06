@@ -94,11 +94,13 @@ class TestGetCurrentTime:
         monkeypatch.setenv("JARVIS_TIMEZONE", "Asia/Ho_Chi_Minh")
         from tools.time_server import get_current_time
         result = get_current_time()
-        # Extract HH from "Bây giờ là HH:MM ngày DD/MM/YYYY."
-        parts = result.split()
-        time_part = parts[3]  # "HH:MM"
-        hour_in_result = time_part.split(":")[0]
-        assert hour_in_result == expected_hour_vn
+        # Extract HH from "It is HH:MM on DD/MM/YYYY." — the format uses
+        # "HH:MM" as the third whitespace-separated token regardless of
+        # surrounding wording.
+        import re
+        m = re.search(r"\b(\d{2}):(\d{2})\b", result)
+        assert m is not None, f"could not find HH:MM in {result!r}"
+        assert m.group(1) == expected_hour_vn
 
     def test_invalid_timezone_propagates(self, monkeypatch):
         monkeypatch.setenv("JARVIS_TIMEZONE", "Fake/Zone")

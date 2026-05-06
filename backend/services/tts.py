@@ -1,18 +1,15 @@
-"""TTS service — Edge TTS only (free, no API key).
+"""TTS service — Edge TTS provider primitives.
 
-ElevenLabs and Gemini providers were removed per BRD D6. They will be
-re-implemented properly via the Settings UI when needed.
+Public API:
+    - TTSProvider      (ABC implemented by every provider, including
+                        :class:`services.tts_realtime.RealtimeTTSProvider`)
+    - EdgeTTSProvider  (concrete; used by stories + as the chat default)
 
-Public API (do not break — many routes/services import these):
-    - TTSProvider      (ABC)
-    - EdgeTTSProvider  (concrete)
-    - TTSFactory       (singleton-style factory)
-
-Environment variables:
-    TTS_PROVIDER     Only ``edge`` is accepted. Other values log a warning
-                     and fall back to edge.
-    EDGE_TTS_VOICE   edge-tts voice id (default: vi-VN-NamMinhNeural).
-    EDGE_TTS_RATE    edge-tts rate string, e.g. ``+20%`` (default: +20%).
+The active *chat* / *stories* providers are built from DB-backed JSON via
+:mod:`services.tts_realtime` factories (``build_chat_provider`` /
+``build_stories_provider``) and swapped into :mod:`services.shared_state`.
+There is no env-var driven factory here — the registry is the source of
+truth.
 """
 from __future__ import annotations
 
@@ -222,22 +219,3 @@ class EdgeTTSProvider(TTSProvider):
             raise
 
 
-class TTSFactory:
-    """Factory used by ``shared_state`` and other callers.
-
-    Kept as a class with a ``get_provider`` static method to preserve the existing
-    API surface — any future providers will be added here.
-    """
-
-    @staticmethod
-    def get_provider() -> TTSProvider:
-        provider_type = (os.getenv("TTS_PROVIDER") or "edge").strip().lower()
-        if provider_type and provider_type != "edge":
-            logger.warning(
-                "TTS_PROVIDER=%r is not supported (only 'edge'). Falling back to Edge TTS.",
-                provider_type,
-            )
-
-        voice = os.getenv("EDGE_TTS_VOICE", DEFAULT_EDGE_VOICE)
-        rate = os.getenv("EDGE_TTS_RATE", DEFAULT_EDGE_RATE)
-        return EdgeTTSProvider(voice=voice, rate=rate)

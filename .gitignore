@@ -75,3 +75,8 @@ backend/core/logs/
 # ─── Playwright E2E (dashboard) ──────────────────
 dashboard/playwright-report/
 dashboard/test-results/
+backend/test-results/
+
+# ─── Skill / agent-card auto-backups (.bak siblings created on edit) ──
+backend/.fast-agent/skills/**/*.bak
+backend/.fast-agent/agent_cards/**/*.bak

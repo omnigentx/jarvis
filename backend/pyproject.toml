@@ -27,6 +27,18 @@ dependencies = [
   "scrapling[ai]>=0.4.2",
   "croniter>=6.2.2",
   "pyyaml>=6.0.3",
+  # Real-time voice (STT + streaming TTS); engines installed via realtimetts extras
+  "realtimestt>=0.3.104",
+  "realtimetts[edge,system,azure,elevenlabs,openai]>=0.6.1",
+  # Optional STT backend: Gipformer-65M Vietnamese (sherpa-onnx runtime).
+  # Wheel ships prebuilt for macOS/Linux/Windows; only loaded when the
+  # user picks the gipformer_vi backend in the voice settings.
+  # Pin to 1.10.46 — last version that bundles libonnxruntime in the wheel.
+  # 1.12+ wheels drop the bundled dylib and require an external onnxruntime
+  # install whose ABI version exactly matches what sherpa-onnx was built
+  # against (currently 1.24.4), but faster-whisper transitively pulls
+  # onnxruntime>=1.25 — so on Python 3.13 the import always fails.
+  "sherpa-onnx==1.10.46",
 ]
 
 [tool.uv]
@@ -34,6 +46,13 @@ package = true
 
 [tool.uv.sources]
 fast-agent-mcp = { path = "./fast-agent", editable = true }
+# Submodule paths intentionally differ from the Python package names
+# (RealtimeSTT / RealtimeTTS) so that Python's PathFinder doesn't pick
+# up the submodule directory at cwd as a namespace package and shadow
+# the editable install. See test_voice_imports.py for the regression
+# guard.
+realtimestt    = { path = "./realtimestt_src", editable = true }
+realtimetts    = { path = "./realtimetts_src", editable = true }
 
 # Optional convenience entry point if you later package this app:
 [project.scripts]
@@ -57,6 +76,16 @@ dev = [
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["."]
+norecursedirs = [
+  ".venv",
+  "fast-agent",
+  "mcp-atlassian",
+  "figma-ui-mcp",
+  "realtimestt_src",
+  "realtimetts_src",
+  "data",
+  "config",
+]
 markers = [
   "slow: marks tests that spawn real subprocesses or take >1s",
 ]

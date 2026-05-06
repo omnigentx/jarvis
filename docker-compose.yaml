@@ -25,7 +25,6 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - LOG_CONSOLE_LEVEL=${LOG_CONSOLE_LEVEL:-INFO}
-      - TTS_PROVIDER=${TTS_PROVIDER:-edge}
       # Point git at the config that services/git_credential_sync.py
       # regenerates from the DB on every boot, so ``git clone/pull/push``
       # from the agent shell picks up credential.helper without touching

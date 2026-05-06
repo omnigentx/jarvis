@@ -1,53 +1,54 @@
 ---
 name: architecture
 description: >
-  Framework ra quyết định kiến trúc. Dùng khi SA cần phân tích requirements,
-  đánh giá trade-offs, viết ADR, hoặc chọn design patterns.
+  Architecture decision framework. Use when an SA needs to analyse
+  requirements, evaluate trade-offs, write an ADR, or pick design
+  patterns.
 ---
 
 # ARCHITECTURE DECISION FRAMEWORK
 
-## Nguyên tắc cốt lõi
+## Core principle
 > "Simplicity is the ultimate sophistication."
-> Bắt đầu đơn giản. Thêm complexity CHỈ KHI cần thiết.
+> Start simple. Add complexity ONLY when justified.
 
-## Decision Tree
+## Decision tree
 
 ```
-Cần quyết định gì?
-├── Chọn technology → Trade-off analysis
-├── Thiết kế component → Separation of Concerns
-├── Database design → Normalize vs Denormalize
+What needs to be decided?
+├── Pick a technology → Trade-off analysis
+├── Component design → Separation of Concerns
+├── Database design → Normalise vs denormalise
 ├── API design → REST vs WebSocket vs gRPC
-└── Scaling → Vertical vs Horizontal
+└── Scaling → Vertical vs horizontal
 ```
 
-## ADR Template (Architecture Decision Record)
+## ADR template (Architecture Decision Record)
 
 ```markdown
-# ADR-[N]: [Tiêu đề]
+# ADR-[N]: [Title]
 ## Status: [Proposed | Accepted | Deprecated]
-## Context: Vấn đề cần giải quyết
-## Decision: Quyết định gì
+## Context: the problem to solve
+## Decision: what we chose
 ## Consequences:
 - ✅ Pros: ...
 - ❌ Cons: ...
-## Alternatives Considered:
-1. Option A: ... (rejected vì ...)
-2. Option B: ... (rejected vì ...)
+## Alternatives considered:
+1. Option A: ... (rejected because ...)
+2. Option B: ... (rejected because ...)
 ```
 
-## Design Patterns (khi nào dùng)
+## Design patterns (when to use)
 
-| Pattern | Khi nào | Ví dụ trong Jarvis |
-|---------|---------|-------------------|
-| MCP (Model Context Protocol) | Tool integration | Tất cả tools |
-| Agent pattern | Task delegation | Root → Sub-agents |
+| Pattern | When | Example in Jarvis |
+|---------|------|-------------------|
+| MCP (Model Context Protocol) | Tool integration | All tools |
+| Agent pattern | Task delegation | Root → sub-agents |
 | Event-driven | Async processing | Crawl jobs, TTS |
 | Repository | Data access | History, stories |
 
-## Checklist trước khi finalize
-- [ ] Requirements đã rõ ràng
+## Pre-finalisation checklist
+- [ ] Requirements are clear
 - [ ] Trade-off analysis documented
-- [ ] Đã xem xét alternatives đơn giản hơn
-- [ ] ADR written cho mỗi quyết định quan trọng
+- [ ] Considered simpler alternatives
+- [ ] ADR written for each significant decision

@@ -1,8 +1,8 @@
 ---
 name: design-system
 description: >
-  Jarvis Design System tokens và guidelines. Dùng khi Designer hoặc Dev cần
-  biết colors, typography, spacing, component conventions.
+  Jarvis Design System tokens and guidelines. Use when a Designer or
+  Dev needs colors, typography, spacing, or component conventions.
 ---
 
 # JARVIS DESIGN SYSTEM
@@ -37,7 +37,7 @@ Warning:     #FFB74D (Amber)
 
 ## Dark Mode (Default)
 - Jarvis uses dark mode by default
-- Text trên dark surface: #EAEAEA
+- Text on dark surface: #EAEAEA
 - Borders: rgba(255,255,255,0.1)
 - Hover states: lighten background 5%
 

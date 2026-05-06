@@ -203,6 +203,13 @@ onMounted(() => {
   word-break: break-word;
 }
 
+/* Strip leading margin so the first heading / paragraph sits flush
+   against the parent container's padding instead of pushing the
+   visible content downward. Without this, a card with padding:16px
+   followed by `# Title` ends up with effectively 40px top spacing. */
+.md-content > *:first-child { margin-top: 0 !important; }
+.md-content > *:last-child { margin-bottom: 0 !important; }
+
 .md-content h1 { font-size: 22px; font-weight: 700; color: var(--text-heading, #f0f2f5); margin: 24px 0 12px; }
 .md-content h2 { font-size: 18px; font-weight: 600; color: var(--text-heading, #f0f2f5); margin: 20px 0 10px; }
 .md-content h3 { font-size: 16px; font-weight: 600; color: var(--text-heading, #f0f2f5); margin: 16px 0 8px; }
@@ -249,11 +256,17 @@ onMounted(() => {
   line-height: 1.5;
 }
 
+/* Wide tables overflow the container on mobile; let them scroll
+   horizontally instead of squashing or breaking layout. */
 .md-content table {
+  display: block;
   width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
   border-collapse: collapse;
   margin: 12px 0;
   font-size: 13px;
+  -webkit-overflow-scrolling: touch;
 }
 
 .md-content th {
@@ -323,4 +336,19 @@ onMounted(() => {
 .md-content .hljs-attr { color: #ffcb6b; }
 .md-content .hljs-title { color: #82aaff; }
 .md-content .hljs-params { color: #e2e8f0; }
+
+/* ── Mobile responsive — tighter type and spacing for narrow screens. */
+@media (max-width: 640px) {
+  .md-content { font-size: 13px; line-height: 1.65; }
+  .md-content h1 { font-size: 19px; margin: 18px 0 10px; }
+  .md-content h2 { font-size: 16px; margin: 16px 0 8px; }
+  .md-content h3 { font-size: 15px; margin: 14px 0 6px; }
+  .md-content h4, .md-content h5, .md-content h6 { font-size: 13px; }
+  .md-content ul, .md-content ol { padding-left: 20px; }
+  .md-content blockquote { padding: 6px 12px; }
+  .md-content pre { padding: 12px; font-size: 12px; border-radius: 6px; }
+  .md-content code { font-size: 12px; padding: 1px 5px; }
+  .md-content table { font-size: 12px; }
+  .md-content th, .md-content td { padding: 6px 10px; }
+}
 </style>

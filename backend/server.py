@@ -65,6 +65,17 @@ def _bootstrap_env_from_db() -> None:
 
 _bootstrap_env_from_db()
 
+# Pre-seed the Runtime RPC socket path BEFORE importing agent.py — fast-agent
+# resolves ``${VAR}`` placeholders in fastagent.config.yaml at module load,
+# so the env var must be set already or every spawned MCP subprocess will
+# inherit the literal string and fail to connect. The actual server starts
+# later in the lifespan; the path itself is deterministic so the early seed
+# matches what the lifespan will create.
+os.environ.setdefault(
+    "JARVIS_RUNTIME_RPC_SOCKET",
+    str(Path(".runtime/state/runtime_rpc.sock").resolve()),
+)
+
 from helpers.audio_cache import clean_audio_cache, cleanup_stale_generating
 from agent import fast
 
@@ -107,6 +118,30 @@ async def lifespan(app: FastAPI):
         logger.info("Spawn event socket ready: %s", socket_path)
     except Exception as e:
         logger.warning("Failed to start spawn event socket: %s", e)
+
+    # Start the RuntimeRpcServer — request/response RPC for MCP subprocesses
+    # that need to mutate live backend state (e.g. skill_server delegating to
+    # skill_service so rebuild_agent_instruction runs in this process). Generic
+    # framework: future tools register their own handlers here too.
+    # The socket path was pre-seeded into os.environ before agent.py was
+    # imported (so ${JARVIS_RUNTIME_RPC_SOCKET} placeholders in
+    # fastagent.config.yaml resolve correctly); we reuse the same value here.
+    runtime_rpc_server = None
+    try:
+        from services.runtime_rpc import RuntimeRpcServer
+        from services import skill_rpc_handlers
+
+        rpc_socket_path = os.environ["JARVIS_RUNTIME_RPC_SOCKET"]
+        runtime_rpc_server = RuntimeRpcServer(rpc_socket_path)
+        skill_rpc_handlers.register(runtime_rpc_server)
+        await runtime_rpc_server.start()
+        state.runtime_rpc_server = runtime_rpc_server
+        logger.info(
+            "Runtime RPC bridge ready: %s (methods=%d)",
+            rpc_socket_path, len(runtime_rpc_server.methods()),
+        )
+    except Exception as e:
+        logger.warning("Failed to start Runtime RPC bridge: %s", e)
     
     # Wire meeting events → SSE stream (cross-process via SQLite)
     meeting_watcher_task = None
@@ -130,13 +165,12 @@ async def lifespan(app: FastAPI):
     logger.info("Database initialized.")
 
     # Wire hot-reload dispatcher so DB-backed config changes (master key,
-    # log level, TTS) take effect without restarting the backend.
+    # log level, voice engines) take effect without restarting the backend.
     try:
         from services.config_service import config_service
         from services.runtime_config import (
             apply_log_console_level,
             apply_master_key,
-            apply_tts_config,
             reconcile_service_env,
             register_config_listeners,
         )
@@ -172,15 +206,19 @@ async def lifespan(app: FastAPI):
             except (ValueError, ZoneInfoNotFoundError) as exc:
                 logger.warning("[RUNTIME] Ignoring invalid stored TIMEZONE: %s", exc)
 
-        if any(
-            config_service.get("system", k) is not None
-            for k in ("TTS_PROVIDER", "EDGE_TTS_VOICE", "EDGE_TTS_RATE")
-        ):
-            apply_tts_config(
-                provider=config_service.get("system", "TTS_PROVIDER"),
-                voice=config_service.get("system", "EDGE_TTS_VOICE"),
-                rate=config_service.get("system", "EDGE_TTS_RATE"),
+        # Voice config (registry-aware, DB-backed JSON). Always run — apply_*
+        # falls back to registry defaults when the DB key is absent, so this
+        # doubles as the bootstrap path for first-run users. STT is NOT
+        # eager-loaded (heavy: torch + whisper); /ws/voice builds it lazily.
+        try:
+            from services.runtime_config import (
+                apply_voice_chat_config,
+                apply_voice_stories_config,
             )
+            apply_voice_chat_config(None)
+            apply_voice_stories_config(None)
+        except Exception as exc:
+            logger.warning("[BOOTSTRAP] Voice provider bootstrap skipped: %s", exc)
 
         # Per-provider LLM config: migrate any legacy single-slot keys left
         # over from pre-namespaced installs, then push whatever is stored
@@ -505,6 +543,13 @@ async def lifespan(app: FastAPI):
     # Shutdown spawn event socket server
     if event_socket_server:
         await event_socket_server.stop()
+
+    # Shutdown runtime RPC bridge
+    if runtime_rpc_server:
+        try:
+            await runtime_rpc_server.stop()
+        except Exception:
+            logger.exception("Failed to stop runtime RPC server")
     
     # Shutdown meeting event watcher
     if meeting_watcher_task:

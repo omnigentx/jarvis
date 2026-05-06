@@ -365,12 +365,30 @@ class CronScheduler:
         logger.info("[CRON] Agent turn: '%s' → agent=%s payload='%s'", job.name, agent_name, payload[:80])
 
         try:
+            # ``agent_name`` MUST flow through to resume_and_send. Without
+            # it the call defaults to Jarvis and the configured target
+            # agent (e.g. ResearchAgent for "Tổng hợp tin tức AI hàng
+            # ngày") never runs — the notification UI still shows the
+            # configured ``exec_agent`` from job metadata, masking the
+            # mismatch. This is why a 45-minute success-marked run came
+            # back with an empty body: Jarvis was the one running the
+            # prompt and gave up.
             response, session_id = await self._session_service.resume_and_send(
                 self._agent_app,
                 payload,
                 session_id=None,  # New session each run
+                agent_name=agent_name,
             )
             result = str(response) if response else "No response"
+            if not response:
+                # Loud-log empty so the next investigation has evidence
+                # without needing to re-run the whole job.
+                logger.warning(
+                    "[CRON] Agent turn '%s' (agent=%s) returned EMPTY response "
+                    "after session=%s — check agent's max-iter / tool-loop "
+                    "behaviour and whether it actually exists in agent_app",
+                    job.name, agent_name, session_id,
+                )
 
             self._broadcast_event("agent_turn_result", {
                 "job_id": job.id,

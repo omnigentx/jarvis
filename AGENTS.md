@@ -40,7 +40,7 @@ jarvis_v3/
 │   ├── agent.py                # fast-agent agent definitions (@fast.agent decorators)
 │   ├── routes/                 # API endpoints
 │   │   ├── agents.py           # /api/agents — list, detail, pause/resume, team, skills, context
-│   │   ├── chat.py             # /api/chat, /api/chat-stream (SSE), /api/chat-audio
+│   │   ├── chat.py             # /api/chat (legacy single-shot, used by Xiaozhi), /api/chat-stream (SSE)
 │   │   ├── inject.py           # /api/agents/{name}/inject — prompt injection (MessageBus + resume)
 │   │   ├── agent_timeline.py   # /api/agents/{name}/timeline (SSE)
 │   │   ├── approvals.py        # /api/approvals — human-in-the-loop approval system
@@ -69,9 +69,13 @@ jarvis_v3/
 │   │   ├── meeting_hooks_bridge.py   # Meeting hooks → SSE bridge
 │   │   ├── dynamic_agents.py   # Dynamic agent loading from agent_cards/
 │   │   ├── crawl_poller.py     # Story crawl polling/monitoring
-│   │   ├── tts.py              # TTS provider (Edge / ElevenLabs)
-│   │   ├── tts_pregen_job.py   # TTS pre-generation background job
+│   │   ├── tts.py              # Edge TTS provider (legacy, still the chat default)
+│   │   ├── tts_realtime.py     # RealtimeTTS adapter — registry-driven engines + factories
+│   │   ├── tts_pregen_job.py   # Story TTS pre-gen (always Edge)
 │   │   ├── pregen_stream.py    # TTS pre-gen SSE stream helper
+│   │   ├── stt_realtime.py     # RealtimeSTT adapter (WS-fed, swappable hook)
+│   │   ├── voice_engine_registry.py  # Single source of truth — TTS/STT engine specs
+│   │   ├── voice_config.py     # JSON-shaped DB persistence for voice.tts.* / voice.stt
 │   │   ├── library_manager.py  # Book library CRUD + progress tracking
 │   │   ├── pricing.py          # LLM token pricing calculations
 │   │   ├── history.py          # TTS cache management
@@ -103,7 +107,9 @@ jarvis_v3/
 │   ├── config/                 # Credentials & runtime config
 │   ├── fastagent.config.yaml   # fast-agent main config (model, MCP servers, logging)
 │   ├── fastagent.secrets.yaml  # Local dev secrets (API keys, base_url overrides)
-│   └── fast-agent/             # Git submodule → fast-agent core
+│   ├── fast-agent/             # Git submodule → fast-agent core
+│   ├── realtimestt_src/        # Git submodule → omnigentx/RealtimeSTT (hands-free STT)
+│   └── realtimetts_src/        # Git submodule → omnigentx/RealtimeTTS (streaming TTS)
 │
 ├── dashboard/                  # Ops Dashboard (Vue 3 + Vite + Tailwind v4)
 │   └── src/
@@ -118,8 +124,10 @@ jarvis_v3/
 │       │   ├── NotificationDetail.vue  # Notification detail + TTS
 │       │   ├── TokenUsage.vue      # Token usage analytics
 │       │   ├── StoriesView.vue     # Story library browser
-│       │   └── StoryReaderView.vue # Audiobook player
-│       ├── components/         # Reusable UI components
+│       │   ├── StoryReaderView.vue # Audiobook player
+│       │   └── settings/
+│       │       └── SettingsVoice.vue   # Voice tab — engines, secrets, STT, wake-word
+│       ├── components/         # Reusable UI components (incl. chat/VoiceBar.vue)
 │       ├── composables/        # Vue composables
 │       │   ├── useActivityStream.js   # Agent activity SSE
 │       │   ├── useChatStream.js       # Chat SSE stream
@@ -128,6 +136,7 @@ jarvis_v3/
 │       │   ├── useMeetingList.js      # Meeting data fetcher
 │       │   ├── useAudioPlayer.js      # Audio player state
 │       │   ├── usePregenStream.js     # TTS pre-gen SSE
+│       │   ├── useVoiceSession.js     # Hands-free /ws/voice client + AudioWorklet
 │       │   ├── useBreakpoint.js       # Responsive breakpoints
 │       │   └── useToast.js            # Toast notification
 │       ├── stores/             # Pinia stores
@@ -248,6 +257,35 @@ MCP Subprocess (agent)
 - **No polling.** If you need data updates, use SSE or WebSocket.
 - SSE connections must implement exponential backoff (1s → 30s max) on disconnect.
 - Dashboard SSE reconnects on tab visibility change (`visibilitychange` event).
+
+## Voice Architecture
+
+### Provider split (single-source-of-truth invariant)
+| Provider | Where it's used | Engine |
+|----------|-----------------|--------|
+| `tts_chat_provider` (registry-driven) | `/chat`, `/chat-stream`, `/ws/voice`, cron notifications | Edge default; ElevenLabs / OpenAI / Azure / System opt-in via Settings → Voice |
+| `tts_stories_provider` (locked Edge) | Story chapters, library books, `tts_pregen_job` | Always Edge — protects long-form quota at code level |
+
+Dispatch lives in `routes/tts.py`: `_state.tts_chat_provider if is_notification else _state.tts_stories_provider`. The legacy `tts_provider` attribute aliases the chat provider for back-compat callers; never alias to stories.
+
+### Voice transports
+| Path | Direction | Purpose |
+|------|-----------|---------|
+| `GET /api/tts/{request_id}` | server → browser MP3 stream | Listen-back of chat replies, story chapters, notifications. Existing browser `<audio>` plays it. |
+| `WS /ws/voice` | bidirectional binary + JSON | Hands-free conversational loop. Browser sends 16 kHz mono int16 PCM; server emits partial transcripts, VAD events, wake word, and TTS audio (PCM or MP3 depending on engine). Barge-in cancels in-flight TTS in-process — single-socket avoids round-trip latency. |
+
+### Registry & hot-reload
+- `services/voice_engine_registry.py` is the **single source of truth** for which engines exist, their params, secrets, and requirements. Settings UI form is generated entirely from this dict — adding a new engine is purely additive.
+- Storage (DB-backed JSON, hot-reloadable):
+  - `voice.tts.chat` = `{engine, params}`
+  - `voice.tts.stories` = `{voice, rate}` (locked schema — no `engine` field accepted)
+  - `voice.stt` = `{backend, params, wake_word: {backend, params}}`
+  - `voice.secrets.{engine}.{slot}` (encrypted via secrets_crypto)
+- `services/runtime_config.py::apply_voice_chat_config / apply_voice_stories_config / apply_voice_stt_config` are listener-driven: any UI write to `voice.*` rebuilds **only** the affected provider; chat changes never touch stories.
+
+### Submodules (omnigentx forks)
+- `backend/realtimestt_src` — fork of `KoljaB/RealtimeSTT`, faster-whisper based STT with VAD, optional wake word (Porcupine / OpenWakeWord). WS-fed via `use_microphone=False` + `feed_audio()`. Submodule path differs from the Python package name (`RealtimeSTT`) so the source tree at backend cwd doesn't shadow the editable install via PEP 420 namespace package resolution.
+- `backend/realtimetts_src` — fork of `KoljaB/RealtimeTTS`, multi-engine streaming TTS. Edge bypasses the library for the legacy MP3 path; other engines run through `RealtimeTTSProvider` with PCM↔MP3 transcode for HTTP and raw PCM for WS. Same path-vs-package-name rule as STT.
 - Auth for GET SSE: `?api_key=<key>` query param. Auth for POST SSE: Bearer token in header.
 
 ## Multi-Agent Architecture
@@ -288,7 +326,6 @@ Key module: `services/context_persistence.py` — uses `SPAWN_REGISTRY_DB` env v
 | Variable | Description |
 |----------|-------------|
 | `JARVIS_API_KEY` | API authentication key |
-| `TTS_PROVIDER` | TTS engine. Currently only `edge` is supported (free, no API key). |
 | `LOG_CONSOLE_LEVEL` | Logging level: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 | `SPAWN_REGISTRY_DB` | Absolute path to SQLite DB (auto-set by server.py startup) |
 | `SPAWN_PROJECT_DIR` | Absolute path to project dir for MCP subprocess env |
@@ -352,7 +389,7 @@ Reference: [fast-agent Tool Runner docs](https://fast-agent.ai/agents/tool_runne
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **jarvis_v3** (27104 symbols, 78065 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **jarvis** (32076 symbols, 89859 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -368,7 +405,7 @@ This project is indexed by GitNexus as **jarvis_v3** (27104 symbols, 78065 relat
 
 1. `gitnexus_query({query: "<error or symptom>"})` — find execution flows related to the issue
 2. `gitnexus_context({name: "<suspect function>"})` — see all callers, callees, and process participation
-3. `READ gitnexus://repo/jarvis_v3/process/{processName}` — trace the full execution flow step by step
+3. `READ gitnexus://repo/jarvis/process/{processName}` — trace the full execution flow step by step
 4. For regressions: `gitnexus_detect_changes({scope: "compare", base_ref: "main"})` — see what your branch changed
 
 ## When Refactoring
@@ -407,10 +444,10 @@ This project is indexed by GitNexus as **jarvis_v3** (27104 symbols, 78065 relat
 
 | Resource | Use for |
 |----------|---------|
-| `gitnexus://repo/jarvis_v3/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/jarvis_v3/clusters` | All functional areas |
-| `gitnexus://repo/jarvis_v3/processes` | All execution flows |
-| `gitnexus://repo/jarvis_v3/process/{name}` | Step-by-step execution trace |
+| `gitnexus://repo/jarvis/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/jarvis/clusters` | All functional areas |
+| `gitnexus://repo/jarvis/processes` | All execution flows |
+| `gitnexus://repo/jarvis/process/{name}` | Step-by-step execution trace |
 
 ## Self-Check Before Finishing
 
