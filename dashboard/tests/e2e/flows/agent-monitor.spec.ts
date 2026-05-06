@@ -34,7 +34,20 @@ test('team monitor — roster renders and SSE event flips one agent status', asy
   const recorder = new NetworkRecorder()
   await recorder.attach(page)
 
-  await page.goto('/monitor')
+  // Wait for the REST roster fetch alongside navigation so the initial
+  // 2-agent payload definitely lands before any SSE event mutates the
+  // store. CI runners are slower than local: the mock-backend's 30ms yield
+  // meant to let REST race-win sometimes loses on GitHub Actions, leaving
+  // the page momentarily with only the SSE-known agent and tripping the
+  // count assertion below.
+  await Promise.all([
+    page.waitForResponse(
+      (r) =>
+        r.request().method() === 'GET' &&
+        new URL(r.url()).pathname === '/api/agents',
+    ),
+    page.goto('/monitor'),
+  ])
 
   // Assertion 1: both agents render as cards. Anchor on the stable count
   // first — the grid hydrates from /api/agents and any assertion targeting
