@@ -15,6 +15,25 @@ BACKEND_DIR = Path(__file__).parent.parent
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
+# Redirect the DB to an isolated jarvis.test.db BEFORE any test module
+# imports core.database. Without this, MCP test cleanup fixtures using the
+# global engine would delete from the developer's runtime data/jarvis.db
+# and the dashboard's MCP list would go empty (tests still pass because
+# they self-seed). Path mirrors the runtime DB so it sits next to it in
+# data/ for easy inspection / .gitignore (data/ is already ignored).
+_TEST_DB_PATH = BACKEND_DIR / "data" / "jarvis.test.db"
+_TEST_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+os.environ.setdefault("JARVIS_DB_PATH", str(_TEST_DB_PATH))
+# Start each pytest session from a clean test DB so leftover rows from a
+# previous run can never leak into assertions.
+for _suffix in ("", "-wal", "-shm"):
+    _path = _TEST_DB_PATH.with_name(_TEST_DB_PATH.name + _suffix)
+    try:
+        if _path.exists():
+            _path.unlink()
+    except OSError:
+        pass
+
 
 # ──────────────────────────────────────────────
 # Database fixtures
@@ -22,12 +41,17 @@ if str(BACKEND_DIR) not in sys.path:
 
 
 @pytest.fixture()
-def tmp_db(tmp_path):
-    """Create a temporary SQLite database for testing."""
+def tmp_db(tmp_path, monkeypatch):
+    """Create a temporary SQLite database for testing.
+
+    Uses monkeypatch so the session-level JARVIS_DB_PATH (set at the top of
+    this conftest) is restored on teardown rather than removed entirely —
+    otherwise tests running after this fixture see no override and fall
+    through to the runtime data/jarvis.db.
+    """
     db_path = tmp_path / "test.db"
-    os.environ["JARVIS_DB_PATH"] = str(db_path)
+    monkeypatch.setenv("JARVIS_DB_PATH", str(db_path))
     yield db_path
-    os.environ.pop("JARVIS_DB_PATH", None)
 
 
 # ──────────────────────────────────────────────

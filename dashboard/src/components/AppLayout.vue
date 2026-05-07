@@ -8,6 +8,7 @@ import { useApprovalsStore } from '../stores/approvals'
 import { useAudioPlayerStore } from '../stores/audioPlayer'
 import { useAudioPlayer } from '../composables/useAudioPlayer'
 import { apiFetch, buildSSEUrl } from '../api'
+import { useToast } from '../composables/useToast'
 import ConnectionBanner from './ConnectionBanner.vue'
 import MiniAudioPlayer from './stories/MiniAudioPlayer.vue'
 import FullAudioPlayer from './stories/FullAudioPlayer.vue'
@@ -42,6 +43,10 @@ watch(() => route.path, () => {
 // ─── Unread notification badge ───
 const unreadCount = ref(0)
 let notifEventSource = null
+// Reconnect timer ids; cleared on unmount so a 5s-pending retry doesn't fire
+// after the component is gone (would re-open EventSource and leak forever).
+let notifReconnectTimer = null
+let mcpReconnectTimer = null
 
 async function fetchUnreadCount() {
   try {
@@ -67,7 +72,40 @@ function connectNotifSSE() {
   }
   notifEventSource.onerror = () => {
     notifEventSource?.close()
-    setTimeout(connectNotifSSE, 5000)
+    notifReconnectTimer = setTimeout(connectNotifSSE, 5000)
+  }
+}
+
+// ─── MCP warning toasts ───
+// /api/mcp/events/stream is filtered server-side to type=mcp. We surface
+// any audit row with action="warn" as a persistent dashboard toast — the
+// most common case is a generated server hitting a forbidden pattern
+// (eval/exec/shell=True…) detected by mcp_admin_service.static_check.
+const toast = useToast()
+let mcpEventSource = null
+
+function connectMcpEventsSSE() {
+  const url = buildSSEUrl('/api/mcp/events/stream')
+  mcpEventSource = new EventSource(url)
+  mcpEventSource.onmessage = (ev) => {
+    try {
+      const data = JSON.parse(ev.data)
+      if (data.type !== 'mcp' || data.action !== 'warn') return
+      const detail = data.detail || {}
+      const category = detail.category || 'warn'
+      const summary = (detail.hits || [])
+        .map((h) => h.why)
+        .filter(Boolean)
+        .join('; ') || category
+      toast.warning(`MCP warning — ${data.server || 'unknown'}`, {
+        description: summary,
+        duration: 8000,
+      })
+    } catch (_) {}
+  }
+  mcpEventSource.onerror = () => {
+    mcpEventSource?.close()
+    mcpReconnectTimer = setTimeout(connectMcpEventsSSE, 5000)
   }
 }
 
@@ -76,6 +114,7 @@ const mainNav = [
   { path: '/overview', label: 'Overview', comingSoon: true },
   { path: '/agents', label: 'Agents' },
   { path: '/skills', label: 'Skills' },
+  { path: '/mcp-servers', label: 'MCP Servers' },
   { path: '/monitor', label: 'Team Monitor' },
   { path: '/chat', label: 'Chat' },
   { path: '/runs', label: 'Runs', comingSoon: true },
@@ -139,11 +178,15 @@ function goBack() {
 onMounted(() => {
   fetchUnreadCount()
   connectNotifSSE()
+  connectMcpEventsSSE()
   window.addEventListener('notification-badge-update', onBadgeUpdate)
 })
 
 onUnmounted(() => {
+  if (notifReconnectTimer) clearTimeout(notifReconnectTimer)
+  if (mcpReconnectTimer) clearTimeout(mcpReconnectTimer)
   notifEventSource?.close()
+  mcpEventSource?.close()
   window.removeEventListener('notification-badge-update', onBadgeUpdate)
 })
 </script>
@@ -186,7 +229,7 @@ onUnmounted(() => {
           Jarvis Ops
         </div>
         <div style="font-size: 11px; font-weight: 400; color: var(--text-sub); margin-top: 2px; line-height: 13px;">
-          v1.1.0 · realtime
+          v1.2.0 · realtime
         </div>
       </div>
 

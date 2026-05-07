@@ -156,6 +156,11 @@ _JARVIS_TOOLS = {}
 # Note: `skill_server` (underscore) — see fastagent.config.yaml comment for why.
 _JARVIS_SERVERS.append("skill_server")
 
+# Self-managed MCP catalog. Same gating model as skill_server: tools return a
+# structured 503 when SELF_IMPROVING_ENABLED is off. Lets Jarvis register
+# off-the-shelf MCPs (Path A) and scaffold/test/promote new ones (Path B).
+_JARVIS_SERVERS.append("mcp_admin")
+
 if _SPAWNER_ENABLED:
     _JARVIS_SERVERS.append("agent_spawner")
     _JARVIS_TOOLS["agent_spawner"] = [
@@ -217,7 +222,7 @@ else:
 
     {{agentSkills}}
     """,
-    skills=CORE_SKILLS + get_skills("terminal-execution", "delegation-strategy", "scrape-web", "skill-authoring", "cron-management"),
+    skills=CORE_SKILLS + get_skills("terminal-execution", "delegation-strategy", "scrape-web", "skill-authoring", "mcp-authoring", "cron-management"),
     servers=_JARVIS_SERVERS,
     tools=_JARVIS_TOOLS,
     agents=[
