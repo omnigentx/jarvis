@@ -386,10 +386,17 @@ async def test_promote_persists_cwd_to_catalog(monkeypatch):
     """
     from core.database import (
         AgentMcpAttachmentModel,
+        Base,
         McpEventLogModel,
         McpServerModel,
         SessionLocal,
+        engine,
     )
+
+    # CI runs against a fresh DB and pytest may pick this file alphabetically
+    # before test_mcp_catalog.py whose fixture creates the tables. Ensure the
+    # MCP tables exist so the cleanup query below doesn't blow up.
+    Base.metadata.create_all(bind=engine)
 
     svc.scaffold("withcwd", "x", [
         {"name": "ping", "description": "Health-check the service."},
