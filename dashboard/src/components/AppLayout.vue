@@ -223,7 +223,7 @@ onUnmounted(() => {
           Jarvis Ops
         </div>
         <div style="font-size: 11px; font-weight: 400; color: var(--text-sub); margin-top: 2px; line-height: 13px;">
-          v1.1.0 · realtime
+          v1.2.0 · realtime
         </div>
       </div>
 
