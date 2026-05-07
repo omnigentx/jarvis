@@ -195,6 +195,19 @@ mcp:
         JARVIS_RUNTIME_RPC_SOCKET: "${JARVIS_RUNTIME_RPC_SOCKET}"
         JARVIS_API_KEY: "${JARVIS_API_KEY}"
         JARVIS_API_BASE: "http://127.0.0.1:8000"
+    # Self-managed MCP catalog. Same RPC bridge as skill_server: every tool
+    # delegates to mcp_rpc_handlers in the main backend so catalog mutations,
+    # generated-server pipeline state, and per-agent attachments all land in
+    # the live process. Lets Jarvis CRUD MCP servers — Path A (config-only)
+    # for off-the-shelf MCPs, Path B (scaffold/test/promote) for self-authored.
+    mcp_admin:
+      command: "python"
+      args: ["tools/mcp_admin_server.py"]
+      env:
+        PYTHONUNBUFFERED: "1"
+        JARVIS_RUNTIME_RPC_SOCKET: "${JARVIS_RUNTIME_RPC_SOCKET}"
+        JARVIS_API_KEY: "${JARVIS_API_KEY}"
+        JARVIS_API_BASE: "http://127.0.0.1:8000"
     mcp-atlassian:
       command: "uv"
       args: ["run", "--directory", "mcp-atlassian", "mcp-atlassian"]

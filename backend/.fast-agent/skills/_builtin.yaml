@@ -38,6 +38,7 @@ builtin:
   - jarvis-infra
   - jarvis-knowledge
   - kaizen
+  - mcp-authoring
   - meeting-facilitator
   - meeting-participant
   - music-playback

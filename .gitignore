@@ -36,6 +36,10 @@ backend/.keys/
 # ─── Backend Runtime / Data ──────────────────────
 backend/.runtime/
 backend/.fast-agent/sessions/
+# MCP workspace: Jarvis-generated MCP servers + their isolated venvs + test runs.
+# These are user-specific runtime artifacts (custom MCPs the agent wrote for itself),
+# not source code to maintain.
+backend/.fast-agent/mcp_workspace/
 backend/fastagent.jsonl
 backend/roborock_session.json
 backend/temp_audio/

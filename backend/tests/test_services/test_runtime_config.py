@@ -217,6 +217,44 @@ class TestReconcileServiceEnv:
         assert count == 0
         assert "ROBOROCK_USERNAME" not in os.environ
 
+    def test_undecryptable_secret_does_not_crash_bootstrap(
+        self, service, monkeypatch, caplog,
+    ):
+        """Regression: a stale secret encrypted under a rotated master key
+        used to abort the entire backend boot (RuntimeError from
+        config_service.get bubbled up). Bootstrap must be resilient — skip
+        the bad row, log a warning, continue with the rest. Otherwise CD
+        deploys are blocked any time the master key changes.
+        """
+        import os
+        monkeypatch.delenv("ROBOROCK_USERNAME", raising=False)
+        monkeypatch.delenv("ROBOROCK_PASSWORD", raising=False)
+        # Good secret — must still land in env after we skip the bad one.
+        service.set("service.roborock", "ROBOROCK_USERNAME", "alice@example.com", is_secret=True)
+        # Make ROBOROCK_PASSWORD raise on .get(), simulating an InvalidToken
+        # from a master-key rotation that wasn't followed by a re-encrypt.
+        original_get = service.get
+        def _fail_on_password(category, key, default=None):
+            if (category, key) == ("service.roborock", "ROBOROCK_PASSWORD"):
+                raise RuntimeError(
+                    "service.roborock/ROBOROCK_PASSWORD: stored secret could "
+                    "not be decrypted (master key rotated without re-encrypting?)"
+                )
+            return original_get(category, key, default=default)
+        service.set("service.roborock", "ROBOROCK_PASSWORD", "ignored", is_secret=True)
+        monkeypatch.setattr(service, "get", _fail_on_password)
+
+        # Must NOT raise.
+        count = runtime_config.reconcile_service_env(service)
+        assert count == 1
+        assert os.environ.get("ROBOROCK_USERNAME") == "alice@example.com"
+        assert "ROBOROCK_PASSWORD" not in os.environ
+        # Caller-visible warning log so ops know which row needs re-setting.
+        assert any(
+            "ROBOROCK_PASSWORD" in r.message
+            for r in caplog.records if r.levelname == "WARNING"
+        )
+
 
 def _event(category, key, *, new_value, action):
     from services.config_service import ConfigChangeEvent

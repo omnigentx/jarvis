@@ -316,13 +316,28 @@ def reconcile_service_env(service) -> int:
     clear audit line at startup.
     """
     exported = 0
+    skipped: list[str] = []
     for category, entries in service.list_all().items():
         if not category.startswith("service."):
             continue
         for entry in entries:
             if not _ENV_SHAPED_KEY_RE.match(entry.key):
                 continue
-            plaintext = service.get(category, entry.key)
+            # Tolerate per-secret decrypt failures here. config_service.get
+            # is fail-closed (raises RuntimeError on InvalidToken) because a
+            # *runtime* caller depends on the secret being correct. Bootstrap
+            # is fan-out: one stale row encrypted under a rotated master key
+            # must not crash the whole backend — that would brick the deploy
+            # for a feature the user may not even use. Skip + warn instead;
+            # the user re-sets via Settings later when they hit the feature.
+            try:
+                plaintext = service.get(category, entry.key)
+            except RuntimeError as exc:
+                skipped.append(f"{category}/{entry.key}")
+                logger.warning(
+                    "[BOOTSTRAP] Skipped %s/%s: %s", category, entry.key, exc,
+                )
+                continue
             if plaintext is None or plaintext == "":
                 continue
             # Respect env that was set explicitly outside the DB (e.g. via
@@ -336,6 +351,12 @@ def reconcile_service_env(service) -> int:
                 "[BOOTSTRAP] Seeded %s from %s (%d chars)",
                 entry.key, category, len(str(plaintext)),
             )
+    if skipped:
+        logger.warning(
+            "[BOOTSTRAP] %d secret(s) undecryptable and skipped: %s. "
+            "Re-set via Settings → Services to restore.",
+            len(skipped), ", ".join(skipped),
+        )
     return exported
 
 

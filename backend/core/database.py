@@ -234,6 +234,59 @@ class McpServerToolModel(Base):
     updated_at = Column(Float, default=lambda: datetime.now().timestamp())
 
 
+class McpServerModel(Base):
+    """MCP server catalog — single source of truth for runtime MCP CRUD.
+
+    Built-in servers are seeded from fastagent.config.yaml on first boot
+    (boot-time upsert: insert if missing, never overwrite). User-created
+    servers live alongside with is_builtin=False.
+    """
+    __tablename__ = "mcp_servers"
+
+    name = Column(String(100), primary_key=True)
+    transport = Column(String(20), nullable=False)        # 'stdio' | 'http' | 'sse'
+    command = Column(String(500), nullable=True)          # null for url-based
+    args_json = Column(Text, nullable=True)               # JSON list[str]
+    env_json = Column(Text, nullable=True)                # JSON dict[str, str]
+    url = Column(Text, nullable=True)                     # null for stdio
+    cwd = Column(Text, nullable=True)                     # working dir for stdio subprocess
+    is_builtin = Column(Boolean, default=False, nullable=False, index=True)
+    created_at = Column(Float, default=lambda: datetime.now().timestamp())
+    updated_at = Column(Float, default=lambda: datetime.now().timestamp())
+
+
+class AgentMcpAttachmentModel(Base):
+    """Per-agent MCP server allowlist. Composite PK (agent_name, server_name).
+
+    Seeded on first boot from agent.py @fast.agent(servers=[...]) decorators.
+    Subsequent boots read this table; decorator becomes documentation only.
+    """
+    __tablename__ = "agent_mcp_attachments"
+
+    agent_name = Column(String(100), primary_key=True)
+    server_name = Column(String(100), primary_key=True)
+    created_at = Column(Float, default=lambda: datetime.now().timestamp())
+
+
+class McpEventLogModel(Base):
+    """Audit log for MCP catalog/attachment lifecycle events.
+
+    One row per audit() context-manager invocation in services.mcp_runtime.
+    Used by /api/mcp/events endpoints and the dashboard Events tab.
+    """
+    __tablename__ = "mcp_event_log"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    timestamp = Column(Float, default=lambda: datetime.now().timestamp(), index=True)
+    action = Column(String(30), nullable=False, index=True)
+    server_name = Column(String(100), nullable=True, index=True)
+    agent_name = Column(String(100), nullable=True, index=True)
+    actor = Column(String(50), default="user")
+    outcome = Column(String(20), nullable=False)          # 'ok' | 'fail'
+    duration_ms = Column(Integer, nullable=True)
+    detail_json = Column(Text, nullable=True)             # JSON dict
+
+
 class AgentContextSnapshot(Base):
     """Full agent context window snapshots — single source of truth for audit/resume.
 
@@ -559,6 +612,7 @@ def init_db():
             "ALTER TABLE crawl_jobs ADD COLUMN params TEXT",
             "ALTER TABLE spawn_records ADD COLUMN runtime_config_json TEXT",
             "ALTER TABLE agent_activities ADD COLUMN session_id VARCHAR(100)",
+            "ALTER TABLE mcp_servers ADD COLUMN cwd TEXT",
         ]
         for sql in migrations:
             try:
@@ -573,6 +627,7 @@ def init_db():
     _migrate_story_metadata(logger)
     _cleanup_legacy_files(logger)
     _seed_setup_wizard(logger)
+    _backfill_mcp_cwd(logger)
 
 
 def _seed_setup_wizard(logger):
@@ -728,6 +783,39 @@ def _cleanup_legacy_files(logger):
             f"[CLEANUP] Legacy directory exists: {media_dir} — "
             "no code references this. Consider removing manually."
         )
+
+
+def _backfill_mcp_cwd(logger):
+    """Backfill mcp_servers.cwd for self-authored servers promoted before the
+    column existed. Only updates rows where cwd IS NULL and the command points
+    inside .fast-agent/mcp_workspace/generated/<name>/. Idempotent.
+    """
+    from pathlib import Path
+    from sqlalchemy import text
+    workspace = Path(__file__).parent.parent / ".fast-agent" / "mcp_workspace" / "generated"
+    if not workspace.exists():
+        return
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(text(
+                "SELECT name FROM mcp_servers "
+                "WHERE cwd IS NULL "
+                "AND command LIKE '%/mcp_workspace/generated/%'"
+            )).fetchall()
+            updated = 0
+            for (name,) in rows:
+                sdir = workspace / name
+                if sdir.exists() and (sdir / "server.py").exists():
+                    conn.execute(
+                        text("UPDATE mcp_servers SET cwd = :c WHERE name = :n"),
+                        {"c": str(sdir), "n": name},
+                    )
+                    updated += 1
+            if updated:
+                conn.commit()
+                logger.info(f"[MIGRATION] Backfilled cwd for {updated} generated MCP server(s)")
+    except Exception as e:
+        logger.warning(f"[MIGRATION] mcp_servers cwd backfill failed: {e}")
 
 
 def get_db_session():

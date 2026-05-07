@@ -24,6 +24,12 @@ const routes = [
     meta: { title: 'Skills' },
   },
   {
+    path: '/mcp-servers',
+    name: 'McpServers',
+    component: () => import('./views/McpServersView.vue'),
+    meta: { title: 'MCP Servers' },
+  },
+  {
     path: '/monitor',
     name: 'TeamMonitor',
     component: () => import('./views/TeamMonitor.vue'),

@@ -8,6 +8,7 @@ import { useApprovalsStore } from '../stores/approvals'
 import { useAudioPlayerStore } from '../stores/audioPlayer'
 import { useAudioPlayer } from '../composables/useAudioPlayer'
 import { apiFetch, buildSSEUrl } from '../api'
+import { useToast } from '../composables/useToast'
 import ConnectionBanner from './ConnectionBanner.vue'
 import MiniAudioPlayer from './stories/MiniAudioPlayer.vue'
 import FullAudioPlayer from './stories/FullAudioPlayer.vue'
@@ -71,11 +72,45 @@ function connectNotifSSE() {
   }
 }
 
+// ─── MCP warning toasts ───
+// /api/mcp/events/stream is filtered server-side to type=mcp. We surface
+// any audit row with action="warn" as a persistent dashboard toast — the
+// most common case is a generated server hitting a forbidden pattern
+// (eval/exec/shell=True…) detected by mcp_admin_service.static_check.
+const toast = useToast()
+let mcpEventSource = null
+
+function connectMcpEventsSSE() {
+  const url = buildSSEUrl('/api/mcp/events/stream')
+  mcpEventSource = new EventSource(url)
+  mcpEventSource.onmessage = (ev) => {
+    try {
+      const data = JSON.parse(ev.data)
+      if (data.type !== 'mcp' || data.action !== 'warn') return
+      const detail = data.detail || {}
+      const category = detail.category || 'warn'
+      const summary = (detail.hits || [])
+        .map((h) => h.why)
+        .filter(Boolean)
+        .join('; ') || category
+      toast.warning(`MCP warning — ${data.server || 'unknown'}`, {
+        description: summary,
+        duration: 8000,
+      })
+    } catch (_) {}
+  }
+  mcpEventSource.onerror = () => {
+    mcpEventSource?.close()
+    setTimeout(connectMcpEventsSSE, 5000)
+  }
+}
+
 // Figma sidebar nav — exact items from node tree
 const mainNav = [
   { path: '/overview', label: 'Overview', comingSoon: true },
   { path: '/agents', label: 'Agents' },
   { path: '/skills', label: 'Skills' },
+  { path: '/mcp-servers', label: 'MCP Servers' },
   { path: '/monitor', label: 'Team Monitor' },
   { path: '/chat', label: 'Chat' },
   { path: '/runs', label: 'Runs', comingSoon: true },
@@ -139,11 +174,13 @@ function goBack() {
 onMounted(() => {
   fetchUnreadCount()
   connectNotifSSE()
+  connectMcpEventsSSE()
   window.addEventListener('notification-badge-update', onBadgeUpdate)
 })
 
 onUnmounted(() => {
   notifEventSource?.close()
+  mcpEventSource?.close()
   window.removeEventListener('notification-badge-update', onBadgeUpdate)
 })
 </script>

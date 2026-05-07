@@ -129,11 +129,12 @@ async def lifespan(app: FastAPI):
     runtime_rpc_server = None
     try:
         from services.runtime_rpc import RuntimeRpcServer
-        from services import skill_rpc_handlers
+        from services import skill_rpc_handlers, mcp_rpc_handlers
 
         rpc_socket_path = os.environ["JARVIS_RUNTIME_RPC_SOCKET"]
         runtime_rpc_server = RuntimeRpcServer(rpc_socket_path)
         skill_rpc_handlers.register(runtime_rpc_server)
+        mcp_rpc_handlers.register(runtime_rpc_server)
         await runtime_rpc_server.start()
         state.runtime_rpc_server = runtime_rpc_server
         logger.info(
@@ -360,7 +361,20 @@ async def lifespan(app: FastAPI):
     await fast.app.initialize()
     setattr(fast.app.context, "shell_runtime", True)
     logger.info("Shell execution runtime enabled on context: %s", getattr(fast.app.context, "shell_runtime", False))
-    
+
+    # MCP catalog: seed DB from yaml on first boot, then override the live
+    # ServerRegistry + per-agent server lists with DB content. Must run
+    # BEFORE fast.run() so MCPAggregator factories see the right state.
+    try:
+        from services import mcp_attachments, mcp_catalog
+        mcp_catalog.seed_from_yaml()
+        mcp_attachments.seed_from_decorator(fast)
+        mcp_catalog.apply_to_registry(fast.app.context)
+        mcp_attachments.apply_to_runtime(fast)
+        logger.info("MCP catalog/attachments synced from DB.")
+    except Exception as e:
+        logger.warning("MCP catalog boot sync failed: %s", e, exc_info=True)
+
     async with fast.run() as agent:
         state.agent_app = agent
         logger.info("FastAgent initialized.")
