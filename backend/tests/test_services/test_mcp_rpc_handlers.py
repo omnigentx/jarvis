@@ -52,12 +52,14 @@ def test_self_lockout_lists_both_admin_servers():
 
 
 @pytest.mark.asyncio
-async def test_self_lockout_blocks_create_of_near_clone():
-    """Regression: ``mcp_admin_v2`` (or any ``mcp_admin_*`` / ``skill_server_*``)
-    must be blocked at create — otherwise Jarvis can register a renamed copy
-    and route around its own lockout."""
+@pytest.mark.parametrize("name", ["mcp_admin_v2", "mcp_admin-clone",
+                                    "skill_server_v2", "skill_server-x"])
+async def test_self_lockout_blocks_create_of_near_clone(name):
+    """Regression: any ``mcp_admin_*`` / ``mcp_admin-*`` / ``skill_server_*``
+    / ``skill_server-*`` must be blocked at create — NAME_RE allows both
+    underscore and hyphen separators so the lockout must too."""
     res = await rpc.mcp_create_server(
-        name="mcp_admin_v2", transport="stdio", command="python",
+        name=name, transport="stdio", command="python",
     )
     assert res["status"] == 423
     assert "near-clone" in res["error"]
@@ -86,7 +88,14 @@ async def test_self_lockout_does_not_block_unrelated_create(monkeypatch):
 async def test_update_server_surfaces_partial_reconnect_failure(monkeypatch):
     """Regression: when fan-out reconnect after update fails for a subset
     of agents, the RPC payload must carry status=207 + partial_failure +
-    error so the LLM doesn't treat update() as fully successful."""
+    error so the LLM doesn't treat update() as fully successful.
+
+    The mock mirrors the REAL shape from mcp_attachments.reconnect_all_for_server:
+    {"server", "agents", "all_ok"} — not "results". An earlier version of
+    this test used "results" matching a typo in production code, and both
+    sides agreed wrongly. test_update_server_partial_failure_uses_real_fanout_key
+    below pins the contract end-to-end.
+    """
     from services import mcp_attachments, mcp_catalog
 
     async def fake_update(name, patch, actor=None):
@@ -94,8 +103,9 @@ async def test_update_server_surfaces_partial_reconnect_failure(monkeypatch):
 
     async def fake_reconnect(name, actor=None):
         return {
+            "server": name,
             "all_ok": False,
-            "results": [
+            "agents": [
                 {"agent": "Jarvis", "ok": True},
                 {"agent": "Personal", "ok": False, "error": "timeout"},
             ],
@@ -117,13 +127,57 @@ async def test_update_server_no_partial_failure_on_clean_reconnect(monkeypatch):
         return {"name": name, **patch}
 
     async def fake_reconnect(name, actor=None):
-        return {"all_ok": True, "results": []}
+        return {"server": name, "all_ok": True, "agents": []}
 
     monkeypatch.setattr(mcp_catalog, "update", fake_update)
     monkeypatch.setattr(mcp_attachments, "reconnect_all_for_server", fake_reconnect)
     res = await rpc.mcp_update_server(name="github", patch={"command": "x"})
     assert res.get("status") != 207
     assert "partial_failure" not in res
+
+
+@pytest.mark.asyncio
+async def test_update_server_partial_failure_uses_real_fanout_key(
+    monkeypatch, mcp_db_isolation,
+):
+    """Cross-layer invariant: pin the actual key
+    ``mcp_attachments.reconnect_all_for_server`` returns. If a refactor
+    renames it (e.g. ``agents`` → ``results``), this test fails before the
+    diagnostic in the partial-failure error message silently goes empty.
+
+    Calls the REAL ``reconnect_all_for_server`` (not a mock) so a typo on
+    either side of the contract is caught. Aggregator lookup returns
+    ``(None, "no agent")`` to drive the failure branch deterministically.
+    """
+    from services import mcp_attachments, mcp_catalog
+
+    async def fake_update(name, patch, actor=None):
+        return {"name": name, **patch}
+
+    monkeypatch.setattr(mcp_catalog, "update", fake_update)
+    # Aggregator missing → reconnect_all marks each affected agent ok=False.
+    monkeypatch.setattr(
+        mcp_attachments, "_get_aggregator",
+        lambda agent_name: (None, "no agent registered for test"),
+    )
+
+    # Stand up two attachments so reconnect_all has work to do.
+    from core.database import AgentMcpAttachmentModel, McpServerModel, SessionLocal
+    with SessionLocal() as db:
+        db.add(McpServerModel(name="srv-real", transport="stdio", command="python",
+                              args_json="[]", env_json="{}", is_builtin=False))
+        db.add(AgentMcpAttachmentModel(agent_name="A", server_name="srv-real"))
+        db.add(AgentMcpAttachmentModel(agent_name="B", server_name="srv-real"))
+        db.commit()
+
+    res = await rpc.mcp_update_server(name="srv-real", patch={"command": "y"})
+    assert res["status"] == 207
+    assert res["partial_failure"] is True
+    # The error must name the failed agents — empty list means the prod
+    # code is reading the wrong key off the fanout dict.
+    assert "A" in res["error"] and "B" in res["error"], (
+        f"failed-agent diagnostic empty — fanout key mismatch? error={res['error']!r}"
+    )
 
 
 # ── Compact projections (context-budget regression) ───────────────────

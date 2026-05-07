@@ -28,14 +28,16 @@ def _self_lockout(name: str, op: str) -> dict | None:
     """Block exact matches and obvious near-clones of locked-out servers.
 
     Exact match catches update/delete/detach on the live admin server. Prefix
-    match (e.g. ``mcp_admin_v2``, ``skill_server_clone``) is enforced for
+    match (e.g. ``mcp_admin_v2``, ``skill_server-clone``) is enforced for
     *create* so Jarvis cannot register a renamed copy and route around the
-    lockout. Names that merely *contain* the prefix as a substring (e.g.
+    lockout. NAME_RE allows both ``_`` and ``-`` so we check both
+    separators. Names that merely *contain* the prefix as a substring (e.g.
     ``my_mcp_admin_helper``) are allowed.
     """
     if name in _SELF_LOCKED:
         reason = "exact match"
-    elif any(name.startswith(f"{locked}_") for locked in _SELF_LOCKED):
+    elif any(name.startswith(f"{locked}_") or name.startswith(f"{locked}-")
+             for locked in _SELF_LOCKED):
         reason = "near-clone of self-locked server"
     else:
         return None
@@ -126,12 +128,13 @@ async def mcp_update_server(*, name: str, patch: dict[str, Any]) -> dict:
         # Surface partial reconnect failure to the LLM so it doesn't treat
         # update() as fully successful. Body still carries the new catalog
         # row + per-agent fanout detail for diagnosis.
+        # NB: reconnect_all_for_server returns {"server", "agents", "all_ok"}
+        # — use "agents", not "results", or the failed-agent list comes back
+        # empty and the LLM loses the diagnostic.
+        failed = [a.get("agent") for a in fanout.get("agents", []) if not a.get("ok")]
         payload["partial_failure"] = True
         payload["status"] = 207
-        payload["error"] = (
-            f"update applied but reconnect failed for "
-            f"{[r.get('agent') for r in fanout.get('results', []) if not r.get('ok')]}"
-        )
+        payload["error"] = f"update applied but reconnect failed for {failed}"
     return payload
 
 
