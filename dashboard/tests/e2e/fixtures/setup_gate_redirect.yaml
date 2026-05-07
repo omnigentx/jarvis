@@ -53,3 +53,5 @@ sse_streams:
     - { event: "ping", data: {} }
   "/api/scheduler/stream":
     - { event: "ping", data: {} }
+  "/api/mcp/events/stream":
+    - { event: "ping", data: {} }
