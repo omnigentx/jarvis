@@ -602,18 +602,17 @@ def init_db():
     logger = logging.getLogger(__name__)
     
     Base.metadata.create_all(bind=engine)
-    
-    # Enable WAL mode for concurrent access
     from sqlalchemy import text
+
+    # Enable WAL mode for concurrent access
     with engine.connect() as conn:
         try:
             conn.execute(text("PRAGMA journal_mode=WAL"))
             conn.commit()
         except Exception:
             pass
-    
+
     # Lightweight migration: add columns that create_all won't add to existing tables
-    from sqlalchemy import text
     with engine.connect() as conn:
         migrations = [
             "ALTER TABLE books ADD COLUMN last_played_at FLOAT",

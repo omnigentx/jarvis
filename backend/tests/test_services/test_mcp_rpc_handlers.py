@@ -51,6 +51,81 @@ def test_self_lockout_lists_both_admin_servers():
     assert rpc._SELF_LOCKED == {"mcp_admin", "skill_server"}
 
 
+@pytest.mark.asyncio
+async def test_self_lockout_blocks_create_of_near_clone():
+    """Regression: ``mcp_admin_v2`` (or any ``mcp_admin_*`` / ``skill_server_*``)
+    must be blocked at create — otherwise Jarvis can register a renamed copy
+    and route around its own lockout."""
+    res = await rpc.mcp_create_server(
+        name="mcp_admin_v2", transport="stdio", command="python",
+    )
+    assert res["status"] == 423
+    assert "near-clone" in res["error"]
+
+
+@pytest.mark.asyncio
+async def test_self_lockout_does_not_block_unrelated_create(monkeypatch):
+    """Names that merely contain ``mcp_admin`` as a substring (not as a
+    prefix segment) must still be allowed."""
+    captured: dict = {}
+
+    async def fake_create(name, payload, actor=None):
+        captured["called"] = (name, payload, actor)
+        return {"name": name, **payload}
+
+    from services import mcp_catalog
+    monkeypatch.setattr(mcp_catalog, "create", fake_create)
+    res = await rpc.mcp_create_server(
+        name="my_mcp_admin_helper", transport="stdio", command="python",
+    )
+    assert "status" not in res or res.get("status") != 423
+    assert captured["called"][0] == "my_mcp_admin_helper"
+
+
+@pytest.mark.asyncio
+async def test_update_server_surfaces_partial_reconnect_failure(monkeypatch):
+    """Regression: when fan-out reconnect after update fails for a subset
+    of agents, the RPC payload must carry status=207 + partial_failure +
+    error so the LLM doesn't treat update() as fully successful."""
+    from services import mcp_attachments, mcp_catalog
+
+    async def fake_update(name, patch, actor=None):
+        return {"name": name, **patch}
+
+    async def fake_reconnect(name, actor=None):
+        return {
+            "all_ok": False,
+            "results": [
+                {"agent": "Jarvis", "ok": True},
+                {"agent": "Personal", "ok": False, "error": "timeout"},
+            ],
+        }
+
+    monkeypatch.setattr(mcp_catalog, "update", fake_update)
+    monkeypatch.setattr(mcp_attachments, "reconnect_all_for_server", fake_reconnect)
+    res = await rpc.mcp_update_server(name="github", patch={"command": "x"})
+    assert res["status"] == 207
+    assert res["partial_failure"] is True
+    assert "Personal" in res["error"]
+
+
+@pytest.mark.asyncio
+async def test_update_server_no_partial_failure_on_clean_reconnect(monkeypatch):
+    from services import mcp_attachments, mcp_catalog
+
+    async def fake_update(name, patch, actor=None):
+        return {"name": name, **patch}
+
+    async def fake_reconnect(name, actor=None):
+        return {"all_ok": True, "results": []}
+
+    monkeypatch.setattr(mcp_catalog, "update", fake_update)
+    monkeypatch.setattr(mcp_attachments, "reconnect_all_for_server", fake_reconnect)
+    res = await rpc.mcp_update_server(name="github", patch={"command": "x"})
+    assert res.get("status") != 207
+    assert "partial_failure" not in res
+
+
 # ── Compact projections (context-budget regression) ───────────────────
 
 

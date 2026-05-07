@@ -27,6 +27,31 @@ from core.database import McpEventLogModel, SessionLocal
 logger = logging.getLogger("mcp")
 
 _PLACEHOLDER_RE = re.compile(r"\$\{([^}]+)\}")
+_BROADCAST_SNIPPET_CAP = 80
+
+
+def _redact_for_broadcast(detail: dict[str, Any]) -> dict[str, Any]:
+    """Trim long snippet fields before pushing audit detail to SSE listeners.
+
+    forbidden-pattern hits land in detail["hits"][i]["snippet"] and can
+    contain arbitrary text from an agent-authored server.py. The DB row
+    still stores the full content; this only bounds what the dashboard
+    sees in real time.
+    """
+    hits = detail.get("hits") if isinstance(detail, dict) else None
+    if not isinstance(hits, list):
+        return detail
+    redacted_hits: list[Any] = []
+    for h in hits:
+        if not isinstance(h, dict):
+            redacted_hits.append(h)
+            continue
+        snippet = h.get("snippet")
+        if isinstance(snippet, str) and len(snippet) > _BROADCAST_SNIPPET_CAP:
+            h = {**h, "snippet": snippet[:_BROADCAST_SNIPPET_CAP].rstrip() + "…",
+                 "snippet_truncated": True}
+        redacted_hits.append(h)
+    return {**detail, "hits": redacted_hits}
 
 
 def resolve_env(raw_env: dict[str, Any]) -> dict[str, str]:
@@ -97,7 +122,10 @@ async def audit(
         except Exception:
             logger.exception("[mcp.%s] failed to persist audit row", action)
 
-        # Realtime broadcast (best-effort, lazy import to avoid cycles)
+        # Realtime broadcast (best-effort, lazy import to avoid cycles).
+        # Snippets in forbidden-pattern hits are bounded so the SSE payload
+        # cannot leak large excerpts of agent-authored server.py to every
+        # dashboard listener — DB row keeps the full text.
         try:
             from services.activity_stream import activity_stream_manager
 
@@ -109,7 +137,7 @@ async def audit(
                     "agent": agent,
                     "outcome": state.outcome,
                     "duration_ms": duration_ms,
-                    "detail": merged_detail,
+                    "detail": _redact_for_broadcast(merged_detail),
                     "ts": time.time(),
                 }
             )

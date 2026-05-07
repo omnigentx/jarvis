@@ -25,15 +25,28 @@ _SELF_LOCKED = {"mcp_admin", "skill_server"}
 
 
 def _self_lockout(name: str, op: str) -> dict | None:
+    """Block exact matches and obvious near-clones of locked-out servers.
+
+    Exact match catches update/delete/detach on the live admin server. Prefix
+    match (e.g. ``mcp_admin_v2``, ``skill_server_clone``) is enforced for
+    *create* so Jarvis cannot register a renamed copy and route around the
+    lockout. Names that merely *contain* the prefix as a substring (e.g.
+    ``my_mcp_admin_helper``) are allowed.
+    """
     if name in _SELF_LOCKED:
-        return {
-            "error": (
-                f"{op} {name!r} is blocked via Jarvis tools — would lock you "
-                "out of self-management. Use the dashboard MCP page instead."
-            ),
-            "status": 423,  # Locked
-        }
-    return None
+        reason = "exact match"
+    elif any(name.startswith(f"{locked}_") for locked in _SELF_LOCKED):
+        reason = "near-clone of self-locked server"
+    else:
+        return None
+    return {
+        "error": (
+            f"{op} {name!r} is blocked via Jarvis tools ({reason}) — would "
+            "lock you out of self-management. Use the dashboard MCP page "
+            "instead."
+        ),
+        "status": 423,  # Locked
+    }
 
 
 # ── Path A: catalog ────────────────────────────────────────────────────
@@ -78,6 +91,13 @@ async def mcp_create_server(
 ) -> dict:
     """Path A: install an existing MCP server (config-only). Smoke-test runs
     inside ``mcp_catalog.create``."""
+    # Self-lockout closes the gap where Jarvis registers a near-clone of its
+    # own admin server (e.g. ``mcp_admin_v2``) and routes its tools through
+    # it. The exact name "mcp_admin" is already rejected by the catalog as a
+    # duplicate, but the lockout matcher catches near-collisions too.
+    block = _self_lockout(name, "creating")
+    if block:
+        return block
     payload: dict[str, Any] = {"transport": transport}
     if command is not None: payload["command"] = command
     if args is not None: payload["args"] = args
@@ -101,7 +121,18 @@ async def mcp_update_server(*, name: str, patch: dict[str, Any]) -> dict:
     except (ValueError, RuntimeError) as exc:
         return {"error": str(exc), "status": 400}
     fanout = await mcp_attachments.reconnect_all_for_server(name, actor="jarvis")
-    return {**result, "fanout": fanout}
+    payload: dict[str, Any] = {**result, "fanout": fanout}
+    if not fanout["all_ok"]:
+        # Surface partial reconnect failure to the LLM so it doesn't treat
+        # update() as fully successful. Body still carries the new catalog
+        # row + per-agent fanout detail for diagnosis.
+        payload["partial_failure"] = True
+        payload["status"] = 207
+        payload["error"] = (
+            f"update applied but reconnect failed for "
+            f"{[r.get('agent') for r in fanout.get('results', []) if not r.get('ok')]}"
+        )
+    return payload
 
 
 async def mcp_delete_server(*, name: str) -> dict:

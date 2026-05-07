@@ -43,6 +43,10 @@ watch(() => route.path, () => {
 // ─── Unread notification badge ───
 const unreadCount = ref(0)
 let notifEventSource = null
+// Reconnect timer ids; cleared on unmount so a 5s-pending retry doesn't fire
+// after the component is gone (would re-open EventSource and leak forever).
+let notifReconnectTimer = null
+let mcpReconnectTimer = null
 
 async function fetchUnreadCount() {
   try {
@@ -68,7 +72,7 @@ function connectNotifSSE() {
   }
   notifEventSource.onerror = () => {
     notifEventSource?.close()
-    setTimeout(connectNotifSSE, 5000)
+    notifReconnectTimer = setTimeout(connectNotifSSE, 5000)
   }
 }
 
@@ -101,7 +105,7 @@ function connectMcpEventsSSE() {
   }
   mcpEventSource.onerror = () => {
     mcpEventSource?.close()
-    setTimeout(connectMcpEventsSSE, 5000)
+    mcpReconnectTimer = setTimeout(connectMcpEventsSSE, 5000)
   }
 }
 
@@ -179,6 +183,8 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  if (notifReconnectTimer) clearTimeout(notifReconnectTimer)
+  if (mcpReconnectTimer) clearTimeout(mcpReconnectTimer)
   notifEventSource?.close()
   mcpEventSource?.close()
   window.removeEventListener('notification-badge-update', onBadgeUpdate)

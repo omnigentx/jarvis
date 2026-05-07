@@ -355,6 +355,34 @@ async def test_patch_tool_rejects_mismatched_function_name():
         await svc.patch_tool("mismatch", "ping", new_code)
 
 
+@pytest.mark.asyncio
+async def test_patch_tool_invalidates_only_patched_tools_test_history():
+    """Regression: after patch_tool, the prior tool_test entry for the
+    PATCHED tool must be dropped (verify reads last-write-wins per stage,
+    so a stale ok=True would mark a now-unverified body as passing). Other
+    tools' test_history must survive.
+    """
+    svc.scaffold("histinv", "x", [
+        {"name": "ping", "description": "Health-check the service."},
+        {"name": "echo", "description": "Echo a payload."},
+    ])
+    _set_history("histinv", [
+        {"stage": "static_check", "ok": True, "ts": 0, "detail": {}},
+        {"stage": "tool_test", "ok": True, "ts": 1, "detail": {"tool": "ping"}},
+        {"stage": "tool_test", "ok": True, "ts": 2, "detail": {"tool": "echo"}},
+    ])
+    new_code = '''def ping() -> str:
+    """Patched body."""
+    return "pong-v2"
+'''
+    await svc.patch_tool("histinv", "ping", new_code)
+
+    history = svc._read_manifest("histinv")["history"]
+    tool_test_entries = [h for h in history if h["stage"] == "tool_test"]
+    # Only echo's tool_test should survive; ping's was invalidated.
+    assert [h["detail"]["tool"] for h in tool_test_entries] == ["echo"]
+
+
 # ── _generated_payload + promote (cwd persistence regression) ─────────
 
 

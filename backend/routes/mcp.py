@@ -15,7 +15,7 @@ import logging
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, select
 
@@ -23,6 +23,7 @@ from core.auth import verify_api_key
 from core.database import McpEventLogModel, SessionLocal
 from services import mcp_attachments, mcp_catalog
 from services.activity_stream import activity_stream_manager
+from services.mcp_runtime import audit
 
 logger = logging.getLogger("mcp_api")
 router = APIRouter(prefix="/api/mcp", tags=["mcp"])
@@ -126,8 +127,15 @@ async def get_server(name: str) -> dict[str, Any]:
 
 @router.get("/servers/{name}/secret/{env_key}", dependencies=[Depends(verify_api_key)])
 async def reveal_secret(name: str, env_key: str) -> dict[str, Any]:
-    """Reveal a single env value (for the UI eye icon)."""
-    val = mcp_catalog.get_secret_value(name, env_key)
+    """Reveal a single env value (for the UI eye icon).
+
+    Logs an audit row per reveal — every other mutation/read on a server
+    goes through ``audit()``; secret reveal was the one gap. Detail records
+    the env key, never the value.
+    """
+    async with audit("reveal_secret", server=name, actor="user",
+                     detail={"env_key": env_key}):
+        val = mcp_catalog.get_secret_value(name, env_key)
     if val is None:
         raise HTTPException(status_code=404, detail={"message": "env key not found"})
     return {"name": name, "key": env_key, "value": val}
@@ -158,15 +166,16 @@ async def update_server(name: str, body: ServerUpdateBody) -> dict[str, Any]:
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail={"message": str(e), "smoke_failed": True})
 
-    # Fan out reconnect
+    # Fan out reconnect. If any agent failed to reconnect, return 207 as the
+    # actual HTTP status (not just a body field) so HTTP clients see the
+    # partial-failure signal. partial_failure mirrors fanout.all_ok=False
+    # for clients that don't read status_code.
     fanout = await mcp_attachments.reconnect_all_for_server(name)
-    status_code = 200 if fanout["all_ok"] else 207
     payload = _enrich_with_status(result)
     payload["fanout"] = fanout
-    if status_code == 207:
-        # Use 207 via HTTPException-like raise; FastAPI route can't easily set
-        # custom status here, so embed it in body and the client checks all_ok.
-        payload["status"] = 207
+    if not fanout["all_ok"]:
+        payload["partial_failure"] = True
+        return JSONResponse(status_code=207, content=payload)
     return payload
 
 

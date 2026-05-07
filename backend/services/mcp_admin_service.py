@@ -48,6 +48,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy.exc import OperationalError
+
 from services.mcp_runtime import audit
 
 logger = logging.getLogger("mcp")
@@ -458,9 +460,11 @@ def scaffold(
                 )
     except FileExistsError:
         raise
-    except Exception:
-        # DB unavailable in unit-test isolation — skip the check
-        logger.debug("[mcp.admin] catalog collision check skipped (DB unavailable)")
+    except (OperationalError, ImportError) as exc:
+        # Narrow catch: tables missing (unit-test isolation) or core.database
+        # import failed. Real DB errors (programming, integrity, connection)
+        # fall through to the caller — silent swallow used to mask them.
+        logger.debug("[mcp.admin] catalog collision check skipped: %s", exc)
 
     tools_meta: list[dict[str, Any]] = []
     stubs: list[str] = []
@@ -1156,6 +1160,17 @@ async def patch_tool(
     parts[-1] = str(int(parts[-1]) + 1) if parts[-1].isdigit() else parts[-1] + "+1"
     manifest["version"] = ".".join(parts)
     manifest["status"] = "patched"
+    # Invalidate any prior tool_test entry for THIS tool so verify() no longer
+    # treats the patched body as previously-passing. verify() reads history
+    # last-write-wins per (stage, tool), so we drop matching entries instead
+    # of appending an "ok=False" placeholder. Untouched tools keep their
+    # passes; the agent must re-run run_tool_test for the patched one.
+    history = manifest.get("history") or []
+    manifest["history"] = [
+        h for h in history
+        if not (h.get("stage") == "tool_test"
+                and (h.get("detail") or {}).get("tool") == tool_name)
+    ]
     _write_manifest(name, manifest)
 
     async with audit("patch_tool", server=name, actor=actor, detail={"tool": tool_name}):
