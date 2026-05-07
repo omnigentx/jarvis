@@ -8,26 +8,16 @@ from unittest.mock import patch
 import pytest
 import yaml
 
-from core.database import (
-    AgentMcpAttachmentModel,
-    Base,
-    McpEventLogModel,
-    McpServerModel,
-    SessionLocal,
-    engine,
-)
+from core.database import McpServerModel, SessionLocal
 from services import mcp_catalog
 
 
 @pytest.fixture(autouse=True)
-def _clean_tables():
-    Base.metadata.create_all(bind=engine)
+def _per_test_db_isolation(mcp_db_isolation):
+    # Defer to the shared SAVEPOINT-based fixture in conftest.py.
+    # Test data lives in the savepoint and is discarded on teardown — no
+    # broad DELETE that would also wipe rows the test did not create.
     yield
-    with SessionLocal() as db:
-        db.query(AgentMcpAttachmentModel).delete()
-        db.query(McpServerModel).delete()
-        db.query(McpEventLogModel).delete()
-        db.commit()
 
 
 def _make_yaml(tmp_path: Path, mcp_servers: dict) -> Path:

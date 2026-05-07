@@ -20,10 +20,18 @@ from sqlalchemy import (
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
-# Database configuration — CWD-relative (Docker WORKDIR=/app)
-DATA_DIR = os.path.join("data")
-os.makedirs(DATA_DIR, exist_ok=True)
-DATABASE_URL = f"sqlite:///{os.path.join(DATA_DIR, 'jarvis.db')}"
+# Database configuration — CWD-relative (Docker WORKDIR=/app).
+# Tests set JARVIS_DB_PATH to redirect to an isolated DB so autouse cleanup
+# fixtures don't wipe the developer's runtime data.
+_DB_PATH_OVERRIDE = os.environ.get("JARVIS_DB_PATH")
+if _DB_PATH_OVERRIDE:
+    DATA_DIR = os.path.dirname(_DB_PATH_OVERRIDE) or "."
+    os.makedirs(DATA_DIR, exist_ok=True)
+    DATABASE_URL = f"sqlite:///{_DB_PATH_OVERRIDE}"
+else:
+    DATA_DIR = os.path.join("data")
+    os.makedirs(DATA_DIR, exist_ok=True)
+    DATABASE_URL = f"sqlite:///{os.path.join(DATA_DIR, 'jarvis.db')}"
 
 # Create engine and session
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})

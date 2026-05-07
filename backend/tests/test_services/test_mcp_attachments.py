@@ -9,24 +9,17 @@ import pytest
 
 from core.database import (
     AgentMcpAttachmentModel,
-    Base,
     McpEventLogModel,
     McpServerModel,
     SessionLocal,
-    engine,
 )
 from services import mcp_attachments
 
 
 @pytest.fixture(autouse=True)
-def _clean_tables():
-    Base.metadata.create_all(bind=engine)
+def _per_test_db_isolation(mcp_db_isolation):
+    # Defer to the shared SAVEPOINT-based fixture in conftest.py.
     yield
-    with SessionLocal() as db:
-        db.query(AgentMcpAttachmentModel).delete()
-        db.query(McpServerModel).delete()
-        db.query(McpEventLogModel).delete()
-        db.commit()
 
 
 def _seed_servers(*names: str) -> None:

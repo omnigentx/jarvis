@@ -23,7 +23,9 @@ from services import mcp_admin_service as svc
 
 
 @pytest.fixture(autouse=True)
-def _isolated_workspace(tmp_path, monkeypatch):
+def _isolated_workspace(tmp_path, monkeypatch, mcp_db_isolation):
+    # mcp_db_isolation wraps the test in a SAVEPOINT that's rolled back on
+    # teardown, so any rows promote() inserts only persist within the test.
     monkeypatch.setattr(svc, "_ROOT", tmp_path)
     monkeypatch.setattr(svc, "GENERATED_DIR", tmp_path / "generated")
     monkeypatch.setattr(svc, "TEST_RUNS_DIR", tmp_path / "test_runs")
@@ -384,19 +386,7 @@ async def test_promote_persists_cwd_to_catalog(monkeypatch):
     without cwd. The aggregator then spawned `python server.py` from the
     backend cwd → file-not-found → subprocess died → 'Connection closed'.
     """
-    from core.database import (
-        AgentMcpAttachmentModel,
-        Base,
-        McpEventLogModel,
-        McpServerModel,
-        SessionLocal,
-        engine,
-    )
-
-    # CI runs against a fresh DB and pytest may pick this file alphabetically
-    # before test_mcp_catalog.py whose fixture creates the tables. Ensure the
-    # MCP tables exist so the cleanup query below doesn't blow up.
-    Base.metadata.create_all(bind=engine)
+    from core.database import McpServerModel, SessionLocal
 
     svc.scaffold("withcwd", "x", [
         {"name": "ping", "description": "Health-check the service."},
@@ -414,28 +404,12 @@ async def test_promote_persists_cwd_to_catalog(monkeypatch):
         {"stage": "tool_test", "ok": True, "ts": 3, "detail": {"tool": "ping"}},
     ])
 
-    # Clean any prior run + attachment listener noise.
+    res = await svc.promote("withcwd", attach_to=[])
+    assert res["promoted"] is True
+
     with SessionLocal() as db:
-        db.query(AgentMcpAttachmentModel).delete()
-        db.query(McpEventLogModel).delete()
-        db.query(McpServerModel).filter_by(name="withcwd").delete()
-        db.commit()
-
-    try:
-        res = await svc.promote("withcwd", attach_to=[])
-        assert res["promoted"] is True
-
-        with SessionLocal() as db:
-            row = db.get(McpServerModel, "withcwd")
-            assert row is not None
-            assert row.cwd == str(sdir), (
-                f"promote() must persist cwd; got {row.cwd!r}, expected {str(sdir)!r}"
-            )
-    finally:
-        # This test shares the prod DB; clean up so cross-file ordering
-        # (test_mcp_catalog) doesn't see leftover rows.
-        with SessionLocal() as db:
-            db.query(AgentMcpAttachmentModel).filter_by(server_name="withcwd").delete()
-            db.query(McpServerModel).filter_by(name="withcwd").delete()
-            db.query(McpEventLogModel).filter_by(server_name="withcwd").delete()
-            db.commit()
+        row = db.get(McpServerModel, "withcwd")
+        assert row is not None
+        assert row.cwd == str(sdir), (
+            f"promote() must persist cwd; got {row.cwd!r}, expected {str(sdir)!r}"
+        )
