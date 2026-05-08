@@ -202,7 +202,8 @@ class TestWhoami:
         assert resp.status_code == 200
         body = resp.json()
         assert body["authenticated"] is True
-        assert body["sid"]
+        # sid is intentionally NOT exposed — see WhoamiResponse docstring.
+        assert "sid" not in body
         assert body["expires_in"] is not None
         assert body["expires_in"] <= core_session.SESSION_TTL_SECONDS
 

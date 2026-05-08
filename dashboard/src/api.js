@@ -35,8 +35,15 @@
 const API_BASE = '' // Vite proxy handles /api → backend
 
 // ─── Auto-initialize API key from Vite env (dev convenience) ───
-const ENV_KEY = import.meta.env.VITE_JARVIS_API_KEY
-if (ENV_KEY && !localStorage.getItem('jarvis_api_key')) {
+// Guarded against test runs (node:test has no import.meta.env) and any
+// future SSR context where ``localStorage`` is unavailable.
+const ENV_KEY =
+  (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_JARVIS_API_KEY) || ''
+if (
+  ENV_KEY &&
+  typeof localStorage !== 'undefined' &&
+  !localStorage.getItem('jarvis_api_key')
+) {
   localStorage.setItem('jarvis_api_key', ENV_KEY)
 }
 
@@ -134,7 +141,14 @@ export async function apiFetch(path, options = {}) {
     // Legacy Bearer fallback: programmatic clients (Xiaozhi, scripts)
     // still rely on it; the dashboard sends both header and cookie
     // during the transition so a half-deployed mix-and-match works.
-    // Once cookies are universal, drop this.
+    //
+    // FOLLOW-UP (tracking issue: drop the localStorage key entirely):
+    // sending Bearer here means the API key remains exfiltrate-able
+    // via XSS — partially defeating the cookie-auth XSS mitigation.
+    // Once we've verified no first-party caller depends on the
+    // legacy path (Setup Wizard reads it from localStorage; needs to
+    // be re-plumbed to receive the key through a one-shot route),
+    // delete this branch and the localStorage helpers.
     ...(!skipAuth && apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
     ...fetchOptions.headers,
   }

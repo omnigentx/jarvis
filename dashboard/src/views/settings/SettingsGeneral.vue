@@ -83,12 +83,23 @@ async function onRotate() {
     // is now stale; the very next request would 401 with reason
     // "key_rotated". Re-login transparently with the new key so the
     // user never sees the AuthGate just for rotating their own key.
-    const result = await auth.login(requestedKey)
+    //
+    // Single-worker deployment: the PUT handler calls apply_api_key
+    // synchronously before responding, so by the time setValue resolves
+    // ``core.auth.JARVIS_API_KEY`` already holds the new value and
+    // login() will match on the first try.
+    //
+    // Multi-worker future: the login POST may land on a worker that
+    // still has the old in-process key. We do one short retry (with a
+    // small delay) before giving up, so the user isn't kicked to the
+    // AuthGate for a 100ms propagation gap. If it still fails, surface
+    // a clear hint instead of letting them stare at a frozen page.
+    let result = await auth.login(requestedKey)
     if (!result.ok) {
-      // Edge case: rotation succeeded server-side but the session
-      // refresh didn't (network hiccup, race with apply_api_key).
-      // Surface a hint instead of leaving the user wondering why
-      // every subsequent click 401s.
+      await new Promise((r) => setTimeout(r, 250))
+      result = await auth.login(requestedKey)
+    }
+    if (!result.ok) {
       throw new Error(
         'Key rotated but session refresh failed — reload the page and log in with the new key.',
       )

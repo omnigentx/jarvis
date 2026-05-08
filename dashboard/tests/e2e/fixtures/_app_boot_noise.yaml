@@ -11,11 +11,25 @@ backend_source:
   - "dashboard/src/composables/useRealtimeStream.js::scheduler SSE"
   - "dashboard/src/stores/notifications.js::unread count badge"
   - "dashboard/src/components/AppLayout.vue::MCP warning toasts SSE"
+  - "dashboard/src/stores/auth.js::probe — boot-time GET /api/auth/whoami"
 
 responses:
   "GET /api/notifications/unread-count":
     status: 200
     json: { count: 0 }
+  # Boot-time auth probe: the dashboard's auth store calls
+  # /api/auth/whoami in App.vue::onMounted to decide whether to render
+  # the AuthGate modal. Tests that don't care about auth state want
+  # this to report "authenticated" so the modal stays hidden and the
+  # actual flow can run uninterrupted. Tests that DO care (the
+  # auth-gate-* specs) build their own fixture that overrides this.
+  "GET /api/auth/whoami":
+    status: 200
+    json:
+      authenticated: true
+      sid: "noise-fixture-sid"
+      expires_in: 3600
+      abs_expires_in: 36000
 
 sse_streams:
   "/api/agents/activity-stream":

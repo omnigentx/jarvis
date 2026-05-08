@@ -39,8 +39,14 @@ export function useRealtimeStream(options = {}) {
       onMessage: handleMessage,
       onConnected: () => {
         console.log('[SSE] Connected to activity stream')
-        // Catch up on anything missed while disconnected.
-        useAgentsStore().fetchAgents()
+        // NOTE: an earlier draft of this composable also fired
+        // ``useAgentsStore().fetchAgents()`` here as a "catch up after
+        // reconnect" call. That introduced a race: the REST response
+        // arrived AFTER the first SSE event and clobbered the just-
+        // mutated status (e.g. SSE flipped alpha-agent to "idle",
+        // fetchAgents reverted it to the snapshot's "running").
+        // The original useRealtimeStream only re-fetched on the
+        // visibility-change path, so we deliberately do nothing here.
       },
     },
   )

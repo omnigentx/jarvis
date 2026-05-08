@@ -77,7 +77,11 @@ class LoginResponse(BaseModel):
 
 class WhoamiResponse(BaseModel):
     authenticated: bool
-    sid: Optional[str] = None
+    # Time-to-live hints. We deliberately do NOT expose the session id
+    # (``sid``) to the dashboard: it would let an XSS exfiltrate a
+    # value that could be correlated against server-side audit logs to
+    # de-anonymize a session. The backend's structured logs already
+    # carry ``sid``; the frontend has no need for it.
     expires_in: Optional[int] = None  # seconds until exp
     abs_expires_in: Optional[int] = None  # seconds until hard ceiling
 
@@ -266,7 +270,6 @@ async def whoami(request: Request) -> WhoamiResponse:
     now = int(_time.time())
     return WhoamiResponse(
         authenticated=True,
-        sid=payload["sid"],
         expires_in=max(0, int(payload["exp"]) - now),
         abs_expires_in=max(0, int(payload["abs_exp"]) - now),
     )

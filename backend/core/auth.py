@@ -29,6 +29,14 @@ logger = logging.getLogger(__name__)
 JARVIS_API_KEY = os.getenv("JARVIS_API_KEY", "")
 
 # Rate limiting state (simple in-memory, per-IP).
+#
+# IMPORTANT: this state is **per-process**. A multi-worker deployment
+# (gunicorn -w 4, uvicorn --workers 4, kubernetes replicas, …) gives
+# each worker its own counter, so the effective budget is
+# ``LOGIN_RATE_LIMIT * num_workers`` per ``LOGIN_RATE_WINDOW`` seconds.
+# Acceptable for the current single-process deployment; before scaling
+# horizontally, move to a shared store (Redis token bucket, slowapi
+# with redis backend, or fail2ban at the proxy layer).
 _login_attempts: dict[str, list[float]] = {}
 LOGIN_RATE_LIMIT = 5      # max attempts
 LOGIN_RATE_WINDOW = 60    # per N seconds

@@ -161,3 +161,28 @@ class TestNonApiPaths:
         resp = client.post("/upload")
         # Whatever the response is (404 / 200 / 405), it must NOT be a CSRF 403.
         assert resp.status_code != 403
+
+
+class TestBearerCallersAreExempt:
+    """Programmatic clients (Xiaozhi, scripts) authenticate via Bearer
+    headers and have NO ``jarvis_csrf`` cookie. They must NOT be
+    blocked by this middleware — that would break automation that
+    pre-dates the cookie-auth flow.
+
+    This pins the contract called out in the module docstring under
+    "Scope of protection". A future change that tightens the rule and
+    accidentally breaks Xiaozhi will fail this test.
+    """
+
+    def test_bearer_post_without_csrf_cookie_passes(self, client):
+        # No CSRF cookie set — the only auth signal is the Bearer header.
+        resp = client.post(
+            "/api/things",
+            headers={"Authorization": "Bearer some-api-key"},
+        )
+        assert resp.status_code == 200
+
+    def test_query_param_post_without_csrf_cookie_passes(self, client):
+        # Legacy ``?api_key=`` style — same expectation as Bearer.
+        resp = client.post("/api/things?api_key=legacy-key")
+        assert resp.status_code == 200

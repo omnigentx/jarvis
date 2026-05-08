@@ -22,6 +22,26 @@ header check kills the remaining ``<img src=...>`` / fetch
 no-cors / cross-origin XHR vectors that can plant a request but cannot
 read the cookie value.
 
+Scope of protection
+-------------------
+
+This middleware ONLY defends **cookie-authenticated** callers. The
+double-submit pattern works by checking that a request's
+``X-CSRF-Token`` header matches the ``jarvis_csrf`` cookie — a value
+the browser will auto-attach but a third-party origin cannot read.
+
+**Bearer / query-param callers (Xiaozhi, automation scripts) carry no
+CSRF cookie**, so they are intentionally allowed through
+this middleware. They have a different threat model: the caller owns
+the long-lived API key, so request-forgery in the browser sense
+doesn't apply. Their own client code is responsible for not handing
+the key to untrusted JS.
+
+If a future change tightens this — e.g., requiring CSRF on Bearer
+mutations too — Xiaozhi and any custom automation will start
+returning 403. That's a breaking change; coordinate with the
+programmatic-client owners first.
+
 Exemptions
 ----------
 
@@ -127,10 +147,11 @@ class CsrfMiddleware:
         cookie_token = cookies.get(CSRF_COOKIE_NAME, "")
         header_token = _get_header(scope, "x-csrf-token") or ""
 
-        # An unauthenticated request (no CSRF cookie at all) is rejected by
-        # the auth dependency on the route, not here. We only block when a
-        # CSRF cookie EXISTS but the header is missing/mismatched — which
-        # is the actual attack signature.
+        # No CSRF cookie → caller is either unauthenticated (route's
+        # auth dep will 401 it) or using Bearer / query-param auth
+        # (programmatic clients, see module docstring "Scope of
+        # protection"). Both cases legitimately have no cookie to
+        # check; pass through.
         if not cookie_token:
             await self.app(scope, receive, send)
             return

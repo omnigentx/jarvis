@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 
 import { emit, EVENTS } from '../auth/bus.js'
+import { getCsrfToken } from '../api.js'
 
 /**
  * Auth store — single source of truth for the dashboard's authentication
@@ -42,19 +43,10 @@ const STATUS = Object.freeze({
 })
 
 const BC_NAME = 'jarvis-auth'
-const CSRF_COOKIE = 'jarvis_csrf'
 
 let _probeInflight = null  // dedup concurrent probes
 let _channel = null
 let _channelInitialized = false
-
-function _readCsrfCookie() {
-  if (typeof document === 'undefined') return ''
-  const match = document.cookie
-    .split('; ')
-    .find((row) => row.startsWith(`${CSRF_COOKIE}=`))
-  return match ? decodeURIComponent(match.split('=', 2)[1] ?? '') : ''
-}
 
 function _initChannel(store) {
   if (_channelInitialized) return
@@ -118,7 +110,7 @@ export const useAuthStore = defineStore('auth', {
           }
           const body = await resp.json()
           if (body.authenticated) {
-            this._setAuthenticated(_readCsrfCookie(), body.expires_in)
+            this._setAuthenticated(getCsrfToken(), body.expires_in)
           } else {
             // Whoami returned authenticated:false — cookie missing or
             // invalid (rotated key, expired, tampered). Lock UI.
@@ -210,7 +202,7 @@ export const useAuthStore = defineStore('auth', {
     _setAuthenticated(csrfToken, expiresIn) {
       const wasUnauth = this.status !== STATUS.AUTHENTICATED
       this.status = STATUS.AUTHENTICATED
-      this.csrfToken = csrfToken || _readCsrfCookie()
+      this.csrfToken = csrfToken || getCsrfToken()
       this.lastReason = ''
       this.expiresAt = expiresIn ? Math.floor(Date.now() / 1000) + expiresIn : null
       if (wasUnauth) {
@@ -240,7 +232,7 @@ export const useAuthStore = defineStore('auth', {
       if (status === STATUS.AUTHENTICATED) {
         const wasUnauth = this.status !== STATUS.AUTHENTICATED
         this.status = STATUS.AUTHENTICATED
-        this.csrfToken = csrfToken || _readCsrfCookie()
+        this.csrfToken = csrfToken || getCsrfToken()
         this.lastReason = ''
         if (wasUnauth) emit(EVENTS.RESTORED)
       } else if (status === STATUS.UNAUTHENTICATED) {
@@ -255,6 +247,14 @@ export const useAuthStore = defineStore('auth', {
       _initChannel(this)
       if (!_channel) return
       try {
+        // ``csrfToken`` is technically redundant here — sibling tabs
+        // share the same origin and can read the ``jarvis_csrf``
+        // cookie themselves. We include it so a sibling that
+        // happens to be in the middle of cookie-write race (e.g.
+        // about to send a mutation) gets the value immediately
+        // instead of having to re-read document.cookie. Cheap
+        // belt-and-suspenders; safe because cookies are not secret
+        // anyway (the httpOnly session is the secret).
         _channel.postMessage({
           type: 'transition',
           status: this.status,

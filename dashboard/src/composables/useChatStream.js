@@ -79,6 +79,13 @@ export function useChatStream() {
         if (res.status === 401) {
           // Route through the auth store so the AuthGate modal opens
           // and ALL streams stop spinning — same contract as apiFetch.
+          //
+          // ``useAuthStore()`` here is intentionally lazy: it's
+          // called inside the request handler (Vue setup scope is
+          // already established by the composable's caller), and
+          // hoisting it to module scope would import-time-bind a
+          // store instance to a stale Pinia setup state in tests.
+          // Keep this call inside the conditional.
           useAuthStore().on401('chat_stream_401')
         }
         throw new Error(`API ${res.status}: ${body || res.statusText}`)
