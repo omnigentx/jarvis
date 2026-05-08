@@ -17,8 +17,11 @@ import { ref, computed, onMounted } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
 import { generateApiKey } from '../../stores/setup'
 import { useConfirm } from '../../composables/useConfirm'
+import { useAuthStore } from '../../stores/auth'
+import { setApiKey } from '../../api'
 
 const store = useSettingsStore()
+const auth = useAuthStore()
 const { confirm } = useConfirm()
 
 const LOG_LEVELS = ['DEBUG', 'INFO', 'WARNING', 'ERROR']
@@ -72,8 +75,37 @@ async function onRotate() {
   rotating.value = true
   rotationError.value = ''
   rotationSuccess.value = false
+  const requestedKey = newKey.value.trim()
   try {
-    await store.setValue('auth', 'JARVIS_API_KEY', newKey.value.trim(), { isSecret: false })
+    await store.setValue('auth', 'JARVIS_API_KEY', requestedKey, { isSecret: false })
+
+    // Backend rotated JARVIS_API_KEY → session cookie's key fingerprint
+    // is now stale; the very next request would 401 with reason
+    // "key_rotated". Re-login transparently with the new key so the
+    // user never sees the AuthGate just for rotating their own key.
+    //
+    // Single-worker deployment: the PUT handler calls apply_api_key
+    // synchronously before responding, so by the time setValue resolves
+    // ``core.auth.JARVIS_API_KEY`` already holds the new value and
+    // login() will match on the first try.
+    //
+    // Multi-worker future: the login POST may land on a worker that
+    // still has the old in-process key. We do one short retry (with a
+    // small delay) before giving up, so the user isn't kicked to the
+    // AuthGate for a 100ms propagation gap. If it still fails, surface
+    // a clear hint instead of letting them stare at a frozen page.
+    let result = await auth.login(requestedKey)
+    if (!result.ok) {
+      await new Promise((r) => setTimeout(r, 250))
+      result = await auth.login(requestedKey)
+    }
+    if (!result.ok) {
+      throw new Error(
+        'Key rotated but session refresh failed — reload the page and log in with the new key.',
+      )
+    }
+    setApiKey(requestedKey)  // legacy localStorage path used by Setup Wizard
+
     rotationSuccess.value = true
     newKey.value = ''
     confirmKey.value = ''

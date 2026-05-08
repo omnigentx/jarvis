@@ -14,6 +14,9 @@ export type RecordedRequest = {
   path: string
   body: unknown
   query: Record<string, string>
+  /** Lower-cased header names mapped to value. Useful for asserting
+   *  things like ``X-CSRF-Token`` was attached to a mutation request. */
+  headers: Record<string, string>
 }
 
 type Matcher =
@@ -40,11 +43,16 @@ export class NetworkRecorder {
       }
       const query: Record<string, string> = {}
       for (const [k, v] of url.searchParams) query[k] = v
+      const headers: Record<string, string> = {}
+      for (const [k, v] of Object.entries(req.headers())) {
+        headers[k.toLowerCase()] = v
+      }
       this.calls.push({
         method: req.method().toUpperCase(),
         path: url.pathname,
         body,
         query,
+        headers,
       })
     })
   }

@@ -6,12 +6,16 @@
  */
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { apiFetch, buildSSEUrl } from '../api'
+import { EVENTS, on } from '../auth/bus.js'
+import { useAuthStore } from '../stores/auth.js'
 
 export function useMeetingList() {
+  const auth = useAuthStore()
   const meetings = ref([])
   const isLoading = ref(false)
   const error = ref(null)
   let eventSource = null
+  let reconnectTimer = null
 
   // Fetch the initial list
   async function fetchMeetings() {
@@ -30,6 +34,8 @@ export function useMeetingList() {
 
   // SSE stream for real-time updates
   function connectSSE() {
+    if (!auth.isAuthenticated) return  // RESTORED listener will retry
+
     if (eventSource) {
       eventSource.close()
     }
@@ -50,12 +56,21 @@ export function useMeetingList() {
     }
 
     eventSource.onerror = () => {
-      console.warn('[useMeetingList] SSE connection error, reconnecting...')
       eventSource?.close()
-      // Exponential backoff reconnect
-      setTimeout(() => connectSSE(), 3000)
+      eventSource = null
+      if (!auth.isAuthenticated) return  // EXPIRED handler will own teardown
+      console.warn('[useMeetingList] SSE connection error, reconnecting...')
+      reconnectTimer = setTimeout(() => connectSSE(), 3000)
     }
   }
+
+  const offExpired = on(EVENTS.EXPIRED, () => {
+    if (eventSource) { try { eventSource.close() } catch (_) { /* ignore */ } eventSource = null }
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
+  })
+  const offRestored = on(EVENTS.RESTORED, () => {
+    connectSSE()
+  })
 
   function handleMeetingEvent(event) {
     const meetingId = event.meeting_id
@@ -147,6 +162,9 @@ export function useMeetingList() {
       eventSource.close()
       eventSource = null
     }
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
+    offExpired()
+    offRestored()
   })
 
   return {

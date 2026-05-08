@@ -1,5 +1,6 @@
 import { ref } from 'vue'
-import { getApiKey } from '../api'
+import { getApiKey, getCsrfToken } from '../api'
+import { useAuthStore } from '../stores/auth.js'
 
 /**
  * Composable for streaming chat via POST /api/chat-stream.
@@ -60,9 +61,14 @@ export function useChatStream() {
       if (apiKey) {
         headers['Authorization'] = `Bearer ${apiKey}`
       }
+      // CSRF — chat-stream is a POST, so the double-submit header is required
+      // when the user is logged in via cookie auth (PR2).
+      const csrf = getCsrfToken()
+      if (csrf) headers['X-CSRF-Token'] = csrf
 
       const res = await fetch('/api/chat-stream', {
         method: 'POST',
+        credentials: 'include',
         headers,
         body,
         signal: controller.signal,
@@ -70,6 +76,18 @@ export function useChatStream() {
 
       if (!res.ok) {
         const body = await res.text().catch(() => '')
+        if (res.status === 401) {
+          // Route through the auth store so the AuthGate modal opens
+          // and ALL streams stop spinning — same contract as apiFetch.
+          //
+          // ``useAuthStore()`` here is intentionally lazy: it's
+          // called inside the request handler (Vue setup scope is
+          // already established by the composable's caller), and
+          // hoisting it to module scope would import-time-bind a
+          // store instance to a stale Pinia setup state in tests.
+          // Keep this call inside the conditional.
+          useAuthStore().on401('chat_stream_401')
+        }
         throw new Error(`API ${res.status}: ${body || res.statusText}`)
       }
 

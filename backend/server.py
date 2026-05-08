@@ -642,8 +642,15 @@ app.add_middleware(
 # Wizard is complete. Registered *after* CORS so pre-flight requests still
 # succeed even when the API is gated.
 from middleware.setup_gate import SetupGateMiddleware, refresh_setup_complete
+from core.csrf import CsrfMiddleware
 
+# Order: outer → inner is the order requests traverse, so the middleware
+# added LAST runs FIRST.  We want CSRF to run before SetupGate so that
+# a valid CSRF cookie is honored even during partial-setup states; and
+# CORS to wrap everything so preflight ``OPTIONS`` works regardless of
+# auth state.
 app.add_middleware(SetupGateMiddleware)
+app.add_middleware(CsrfMiddleware)
 refresh_setup_complete()
 
 # Register all route modules

@@ -6,8 +6,11 @@
  */
 import { ref, onUnmounted, watch } from 'vue'
 import { buildSSEUrl, apiFetch } from '../api'
+import { EVENTS, on } from '../auth/bus.js'
+import { useAuthStore } from '../stores/auth.js'
 
 export function useMeetingStream() {
+  const auth = useAuthStore()
   const transcript = ref([])
   const meetingState = ref({
     ended: false,
@@ -33,6 +36,13 @@ export function useMeetingStream() {
    */
   function connect(meetingId) {
     if (!meetingId) return
+    // Don't open with no auth — backend would 401, EventSource would
+    // silently retry, network panel fills with 401s while user is at
+    // the AuthGate. RESTORED listener below kicks the actual connect.
+    if (!auth.isAuthenticated) {
+      currentMeetingId = meetingId
+      return
+    }
     disconnect()
 
     currentMeetingId = meetingId
@@ -146,12 +156,30 @@ export function useMeetingStream() {
   function scheduleReconnect() {
     if (reconnectTimer) clearTimeout(reconnectTimer)
     reconnectTimer = setTimeout(() => {
-      if (currentMeetingId && !meetingState.value.ended) {
+      if (currentMeetingId && !meetingState.value.ended && auth.isAuthenticated) {
         reconnectDelay = Math.min(reconnectDelay * 2, 30000) // Max 30s
         connect(currentMeetingId)
       }
     }, reconnectDelay)
   }
+
+  // ─── Auth bus integration ────────────────────────────────────────────
+  // EXPIRED: tear down NOW, don't wait for backoff to discover the 401.
+  const offExpired = on(EVENTS.EXPIRED, () => {
+    if (eventSource) {
+      try { eventSource.close() } catch (_) { /* ignore */ }
+      eventSource = null
+    }
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
+    isConnected.value = false
+    isConnecting.value = false
+  })
+  const offRestored = on(EVENTS.RESTORED, () => {
+    if (currentMeetingId && !meetingState.value.ended) {
+      reconnectDelay = 1000
+      connect(currentMeetingId)
+    }
+  })
 
   function disconnect() {
     if (eventSource) {
@@ -167,7 +195,11 @@ export function useMeetingStream() {
     currentMeetingId = null
   }
 
-  onUnmounted(() => disconnect())
+  onUnmounted(() => {
+    disconnect()
+    offExpired()
+    offRestored()
+  })
 
   return {
     transcript,

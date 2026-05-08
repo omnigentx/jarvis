@@ -1,8 +1,9 @@
 <script setup>
-import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { apiFetch, buildSSEUrl } from '../api.js'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import { useToast } from '../composables/useToast.js'
+import { useSSEConnection } from '../composables/useSSEConnection.js'
 
 const toast = useToast()
 
@@ -22,7 +23,6 @@ const showCreateModal = ref(false)
 const timeFilter = ref('today')
 
 // SSE
-let eventSource = null
 
 // ─── Computed ────────────────────────────────────────
 const activeJobs = computed(() => jobs.value.filter(j => j.status === 'active'))
@@ -60,24 +60,15 @@ async function fetchAll() {
 }
 
 // ─── SSE ─────────────────────────────────────────────
-function connectSSE() {
-  const url = buildSSEUrl('/api/scheduler/stream')
-  eventSource = new EventSource(url)
-
-  eventSource.onmessage = (event) => {
+useSSEConnection(buildSSEUrl('/api/scheduler/stream'), {
+  onMessage(event) {
     try {
-      const data = JSON.parse(event.data)
-      handleSSEEvent(data)
+      handleSSEEvent(JSON.parse(event.data))
     } catch (e) {
       console.warn('SSE parse error:', e)
     }
-  }
-
-  eventSource.onerror = () => {
-    eventSource?.close()
-    setTimeout(connectSSE, 5000)
-  }
-}
+  },
+})
 
 function handleSSEEvent(event) {
   if (event.type === 'init') {
@@ -271,11 +262,6 @@ function modeColor(mode) {
 // ─── Lifecycle ───────────────────────────────────────
 onMounted(() => {
   fetchAll()
-  connectSSE()
-})
-
-onUnmounted(() => {
-  eventSource?.close()
 })
 </script>
 

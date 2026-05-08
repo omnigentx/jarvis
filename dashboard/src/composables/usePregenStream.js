@@ -12,8 +12,11 @@
  */
 import { ref, watch, onUnmounted } from 'vue'
 import { buildSSEUrl } from '../api'
+import { EVENTS, on } from '../auth/bus.js'
+import { useAuthStore } from '../stores/auth.js'
 
 export function usePregenStream(storyIdRef) {
+  const auth = useAuthStore()
   const isConnected = ref(false)
   /** @type {import('vue').Ref<Array<{story_id: string, chapter_file: string, priority: number}>>} */
   const queue = ref([])
@@ -25,9 +28,15 @@ export function usePregenStream(storyIdRef) {
   let eventSource = null
   let reconnectTimer = null
   let reconnectDelay = 1000
+  let lastStoryId = null
   const MAX_RECONNECT_DELAY = 30000
 
   function connect(storyId) {
+    lastStoryId = storyId
+    if (!auth.isAuthenticated) {
+      // Skip — RESTORED listener below will retry once we're back.
+      return
+    }
     disconnect()
     reconnectDelay = 1000
 
@@ -102,6 +111,7 @@ export function usePregenStream(storyIdRef) {
       isConnected.value = false
       eventSource?.close()
       eventSource = null
+      if (!auth.isAuthenticated) return  // EXPIRED handler will own teardown
       // Exponential backoff reconnect
       reconnectTimer = setTimeout(() => {
         reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY)
@@ -109,6 +119,16 @@ export function usePregenStream(storyIdRef) {
       }, reconnectDelay)
     }
   }
+
+  // ─── Auth bus integration ────────────────────────────────────────────
+  const offExpired = on(EVENTS.EXPIRED, () => {
+    if (eventSource) { try { eventSource.close() } catch (_) { /* ignore */ } eventSource = null }
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
+    isConnected.value = false
+  })
+  const offRestored = on(EVENTS.RESTORED, () => {
+    if (lastStoryId) connect(lastStoryId)
+  })
 
   function disconnect() {
     if (eventSource) {
@@ -175,6 +195,8 @@ export function usePregenStream(storyIdRef) {
 
   onUnmounted(() => {
     disconnect()
+    offExpired()
+    offRestored()
   })
 
   return {

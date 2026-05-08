@@ -36,6 +36,15 @@ responses:
   "GET /api/setup/auth/probe":
     status: 200
     json: { configured: false }
+  # Auth probe fired by App.vue::onMounted before the SetupGate redirect
+  # kicks in. /api/auth/* is exempt from the SetupGate so it returns
+  # whatever the auth route would say — for a fresh install with no
+  # session, that's authenticated:false. The AuthGate would briefly
+  # render but the SetupGate redirect to /setup (bare layout) hides it
+  # again before the user can see anything.
+  "GET /api/auth/whoami":
+    status: 200
+    json: { authenticated: false }
   "GET /api/setup/status":
     status: 200
     json:
