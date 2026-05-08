@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 from core import auth as core_auth
 from core.auth import verify_api_key
 from services.config_service import ConfigEntry, config_service
-from services.runtime_config import apply_master_key
+from services.runtime_config import apply_api_key
 
 logger = logging.getLogger("settings_api")
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -73,10 +73,13 @@ def _entry_to_dict(entry: ConfigEntry) -> dict:
     return asdict(entry)
 
 
-def _maybe_apply_master_key(category: str, key: str, new_value: Optional[str]) -> None:
-    """If ``auth.JARVIS_API_KEY`` just changed, propagate to the running process."""
+def _maybe_apply_api_key(category: str, key: str, new_value: Optional[str]) -> None:
+    """If ``auth.JARVIS_API_KEY`` just changed, propagate to the running
+    process (env var + ``core.auth`` cached global). No crypto reload —
+    that's a separate, operator-driven action via ``apply_master_key``.
+    """
     if category == "auth" and key == "JARVIS_API_KEY" and new_value:
-        apply_master_key(new_value)
+        apply_api_key(new_value)
 
 
 # ---- Fixed paths (registered first) -----------------------------------------
@@ -175,7 +178,7 @@ async def import_settings(payload: ImportBody):
         raise HTTPException(status_code=400, detail=str(exc))
 
     for ev in events:
-        _maybe_apply_master_key(ev.category, ev.key, ev.new_value)
+        _maybe_apply_api_key(ev.category, ev.key, ev.new_value)
 
     return {
         "applied": len(apply_items),
@@ -195,7 +198,7 @@ async def bulk_update(payload: BulkUpdate):
         raise HTTPException(status_code=400, detail=str(exc))
 
     for ev in events:
-        _maybe_apply_master_key(ev.category, ev.key, ev.new_value)
+        _maybe_apply_api_key(ev.category, ev.key, ev.new_value)
 
     return {
         "events": [
@@ -247,7 +250,7 @@ async def put_entry(category: str, key: str, payload: SetValue):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    _maybe_apply_master_key(event.category, event.key, event.new_value)
+    _maybe_apply_api_key(event.category, event.key, event.new_value)
 
     return {
         "category": event.category,
