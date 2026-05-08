@@ -147,6 +147,100 @@ class TestSeedClientFromEnv:
         assert oauth_env.seed_client_from_env() is False
 
 
+class TestSafeSeedClientFromEnv:
+    """Bootstrap-safe wrapper. Prevents a stale OAuth secret encrypted under
+    a rotated master key from crash-looping the entire backend container —
+    historically caused a CD outage (PR #7) when reconcile_service_env's
+    soft-fail policy was missing from this second bootstrap call site.
+    """
+
+    def test_swallows_runtime_error_from_decrypt_fail(
+        self, oauth_env, monkeypatch,
+    ):
+        """Unit: when seed_client_from_env raises RuntimeError (the exact
+        exception type config_service.get raises on InvalidToken), the safe
+        wrapper must return False and forward the exception to on_warn —
+        not let it propagate.
+        """
+        def boom() -> bool:
+            raise RuntimeError(
+                "oauth.google/client_id: stored secret could not be decrypted "
+                "(master key rotated without re-encrypting?)"
+            )
+        monkeypatch.setattr(oauth_env, "seed_client_from_env", boom)
+
+        captured: list[Exception] = []
+        result = oauth_env.safe_seed_client_from_env(on_warn=captured.append)
+
+        assert result is False
+        assert len(captured) == 1
+        assert "could not be decrypted" in str(captured[0])
+
+    def test_pass_through_true_on_success(self, oauth_env, monkeypatch):
+        monkeypatch.setattr(oauth_env, "seed_client_from_env", lambda: True)
+        assert oauth_env.safe_seed_client_from_env() is True
+
+    def test_pass_through_false_on_no_op(self, oauth_env, monkeypatch):
+        monkeypatch.setattr(oauth_env, "seed_client_from_env", lambda: False)
+        assert oauth_env.safe_seed_client_from_env() is False
+
+    def test_does_not_swallow_non_runtime_errors(
+        self, oauth_env, monkeypatch,
+    ):
+        """Programming bugs (AttributeError, ValueError, …) must propagate.
+        Soft-fail is scoped to the InvalidToken-shaped RuntimeError only —
+        broadening it would hide real defects at boot.
+        """
+        def buggy() -> bool:
+            raise ValueError("programmer error")
+        monkeypatch.setattr(oauth_env, "seed_client_from_env", buggy)
+        with pytest.raises(ValueError, match="programmer error"):
+            oauth_env.safe_seed_client_from_env()
+
+    def test_cross_layer_real_decrypt_fail_with_rotated_key(
+        self, oauth_env, monkeypatch,
+    ):
+        """Cross-layer integration (no mock at the seed layer): write a real
+        client_id/secret encrypted with master key A, rotate to master key B,
+        then call safe_seed_client_from_env. If a future refactor narrows
+        the except clause, drops the wrapper, or changes the RuntimeError
+        type config_service.get raises, this test fails — the regression
+        gets caught BEFORE production CD crash-loops.
+
+        This is the regression that PR #7 fixed; the unit tests above mock
+        the inner layer, so a contract change between config_service and
+        google_oauth would silently bypass them.
+        """
+        # Step 1: store a real Fernet-encrypted client under master key A.
+        oauth_env.save_client("real-cid", "real-sec", "desktop")
+        assert oauth_env.load_client() is not None  # sanity
+
+        # Step 2: rotate master key. The DB row's ciphertext is now
+        # un-decryptable — config_service.get will raise RuntimeError on
+        # any read of the affected secret keys.
+        from core import auth as core_auth
+        from core import secrets_crypto
+
+        rotated_key = "rotated-master-key-yyyyy"
+        monkeypatch.setenv("JARVIS_API_KEY", rotated_key)
+        monkeypatch.setattr(core_auth, "JARVIS_API_KEY", rotated_key)
+        secrets_crypto.reload_master_key()
+
+        # Sanity: reading the secret directly really does raise. If this
+        # assertion ever stops holding, the rest of the test loses its
+        # teeth, so we assert the trigger is live.
+        with pytest.raises(RuntimeError, match="could not be decrypted"):
+            oauth_env.config_service.get("oauth.google", "client_id")
+
+        # Step 3: the wrapper must NOT raise — boot must proceed.
+        captured: list[Exception] = []
+        result = oauth_env.safe_seed_client_from_env(on_warn=captured.append)
+
+        assert result is False
+        assert len(captured) == 1
+        assert "could not be decrypted" in str(captured[0])
+
+
 class TestTokenStorage:
     def test_save_load_round_trip(self, oauth_env):
         tokens = oauth_env.GoogleOAuthTokens(

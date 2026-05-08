@@ -29,7 +29,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
-from typing import Iterable, Literal, Optional
+from typing import Callable, Iterable, Literal, Optional
 from urllib.parse import urlencode
 
 import requests
@@ -225,6 +225,29 @@ def seed_client_from_env() -> bool:
         return False
     save_client(env_id.strip(), env_secret.strip(), "desktop")
     return True
+
+
+def safe_seed_client_from_env(
+    *, on_warn: Optional[Callable[[Exception], None]] = None,
+) -> bool:
+    """Bootstrap-safe wrapper around :func:`seed_client_from_env`.
+
+    Mirrors :func:`services.runtime_config.reconcile_service_env`'s soft-fail
+    policy: if the stored ``client_id``/``client_secret`` is encrypted under
+    a rotated master key, ``config_service.get`` raises ``RuntimeError`` —
+    swallow it here so backend boot proceeds (the user re-sets via Settings
+    when they next need Google OAuth) instead of crash-looping the whole
+    container for one optional feature.
+
+    Non-``RuntimeError`` exceptions propagate — those signal programming
+    bugs and should not be hidden.
+    """
+    try:
+        return seed_client_from_env()
+    except RuntimeError as exc:
+        if on_warn is not None:
+            on_warn(exc)
+        return False
 
 
 def load_tokens() -> Optional[GoogleOAuthTokens]:

@@ -59,7 +59,18 @@ def _bootstrap_env_from_db() -> None:
                     seeded, "y" if seeded == 1 else "ies")
 
     from services import google_oauth
-    if google_oauth.seed_client_from_env():
+    # safe_seed_client_from_env mirrors reconcile_service_env's soft-fail:
+    # a stale client_id/secret encrypted under a rotated master key
+    # surfaces as a warning instead of crashing the whole backend boot for
+    # one optional feature. The user re-sets via Settings → Services when
+    # they next try Google OAuth.
+    seeded = google_oauth.safe_seed_client_from_env(
+        on_warn=lambda exc: logger.warning(
+            "[BOOTSTRAP] Skipped Google OAuth client seed: %s. "
+            "Re-set via Settings → Services to restore.", exc,
+        ),
+    )
+    if seeded:
         logger.info("[BOOTSTRAP] Migrated Google OAuth client from env to DB (client_type=desktop)")
 
 
