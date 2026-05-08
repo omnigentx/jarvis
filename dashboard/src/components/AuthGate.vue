@@ -13,12 +13,13 @@
  *   never have to translate magic strings to user-readable text twice.
  */
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 import { useAuthStore } from '../stores/auth'
 
 const auth = useAuthStore()
 const router = useRouter()
+const route = useRoute()
 
 const apiKey = ref('')
 const submitting = ref(false)
@@ -26,7 +27,15 @@ const errorMessage = ref('')
 const inputEl = ref(null)
 const modalEl = ref(null)
 
-const visible = computed(() => auth.showAuthGate)
+// AuthGate stays hidden on the bare setup layout: that flow has its
+// own auth bootstrap (Step 1 of the wizard mints / confirms the key)
+// and stacking the modal on top would block it. Only the main app
+// chrome surfaces the modal. Watching ``route.meta`` instead of
+// hard-coding paths lets new bare-layout routes opt-in via
+// ``meta.layout: 'bare'`` without touching this file.
+const visible = computed(
+  () => auth.showAuthGate && route.meta?.layout !== 'bare',
+)
 
 const reasonHint = computed(() => {
   const r = auth.lastReason || ''

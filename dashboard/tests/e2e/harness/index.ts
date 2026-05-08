@@ -6,7 +6,7 @@
 export { mockBackend } from './mock-backend'
 export type { MockBackend, RequestRecord } from './mock-backend'
 
-export { seedApiKey, clearApiKey } from './auth'
+export { seedApiKey, clearApiKey, seedCsrfCookie, clearAllAuth } from './auth'
 
 export { NetworkRecorder } from './network-recorder'
 export type { RecordedRequest } from './network-recorder'
