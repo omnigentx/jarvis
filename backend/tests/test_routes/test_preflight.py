@@ -1,85 +1,44 @@
 """Pre-flight check: server boot must fail fast (clear error, exit 1)
-when JARVIS_MASTER_KEY is missing AND the DB has encrypted secrets.
+when JARVIS_MASTER_KEY is missing — REGARDLESS of whether the DB
+currently has encrypted rows.
 
-Without this, the missing key would surface deep inside an unrelated
-bootstrap step (e.g. wizard's Services step calling
-``ensure_provider_sections``) with a confusing stack trace.
-
-Fresh installs (no encrypted rows yet) must still boot — the key only
-becomes mandatory when there's something to decrypt.
+The earlier "skip preflight when DB is empty" branch was removed: it
+converted a config bug into a delayed mystery 500 (backend boots fine,
+then UI save returns 500 because Fernet can't encrypt the brand-new
+secret). Fail-loud at boot so operators see the env var name in the log,
+not in a stack trace from a settings save.
 """
 from __future__ import annotations
 
 import pytest
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-
-from core import database as core_db
-from core.database import Base, SystemConfig
 from core.preflight import check_master_key_or_exit
 
 
-@pytest.fixture()
-def isolated_db(tmp_path, monkeypatch):
-    engine = create_engine(f"sqlite:///{tmp_path}/preflight.db", future=True)
-    Base.metadata.create_all(engine)
-    Session = sessionmaker(bind=engine, future=True, expire_on_commit=False)
-    monkeypatch.setattr(core_db, "SessionLocal", Session)
-    return Session
-
-
 class TestPreflight:
-    def test_no_secrets_no_key_allows_boot(self, isolated_db, monkeypatch):
-        """Fresh install: empty DB + no key → must NOT raise. The key
-        only becomes mandatory when there's encrypted data to read."""
+    def test_no_key_aborts(self, monkeypatch, caplog):
+        """No JARVIS_MASTER_KEY in env → SystemExit(1) with a clear log
+        line, regardless of DB state."""
         monkeypatch.delenv("JARVIS_MASTER_KEY", raising=False)
-        check_master_key_or_exit()  # must return cleanly
-
-    def test_secrets_present_no_key_aborts(
-        self, isolated_db, monkeypatch, caplog,
-    ):
-        """Existing install upgraded without setting JARVIS_MASTER_KEY
-        in env → must SystemExit with a clear log line, not crash later
-        on a confusing decrypt error."""
-        monkeypatch.delenv("JARVIS_MASTER_KEY", raising=False)
-        with isolated_db() as db:
-            db.add(SystemConfig(
-                category="service.github", key="personal_access_token",
-                value="v1:some-ciphertext", is_secret=True,
-            ))
-            db.commit()
-
         with caplog.at_level("ERROR"):
             with pytest.raises(SystemExit) as exc_info:
                 check_master_key_or_exit()
         assert exc_info.value.code == 1
-        # Must mention the env var name and the upgrade hint so operators
-        # can self-diagnose without grepping the codebase.
         msg = " ".join(r.getMessage() for r in caplog.records)
+        # Operator must see env var name + upgrade hint in the log.
         assert "JARVIS_MASTER_KEY" in msg
         assert "JARVIS_API_KEY" in msg  # upgrade-from-old-build hint
 
-    def test_secrets_present_key_set_allows_boot(
-        self, isolated_db, monkeypatch,
-    ):
+    def test_key_set_allows_boot(self, monkeypatch):
         monkeypatch.setenv("JARVIS_MASTER_KEY", "preflight-test-key-xxx")
-        with isolated_db() as db:
-            db.add(SystemConfig(
-                category="service.github", key="personal_access_token",
-                value="v1:some-ciphertext", is_secret=True,
-            ))
-            db.commit()
         check_master_key_or_exit()  # must return cleanly
 
-    def test_only_plain_rows_no_key_allows_boot(self, isolated_db, monkeypatch):
-        """Plain rows (is_secret=False) never go through Fernet, so a
-        DB containing only plain rows must boot without JARVIS_MASTER_KEY."""
-        monkeypatch.delenv("JARVIS_MASTER_KEY", raising=False)
-        with isolated_db() as db:
-            db.add(SystemConfig(
-                category="system", key="TIMEZONE",
-                value="Asia/Ho_Chi_Minh", is_secret=False,
-            ))
-            db.commit()
-        check_master_key_or_exit()  # must return cleanly
+    def test_empty_string_treated_as_missing(self, monkeypatch):
+        """An explicitly empty JARVIS_MASTER_KEY is just as broken as
+        unset — Fernet can't derive from empty input. Currently the
+        check uses ``os.environ.get`` truthy test which already covers
+        this; the test pins the behavior so a refactor doesn't regress
+        it (e.g., by switching to ``"JARVIS_MASTER_KEY" in os.environ``)."""
+        monkeypatch.setenv("JARVIS_MASTER_KEY", "")
+        with pytest.raises(SystemExit):
+            check_master_key_or_exit()

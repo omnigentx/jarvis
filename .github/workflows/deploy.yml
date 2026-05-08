@@ -34,11 +34,19 @@ jobs:
           # First-run bootstrap: if persistent dir is empty (fresh server or
           # post-onboard-reset), seed from repo templates so docker compose
           # bind mounts don't fail. Setup Wizard then writes real values.
+          #
+          # Each placeholder becomes a distinct random value — JARVIS_API_KEY
+          # (auth bearer), JARVIS_MASTER_KEY (Fernet root for stored secrets),
+          # and JWT_SECRET must NOT share the same value. Auto-generating all
+          # three on first deploy prevents the recurring "preflight aborts —
+          # JARVIS_MASTER_KEY missing" boot loop on fresh servers.
           if [ ! -f ${{ env.PERSIST_DIR }}/.env ]; then
-            JWT_SECRET=$(openssl rand -hex 32)
-            sed "s|change-this-to-a-secure-random-string|$JWT_SECRET|" \
-              backend/.env.example > ${{ env.PERSIST_DIR }}/.env
-            echo "Bootstrapped ${{ env.PERSIST_DIR }}/.env from .env.example"
+            sed -e "s|__GENERATE_JARVIS_API_KEY__|$(openssl rand -hex 32)|" \
+                -e "s|__GENERATE_JARVIS_MASTER_KEY__|$(openssl rand -hex 32)|" \
+                -e "s|__GENERATE_JWT_SECRET__|$(openssl rand -hex 32)|" \
+                backend/.env.example > ${{ env.PERSIST_DIR }}/.env
+            chmod 600 ${{ env.PERSIST_DIR }}/.env
+            echo "Bootstrapped ${{ env.PERSIST_DIR }}/.env with auto-generated keys"
           fi
           # fast-agent validates provider keys at startup and raises
           # ProviderKeyError for an explicitly-empty api_key — it will NOT
@@ -71,6 +79,20 @@ jobs:
           fi
           mkdir -p backend/config
           cp -r ${{ env.PERSIST_DIR }}/credentials backend/config/credentials
+
+          # Guard: workspace .env must contain both required keys before we
+          # bring up the stack. Catches the failure mode hit on 2026-05-08
+          # where an operator added JARVIS_MASTER_KEY only to ~/jarvis-data/.env
+          # (skipping the workspace copy), the container booted with no key
+          # in env, and Settings → Save returned 500 with a stack-buried
+          # MissingMasterKeyError. Failing the deploy step keeps the
+          # diagnostic at the layer that owns the invariant.
+          for required in JARVIS_API_KEY JARVIS_MASTER_KEY JWT_SECRET; do
+            if ! grep -qE "^${required}=" backend/.env; then
+              echo "::error::backend/.env is missing ${required}. Add it to ${{ env.PERSIST_DIR }}/.env (persistent dir, sourced into workspace) and re-run." >&2
+              exit 1
+            fi
+          done
 
       - name: Build & Deploy
         run: |
