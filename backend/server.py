@@ -44,6 +44,8 @@ from core.database import init_db
 # every MCP subprocess spawned later inherits empty creds.
 def _bootstrap_env_from_db() -> None:
     init_db()
+    from core.preflight import check_master_key_or_exit
+    check_master_key_or_exit()
     from services.config_service import config_service
     from services.runtime_config import apply_api_key, reconcile_service_env
 
