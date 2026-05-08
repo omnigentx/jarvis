@@ -4,8 +4,10 @@ import { useRoute, useRouter } from 'vue-router'
 import AppLayout from './components/AppLayout.vue'
 import ToastContainer from './components/ToastContainer.vue'
 import ConfirmModal from './components/ConfirmModal.vue'
+import AuthGate from './components/AuthGate.vue'
 import { useConfirmState } from './composables/useConfirm'
-import { onSetupRequired } from './api'
+import { onSetupRequired, onUnauthorized } from './api'
+import { useAuthStore } from './stores/auth'
 
 // Single globally-mounted confirmation dialog driven by useConfirm().  Views
 // call ``await confirm({...})`` instead of ``window.confirm(...)`` so every
@@ -20,7 +22,9 @@ const router = useRouter()
 // normal chrome would show empty/erroring panels.
 const useBareLayout = computed(() => route.meta?.layout === 'bare')
 
-onMounted(() => {
+const auth = useAuthStore()
+
+onMounted(async () => {
   // Install the global 503 handler once.  Any apiFetch that hits the setup
   // gate will trigger this — we push the user into the wizard unless they're
   // already inside it.
@@ -28,6 +32,19 @@ onMounted(() => {
     if (router.currentRoute.value.path.startsWith('/setup')) return
     router.push('/setup')
   })
+
+  // 401s from any apiFetch go through the auth store's soft-fail path
+  // (re-probes once before locking the UI; see stores/auth.js#on401).
+  onUnauthorized((reason) => {
+    auth.on401(reason)
+  })
+
+  // Boot probe: ask the backend whether the existing cookie is still good.
+  // Skip on the bare /setup pages — the user has no cookie there yet and
+  // the AuthGate would cover the wizard otherwise.
+  if (route.meta?.layout !== 'bare') {
+    await auth.init()
+  }
 })
 </script>
 
@@ -49,4 +66,7 @@ onMounted(() => {
     @confirm="onConfirm"
     @cancel="onCancel"
   />
+  <!-- Mounted at root so it covers both bare /setup and the main app
+       layouts. Visibility is driven by the auth store. -->
+  <AuthGate />
 </template>
