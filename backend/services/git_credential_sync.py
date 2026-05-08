@@ -43,6 +43,8 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import quote
 
+from services.secret_utils import safe_get_or_none
+
 logger = logging.getLogger(__name__)
 
 
@@ -73,6 +75,15 @@ _KNOWN_FIELDS = (FIELD_TOKEN, FIELD_USER_NAME, FIELD_USER_EMAIL)
 # ---- DB → files ------------------------------------------------------------
 
 
+def _warn_skipped(exc: Exception) -> None:
+    """Per-field decrypt-fail warning. Surfaced once per stale secret so ops
+    can see exactly which row needs re-setting in the wizard."""
+    logger.warning(
+        "[GIT_SYNC] Skipped stale field: %s. "
+        "Re-set via Settings → Services to restore.", exc,
+    )
+
+
 def apply_change(key: str, new_value: Optional[str], *, action: str) -> None:
     """Reflect a single ``service.github.<key>`` mutation into the two files.
 
@@ -85,6 +96,10 @@ def apply_change(key: str, new_value: Optional[str], *, action: str) -> None:
     ``new_value`` and ``action`` are accepted for signature parity with the
     other ``apply_*`` functions (``apply_llm_provider_change`` etc.) but are
     intentionally unused — the DB re-read is authoritative.
+
+    Tolerant of decrypt-fail: a stale field encrypted under a rotated master
+    key is treated as missing rather than crashing the hot-reload path. Same
+    rationale as :func:`reconcile_from_db`.
     """
     if key not in _KNOWN_FIELDS:
         return  # Unknown field under service.github — ignore, stay forward-compat
@@ -93,9 +108,9 @@ def apply_change(key: str, new_value: Optional[str], *, action: str) -> None:
     # from the DB. This makes apply_change idempotent and race-tolerant.
     from services.config_service import config_service as _cfg
     _write_from_values(
-        token=_cfg.get("service.github", FIELD_TOKEN),
-        user_name=_cfg.get("service.github", FIELD_USER_NAME),
-        user_email=_cfg.get("service.github", FIELD_USER_EMAIL),
+        token=safe_get_or_none(_cfg, "service.github", FIELD_TOKEN, on_warn=_warn_skipped),
+        user_name=safe_get_or_none(_cfg, "service.github", FIELD_USER_NAME, on_warn=_warn_skipped),
+        user_email=safe_get_or_none(_cfg, "service.github", FIELD_USER_EMAIL, on_warn=_warn_skipped),
     )
 
 
@@ -105,11 +120,17 @@ def reconcile_from_db(config_service) -> None:
     Idempotent counterpart to :func:`apply_change`. Ensures the host files
     exist (empty is fine) so the Docker bind-mount doesn't dangle on a
     fresh install where the user hasn't run the wizard yet.
+
+    Decrypt-fail tolerance: a stale ``personal_access_token`` encrypted
+    under a rotated master key is treated as missing — git-credentials gets
+    written empty (git prompts for credential, the correct "no credential"
+    signal). Filesystem errors still propagate so disk-full / permission
+    problems crash startup loud, matching the intent at server.py:265-278.
     """
     _write_from_values(
-        token=config_service.get("service.github", FIELD_TOKEN),
-        user_name=config_service.get("service.github", FIELD_USER_NAME),
-        user_email=config_service.get("service.github", FIELD_USER_EMAIL),
+        token=safe_get_or_none(config_service, "service.github", FIELD_TOKEN, on_warn=_warn_skipped),
+        user_name=safe_get_or_none(config_service, "service.github", FIELD_USER_NAME, on_warn=_warn_skipped),
+        user_email=safe_get_or_none(config_service, "service.github", FIELD_USER_EMAIL, on_warn=_warn_skipped),
     )
 
 

@@ -209,6 +209,121 @@ class TestReconcileFromDb:
         assert "ghp_FROMDB" in (tmp / "git-credentials").read_text()
 
 
+class TestReconcileFromDbDecryptFail:
+    """Cross-layer regression for the CD outage that hit prod: a stale
+    ``service.github.personal_access_token`` encrypted under a rotated
+    master key crash-looped backend boot from
+    ``server.py:lifespan`` → ``reconcile_from_db`` →
+    ``config_service.get`` → ``RuntimeError``.
+
+    Tests here drive the REAL :class:`ConfigService` (no FakeCfg mock) so
+    a contract drift between :mod:`services.config_service` and
+    :mod:`services.secret_utils` is caught here before it reaches CD.
+    """
+
+    @pytest.fixture
+    def real_service(self, tmp_path, monkeypatch):
+        """Real ConfigService backed by a throwaway DB + master key, so
+        Fernet encrypt/decrypt round-trips work."""
+        from core import auth as core_auth
+        from core import secrets_crypto
+        from core.database import Base
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from services.config_service import ConfigService
+
+        key = "git-sync-tests-master-key-xxxxx"
+        monkeypatch.setenv("JARVIS_API_KEY", key)
+        monkeypatch.setattr(core_auth, "JARVIS_API_KEY", key)
+        secrets_crypto.reload_master_key()
+
+        engine = create_engine(f"sqlite:///{tmp_path}/git_sync.db", future=True)
+        Base.metadata.create_all(engine)
+        Session = sessionmaker(bind=engine, future=True, expire_on_commit=False)
+        return ConfigService(db_factory=Session)
+
+    def test_stale_token_does_not_crash_reconcile(
+        self, sync_module, real_service, monkeypatch, caplog,
+    ):
+        """The original CD failure: token encrypted under master key A,
+        deploy rolls master key B without a re-encrypt, backend boots
+        and reconcile_from_db runs at lifespan startup. Must NOT raise.
+        Empty ``git-credentials`` is the correct "no credential" signal
+        — git will prompt at next clone, surfacing the issue at
+        invocation time rather than at boot.
+        """
+        from core import auth as core_auth
+        from core import secrets_crypto
+
+        mod, tmp = sync_module
+
+        # Step 1: encrypt token under master key A.
+        real_service.set("service.github", "personal_access_token", "ghp_real",
+                         is_secret=True)
+        # Plain fields stay readable — they never go through Fernet.
+        real_service.set("service.github", "user_name", "Phuc", is_secret=False)
+        real_service.set("service.github", "user_email", "p@example.com",
+                         is_secret=False)
+
+        # Step 2: rotate master key.
+        rotated = "rotated-master-key-yyyyy"
+        monkeypatch.setenv("JARVIS_API_KEY", rotated)
+        monkeypatch.setattr(core_auth, "JARVIS_API_KEY", rotated)
+        secrets_crypto.reload_master_key()
+
+        # Sanity: the token row really IS un-decryptable now. If this
+        # ever stops holding the rest of the test loses its teeth.
+        with pytest.raises(RuntimeError, match="could not be decrypted"):
+            real_service.get("service.github", "personal_access_token")
+
+        # Step 3: reconcile_from_db must succeed without raising.
+        with caplog.at_level("WARNING"):
+            mod.reconcile_from_db(real_service)
+
+        # File written, but token line is empty (decrypt-fail → None →
+        # _render_credentials returns "").
+        cred_file = tmp / "git-credentials"
+        assert cred_file.exists()
+        assert cred_file.read_text() == ""
+
+        # gitconfig still contains the plain user identity (those rows
+        # never went through Fernet so they read cleanly).
+        gitconfig_text = (tmp / "gitconfig").read_text()
+        assert "name = Phuc" in gitconfig_text
+        assert "email = p@example.com" in gitconfig_text
+
+        # Operator-visible warning so the stale row is discoverable in
+        # logs without grepping ConfigService internals.
+        assert any(
+            "personal_access_token" in r.getMessage()
+            and "could not be decrypted" in r.getMessage()
+            for r in caplog.records
+            if r.levelname == "WARNING"
+        )
+
+    def test_stale_token_does_not_block_clean_user_fields(
+        self, sync_module, real_service, monkeypatch,
+    ):
+        """A stale token MUST NOT take user_name + user_email offline.
+        They are independent fields; the soft-fail policy is per-field,
+        not per-call."""
+        from core import auth as core_auth
+        from core import secrets_crypto
+
+        mod, tmp = sync_module
+
+        real_service.set("service.github", "personal_access_token", "ghp_x",
+                         is_secret=True)
+        real_service.set("service.github", "user_name", "Phuc", is_secret=False)
+
+        monkeypatch.setenv("JARVIS_API_KEY", "rotated-yyy")
+        monkeypatch.setattr(core_auth, "JARVIS_API_KEY", "rotated-yyy")
+        secrets_crypto.reload_master_key()
+
+        mod.reconcile_from_db(real_service)
+        assert "name = Phuc" in (tmp / "gitconfig").read_text()
+
+
 class TestNoTokenLeaks:
     """Token value must never hit the log — only path + byte count."""
 
