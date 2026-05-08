@@ -17,8 +17,11 @@ import { ref, computed, onMounted } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
 import { generateApiKey } from '../../stores/setup'
 import { useConfirm } from '../../composables/useConfirm'
+import { useAuthStore } from '../../stores/auth'
+import { setApiKey } from '../../api'
 
 const store = useSettingsStore()
+const auth = useAuthStore()
 const { confirm } = useConfirm()
 
 const LOG_LEVELS = ['DEBUG', 'INFO', 'WARNING', 'ERROR']
@@ -72,8 +75,26 @@ async function onRotate() {
   rotating.value = true
   rotationError.value = ''
   rotationSuccess.value = false
+  const requestedKey = newKey.value.trim()
   try {
-    await store.setValue('auth', 'JARVIS_API_KEY', newKey.value.trim(), { isSecret: false })
+    await store.setValue('auth', 'JARVIS_API_KEY', requestedKey, { isSecret: false })
+
+    // Backend rotated JARVIS_API_KEY → session cookie's key fingerprint
+    // is now stale; the very next request would 401 with reason
+    // "key_rotated". Re-login transparently with the new key so the
+    // user never sees the AuthGate just for rotating their own key.
+    const result = await auth.login(requestedKey)
+    if (!result.ok) {
+      // Edge case: rotation succeeded server-side but the session
+      // refresh didn't (network hiccup, race with apply_api_key).
+      // Surface a hint instead of leaving the user wondering why
+      // every subsequent click 401s.
+      throw new Error(
+        'Key rotated but session refresh failed — reload the page and log in with the new key.',
+      )
+    }
+    setApiKey(requestedKey)  // legacy localStorage path used by Setup Wizard
+
     rotationSuccess.value = true
     newKey.value = ''
     confirmKey.value = ''

@@ -16,6 +16,7 @@ import { apiFetch, ApiError, buildSSEUrl } from '../api'
 import { useAgentsStore } from '../stores/agents'
 import { useConfirm } from '../composables/useConfirm'
 import { useToast } from '../composables/useToast'
+import { useSSEConnection } from '../composables/useSSEConnection.js'
 
 const agentsStore = useAgentsStore()
 const { confirm } = useConfirm()
@@ -32,7 +33,6 @@ const selectedName = ref('')
 const search = ref('')
 const filterMode = ref('all') // all | builtin | user
 const tab = ref('config') // config | agents | events
-const sse = ref(null)
 
 const editing = reactive({
   open: false,
@@ -402,11 +402,8 @@ async function detachFromAgent(server, agentName) {
 
 // ── live events SSE ─────────────────────────────────────────────────
 
-function connectSSE() {
-  if (sse.value) sse.value.close()
-  const url = buildSSEUrl('/api/mcp/events/stream')
-  const es = new EventSource(url)
-  es.onmessage = (msg) => {
+useSSEConnection(buildSSEUrl('/api/mcp/events/stream'), {
+  onMessage(msg) {
     try {
       const event = JSON.parse(msg.data)
       events.value.unshift({
@@ -427,26 +424,19 @@ function connectSSE() {
     } catch (e) {
       console.warn('[mcp.sse] parse failed', e)
     }
-  }
-  es.onerror = () => {
-    es.close()
-    setTimeout(connectSSE, 5000)
-  }
-  sse.value = es
-}
+  },
+})
 
 // ── lifecycle ───────────────────────────────────────────────────────
 
 onMounted(async () => {
   await Promise.all([loadServers(), loadEvents(), agentsStore.fetchAgents()])
-  connectSSE()
   document.addEventListener('click', closeAttachMenu)
   window.addEventListener('scroll', _onWindowScrollOrResize, true)
   window.addEventListener('resize', _onWindowScrollOrResize)
 })
 
 onUnmounted(() => {
-  sse.value?.close()
   document.removeEventListener('click', closeAttachMenu)
   window.removeEventListener('scroll', _onWindowScrollOrResize, true)
   window.removeEventListener('resize', _onWindowScrollOrResize)

@@ -3,6 +3,7 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter, RouterLink } from 'vue-router'
 import { useBreakpoint } from '../composables/useBreakpoint'
 import { useRealtimeStream } from '../composables/useRealtimeStream'
+import { useSSEConnection } from '../composables/useSSEConnection.js'
 import { useAgentsStore } from '../stores/agents'
 import { useApprovalsStore } from '../stores/approvals'
 import { useAudioPlayerStore } from '../stores/audioPlayer'
@@ -42,11 +43,6 @@ watch(() => route.path, () => {
 
 // ─── Unread notification badge ───
 const unreadCount = ref(0)
-let notifEventSource = null
-// Reconnect timer ids; cleared on unmount so a 5s-pending retry doesn't fire
-// after the component is gone (would re-open EventSource and leak forever).
-let notifReconnectTimer = null
-let mcpReconnectTimer = null
 
 async function fetchUnreadCount() {
   try {
@@ -55,26 +51,19 @@ async function fetchUnreadCount() {
   } catch (_) {}
 }
 
-function connectNotifSSE() {
-  const url = buildSSEUrl('/api/scheduler/stream')
-  notifEventSource = new EventSource(url)
-  notifEventSource.onmessage = (ev) => {
+useSSEConnection(buildSSEUrl('/api/scheduler/stream'), {
+  onMessage(ev) {
     try {
       const data = JSON.parse(ev.data)
       if (data.type === 'new_notification') {
         unreadCount.value += 1
-        // Update browser tab title
         document.title = unreadCount.value > 0
           ? `(${unreadCount.value}) ${route.meta.title || 'Dashboard'} — My Jarvis`
           : `${route.meta.title || 'Dashboard'} — My Jarvis`
       }
     } catch (_) {}
-  }
-  notifEventSource.onerror = () => {
-    notifEventSource?.close()
-    notifReconnectTimer = setTimeout(connectNotifSSE, 5000)
-  }
-}
+  },
+})
 
 // ─── MCP warning toasts ───
 // /api/mcp/events/stream is filtered server-side to type=mcp. We surface
@@ -82,12 +71,9 @@ function connectNotifSSE() {
 // most common case is a generated server hitting a forbidden pattern
 // (eval/exec/shell=True…) detected by mcp_admin_service.static_check.
 const toast = useToast()
-let mcpEventSource = null
 
-function connectMcpEventsSSE() {
-  const url = buildSSEUrl('/api/mcp/events/stream')
-  mcpEventSource = new EventSource(url)
-  mcpEventSource.onmessage = (ev) => {
+useSSEConnection(buildSSEUrl('/api/mcp/events/stream'), {
+  onMessage(ev) {
     try {
       const data = JSON.parse(ev.data)
       if (data.type !== 'mcp' || data.action !== 'warn') return
@@ -102,12 +88,8 @@ function connectMcpEventsSSE() {
         duration: 8000,
       })
     } catch (_) {}
-  }
-  mcpEventSource.onerror = () => {
-    mcpEventSource?.close()
-    mcpReconnectTimer = setTimeout(connectMcpEventsSSE, 5000)
-  }
-}
+  },
+})
 
 // Figma sidebar nav — exact items from node tree
 const mainNav = [
@@ -177,16 +159,10 @@ function goBack() {
 
 onMounted(() => {
   fetchUnreadCount()
-  connectNotifSSE()
-  connectMcpEventsSSE()
   window.addEventListener('notification-badge-update', onBadgeUpdate)
 })
 
 onUnmounted(() => {
-  if (notifReconnectTimer) clearTimeout(notifReconnectTimer)
-  if (mcpReconnectTimer) clearTimeout(mcpReconnectTimer)
-  notifEventSource?.close()
-  mcpEventSource?.close()
   window.removeEventListener('notification-badge-update', onBadgeUpdate)
 })
 </script>

@@ -4,10 +4,11 @@
  * SSE subscription for realtime updates via scheduler stream.
  * Mobile: compact chip filter bar with unread toggle pill.
  */
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useBreakpoint } from '../composables/useBreakpoint'
 import { apiFetch, buildSSEUrl } from '../api'
+import { useSSEConnection } from '../composables/useSSEConnection.js'
 
 const router = useRouter()
 const { isMobile } = useBreakpoint()
@@ -110,12 +111,8 @@ function typeColor(type) {
 }
 
 // ─── SSE ───
-let eventSource = null
-
-function connectSSE() {
-  const url = buildSSEUrl('/api/scheduler/stream')
-  eventSource = new EventSource(url)
-  eventSource.onmessage = (ev) => {
+useSSEConnection(buildSSEUrl('/api/scheduler/stream'), {
+  onMessage(ev) {
     try {
       const data = JSON.parse(ev.data)
       if (data.type === 'new_notification') {
@@ -130,15 +127,10 @@ function connectSSE() {
         total.value += 1
       }
     } catch (_) {}
-  }
-  eventSource.onerror = () => {
-    eventSource?.close()
-    setTimeout(connectSSE, 5000)
-  }
-}
+  },
+})
 
-onMounted(() => { fetchNotifications(true); connectSSE() })
-onUnmounted(() => { eventSource?.close() })
+onMounted(() => { fetchNotifications(true) })
 </script>
 
 <template>

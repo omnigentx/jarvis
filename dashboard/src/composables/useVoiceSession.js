@@ -19,9 +19,10 @@
  * mono — when chat engine is RealtimeTTS-backed). We branch on the magic
  * bytes since the protocol is the same socket either way.
  */
-import { ref, reactive, shallowRef } from 'vue'
+import { ref, reactive, shallowRef, onScopeDispose } from 'vue'
 import { getApiKey } from '../api.js'
 import { useChatStore } from '../stores/chat.js'
+import { EVENTS, on } from '../auth/bus.js'
 
 const PCM_PLAYBACK_RATE = 24000  // RealtimeTTS engines emit 24 kHz mono
 
@@ -526,6 +527,17 @@ export function useVoiceSession() {
     if (ws.value?.readyState !== 1) return
     ws.value.send(JSON.stringify({ type: 'barge_in' }))
   }
+
+  // Auth expiry: voice sessions are long-lived WebSockets that won't
+  // notice a key rotation until the user speaks again. Tear down on
+  // EXPIRED so the AuthGate doesn't have a ghost-streaming session
+  // behind it.
+  const offExpired = on(EVENTS.EXPIRED, () => {
+    if (status.value !== 'idle') {
+      stop().catch(() => { /* already torn */ })
+    }
+  })
+  onScopeDispose(() => offExpired())
 
   return {
     status, error,
