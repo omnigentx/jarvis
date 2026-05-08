@@ -44,13 +44,15 @@ from core.database import init_db
 # every MCP subprocess spawned later inherits empty creds.
 def _bootstrap_env_from_db() -> None:
     init_db()
+    from core.preflight import check_master_key_or_exit
+    check_master_key_or_exit()
     from services.config_service import config_service
-    from services.runtime_config import apply_master_key, reconcile_service_env
+    from services.runtime_config import apply_api_key, reconcile_service_env
 
     if not os.environ.get("JARVIS_API_KEY"):
         stored_master = config_service.get("auth", "JARVIS_API_KEY")
         if stored_master:
-            apply_master_key(stored_master)
+            apply_api_key(stored_master)
             logger.info("[BOOTSTRAP] Restored JARVIS_API_KEY from DB (pre-agent)")
 
     seeded = reconcile_service_env(config_service)
@@ -181,21 +183,22 @@ async def lifespan(app: FastAPI):
     try:
         from services.config_service import config_service
         from services.runtime_config import (
+            apply_api_key,
             apply_log_console_level,
-            apply_master_key,
             reconcile_service_env,
             register_config_listeners,
         )
 
-        # Bootstrap the master key from DB if env is empty. Without this,
+        # Bootstrap the auth key from DB if env is empty. Without this,
         # container restarts (which blow away os.environ mutations set by
-        # Setup Wizard Step 1) leave JARVIS_API_KEY unset → crypto can't
-        # decrypt previously-stored secrets → verify_api_key silently falls
-        # back to dev mode (open access).
+        # Setup Wizard Step 1) leave JARVIS_API_KEY unset → verify_api_key
+        # silently falls back to dev mode (open access).
+        # Note: this only restores the *auth* key. JARVIS_MASTER_KEY (crypto)
+        # must be set in the environment before backend start.
         if not os.environ.get("JARVIS_API_KEY"):
             stored_master = config_service.get("auth", "JARVIS_API_KEY")
             if stored_master:
-                apply_master_key(stored_master)
+                apply_api_key(stored_master)
                 logger.info("[BOOTSTRAP] Restored JARVIS_API_KEY from DB (env was empty)")
 
         # Reconcile cached globals with whatever is already stored in the DB

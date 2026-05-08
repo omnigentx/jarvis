@@ -20,7 +20,7 @@ Two entry points are provided:
 
 D2 scope (Phase 3a) covers:
 
-* ``auth/JARVIS_API_KEY``         — master key rotation
+* ``auth/JARVIS_API_KEY``         — auth password rotation (no crypto impact)
 * ``system/LOG_CONSOLE_LEVEL``    — console log verbosity
 * ``voice/tts.chat``              — rebuild chat TTS provider (registry JSON)
 * ``voice/tts.stories``           — rebuild stories TTS provider (Edge schema)
@@ -59,10 +59,14 @@ _ENV_SHAPED_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]{1,63}$")
 # ---- Imperative apply_* -----------------------------------------------------
 
 
-def apply_master_key(api_key: str) -> str:
-    """Propagate a new ``JARVIS_API_KEY`` to env, auth module, and crypto.
+def apply_api_key(api_key: str) -> None:
+    """Propagate a new ``JARVIS_API_KEY`` (auth/web password) to env + the
+    auth module's cached global.
 
-    Returns the new Fernet key fingerprint so the caller can log or surface it.
+    Crypto is *not* touched here — that's the whole point of the
+    ``JARVIS_API_KEY`` ↔ ``JARVIS_MASTER_KEY`` split. Rotating the auth
+    password is a routine operator action; rotating crypto requires
+    re-encrypting the DB and is done via the rotate-master-key CLI.
     """
     if not isinstance(api_key, str) or not api_key.strip():
         raise ValueError("api_key must be a non-empty string")
@@ -71,6 +75,22 @@ def apply_master_key(api_key: str) -> str:
     # ``core.auth`` reads its module-global inside the verify dependency at
     # call-time, so mutating the attribute is enough.
     core_auth.JARVIS_API_KEY = api_key
+    logger.info("[RUNTIME] API/auth key applied")
+
+
+def apply_master_key(master_key: str) -> str:
+    """Propagate a new ``JARVIS_MASTER_KEY`` to env and force crypto reload.
+
+    Only call this AFTER re-encrypting the DB under the new key (use
+    ``scripts/rotate_master_key.py``). Calling it on a DB still encrypted
+    under the old key renders every stored secret undecryptable.
+
+    Returns the new Fernet fingerprint for diagnostic logging.
+    """
+    if not isinstance(master_key, str) or not master_key.strip():
+        raise ValueError("master_key must be a non-empty string")
+
+    os.environ["JARVIS_MASTER_KEY"] = master_key
     fingerprint = secrets_crypto.reload_master_key()
     logger.info("[RUNTIME] Master key applied (fingerprint=%s)", fingerprint)
     return fingerprint
@@ -230,10 +250,10 @@ def _on_config_change(event) -> None:
     try:
         if cat == "auth" and key == "JARVIS_API_KEY":
             if action == "delete":
-                logger.warning("[RUNTIME] Master key deleted — leaving in-process copy untouched")
+                logger.warning("[RUNTIME] API key deleted — leaving in-process copy untouched")
                 return
             if new_value:
-                apply_master_key(new_value)
+                apply_api_key(new_value)
             return
 
         if cat == "system":
@@ -324,7 +344,7 @@ def reconcile_service_env(service) -> int:
             if not _ENV_SHAPED_KEY_RE.match(entry.key):
                 continue
             # Tolerate per-secret decrypt failures here. config_service.get
-            # is fail-closed (raises RuntimeError on InvalidToken) because a
+            # is fail-closed (raises DecryptError on InvalidToken) because a
             # *runtime* caller depends on the secret being correct. Bootstrap
             # is fan-out: one stale row encrypted under a rotated master key
             # must not crash the whole backend — that would brick the deploy
@@ -332,7 +352,7 @@ def reconcile_service_env(service) -> int:
             # the user re-sets via Settings later when they hit the feature.
             try:
                 plaintext = service.get(category, entry.key)
-            except RuntimeError as exc:
+            except secrets_crypto.DecryptError as exc:
                 skipped.append(f"{category}/{entry.key}")
                 logger.warning(
                     "[BOOTSTRAP] Skipped %s/%s: %s", category, entry.key, exc,

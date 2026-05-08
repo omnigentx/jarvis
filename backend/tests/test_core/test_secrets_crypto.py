@@ -7,7 +7,7 @@ from core import secrets_crypto
 @pytest.fixture(autouse=True)
 def _reset_crypto_state(monkeypatch):
     """Each test starts from a clean module state + a known master key."""
-    monkeypatch.setenv("JARVIS_API_KEY", "test-master-key-please-rotate")
+    monkeypatch.setenv("JARVIS_MASTER_KEY", "test-master-key-please-rotate")
     # Force re-derivation on each test to avoid leakage between tests.
     secrets_crypto._fernet = None
     secrets_crypto._fingerprint = None
@@ -44,13 +44,13 @@ class TestRoundTrip:
 
 class TestMissingKey:
     def test_encrypt_without_master_raises(self, monkeypatch):
-        monkeypatch.delenv("JARVIS_API_KEY", raising=False)
+        monkeypatch.delenv("JARVIS_MASTER_KEY", raising=False)
         secrets_crypto._fernet = None
         with pytest.raises(secrets_crypto.MissingMasterKeyError):
             secrets_crypto.encrypt("anything")
 
     def test_blank_master_raises(self, monkeypatch):
-        monkeypatch.setenv("JARVIS_API_KEY", "   ")
+        monkeypatch.setenv("JARVIS_MASTER_KEY", "   ")
         secrets_crypto._fernet = None
         with pytest.raises(secrets_crypto.MissingMasterKeyError):
             secrets_crypto.encrypt("anything")
@@ -85,7 +85,7 @@ class TestKeyRotation:
 
         old_fp = secrets_crypto.get_master_fingerprint()
 
-        monkeypatch.setenv("JARVIS_API_KEY", "rotated-master-key-zzz")
+        monkeypatch.setenv("JARVIS_MASTER_KEY", "rotated-master-key-zzz")
         new_fp = secrets_crypto.reload_master_key()
 
         assert new_fp != old_fp
@@ -95,7 +95,7 @@ class TestKeyRotation:
         secrets_crypto.encrypt("warmup")  # ensures lazy init
         original = secrets_crypto.get_master_fingerprint()
 
-        monkeypatch.setenv("JARVIS_API_KEY", "different-master-key-xyz")
+        monkeypatch.setenv("JARVIS_MASTER_KEY", "different-master-key-xyz")
         new_fp = secrets_crypto.reload_master_key()
         assert new_fp == secrets_crypto.get_master_fingerprint()
         assert new_fp != original

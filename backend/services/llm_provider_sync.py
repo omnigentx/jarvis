@@ -39,6 +39,8 @@ from typing import Optional
 
 import yaml
 
+from services.secret_utils import safe_get_or_none
+
 logger = logging.getLogger(__name__)
 
 # ---- Public contract -------------------------------------------------------
@@ -220,16 +222,34 @@ def _atomic_write_yaml(data: dict) -> None:
 # ---- Reconcile at startup ---------------------------------------------------
 
 
+def _warn_skipped_llm(exc: Exception) -> None:
+    """Bootstrap-time per-secret warning when an LLM api_key can't be
+    decrypted (e.g. master key rotated)."""
+    logger.warning(
+        "[LLM_SYNC] Skipped stale field: %s. "
+        "Re-set via Settings → LLM to restore.", exc,
+    )
+
+
 def reconcile_from_db(config_service) -> None:
     """Push every stored per-provider value into env + YAML on startup.
 
     This is the idempotent counterpart to :func:`apply_llm_provider_change` —
     call it once at app boot so a fresh process picks up whatever the DB
     currently has, in case env/YAML drifted between restarts.
+
+    Decrypt-fail tolerance: api_key fields encrypted under a rotated master
+    key are skipped + warned rather than crashing the whole bootstrap (see
+    ``services.secret_utils.safe_get_or_none``). Other providers' values
+    still apply, so a single stale key can't take the entire LLM config
+    offline.
     """
     for provider in SUPPORTED_PROVIDERS:
         for kind in ("api_key", "base_url"):
-            value = config_service.get("llm", f"{provider}_{kind}")
+            value = safe_get_or_none(
+                config_service, "llm", f"{provider}_{kind}",
+                on_warn=_warn_skipped_llm,
+            )
             if value:
                 apply_llm_provider_change(
                     provider, kind, value, action="update"
@@ -263,9 +283,16 @@ def migrate_legacy_keys(config_service) -> None:
     to the namespace of whichever ``llm.provider`` was active.
 
     Idempotent: once the legacy keys are removed the function is a no-op.
+
+    Decrypt-fail tolerance: a legacy ``llm.api_key`` encrypted under a
+    rotated master key is treated as missing so bootstrap proceeds. The
+    user re-enters via Settings → LLM and the migration runs cleanly next
+    boot.
     """
-    legacy_key = config_service.get("llm", "api_key")
-    legacy_base = config_service.get("llm", "base_url")
+    legacy_key = safe_get_or_none(
+        config_service, "llm", "api_key", on_warn=_warn_skipped_llm,
+    )
+    legacy_base = config_service.get("llm", "base_url")  # plain, can't decrypt-fail
     if legacy_key is None and legacy_base is None:
         return
 
