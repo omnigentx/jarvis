@@ -80,6 +80,20 @@ jobs:
           mkdir -p backend/config
           cp -r ${{ env.PERSIST_DIR }}/credentials backend/config/credentials
 
+          # Guard: workspace .env must contain both required keys before we
+          # bring up the stack. Catches the failure mode hit on 2026-05-08
+          # where an operator added JARVIS_MASTER_KEY only to ~/jarvis-data/.env
+          # (skipping the workspace copy), the container booted with no key
+          # in env, and Settings → Save returned 500 with a stack-buried
+          # MissingMasterKeyError. Failing the deploy step keeps the
+          # diagnostic at the layer that owns the invariant.
+          for required in JARVIS_API_KEY JARVIS_MASTER_KEY JWT_SECRET; do
+            if ! grep -qE "^${required}=" backend/.env; then
+              echo "::error::backend/.env is missing ${required}. Add it to ${{ env.PERSIST_DIR }}/.env (persistent dir, sourced into workspace) and re-run." >&2
+              exit 1
+            fi
+          done
+
       - name: Build & Deploy
         run: |
           # JARVIS_PERSIST_DIR is read by docker-compose.yaml to bind-mount
