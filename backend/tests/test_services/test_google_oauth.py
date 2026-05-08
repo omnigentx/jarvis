@@ -15,9 +15,7 @@ def oauth_env(tmp_path, monkeypatch):
     from services import google_oauth
 
     # Master key so Fernet works.
-    key = "oauth-tests-master-key-xxxxx"
-    monkeypatch.setenv("JARVIS_API_KEY", key)
-    monkeypatch.setattr(core_auth, "JARVIS_API_KEY", key)
+    monkeypatch.setenv("JARVIS_MASTER_KEY", "oauth-tests-master-key-xxxxx")
     secrets_crypto.reload_master_key()
 
     from core.database import Base
@@ -154,18 +152,19 @@ class TestSafeSeedClientFromEnv:
     soft-fail policy was missing from this second bootstrap call site.
     """
 
-    def test_swallows_runtime_error_from_decrypt_fail(
+    def test_swallows_decrypt_error_from_decrypt_fail(
         self, oauth_env, monkeypatch,
     ):
-        """Unit: when seed_client_from_env raises RuntimeError (the exact
+        """Unit: when seed_client_from_env raises DecryptError (the exact
         exception type config_service.get raises on InvalidToken), the safe
         wrapper must return False and forward the exception to on_warn —
         not let it propagate.
         """
+        from core.secrets_crypto import DecryptError
+
         def boom() -> bool:
-            raise RuntimeError(
-                "oauth.google/client_id: stored secret could not be decrypted "
-                "(master key rotated without re-encrypting?)"
+            raise DecryptError(
+                "oauth.google/client_id: stored secret could not be decrypted"
             )
         monkeypatch.setattr(oauth_env, "seed_client_from_env", boom)
 
@@ -174,7 +173,7 @@ class TestSafeSeedClientFromEnv:
 
         assert result is False
         assert len(captured) == 1
-        assert "could not be decrypted" in str(captured[0])
+        assert isinstance(captured[0], DecryptError)
 
     def test_pass_through_true_on_success(self, oauth_env, monkeypatch):
         monkeypatch.setattr(oauth_env, "seed_client_from_env", lambda: True)
@@ -216,20 +215,18 @@ class TestSafeSeedClientFromEnv:
         assert oauth_env.load_client() is not None  # sanity
 
         # Step 2: rotate master key. The DB row's ciphertext is now
-        # un-decryptable — config_service.get will raise RuntimeError on
+        # un-decryptable — config_service.get will raise DecryptError on
         # any read of the affected secret keys.
-        from core import auth as core_auth
         from core import secrets_crypto
+        from core.secrets_crypto import DecryptError
 
-        rotated_key = "rotated-master-key-yyyyy"
-        monkeypatch.setenv("JARVIS_API_KEY", rotated_key)
-        monkeypatch.setattr(core_auth, "JARVIS_API_KEY", rotated_key)
+        monkeypatch.setenv("JARVIS_MASTER_KEY", "rotated-master-key-yyyyy")
         secrets_crypto.reload_master_key()
 
         # Sanity: reading the secret directly really does raise. If this
         # assertion ever stops holding, the rest of the test loses its
         # teeth, so we assert the trigger is live.
-        with pytest.raises(RuntimeError, match="could not be decrypted"):
+        with pytest.raises(DecryptError):
             oauth_env.config_service.get("oauth.google", "client_id")
 
         # Step 3: the wrapper must NOT raise — boot must proceed.
@@ -238,7 +235,7 @@ class TestSafeSeedClientFromEnv:
 
         assert result is False
         assert len(captured) == 1
-        assert "could not be decrypted" in str(captured[0])
+        assert isinstance(captured[0], DecryptError)
 
 
 class TestTokenStorage:

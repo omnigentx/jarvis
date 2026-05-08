@@ -12,9 +12,8 @@ Pre-PR-#8 incident: a stale secret encrypted under a rotated master key
 crash-looped the backend container. These tests catch any regression
 where the wrapper:
 
-  * stops swallowing the right RuntimeError shape,
-  * swallows too much (e.g. "database is locked"),
-  * the upstream message shape drifts and the marker no longer matches.
+  * stops swallowing :class:`~core.secrets_crypto.DecryptError`,
+  * swallows too much (e.g. ``RuntimeError("database is locked")``).
 
 Module deliberately has no fast_agent dependency, so this whole file
 runs locally without the submodule installed — making the cross-layer
@@ -24,8 +23,8 @@ from __future__ import annotations
 
 import pytest
 
-from core import auth as core_auth
 from core import secrets_crypto
+from core.secrets_crypto import DecryptError
 from services import secret_utils
 
 
@@ -53,13 +52,13 @@ def test_returns_none_when_underlying_returns_none():
     assert secret_utils.safe_get_or_none(svc, "service.x", "MISSING") is None
 
 
-def test_swallows_decrypt_fail_runtime_error_and_calls_on_warn():
+def test_swallows_decrypt_error_and_calls_on_warn():
     """The wrapper returns None and forwards the original exception to
     on_warn — does not let it propagate."""
     def boom(c, k, d):
-        raise RuntimeError(
+        raise DecryptError(
             "service.github/personal_access_token: stored secret could "
-            "not be decrypted (master key rotated without re-encrypting?)"
+            "not be decrypted"
         )
     captured: list[Exception] = []
     result = secret_utils.safe_get_or_none(
@@ -69,25 +68,23 @@ def test_swallows_decrypt_fail_runtime_error_and_calls_on_warn():
     )
     assert result is None
     assert len(captured) == 1
-    assert isinstance(captured[0], RuntimeError)
-    assert "could not be decrypted" in str(captured[0])
+    assert isinstance(captured[0], DecryptError)
 
 
-def test_swallows_decrypt_fail_without_on_warn_callback():
+def test_swallows_decrypt_error_without_on_warn_callback():
     """on_warn is optional — wrapper still returns None silently when
-    omitted, so callers that don't care about the warning don't have to
-    supply a no-op callback."""
+    omitted."""
     def boom(c, k, d):
-        raise RuntimeError("oauth.google/client_id: stored secret could "
+        raise DecryptError("oauth.google/client_id: stored secret could "
                            "not be decrypted")
     result = secret_utils.safe_get_or_none(
         _StubService(boom), "oauth.google", "client_id",
     )
-    assert result is None  # no exception raised, no callback supplied
+    assert result is None
 
 
 def test_propagates_other_runtime_errors():
-    """A RuntimeError that ISN'T a decrypt fail (DB connection drop,
+    """A RuntimeError that ISN'T a DecryptError (DB connection drop,
     missing table, lock contention …) must propagate. Broadening the
     catch would hide infrastructure problems behind a misleading
     silent None."""
@@ -99,30 +96,11 @@ def test_propagates_other_runtime_errors():
 
 def test_propagates_non_runtime_errors():
     """Programming bugs (AttributeError, ValueError, KeyError …) must
-    propagate — soft-fail is scoped strictly to the InvalidToken-shaped
-    RuntimeError. Otherwise broadening the except would hide real defects
-    at boot."""
+    propagate — soft-fail is scoped strictly to DecryptError."""
     def bug(c, k, d):
         raise ValueError("bad argument")
     with pytest.raises(ValueError, match="bad argument"):
         secret_utils.safe_get_or_none(_StubService(bug), "x", "y")
-
-
-def test_marker_match_is_substring_not_exact():
-    """The marker check must be an ``in`` substring test, not an exact
-    equality, so wrappers that prefix/suffix the message (e.g. log
-    formatters) still get swallowed."""
-    def wrapped(c, k, d):
-        raise RuntimeError(
-            "[BOOTSTRAP] service.x/Y: stored secret could not be decrypted "
-            "(rotated key) — see Settings → Services to fix."
-        )
-    captured: list[Exception] = []
-    result = secret_utils.safe_get_or_none(
-        _StubService(wrapped), "service.x", "Y", on_warn=captured.append,
-    )
-    assert result is None
-    assert len(captured) == 1
 
 
 # ── Cross-layer integration test (real Fernet + real ConfigService) ─────
@@ -133,13 +111,10 @@ def real_service(tmp_path, monkeypatch):
     """Real ConfigService backed by a throwaway DB + master key, so Fernet
     encrypt/decrypt round-trips work for real. Tests using this fixture
     exercise the actual contract between ConfigService and secret_utils,
-    not a mock — that's the only way to catch a drift in the upstream
-    RuntimeError message shape (which is what _DECRYPT_FAIL_MARKER
-    pattern-matches).
+    not a mock — that's the only way to catch a contract drift in the
+    upstream :class:`DecryptError` shape.
     """
-    key = "secret-utils-tests-master-key-xxxxx"
-    monkeypatch.setenv("JARVIS_API_KEY", key)
-    monkeypatch.setattr(core_auth, "JARVIS_API_KEY", key)
+    monkeypatch.setenv("JARVIS_MASTER_KEY", "secret-utils-tests-master-key-xxxxx")
     secrets_crypto.reload_master_key()
 
     from core.database import Base
@@ -168,41 +143,26 @@ def test_cross_layer_real_decrypt_fail_with_rotated_key(
     the Fernet ciphertext: store a real secret under master key A, rotate
     to key B, then assert safe_get_or_none soft-fails gracefully.
 
-    This is the exact regression scenario CD has hit twice (PR #7 + #8).
-    If a future refactor:
-
-      * changes the upstream RuntimeError message shape so
-        ``_DECRYPT_FAIL_MARKER`` no longer matches,
-      * narrows the except clause in safe_get_or_none,
-      * removes the wrapper entirely from a caller,
-
-    this test fails BEFORE production CD crash-loops. The unit tests
-    above can't catch any of those because both sides of the contract
-    agree on synthetic strings.
+    This is the exact regression scenario CD has hit (PR #6/#7/#8). If a
+    future refactor narrows the except clause in safe_get_or_none, or
+    changes the exception type ConfigService raises, this test fails
+    BEFORE production CD crash-loops.
     """
     # Step 1: store a real Fernet-encrypted secret under master key A.
     real_service.set(
         "service.github", "personal_access_token", "ghp_realsecret",
         is_secret=True,
     )
-    # Sanity: clean read works under key A.
     assert real_service.get("service.github", "personal_access_token") \
         == "ghp_realsecret"
 
     # Step 2: rotate master key. The DB row's ciphertext is now
     # un-decryptable under the new key.
-    rotated_key = "rotated-master-key-yyyyy"
-    monkeypatch.setenv("JARVIS_API_KEY", rotated_key)
-    monkeypatch.setattr(core_auth, "JARVIS_API_KEY", rotated_key)
+    monkeypatch.setenv("JARVIS_MASTER_KEY", "rotated-master-key-yyyyy")
     secrets_crypto.reload_master_key()
 
-    # Sanity: reading the secret directly really does raise the
-    # expected shape. If this assertion ever stops holding, the rest of
-    # the test loses its teeth — pinning the trigger here means a
-    # contract drift in ConfigService.get is caught explicitly rather
-    # than appearing as a confusing "wrapper test passed but prod
-    # crashed" later.
-    with pytest.raises(RuntimeError, match="could not be decrypted"):
+    # Sanity: reading the secret directly really does raise DecryptError.
+    with pytest.raises(DecryptError):
         real_service.get("service.github", "personal_access_token")
 
     # Step 3: the wrapper must NOT raise — bootstrap must proceed.
@@ -213,4 +173,4 @@ def test_cross_layer_real_decrypt_fail_with_rotated_key(
     )
     assert result is None
     assert len(captured) == 1
-    assert "could not be decrypted" in str(captured[0])
+    assert isinstance(captured[0], DecryptError)

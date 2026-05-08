@@ -21,7 +21,7 @@ from services.config_service import (
 @pytest.fixture(autouse=True)
 def _crypto_master_key(monkeypatch):
     """Every test starts with a known master key + clean crypto state."""
-    monkeypatch.setenv("JARVIS_API_KEY", "unit-test-master-key-xxxxxxxx")
+    monkeypatch.setenv("JARVIS_MASTER_KEY", "unit-test-master-key-xxxxxxxx")
     secrets_crypto._fernet = None
     secrets_crypto._fingerprint = None
     yield
@@ -151,11 +151,11 @@ class TestSecretRoundTrip:
         """
         svc.set("auth", "api_key", "sk-original", is_secret=True)
         # Rotate master key so the ciphertext can no longer be read.
-        monkeypatch.setenv("JARVIS_API_KEY", "rotated-master-key-yyyyyy")
+        monkeypatch.setenv("JARVIS_MASTER_KEY", "rotated-master-key-yyyyyy")
         secrets_crypto.reload_master_key()
         # Even with a tempting env var present, we must NOT consume it.
         monkeypatch.setenv("api_key", "sk-from-env")
-        with pytest.raises(RuntimeError, match="could not be decrypted"):
+        with pytest.raises(secrets_crypto.DecryptError):
             svc.get("auth", "api_key")
 
 

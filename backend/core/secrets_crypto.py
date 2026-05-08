@@ -3,21 +3,25 @@
 The Settings UI stores user-entered secrets (API keys, passwords, OAuth tokens)
 in the ``system_config`` table. Those rows are encrypted at rest with Fernet
 (AES-128-CBC + HMAC-SHA256) and a key derived from the operator's
-``JARVIS_API_KEY``.
+``JARVIS_MASTER_KEY``.
 
 Design notes
 ------------
 
-* **No second master key.** ``JARVIS_API_KEY`` doubles as the master per BRD D1.
-  The key is derived via HKDF-SHA256 with a fixed application salt so it cannot
-  be reused for unrelated purposes.
+* **Master key is separate from auth key.** ``JARVIS_MASTER_KEY`` is the sole
+  input to the Fernet derivation. ``JARVIS_API_KEY`` (the web/auth password)
+  used to double as the master, but operators rotate the auth password as a
+  routine action — coupling the two crashed CD repeatedly. They are now
+  decoupled: rotating the auth password no longer touches stored ciphertext.
+* The key is derived via HKDF-SHA256 with a fixed application salt so it
+  cannot be reused for unrelated purposes.
 * **Versioned token format** ``v1:<urlsafe_b64_ciphertext>``. Future schemes
   (key rotation, AEAD upgrades) can ship under ``v2:`` while still reading ``v1``.
 * **Returns ``None`` on decrypt failure**, never raises. Callers decide whether
   to treat the secret as missing, prompt the user to re-enter it, etc. We never
   log the ciphertext or plaintext — only the token version + a fingerprint.
 * **Thread-safe lazy init** via an ``RLock``. ``reload_master_key()`` is called
-  by the hot-reload pipeline whenever ``JARVIS_API_KEY`` changes.
+  by the rotate-master-key CLI after re-encrypting the DB.
 """
 from __future__ import annotations
 
@@ -54,7 +58,14 @@ _TOKEN_PREFIX = f"{_TOKEN_VERSION}:"
 
 
 class MissingMasterKeyError(RuntimeError):
-    """Raised when ``JARVIS_API_KEY`` is unavailable during encryption."""
+    """Raised when ``JARVIS_MASTER_KEY`` is unavailable during encryption."""
+
+
+class DecryptError(RuntimeError):
+    """Raised when a stored secret's ciphertext cannot be decrypted under the
+    current master key — typically because the key was rotated without
+    re-encrypting the DB. Bootstrap-level callers catch this specifically to
+    soft-fail per-secret instead of crashing the whole backend."""
 
 
 # ---- Internal state ----------------------------------------------------------
@@ -66,11 +77,13 @@ _fingerprint: Optional[str] = None
 
 def _read_master_key() -> str:
     """Pull the master key from the environment."""
-    key = os.getenv("JARVIS_API_KEY", "").strip()
+    key = os.getenv("JARVIS_MASTER_KEY", "").strip()
     if not key:
         raise MissingMasterKeyError(
-            "JARVIS_API_KEY is not set — cannot encrypt or decrypt secrets. "
-            "Configure it via the Setup Wizard or .env."
+            "JARVIS_MASTER_KEY is not set — cannot encrypt or decrypt secrets. "
+            "Set it in your .env (or docker environment) before starting the "
+            "backend. Generate one with: python -c 'import secrets; "
+            "print(secrets.token_urlsafe(32))'."
         )
     return key
 
@@ -158,10 +171,13 @@ def is_encrypted(value: str) -> bool:
 
 
 def reload_master_key() -> str:
-    """Force re-derivation after ``JARVIS_API_KEY`` changes.
+    """Force re-derivation after ``JARVIS_MASTER_KEY`` changes in env.
 
-    Returns the new key fingerprint so callers can decide whether to re-encrypt
-    existing secrets.
+    Should only be called by the rotate-master-key CLI after it has
+    re-encrypted every stored secret under the new key. Calling this without
+    a prior re-encryption renders all existing ciphertext unreadable.
+
+    Returns the new key fingerprint for diagnostic logging.
     """
     global _fernet, _fingerprint
     with _lock:

@@ -143,10 +143,13 @@ class ConfigService:
             default: Returned when no DB row is present.
 
         Raises:
-            RuntimeError: A secret row is present in the DB but cannot be
+            DecryptError: A secret row is present in the DB but cannot be
                 decrypted (e.g. master key rotated without re-encrypting
                 stored secrets). Surfaces loudly so the user fixes the
                 state instead of silently consuming a stale value.
+                Bootstrap-level callers can use
+                :func:`services.secret_utils.safe_get_or_none` to soft-fail
+                per-secret instead of crashing the whole backend.
         """
         row = self._fetch(category, key)
         if row is None or row.value is None:
@@ -157,10 +160,10 @@ class ConfigService:
         # Secret stored but undecryptable — refuse to fall through. A
         # silent fallback to default would hide a real corruption /
         # key-rotation issue and could substitute a wrong value.
-        raise RuntimeError(
+        raise secrets_crypto.DecryptError(
             f"{category}/{key}: stored secret could not be decrypted "
             "(master key rotated without re-encrypting?); re-set the "
-            "value via Settings or the Setup Wizard."
+            "value via Settings or run scripts/rotate_master_key.py."
         )
 
     def get_entry(self, category: str, key: str) -> Optional[ConfigEntry]:

@@ -234,17 +234,19 @@ def safe_seed_client_from_env(
 
     Mirrors :func:`services.runtime_config.reconcile_service_env`'s soft-fail
     policy: if the stored ``client_id``/``client_secret`` is encrypted under
-    a rotated master key, ``config_service.get`` raises ``RuntimeError`` —
-    swallow it here so backend boot proceeds (the user re-sets via Settings
-    when they next need Google OAuth) instead of crash-looping the whole
-    container for one optional feature.
+    a rotated master key, ``config_service.get`` raises
+    :class:`~core.secrets_crypto.DecryptError` — swallow it here so backend
+    boot proceeds (the user re-sets via Settings when they next need Google
+    OAuth) instead of crash-looping the whole container for one optional
+    feature.
 
-    Non-``RuntimeError`` exceptions propagate — those signal programming
-    bugs and should not be hidden.
+    All other exceptions propagate — those signal programming or infra bugs
+    and should not be hidden.
     """
+    from core.secrets_crypto import DecryptError
     try:
         return seed_client_from_env()
-    except RuntimeError as exc:
+    except DecryptError as exc:
         if on_warn is not None:
             on_warn(exc)
         return False

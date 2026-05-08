@@ -24,6 +24,12 @@ if str(BACKEND_DIR) not in sys.path:
 _TEST_DB_PATH = BACKEND_DIR / "data" / "jarvis.test.db"
 _TEST_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 os.environ.setdefault("JARVIS_DB_PATH", str(_TEST_DB_PATH))
+
+# Session-level default so any test that imports secrets_crypto without
+# explicitly setting a master key (the typical case for routes/integration
+# tests) gets a deterministic Fernet bring-up. Tests that need to exercise
+# rotation override this via monkeypatch.
+os.environ.setdefault("JARVIS_MASTER_KEY", "pytest-session-master-key-xxxxx")
 # Start each pytest session from a clean test DB so leftover rows from a
 # previous run can never leak into assertions.
 for _suffix in ("", "-wal", "-shm"):

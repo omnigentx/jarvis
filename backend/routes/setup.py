@@ -32,7 +32,7 @@ from core.database import (
 )
 from middleware.setup_gate import refresh_setup_complete
 from services.config_service import config_service
-from services.runtime_config import apply_master_key
+from services.runtime_config import apply_api_key
 
 logger = logging.getLogger("setup_api")
 router = APIRouter(prefix="/api/setup", tags=["setup"])
@@ -228,8 +228,8 @@ async def setup_auth(payload: AuthStep):
                     "or re-enter the existing key to confirm."
                 ),
             )
-        # Adopt the existing key; ensure it's persisted + crypto is primed.
-        apply_master_key(current)
+        # Adopt the existing key; ensure it's persisted in env + auth module.
+        apply_api_key(current)
         config_service.set(
             "auth",
             "JARVIS_API_KEY",
@@ -248,11 +248,11 @@ async def setup_auth(payload: AuthStep):
             detail=f"API key too short (min {_MIN_API_KEY_LEN} chars).",
         )
 
-    # Apply to env/auth/crypto *first* so the subsequent DB write can encrypt
-    # any future secrets with the right master.
-    apply_master_key(api_key)
-    # The master itself cannot be stored under its own encryption (circular);
-    # we persist it unencrypted and rely on OS filesystem permissions, same
+    # Apply to env/auth so the auth dependency picks it up immediately.
+    # Crypto uses JARVIS_MASTER_KEY (separate env), unaffected by this write.
+    apply_api_key(api_key)
+    # The auth key is stored unencrypted (it would be circular under the
+    # master key anyway); we rely on OS filesystem permissions, same
     # guarantee as a .env file.
     config_service.set(
         "auth",

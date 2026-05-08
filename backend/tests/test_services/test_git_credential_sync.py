@@ -214,7 +214,7 @@ class TestReconcileFromDbDecryptFail:
     ``service.github.personal_access_token`` encrypted under a rotated
     master key crash-looped backend boot from
     ``server.py:lifespan`` → ``reconcile_from_db`` →
-    ``config_service.get`` → ``RuntimeError``.
+    ``config_service.get`` → :class:`DecryptError`.
 
     Tests here drive the REAL :class:`ConfigService` (no FakeCfg mock) so
     a contract drift between :mod:`services.config_service` and
@@ -225,16 +225,13 @@ class TestReconcileFromDbDecryptFail:
     def real_service(self, tmp_path, monkeypatch):
         """Real ConfigService backed by a throwaway DB + master key, so
         Fernet encrypt/decrypt round-trips work."""
-        from core import auth as core_auth
         from core import secrets_crypto
         from core.database import Base
         from sqlalchemy import create_engine
         from sqlalchemy.orm import sessionmaker
         from services.config_service import ConfigService
 
-        key = "git-sync-tests-master-key-xxxxx"
-        monkeypatch.setenv("JARVIS_API_KEY", key)
-        monkeypatch.setattr(core_auth, "JARVIS_API_KEY", key)
+        monkeypatch.setenv("JARVIS_MASTER_KEY", "git-sync-tests-master-key-xxxxx")
         secrets_crypto.reload_master_key()
 
         engine = create_engine(f"sqlite:///{tmp_path}/git_sync.db", future=True)
@@ -252,8 +249,8 @@ class TestReconcileFromDbDecryptFail:
         — git will prompt at next clone, surfacing the issue at
         invocation time rather than at boot.
         """
-        from core import auth as core_auth
         from core import secrets_crypto
+        from core.secrets_crypto import DecryptError
 
         mod, tmp = sync_module
 
@@ -266,14 +263,11 @@ class TestReconcileFromDbDecryptFail:
                          is_secret=False)
 
         # Step 2: rotate master key.
-        rotated = "rotated-master-key-yyyyy"
-        monkeypatch.setenv("JARVIS_API_KEY", rotated)
-        monkeypatch.setattr(core_auth, "JARVIS_API_KEY", rotated)
+        monkeypatch.setenv("JARVIS_MASTER_KEY", "rotated-master-key-yyyyy")
         secrets_crypto.reload_master_key()
 
-        # Sanity: the token row really IS un-decryptable now. If this
-        # ever stops holding the rest of the test loses its teeth.
-        with pytest.raises(RuntimeError, match="could not be decrypted"):
+        # Sanity: the token row really IS un-decryptable now.
+        with pytest.raises(DecryptError):
             real_service.get("service.github", "personal_access_token")
 
         # Step 3: reconcile_from_db must succeed without raising.
@@ -292,11 +286,9 @@ class TestReconcileFromDbDecryptFail:
         assert "name = Phuc" in gitconfig_text
         assert "email = p@example.com" in gitconfig_text
 
-        # Operator-visible warning so the stale row is discoverable in
-        # logs without grepping ConfigService internals.
+        # Operator-visible warning so the stale row is discoverable in logs.
         assert any(
             "personal_access_token" in r.getMessage()
-            and "could not be decrypted" in r.getMessage()
             for r in caplog.records
             if r.levelname == "WARNING"
         )
@@ -307,7 +299,6 @@ class TestReconcileFromDbDecryptFail:
         """A stale token MUST NOT take user_name + user_email offline.
         They are independent fields; the soft-fail policy is per-field,
         not per-call."""
-        from core import auth as core_auth
         from core import secrets_crypto
 
         mod, tmp = sync_module
@@ -316,8 +307,7 @@ class TestReconcileFromDbDecryptFail:
                          is_secret=True)
         real_service.set("service.github", "user_name", "Phuc", is_secret=False)
 
-        monkeypatch.setenv("JARVIS_API_KEY", "rotated-yyy")
-        monkeypatch.setattr(core_auth, "JARVIS_API_KEY", "rotated-yyy")
+        monkeypatch.setenv("JARVIS_MASTER_KEY", "rotated-yyy")
         secrets_crypto.reload_master_key()
 
         mod.reconcile_from_db(real_service)

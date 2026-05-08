@@ -22,13 +22,35 @@ def _restore_env(monkeypatch):
         monkeypatch.delenv(key, raising=False)
 
 
-class TestApplyMasterKey:
-    def test_applies_to_env_and_auth(self, monkeypatch):
-        # Stub the crypto reload so we don't need a real Fernet roundtrip.
-        monkeypatch.setattr(secrets_crypto, "reload_master_key", lambda: "fp-abc")
-        fingerprint = runtime_config.apply_master_key("x" * 32)
-        assert fingerprint == "fp-abc"
+class TestApplyApiKey:
+    def test_applies_to_env_and_auth(self):
+        runtime_config.apply_api_key("x" * 32)
         assert core_auth.JARVIS_API_KEY == "x" * 32
+
+    def test_does_not_reload_crypto(self, monkeypatch):
+        """The whole point of the API/master split: rotating the auth
+        password must NOT trigger a Fernet reload (which used to crash
+        bootstrap when the master key drifted)."""
+        called = []
+        monkeypatch.setattr(
+            secrets_crypto, "reload_master_key",
+            lambda: called.append(True) or "fp",
+        )
+        runtime_config.apply_api_key("y" * 32)
+        assert called == []
+
+    def test_rejects_empty(self):
+        with pytest.raises(ValueError):
+            runtime_config.apply_api_key("   ")
+
+
+class TestApplyMasterKey:
+    def test_sets_env_and_reloads_crypto(self, monkeypatch):
+        monkeypatch.setattr(secrets_crypto, "reload_master_key", lambda: "fp-abc")
+        fingerprint = runtime_config.apply_master_key("z" * 32)
+        assert fingerprint == "fp-abc"
+        import os
+        assert os.environ["JARVIS_MASTER_KEY"] == "z" * 32
 
     def test_rejects_empty(self):
         with pytest.raises(ValueError):
@@ -72,10 +94,10 @@ class TestApplyLogConsoleLevel:
 
 
 class TestListenerDispatch:
-    def test_master_key_event_dispatches(self, monkeypatch):
+    def test_api_key_event_dispatches(self, monkeypatch):
         calls = []
         monkeypatch.setattr(
-            runtime_config, "apply_master_key", lambda k: calls.append(("key", k)) or "fp"
+            runtime_config, "apply_api_key", lambda k: calls.append(("key", k))
         )
         event = _event("auth", "JARVIS_API_KEY", new_value="newkey", action="update")
         runtime_config._on_config_change(event)
@@ -116,7 +138,7 @@ class TestListenerDispatch:
         sentinel = {"called": False}
         monkeypatch.setattr(
             runtime_config,
-            "apply_master_key",
+            "apply_api_key",
             lambda *_a, **_kw: sentinel.__setitem__("called", True),
         )
         event = _event("llm", "model", new_value="gpt-4o", action="update")
@@ -158,9 +180,7 @@ class TestReconcileServiceEnv:
     @pytest.fixture()
     def service(self, tmp_path, monkeypatch):
         # A throwaway ConfigService + master key so Fernet can encrypt/decrypt.
-        key = "reconcile-tests-master-key-xxxxx"
-        monkeypatch.setenv("JARVIS_API_KEY", key)
-        monkeypatch.setattr(core_auth, "JARVIS_API_KEY", key)
+        monkeypatch.setenv("JARVIS_MASTER_KEY", "reconcile-tests-master-key-xxxxx")
         secrets_crypto.reload_master_key()
 
         from core.database import Base
@@ -236,9 +256,9 @@ class TestReconcileServiceEnv:
         original_get = service.get
         def _fail_on_password(category, key, default=None):
             if (category, key) == ("service.roborock", "ROBOROCK_PASSWORD"):
-                raise RuntimeError(
+                raise secrets_crypto.DecryptError(
                     "service.roborock/ROBOROCK_PASSWORD: stored secret could "
-                    "not be decrypted (master key rotated without re-encrypting?)"
+                    "not be decrypted"
                 )
             return original_get(category, key, default=default)
         service.set("service.roborock", "ROBOROCK_PASSWORD", "ignored", is_secret=True)

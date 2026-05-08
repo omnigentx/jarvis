@@ -20,8 +20,8 @@ from __future__ import annotations
 
 import pytest
 
-from core import auth as core_auth
 from core import secrets_crypto
+from core.secrets_crypto import DecryptError
 
 
 @pytest.fixture
@@ -34,9 +34,7 @@ def real_service(tmp_path, monkeypatch):
     from sqlalchemy.orm import sessionmaker
     from services.config_service import ConfigService
 
-    key = "llm-sync-tests-master-key-xxxxx"
-    monkeypatch.setenv("JARVIS_API_KEY", key)
-    monkeypatch.setattr(core_auth, "JARVIS_API_KEY", key)
+    monkeypatch.setenv("JARVIS_MASTER_KEY", "llm-sync-tests-master-key-xxxxx")
     secrets_crypto.reload_master_key()
 
     engine = create_engine(f"sqlite:///{tmp_path}/llm_sync.db", future=True)
@@ -63,8 +61,7 @@ def isolate_apply(monkeypatch):
 
 
 def _rotate_master_key(monkeypatch, new_key: str = "rotated-master-key-yyy"):
-    monkeypatch.setenv("JARVIS_API_KEY", new_key)
-    monkeypatch.setattr(core_auth, "JARVIS_API_KEY", new_key)
+    monkeypatch.setenv("JARVIS_MASTER_KEY", new_key)
     secrets_crypto.reload_master_key()
 
 
@@ -94,7 +91,7 @@ class TestReconcileFromDbDecryptFail:
         # un-decryptable; anthropic_base_url is plain so still readable.
         _rotate_master_key(monkeypatch)
 
-        with pytest.raises(RuntimeError, match="could not be decrypted"):
+        with pytest.raises(DecryptError):
             real_service.get("llm", "openai_api_key")
 
         # reconcile_from_db must NOT raise on the stale openai_api_key.
@@ -114,7 +111,6 @@ class TestReconcileFromDbDecryptFail:
         # Operator-visible warning identifies which key needs re-setting.
         assert any(
             "openai_api_key" in r.getMessage()
-            and "could not be decrypted" in r.getMessage()
             for r in caplog.records
             if r.levelname == "WARNING"
         )
@@ -143,7 +139,7 @@ class TestMigrateLegacyKeysDecryptFail:
 
         # Rotate master key.
         _rotate_master_key(monkeypatch)
-        with pytest.raises(RuntimeError, match="could not be decrypted"):
+        with pytest.raises(DecryptError):
             real_service.get("llm", "api_key")
 
         # migrate_legacy_keys must NOT raise. The function returns None;
@@ -158,7 +154,6 @@ class TestMigrateLegacyKeysDecryptFail:
         # row to fix).
         assert any(
             "api_key" in r.getMessage()
-            and "could not be decrypted" in r.getMessage()
             for r in caplog.records
             if r.levelname == "WARNING"
         )
