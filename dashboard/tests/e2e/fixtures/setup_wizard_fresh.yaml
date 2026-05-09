@@ -49,3 +49,18 @@ responses:
         - { name: "verify",      completed: false, skipped: false }
       overall_complete: false
       current_step: "llm"
+
+  # After Step 1 succeeds, submitAuth (stores/setup.js) calls
+  # POST /api/auth/login to mint a session cookie so the dashboard
+  # doesn't pop the AuthGate the moment the user navigates out of
+  # the wizard. Best-effort — wizard ignores any login() failure —
+  # but tests assert no unexpected requests, so the fixture must
+  # answer.
+  "POST /api/auth/login":
+    status: 200
+    headers:
+      set-cookie: "jarvis_csrf=fixture-csrf-xyz; Path=/; SameSite=Lax"
+    json:
+      status: "ok"
+      csrf_token: "fixture-csrf-xyz"
+      expires_in: 3600

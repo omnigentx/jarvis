@@ -91,6 +91,43 @@ export const useSetupStore = defineStore('setup', {
         })
         setApiKey(apiKey)
         this._applyStatus(res)
+
+        // Mint a session cookie now so the dashboard's auth.probe() at
+        // the next non-bare route resolves authenticated:true. Without
+        // this, the user finishes the wizard, navigates to /agents,
+        // and immediately hits the AuthGate modal with "session
+        // expired" — confusing UX since they just typed the key.
+        //
+        // Both wizard paths (typed key, "Generate" button) carry an
+        // apiKey value here: ``generateApiKey()`` runs client-side
+        // (crypto.getRandomValues), so the FE always knows the value
+        // it's sending and ``login(apiKey)`` will match against the
+        // ``apply_api_key`` the backend just performed for /setup/auth.
+        //
+        // SetupGate middleware exempts ``/api/auth/*`` (see
+        // ``backend/middleware/setup_gate.py::_ALLOWED_PREFIXES``), so
+        // calling /api/auth/login mid-wizard works even though
+        // ``overall_complete`` is still false. If a future change
+        // narrows that exemption, this call will start 503-ing and
+        // wizard users will hit the AuthGate after navigating out.
+        //
+        // Best-effort: programming-error try/catch (import failure)
+        // PLUS an explicit ok:false branch (login itself returns a
+        // structured failure for HTTP/network errors). Wizard
+        // completion is not blocked — AuthGate is the recovery path.
+        try {
+          const { useAuthStore } = await import('./auth.js')
+          const result = await useAuthStore().login(apiKey)
+          if (!result || !result.ok) {
+            console.warn(
+              '[setup] post-auth login() did not establish session:',
+              result?.status, result?.reason,
+            )
+          }
+        } catch (err) {
+          console.warn('[setup] post-auth login() threw:', err)
+        }
+
         return res
       } catch (err) {
         this.lastSubmitError = _formatApiError(err)
