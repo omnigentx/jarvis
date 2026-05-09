@@ -1,35 +1,51 @@
-"""
-Approval MCP Tool Server — agent requests human approval before proceeding.
+"""Approval MCP Tool Server — agent requests human approval before proceeding.
+
+Talks to the live backend over the Runtime RPC Unix socket
+(``JARVIS_RUNTIME_RPC_SOCKET``); see ``services/runtime_rpc.py`` and
+``services/approval_rpc_handlers.py``. No HTTP, no API key — trust is
+file-system permissions on the socket path, the same model used by
+``skill_server`` and ``mcp_admin``.
 
 Blocking mechanism:
-  1. POST /api/approvals → create approval request (pauses team)
-  2. Subscribe SSE /api/agents/activity-stream → wait for approval_resolved event
-  3. Return decision + inline comments to agent
+  1. ``approval.create`` — create approval row, pause team, return id
+  2. ``approval.wait``  — long-poll until user resolves on dashboard
+                          (may block for hours; backend handler is
+                          registered with timeout=None and we pass
+                          timeout=None to the client too)
+  3. Format the resolution payload for the agent
+
+Backend restart resilience: ``approval.wait`` is retried with
+exponential-ish backoff on connection drop. The server-side handler
+checks DB state on (re)subscribe, so a retry after a restart sees the
+already-resolved approval and returns immediately.
 
 Environment:
-  JARVIS_API_KEY  — API auth key (passed via fastagent.config.yaml env)
-  JARVIS_API_BASE — Backend URL (default: http://127.0.0.1:8000)
+  JARVIS_RUNTIME_RPC_SOCKET — UDS path to the backend's RuntimeRpcServer
+                              (set automatically by the backend at boot,
+                              propagated via fastagent.config.yaml).
 """
+from __future__ import annotations
 
-import json
-import os
+import asyncio
+import logging
 import sys
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
+# Allow imports from backend/.
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from tools.runtime_rpc_client import RuntimeRpcError, call as rpc_call  # noqa: E402
+
+logger = logging.getLogger("approval_server")
 mcp = FastMCP("ApprovalService")
 
-# Config
-API_BASE = os.environ.get("JARVIS_API_BASE", "http://127.0.0.1:8000")
-API_KEY = os.environ.get("JARVIS_API_KEY", "")
 
-
-def _api_headers() -> dict:
-    return {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {API_KEY}",
-    }
+# Backend restart / transient socket failures: retry the wait. Each
+# reconnect re-issues approval.wait, the handler re-checks DB state, so
+# resolution that landed during the gap is delivered immediately.
+_WAIT_RETRY_DELAY_SECONDS = 2.0
 
 
 @mcp.tool()
@@ -70,9 +86,6 @@ async def request_approval(
     Returns: approval result with decision, comment, and inline comments
     from the user.
     """
-    import httpx
-
-    # 1. Create approval request via API
     payload = {
         "title": title,
         "content": content,
@@ -84,8 +97,6 @@ async def request_approval(
     if team_name:
         payload["team_name"] = team_name
 
-
-    # Impact analysis
     impact = {}
     if impact_files is not None:
         impact["files"] = impact_files
@@ -98,30 +109,49 @@ async def request_approval(
     if impact:
         payload["impact"] = impact
 
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(
-            f"{API_BASE}/api/approvals",
-            json=payload,
-            headers=_api_headers(),
+    # Sync RPC client → run in a worker thread so the MCP loop keeps
+    # serving other tool calls while we block on the human.
+    create_resp = await asyncio.to_thread(rpc_call, "approval.create", payload)
+    if isinstance(create_resp, dict) and "error" in create_resp:
+        raise RuntimeError(
+            f"Failed to create approval: {create_resp.get('status')} {create_resp.get('error')}"
         )
-        if resp.status_code != 201:
-            raise RuntimeError(f"Failed to create approval: {resp.status_code} {resp.text}")
+    approval_id = create_resp["id"]
 
-        approval = resp.json()
-        approval_id = approval["id"]
+    # Block until resolved. Auto-retry across backend restarts: each
+    # reconnect's handler re-reads DB state and returns immediately if
+    # the approval was resolved during the disconnect window.
+    while True:
+        try:
+            result = await asyncio.to_thread(
+                rpc_call, "approval.wait", {"approval_id": approval_id}, timeout=None,
+            )
+            break
+        except RuntimeRpcError as exc:
+            logger.warning(
+                "[approval] RPC dropped while waiting on %s — retrying in %.1fs: %s",
+                approval_id, _WAIT_RETRY_DELAY_SECONDS, exc,
+            )
+            await asyncio.sleep(_WAIT_RETRY_DELAY_SECONDS)
 
-    # 2. Subscribe to SSE activity stream and wait for approval_resolved
-    result = await _wait_for_resolution_via_sse(approval_id)
+    if isinstance(result, dict) and "error" in result and "status" in result:
+        # 404 / handler error — surface to the agent rather than guessing.
+        raise RuntimeError(
+            f"approval.wait failed: {result.get('status')} {result.get('error')}"
+        )
 
-    # 3. Format response for agent
+    return _format_result(result, content)
+
+
+def _format_result(result: dict, original_content: str) -> str:
     decision = result.get("user_decision", "unknown")
     user_comment = result.get("user_comment", "")
-    inline_comments = result.get("comments", result.get("inline_comments", []))
-    content_lines = content.split("\n")
+    inline_comments = result.get("inline_comments", []) or result.get("comments", [])
+    content_lines = original_content.split("\n")
 
     lines = [
         f"📋 Approval Result: **{decision.upper()}**",
-        f"📝 Title: {title}",
+        f"📝 Title: {result.get('title', '')}",
     ]
     if user_comment:
         lines.append(f"💬 User Comment: {user_comment}")
@@ -136,76 +166,12 @@ async def request_approval(
             elif c.get("selection"):
                 sel = c["selection"]
                 ctx = sel.get("selected_text", "")
-                lines.append(f'  • [Lines {sel.get("start_line", "?")}-{sel.get("end_line", "?")}]: "{ctx}"')
+                lines.append(
+                    f'  • [Lines {sel.get("start_line", "?")}-{sel.get("end_line", "?")}]: "{ctx}"'
+                )
                 lines.append(f"    → {c['body']}")
 
     return "\n".join(lines)
-
-
-async def _wait_for_resolution_via_sse(approval_id: str) -> dict:
-    """Subscribe to SSE activity stream and block until approval is resolved.
-
-    Connects to /api/agents/activity-stream and listens for
-    event_type == "approval_resolved" with matching approval_id.
-    On disconnect, throws error (no fallback — keeps debugging simple).
-    """
-    import httpx
-
-    sse_url = f"{API_BASE}/api/agents/activity-stream"
-    params = {"api_key": API_KEY} if API_KEY else {}
-
-    async with httpx.AsyncClient(timeout=None) as client:
-        async with client.stream(
-            "GET",
-            sse_url,
-            params=params,
-            headers={"Accept": "text/event-stream"},
-        ) as response:
-            if response.status_code != 200:
-                raise RuntimeError(
-                    f"SSE connection failed: {response.status_code}"
-                )
-
-            async for line in response.aiter_lines():
-                if not line.startswith("data: "):
-                    continue
-
-                try:
-                    event = json.loads(line[6:])
-                except (json.JSONDecodeError, ValueError):
-                    continue
-
-                # Skip pings and other events
-                event_type = event.get("event_type") or event.get("type")
-                if event_type != "approval_resolved":
-                    continue
-
-                # Check if this event matches our approval
-                data = event.get("data", {})
-                if data.get("approval_id") != approval_id:
-                    continue
-
-                # Match! Fetch full approval detail with comments
-                # Use a separate client to avoid conflict with SSE stream
-                async with httpx.AsyncClient(timeout=30) as detail_client:
-                    detail_resp = await detail_client.get(
-                        f"{API_BASE}/api/approvals/{approval_id}",
-                        headers=_api_headers(),
-                    )
-                if detail_resp.status_code == 200:
-                    return detail_resp.json()
-                else:
-                    # Return what we have from the event
-                    return {
-                        "user_decision": data.get("decision", "unknown"),
-                        "user_comment": data.get("comment", ""),
-                        "comments": [],
-                    }
-
-    # Stream ended without receiving resolution — should not happen
-    raise RuntimeError(
-        f"SSE stream ended without receiving approval resolution for {approval_id}"
-    )
 
 
 if __name__ == "__main__":

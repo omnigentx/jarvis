@@ -1,0 +1,289 @@
+"""Tests for approval RPC migration.
+
+Two layers:
+
+1. ``ApprovalService.wait_for_resolution`` direct calls — covers the
+   in-process pub/sub correctness (resolve-before-wait, concurrent
+   waiters, not-found, signal-after-wait).
+2. UDS round-trip through ``RuntimeRpcServer`` with the registered
+   ``approval.*`` handlers — proves the full path the MCP subprocess
+   exercises in production.
+
+No mocks of the transport or the service.  We use the real SessionLocal
+(rolled back per-test via ``mcp_db_isolation``) and a real Unix socket.
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import sys
+import threading
+import time
+import uuid
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+
+from services import approval_rpc_handlers, approval_service as approval_module
+from services.approval_service import approval_service
+from services.runtime_rpc import RuntimeRpcServer
+from tools.runtime_rpc_client import RuntimeRpcClient
+
+
+@pytest.fixture(autouse=True)
+def _isolate_db(mcp_db_isolation):
+    """Every test runs inside a SAVEPOINT so approval rows it inserts
+    are rolled back. Avoids leaking pending approvals between tests.
+    """
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _stub_pause_manager(monkeypatch):
+    """``create_approval`` calls ``pause_manager.pause(agent)`` which
+    looks up the live FastAgent app to send a control event. In unit
+    tests there's no app — stub the pause/resume methods to no-ops so
+    we can exercise the approval lifecycle in isolation.
+    """
+    from services import pause_manager as pm
+    monkeypatch.setattr(pm.pause_manager, "pause", lambda *a, **k: True)
+    monkeypatch.setattr(pm.pause_manager, "resume", lambda *a, **k: True)
+
+
+@pytest.fixture(autouse=True)
+def _silence_activity_stream(monkeypatch):
+    """SSE broadcast targets the live activity stream manager. Stub
+    it so we don't pollute test logs and don't depend on background
+    asyncio tasks the manager spawns at import time.
+    """
+    from services import activity_stream as a
+    monkeypatch.setattr(a.activity_stream_manager, "broadcast", lambda *a, **k: None)
+
+
+@pytest.fixture()
+def _empty_waiters():
+    """The pub/sub dict is module-scoped; reset between tests to keep
+    waiter assertions deterministic when run alongside other tests."""
+    approval_module._resolution_waiters.clear()
+    yield
+    approval_module._resolution_waiters.clear()
+
+
+def _create_pending_approval() -> str:
+    """Insert an approval row and return its id. Bypasses the public
+    create_approval to avoid SSE/pause side effects in tests that only
+    care about the wait/resolve path.
+    """
+    row = approval_service.create_approval({
+        "agent_name": "test_agent",
+        "title": "Test approval",
+        "content": "Body",
+    })
+    return row["id"]
+
+
+# ----- Direct service-level pub/sub ------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_wait_returns_immediately_when_already_resolved(_empty_waiters):
+    approval_id = _create_pending_approval()
+    approval_service.resolve_approval(approval_id, "approve", "looks good")
+
+    # No subscriber should be registered after a fast-path return.
+    result = await approval_service.wait_for_resolution(approval_id)
+
+    assert result["status"] == "approved"
+    assert result["user_decision"] == "approve"
+    assert result["user_comment"] == "looks good"
+    assert approval_id not in approval_module._resolution_waiters
+
+
+@pytest.mark.asyncio
+async def test_wait_blocks_then_returns_on_resolve(_empty_waiters):
+    approval_id = _create_pending_approval()
+
+    # Resolve from a parallel task after the waiter has subscribed.
+    async def _resolve_after_delay():
+        # Yield so the waiter actually reaches ``await fut``.
+        await asyncio.sleep(0.05)
+        approval_service.resolve_approval(approval_id, "reject", "no thanks")
+
+    waiter = asyncio.create_task(approval_service.wait_for_resolution(approval_id))
+    resolver = asyncio.create_task(_resolve_after_delay())
+
+    result = await asyncio.wait_for(waiter, timeout=2.0)
+    await resolver
+
+    assert result["status"] == "rejected"
+    assert result["user_comment"] == "no thanks"
+    # Cleanup happened in the finally block.
+    assert approval_id not in approval_module._resolution_waiters
+
+
+@pytest.mark.asyncio
+async def test_unknown_approval_id_raises_keyerror(_empty_waiters):
+    with pytest.raises(KeyError):
+        await approval_service.wait_for_resolution("nonexistent-id")
+
+
+@pytest.mark.asyncio
+async def test_multiple_waiters_all_notified(_empty_waiters):
+    """Team scenarios: more than one agent can wait on the same approval.
+    Resolve must signal every subscriber.
+    """
+    approval_id = _create_pending_approval()
+
+    waiters = [
+        asyncio.create_task(approval_service.wait_for_resolution(approval_id))
+        for _ in range(3)
+    ]
+
+    # Yield until all three have subscribed.
+    for _ in range(50):
+        if len(approval_module._resolution_waiters.get(approval_id, [])) == 3:
+            break
+        await asyncio.sleep(0.01)
+    assert len(approval_module._resolution_waiters[approval_id]) == 3
+
+    approval_service.resolve_approval(approval_id, "approve")
+
+    results = await asyncio.wait_for(asyncio.gather(*waiters), timeout=2.0)
+    assert all(r["status"] == "approved" for r in results)
+    assert approval_id not in approval_module._resolution_waiters
+
+
+# ----- Full UDS round-trip --------------------------------------------
+
+
+@pytest.fixture()
+def _short_sock():
+    p = Path("/tmp") / f"approval-rpc-{uuid.uuid4().hex[:8]}.sock"
+    yield p
+    p.unlink(missing_ok=True)
+
+
+@pytest.fixture()
+async def rpc_server(_short_sock):
+    srv = RuntimeRpcServer(str(_short_sock))
+    approval_rpc_handlers.register(srv)
+    await srv.start()
+    try:
+        yield srv
+    finally:
+        await srv.stop()
+
+
+def _client_call_in_thread(socket_path, method, params=None, timeout=30.0):
+    """Run RuntimeRpcClient.call in a worker thread so the event loop
+    is free to drive the server side concurrently.
+    """
+    result_box: dict = {}
+    err_box: list = []
+
+    def _go():
+        try:
+            client = RuntimeRpcClient(socket_path)
+            result_box["v"] = client.call(method, params, timeout=timeout)
+        except Exception as exc:
+            err_box.append(exc)
+
+    t = threading.Thread(target=_go, daemon=True)
+    t.start()
+    return t, result_box, err_box
+
+
+async def _join_thread(t, *, timeout=5.0):
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, t.join, timeout)
+    if t.is_alive():
+        raise AssertionError("RPC client thread hung")
+
+
+@pytest.mark.asyncio
+async def test_uds_create_then_wait_blocks_until_resolve(
+    rpc_server, _empty_waiters,
+):
+    """Full path the MCP subprocess uses: open a socket, create the
+    approval, then long-poll on approval.wait until the dashboard
+    resolves it.
+    """
+    create_t, create_r, create_e = _client_call_in_thread(
+        rpc_server._socket_path,
+        "approval.create",
+        {
+            "agent_name": "agent_a",
+            "title": "Deploy plan",
+            "content": "Looks good?",
+        },
+    )
+    await _join_thread(create_t, timeout=5.0)
+    if create_e:
+        raise create_e[0]
+    approval_id = create_r["v"]["id"]
+
+    # Long-poll. Pass timeout=None on the client so the socket blocks
+    # rather than firing the default 30 s SO_RCVTIMEO.
+    wait_t, wait_r, wait_e = _client_call_in_thread(
+        rpc_server._socket_path,
+        "approval.wait",
+        {"approval_id": approval_id},
+        timeout=None,
+    )
+
+    # Give the wait handler time to subscribe before we resolve.
+    for _ in range(50):
+        if approval_id in approval_module._resolution_waiters:
+            break
+        await asyncio.sleep(0.02)
+    assert approval_id in approval_module._resolution_waiters
+
+    approval_service.resolve_approval(approval_id, "approve", "ok")
+
+    await _join_thread(wait_t, timeout=5.0)
+    if wait_e:
+        raise wait_e[0]
+    result = wait_r["v"]
+    assert result["user_decision"] == "approve"
+    assert result["user_comment"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_uds_wait_returns_immediately_for_resolved(
+    rpc_server, _empty_waiters,
+):
+    """Backend-restart recovery: if the client retries approval.wait
+    after a socket drop and the approval already resolved during the
+    gap, the handler must return the resolved record without blocking.
+    """
+    approval_id = _create_pending_approval()
+    approval_service.resolve_approval(approval_id, "approve")
+
+    wait_t, wait_r, wait_e = _client_call_in_thread(
+        rpc_server._socket_path,
+        "approval.wait",
+        {"approval_id": approval_id},
+    )
+    await _join_thread(wait_t, timeout=5.0)
+    if wait_e:
+        raise wait_e[0]
+    assert wait_r["v"]["user_decision"] == "approve"
+
+
+@pytest.mark.asyncio
+async def test_uds_wait_unknown_id_returns_error_envelope(
+    rpc_server, _empty_waiters,
+):
+    wait_t, wait_r, wait_e = _client_call_in_thread(
+        rpc_server._socket_path,
+        "approval.wait",
+        {"approval_id": "does-not-exist"},
+    )
+    await _join_thread(wait_t, timeout=5.0)
+    if wait_e:
+        raise wait_e[0]
+    result = wait_r["v"]
+    assert result.get("status") == 404
+    assert "not found" in result.get("error", "")

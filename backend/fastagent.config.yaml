@@ -176,11 +176,14 @@ mcp:
       args: ["tools/cron_server.py"]
       env:
         PYTHONUNBUFFERED: "1"
+    # Approval — Runtime RPC over Unix socket (no HTTP, no API key).
+    # See tools/approval_server.py + services/approval_rpc_handlers.py.
     approval-server:
       command: "python"
       args: ["tools/approval_server.py"]
       env:
         PYTHONUNBUFFERED: "1"
+        JARVIS_RUNTIME_RPC_SOCKET: "${JARVIS_RUNTIME_RPC_SOCKET}"
     # Self-improving Jarvis (experimental). Subprocess delegates every
     # mutating operation to the main backend's RuntimeRpcServer over a
     # Unix domain socket — so `rebuild_agent_instruction` runs in the live
@@ -193,8 +196,6 @@ mcp:
       env:
         PYTHONUNBUFFERED: "1"
         JARVIS_RUNTIME_RPC_SOCKET: "${JARVIS_RUNTIME_RPC_SOCKET}"
-        JARVIS_API_KEY: "${JARVIS_API_KEY}"
-        JARVIS_API_BASE: "http://127.0.0.1:8000"
     # Self-managed MCP catalog. Same RPC bridge as skill_server: every tool
     # delegates to mcp_rpc_handlers in the main backend so catalog mutations,
     # generated-server pipeline state, and per-agent attachments all land in
@@ -206,8 +207,6 @@ mcp:
       env:
         PYTHONUNBUFFERED: "1"
         JARVIS_RUNTIME_RPC_SOCKET: "${JARVIS_RUNTIME_RPC_SOCKET}"
-        JARVIS_API_KEY: "${JARVIS_API_KEY}"
-        JARVIS_API_BASE: "http://127.0.0.1:8000"
     mcp-atlassian:
       command: "uv"
       args: ["run", "--directory", "mcp-atlassian", "mcp-atlassian"]

@@ -44,7 +44,16 @@ RequestTimeout = -32001  # custom — JSON-RPC reserves -32000..-32099 for serve
 # forever and tie up the loop's default thread pool. The default client
 # timeout matches at 30 s so the server errors first with a clean envelope
 # instead of letting the client time out on its own.
+#
+# Methods that legitimately block (waiting on human input, long-poll
+# subscriptions) opt out by registering with ``timeout=None``.
 DEFAULT_HANDLER_TIMEOUT = 30.0
+
+# Sentinel for ``register(..., timeout=)`` — distinct from ``None``
+# (which means *unbounded*). When passed, the module-level
+# ``DEFAULT_HANDLER_TIMEOUT`` is looked up at register-call time so a
+# test that patches the constant before registering takes effect.
+_USE_DEFAULT_TIMEOUT = object()
 
 
 class RuntimeRpcServer:
@@ -54,6 +63,8 @@ class RuntimeRpcServer:
 
         server = RuntimeRpcServer(socket_path)
         server.register("skill.create", skill_create_handler)
+        # Long-poll style — block indefinitely until backend signals.
+        server.register("approval.wait", approval_wait, timeout=None)
         await server.start()
         # ... shutdown ...
         await server.stop()
@@ -61,16 +72,28 @@ class RuntimeRpcServer:
 
     def __init__(self, socket_path: str) -> None:
         self._socket_path = socket_path
-        self._handlers: dict[str, Handler] = {}
+        # Each entry stores ``(handler, timeout)``. ``timeout=None`` opts
+        # out of the dispatch deadline (used by long-running waits like
+        # ``approval.wait`` that legitimately block on a human resolving
+        # an approval, often for hours).
+        self._handlers: dict[str, tuple[Handler, Optional[float]]] = {}
         self._server: Optional[asyncio.AbstractServer] = None
         self._client_count = 0
 
     # ---- Registration ---------------------------------------------------
 
-    def register(self, method: str, handler: Handler) -> None:
+    def register(
+        self,
+        method: str,
+        handler: Handler,
+        *,
+        timeout: Any = _USE_DEFAULT_TIMEOUT,
+    ) -> None:
         if method in self._handlers:
             logger.warning("[RPC] Handler %r overrides existing registration", method)
-        self._handlers[method] = handler
+        if timeout is _USE_DEFAULT_TIMEOUT:
+            timeout = DEFAULT_HANDLER_TIMEOUT
+        self._handlers[method] = (handler, timeout)
 
     def methods(self) -> list[str]:
         return sorted(self._handlers)
@@ -149,9 +172,10 @@ class RuntimeRpcServer:
         if not isinstance(params, dict):
             return _err_response(req_id, InvalidParams, "'params' must be an object")
 
-        handler = self._handlers.get(method)
-        if handler is None:
+        entry = self._handlers.get(method)
+        if entry is None:
             return _err_response(req_id, MethodNotFound, f"Unknown method: {method}")
+        handler, method_timeout = entry
 
         try:
             if asyncio.iscoroutinefunction(handler):
@@ -161,12 +185,20 @@ class RuntimeRpcServer:
                 # loop when they do filesystem I/O.
                 loop = asyncio.get_running_loop()
                 coro = loop.run_in_executor(None, lambda: handler(**params))
-            result = await asyncio.wait_for(coro, timeout=DEFAULT_HANDLER_TIMEOUT)
+            if method_timeout is None:
+                # Long-poll handler — caller is responsible for its own
+                # exit condition (typically an asyncio.Future signalled
+                # from another part of the backend). Connection close
+                # will cancel the awaited coroutine via the surrounding
+                # ``_handle_client`` loop.
+                result = await coro
+            else:
+                result = await asyncio.wait_for(coro, timeout=method_timeout)
         except asyncio.TimeoutError:
-            logger.warning("[RPC] Handler %r exceeded %ss deadline", method, DEFAULT_HANDLER_TIMEOUT)
+            logger.warning("[RPC] Handler %r exceeded %ss deadline", method, method_timeout)
             return _err_response(
                 req_id, RequestTimeout,
-                f"Handler exceeded {DEFAULT_HANDLER_TIMEOUT}s deadline",
+                f"Handler exceeded {method_timeout}s deadline",
             )
         except TypeError as exc:
             return _err_response(req_id, InvalidParams, f"Bad arguments: {exc}")

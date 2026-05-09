@@ -3,8 +3,14 @@ Approval Service — business logic for agent approval requests.
 
 Handles CRUD operations, team-wide pause/resume via PauseManager,
 and realtime SSE broadcasting via ActivityStreamManager.
+
+Also exposes an in-process pub/sub for resolution events
+(:func:`wait_for_resolution`) so MCP subprocesses calling via
+``approval.wait`` over Runtime RPC can block on the same event without
+polling. Single-worker only — see :data:`_resolution_waiters`.
 """
 
+import asyncio
 import json
 import logging
 import time
@@ -17,6 +23,47 @@ from services.pause_manager import pause_manager
 from services.activity_stream import activity_stream_manager
 
 logger = logging.getLogger(__name__)
+
+
+# In-process pub/sub for approval resolution. Each pending approval
+# can have multiple waiters (e.g. team scenarios where >1 agent blocks
+# on the same approval). The dict key is approval_id, the value is the
+# list of futures to resolve when the approval reaches a terminal state.
+#
+# Single-worker assumption: this lives in one Python process. If we
+# scale to multiple gunicorn workers later, the resolve_approval call
+# may land on a different worker than the wait subscriber → signal would
+# be lost. Mitigations for that future scenario: (a) shared pub/sub
+# (Redis), (b) DB-poll fallback inside wait_for_resolution. The wait
+# handler always re-checks DB state on (re)subscribe, so a backend
+# restart that drops in-memory futures is recoverable: the next call
+# from a retrying client sees the resolved DB state and returns
+# immediately.
+_resolution_waiters: dict[str, list[asyncio.Future]] = {}
+
+
+def _signal_resolution(approval_id: str, payload: dict) -> None:
+    """Notify any in-process waiters that ``approval_id`` has been
+    resolved. Safe to call from sync code on the event-loop thread; uses
+    ``call_soon_threadsafe`` to bridge if invoked from elsewhere.
+    """
+    waiters = _resolution_waiters.pop(approval_id, [])
+    for fut in waiters:
+        if fut.done():
+            continue
+        try:
+            loop = fut.get_loop()
+        except RuntimeError:
+            continue
+        loop.call_soon_threadsafe(_set_future_result, fut, payload)
+
+
+def _set_future_result(fut: asyncio.Future, payload: dict) -> None:
+    """Idempotent set_result — guards against the future already being
+    cancelled (e.g. RPC client disconnected between resolve and signal).
+    """
+    if not fut.done():
+        fut.set_result(payload)
 
 
 class ApprovalService:
@@ -184,7 +231,59 @@ class ApprovalService:
         # Fetch inline comments to include in result (for MCP tool)
         result["inline_comments"] = self._get_comments(approval_id)
 
+        # Notify in-process waiters (Runtime RPC ``approval.wait``
+        # subscribers). Done last so waiters see the final dict, with
+        # comments included.
+        _signal_resolution(approval_id, dict(result))
+
         return result
+
+    async def wait_for_resolution(self, approval_id: str) -> dict:
+        """Block until ``approval_id`` reaches a terminal state, then
+        return the resolved approval dict (including inline comments).
+
+        Used by the Runtime RPC ``approval.wait`` handler. Safe against
+        the resolve-before-subscribe race: subscribes first, then
+        re-checks DB state under the same coroutine to drain ourselves
+        if resolution happened in the gap.
+
+        Raises ``KeyError`` if the approval id is unknown.
+        """
+        record = self.get_approval(approval_id)
+        if record is None:
+            raise KeyError(approval_id)
+        if record["status"] != "pending":
+            # Already resolved — return immediately. Match the dict shape
+            # produced by ``resolve_approval`` so callers don't need a
+            # second branch (they can rely on ``inline_comments`` being
+            # present alongside ``user_decision``).
+            record["inline_comments"] = record.get("comments", [])
+            return record
+
+        loop = asyncio.get_running_loop()
+        fut: asyncio.Future = loop.create_future()
+        _resolution_waiters.setdefault(approval_id, []).append(fut)
+
+        try:
+            # Re-check DB state. Resolution could have happened between
+            # the first check above and the subscribe-list append. If it
+            # already landed, _signal_resolution will have popped the
+            # entry before we appended → our future never fires → so we
+            # must bail out by reading state ourselves.
+            record = self.get_approval(approval_id)
+            if record is not None and record["status"] != "pending":
+                record["inline_comments"] = record.get("comments", [])
+                return record
+
+            return await fut
+        finally:
+            waiters = _resolution_waiters.get(approval_id, [])
+            try:
+                waiters.remove(fut)
+            except ValueError:
+                pass
+            if not waiters:
+                _resolution_waiters.pop(approval_id, None)
 
     def add_comment(self, approval_id: str, data: dict) -> dict:
         """Add an inline comment to an approval request.
