@@ -187,6 +187,62 @@ class TestRefresh:
         assert resp.json()["detail"]["reason"] == "key_rotated"
 
 
+# ---- Refresh + CSRF middleware (production-shape) ---------------------------
+#
+# The default ``client`` fixture mounts the auth router only, so it does
+# NOT exercise CsrfMiddleware. Production wires the middleware via
+# ``server.py`` and ``/api/auth/refresh`` is NOT in the exempt list — so
+# any frontend caller that forgets the ``X-CSRF-Token`` header gets 403'd
+# silently. These tests pin that contract so the dashboard's silent
+# refresh can never regress to an unsigned call.
+
+
+class TestRefreshCsrf:
+    @pytest.fixture()
+    def csrf_app(self) -> FastAPI:
+        from core.csrf import CsrfMiddleware
+        from routes.auth import router as auth_router
+
+        a = FastAPI()
+        a.include_router(auth_router)
+        a.add_middleware(CsrfMiddleware)
+        return a
+
+    @pytest.fixture()
+    def csrf_client(self, csrf_app) -> TestClient:
+        return TestClient(csrf_app)
+
+    def test_refresh_without_header_is_blocked_by_csrf_middleware(self, csrf_client):
+        """Regression guard: /api/auth/refresh is not exempt, so a refresh
+        call without X-CSRF-Token must 403 even with valid session cookie."""
+        login = csrf_client.post("/api/auth/login", json={"api_key": core_auth.JARVIS_API_KEY})
+        assert login.status_code == 200
+
+        # No header → CSRF rejects.
+        resp = csrf_client.post("/api/auth/refresh")
+        assert resp.status_code == 403, (
+            "Without X-CSRF-Token the call must be rejected — this proves the "
+            "frontend cannot rely on the cookie alone."
+        )
+
+    def test_refresh_with_header_passes_csrf_and_extends_session(self, csrf_client):
+        """Frontend contract: echo the jarvis_csrf cookie value as
+        X-CSRF-Token and the call succeeds end-to-end."""
+        login = csrf_client.post("/api/auth/login", json={"api_key": core_auth.JARVIS_API_KEY})
+        csrf_value = login.json()["csrf_token"]
+
+        time.sleep(1.1)  # ensure new iat differs
+        resp = csrf_client.post(
+            "/api/auth/refresh",
+            headers={"X-CSRF-Token": csrf_value},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "ok"
+        assert body["csrf_token"]
+        assert body["expires_in"] == core_session.SESSION_TTL_SECONDS
+
+
 # ---- Whoami -----------------------------------------------------------------
 
 

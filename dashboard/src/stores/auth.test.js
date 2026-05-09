@@ -88,7 +88,10 @@ beforeEach(() => {
   FakeBroadcastChannel._channels.length = 0
   globalThis.document.cookie = ''
   _scheduledTimers = []
-  _nextTimerId = 1
+  // Use a high baseline so our captured-timer IDs cannot collide with
+  // real Node timer ids returned for the <1s passthrough timers used
+  // by other tests in this file.
+  _nextTimerId = 1_000_000
 })
 
 
@@ -399,16 +402,21 @@ test('schedule honours the 30s minimum delay for tiny expires_in', async () => {
   assert.equal(_pendingTimer().ms, 30 * 1000)
 })
 
-test('refresh() success extends session and reschedules the next refresh', async () => {
+test('refresh() success extends session, sends X-CSRF-Token header, and reschedules', async () => {
   let calls = 0
-  _setFetch(async (url) => {
+  let refreshHeaders = null
+  _setFetch(async (url, init) => {
     calls++
     if (url.includes('/api/auth/login')) {
+      // Simulate the cookie write so getCsrfToken() returns tok-1.
+      globalThis.document.cookie = 'jarvis_csrf=tok-1'
       return new Response(JSON.stringify({ status: 'ok', csrf_token: 'tok-1', expires_in: 3600 }), {
         status: 200, headers: { 'content-type': 'application/json' },
       })
     }
     if (url.includes('/api/auth/refresh')) {
+      refreshHeaders = init?.headers || {}
+      globalThis.document.cookie = 'jarvis_csrf=tok-2'
       return new Response(JSON.stringify({ status: 'ok', csrf_token: 'tok-2', expires_in: 3600 }), {
         status: 200, headers: { 'content-type': 'application/json' },
       })
@@ -426,8 +434,45 @@ test('refresh() success extends session and reschedules the next refresh', async
   assert.equal(calls, 2, 'login + refresh')
   assert.equal(auth.status, STATUS.AUTHENTICATED, 'still authenticated after refresh')
   assert.equal(auth.csrfToken, 'tok-2', 'CSRF rotated on refresh')
+  // CRITICAL: refresh must echo the CSRF cookie as X-CSRF-Token, otherwise
+  // CsrfMiddleware 403s the call (the endpoint is not in _EXEMPT_PREFIXES).
+  assert.equal(refreshHeaders['X-CSRF-Token'], 'tok-1',
+    'refresh must send the current CSRF cookie value as the header')
   // A NEW timer should have been scheduled by _setAuthenticated.
   assert.ok(_pendingTimer(), 'next refresh must be re-scheduled')
+})
+
+test('refresh() falls back to probe() when response is missing expires_in', async () => {
+  let probeCalls = 0
+  _setFetch(async (url) => {
+    if (url.includes('/api/auth/login')) {
+      globalThis.document.cookie = 'jarvis_csrf=tok-1'
+      return new Response(JSON.stringify({ status: 'ok', csrf_token: 'tok-1', expires_in: 3600 }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      })
+    }
+    if (url.includes('/api/auth/refresh')) {
+      // Malformed payload — missing expires_in.
+      return new Response(JSON.stringify({ status: 'ok', csrf_token: 'tok-2' }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      })
+    }
+    if (url.includes('/api/auth/whoami')) {
+      probeCalls++
+      return new Response(JSON.stringify({ authenticated: true, expires_in: 3600 }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      })
+    }
+    throw new Error(`unexpected url: ${url}`)
+  })
+
+  const auth = useAuthStore()
+  await auth.login('good-key')
+  await _fireTimer()
+
+  assert.equal(probeCalls, 1, 'whoami fallback must run')
+  assert.equal(auth.status, STATUS.AUTHENTICATED, 'fallback keeps user authenticated')
+  assert.ok(_pendingTimer(), 'fallback re-schedules next refresh via _setAuthenticated')
 })
 
 test('refresh() 401 (max_lifetime_exceeded) locks the UI', async () => {

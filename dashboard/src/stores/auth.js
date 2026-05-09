@@ -207,10 +207,17 @@ export const useAuthStore = defineStore('auth', {
      */
     async refresh() {
       if (this.status !== STATUS.AUTHENTICATED) return
+      // CSRF: /api/auth/refresh is NOT exempt from CsrfMiddleware
+      // (only /login, /logout, /setup, /oauth callbacks are). We must
+      // echo the jarvis_csrf cookie as X-CSRF-Token or the middleware
+      // 403s us. Same envelope apiFetch uses for every other mutation.
+      const csrf = getCsrfToken()
+      const headers = csrf ? { 'X-CSRF-Token': csrf } : {}
       try {
         const resp = await fetch('/api/auth/refresh', {
           method: 'POST',
           credentials: 'include',
+          headers,
         })
         if (resp.status === 401) {
           let reason = 'session_expired'
@@ -227,6 +234,15 @@ export const useAuthStore = defineStore('auth', {
           return
         }
         const body = await resp.json()
+        if (!body.expires_in) {
+          // Defensive: an unexpected response shape would otherwise
+          // schedule no next refresh and silently expire the session
+          // one cycle later. Fall back to whoami to recover an
+          // expires_in.
+          console.warn('[auth/store] /refresh response missing expires_in; falling back to whoami')
+          await this.probe()
+          return
+        }
         // _setAuthenticated reschedules the next silent refresh based on
         // the new expires_in window.
         this._setAuthenticated(body.csrf_token, body.expires_in)
