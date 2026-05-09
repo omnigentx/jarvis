@@ -40,6 +40,44 @@ let _fetchImpl = async () => { throw new Error('fetch not set') }
 globalThis.fetch = (...args) => _fetchImpl(...args)
 function _setFetch(impl) { _fetchImpl = impl }
 
+// Timer stubs. Two motivations:
+//   1. The auth store schedules a silent-refresh timer ~55 min ahead on
+//      every successful auth — without stubbing, the real Node timer
+//      keeps the test process alive after the last test finishes.
+//   2. We want to assert the schedule (delay, presence) and fire the
+//      callback synchronously instead of waiting wall-clock time.
+//
+// Short delays (<1s) are used by other tests in this file to interleave
+// promises (``setTimeout(r, 10)``); we pass those through to the real
+// timer so those tests still work. The auth store's minimum scheduled
+// delay is 30s, so the 1s cutoff is safely above test helper usage and
+// safely below anything the auth store would ever schedule.
+const _origSetTimeout = globalThis.setTimeout
+const _origClearTimeout = globalThis.clearTimeout
+let _scheduledTimers = []  // {id, fn, ms}
+let _nextTimerId = 1_000_000  // distinct namespace from real timer ids
+globalThis.setTimeout = (fn, ms) => {
+  if (ms < 1000) return _origSetTimeout(fn, ms)
+  const id = _nextTimerId++
+  _scheduledTimers.push({ id, fn, ms })
+  return id
+}
+globalThis.clearTimeout = (id) => {
+  const idx = _scheduledTimers.findIndex((t) => t.id === id)
+  if (idx >= 0) _scheduledTimers.splice(idx, 1)
+  else _origClearTimeout(id)
+}
+function _pendingTimer() {
+  // Latest scheduled timer (auth store only ever has one in-flight).
+  return _scheduledTimers[_scheduledTimers.length - 1] || null
+}
+async function _fireTimer() {
+  const t = _pendingTimer()
+  if (!t) throw new Error('no timer pending')
+  _scheduledTimers = _scheduledTimers.filter((x) => x.id !== t.id)
+  await t.fn()
+}
+
 // Now import the store (after globals are in place).
 const { useAuthStore, STATUS, _resetAuthModuleForTests } = await import('./auth.js')
 
@@ -49,6 +87,11 @@ beforeEach(() => {
   _resetAuthModuleForTests()
   FakeBroadcastChannel._channels.length = 0
   globalThis.document.cookie = ''
+  _scheduledTimers = []
+  // Use a high baseline so our captured-timer IDs cannot collide with
+  // real Node timer ids returned for the <1s passthrough timers used
+  // by other tests in this file.
+  _nextTimerId = 1_000_000
 })
 
 
@@ -315,6 +358,266 @@ test('cross-tab: receiving unauthenticated transition locks local state', async 
 
   assert.equal(auth.status, STATUS.UNAUTHENTICATED)
   assert.equal(expiredFired, 1)
+})
+
+
+// ---- Silent refresh --------------------------------------------------------
+
+test('login() schedules silent refresh ~5min before exp', async () => {
+  _setFetch(async () => new Response(JSON.stringify({
+    status: 'ok', csrf_token: 'tok', expires_in: 3600,
+  }), { status: 200, headers: { 'content-type': 'application/json' } }))
+
+  const auth = useAuthStore()
+  await auth.login('good-key')
+
+  const t = _pendingTimer()
+  assert.ok(t, 'a timer must be scheduled after login')
+  // 3600 - 300 (lead) = 3300s = 3,300,000 ms
+  assert.equal(t.ms, 3300 * 1000)
+})
+
+test('probe() also schedules silent refresh when authenticated', async () => {
+  _setFetch(async () => new Response(JSON.stringify({
+    authenticated: true, expires_in: 3600,
+  }), { status: 200, headers: { 'content-type': 'application/json' } }))
+
+  const auth = useAuthStore()
+  await auth.probe()
+
+  const t = _pendingTimer()
+  assert.ok(t, 'a timer must be scheduled after a successful probe')
+  assert.equal(t.ms, 3300 * 1000)
+})
+
+test('schedule honours the 30s minimum delay for tiny expires_in', async () => {
+  _setFetch(async () => new Response(JSON.stringify({
+    status: 'ok', csrf_token: 'tok', expires_in: 60,  // 1 minute window
+  }), { status: 200, headers: { 'content-type': 'application/json' } }))
+
+  const auth = useAuthStore()
+  await auth.login('good-key')
+
+  // 60 - 300 = -240 → clamped to 30s floor
+  assert.equal(_pendingTimer().ms, 30 * 1000)
+})
+
+test('refresh() success extends session, sends X-CSRF-Token header, and reschedules', async () => {
+  let calls = 0
+  let refreshHeaders = null
+  _setFetch(async (url, init) => {
+    calls++
+    if (url.includes('/api/auth/login')) {
+      // Simulate the cookie write so getCsrfToken() returns tok-1.
+      globalThis.document.cookie = 'jarvis_csrf=tok-1'
+      return new Response(JSON.stringify({ status: 'ok', csrf_token: 'tok-1', expires_in: 3600 }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      })
+    }
+    if (url.includes('/api/auth/refresh')) {
+      refreshHeaders = init?.headers || {}
+      globalThis.document.cookie = 'jarvis_csrf=tok-2'
+      return new Response(JSON.stringify({ status: 'ok', csrf_token: 'tok-2', expires_in: 3600 }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      })
+    }
+    throw new Error(`unexpected url: ${url}`)
+  })
+
+  const auth = useAuthStore()
+  await auth.login('good-key')
+  assert.equal(auth.csrfToken, 'tok-1')
+
+  // Fire the scheduled refresh.
+  await _fireTimer()
+
+  assert.equal(calls, 2, 'login + refresh')
+  assert.equal(auth.status, STATUS.AUTHENTICATED, 'still authenticated after refresh')
+  assert.equal(auth.csrfToken, 'tok-2', 'CSRF rotated on refresh')
+  // CRITICAL: refresh must echo the CSRF cookie as X-CSRF-Token, otherwise
+  // CsrfMiddleware 403s the call (the endpoint is not in _EXEMPT_PREFIXES).
+  assert.equal(refreshHeaders['X-CSRF-Token'], 'tok-1',
+    'refresh must send the current CSRF cookie value as the header')
+  // A NEW timer should have been scheduled by _setAuthenticated.
+  assert.ok(_pendingTimer(), 'next refresh must be re-scheduled')
+})
+
+test('refresh() falls back to probe() when response is missing expires_in', async () => {
+  let probeCalls = 0
+  _setFetch(async (url) => {
+    if (url.includes('/api/auth/login')) {
+      globalThis.document.cookie = 'jarvis_csrf=tok-1'
+      return new Response(JSON.stringify({ status: 'ok', csrf_token: 'tok-1', expires_in: 3600 }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      })
+    }
+    if (url.includes('/api/auth/refresh')) {
+      // Malformed payload — missing expires_in.
+      return new Response(JSON.stringify({ status: 'ok', csrf_token: 'tok-2' }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      })
+    }
+    if (url.includes('/api/auth/whoami')) {
+      probeCalls++
+      return new Response(JSON.stringify({ authenticated: true, expires_in: 3600 }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      })
+    }
+    throw new Error(`unexpected url: ${url}`)
+  })
+
+  const auth = useAuthStore()
+  await auth.login('good-key')
+  await _fireTimer()
+
+  assert.equal(probeCalls, 1, 'whoami fallback must run')
+  assert.equal(auth.status, STATUS.AUTHENTICATED, 'fallback keeps user authenticated')
+  assert.ok(_pendingTimer(), 'fallback re-schedules next refresh via _setAuthenticated')
+})
+
+test('refresh() 401 (max_lifetime_exceeded) locks the UI', async () => {
+  _setFetch(async (url) => {
+    if (url.includes('/api/auth/login')) {
+      return new Response(JSON.stringify({ status: 'ok', csrf_token: 'tok', expires_in: 3600 }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      })
+    }
+    return new Response(JSON.stringify({
+      detail: { error: 'unauthorized', reason: 'max_lifetime_exceeded' },
+    }), { status: 401, headers: { 'content-type': 'application/json' } })
+  })
+
+  let expiredFired = 0
+  let expiredReason = ''
+  on(EVENTS.EXPIRED, (p) => { expiredFired++; expiredReason = p?.reason })
+
+  const auth = useAuthStore()
+  await auth.login('good-key')
+  await _fireTimer()
+
+  assert.equal(auth.status, STATUS.UNAUTHENTICATED)
+  assert.equal(expiredFired, 1)
+  assert.equal(expiredReason, 'max_lifetime_exceeded')
+})
+
+test('refresh() 5xx keeps user authenticated and reschedules a short retry', async () => {
+  _setFetch(async (url) => {
+    if (url.includes('/api/auth/login')) {
+      return new Response(JSON.stringify({ status: 'ok', csrf_token: 'tok', expires_in: 3600 }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      })
+    }
+    return new Response('upstream error', { status: 502 })
+  })
+
+  const auth = useAuthStore()
+  await auth.login('good-key')
+  await _fireTimer()
+
+  assert.equal(auth.status, STATUS.AUTHENTICATED, 'transient 5xx must not lock')
+  // Retry: 60 + 300 = 360s window minus 300s lead = 60s delay. Floor is 30s,
+  // so 60s should hold.
+  assert.equal(_pendingTimer().ms, 60 * 1000)
+})
+
+test('refresh() network error keeps user authenticated and reschedules a short retry', async () => {
+  let firstCall = true
+  _setFetch(async (url) => {
+    if (url.includes('/api/auth/login')) {
+      return new Response(JSON.stringify({ status: 'ok', csrf_token: 'tok', expires_in: 3600 }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      })
+    }
+    if (firstCall) {
+      firstCall = false
+      throw new TypeError('Failed to fetch')
+    }
+    return new Response('{}', { status: 200 })
+  })
+
+  const auth = useAuthStore()
+  await auth.login('good-key')
+  await _fireTimer()
+
+  assert.equal(auth.status, STATUS.AUTHENTICATED, 'network error must not lock')
+  assert.ok(_pendingTimer(), 'retry timer must be scheduled')
+})
+
+test('logout() cancels the pending refresh timer', async () => {
+  _setFetch(async (url) => {
+    if (url.includes('/api/auth/login')) {
+      return new Response(JSON.stringify({ status: 'ok', csrf_token: 'tok', expires_in: 3600 }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      })
+    }
+    return new Response('{}', { status: 200 })
+  })
+
+  const auth = useAuthStore()
+  await auth.login('good-key')
+  assert.ok(_pendingTimer(), 'login should have scheduled a timer')
+
+  await auth.logout()
+
+  assert.equal(_pendingTimer(), null, 'logout must cancel the refresh timer')
+})
+
+test('refresh() is a no-op when not authenticated', async () => {
+  let calls = 0
+  _setFetch(async () => {
+    calls++
+    return new Response('{}', { status: 200 })
+  })
+  const auth = useAuthStore()
+  // status is UNKNOWN at boot
+  await auth.refresh()
+  assert.equal(calls, 0, 'must not hit the network when not authenticated')
+})
+
+test('cross-tab AUTHENTICATED with expiresIn schedules sibling refresh', async () => {
+  _setFetch(async () => new Response(JSON.stringify({ authenticated: false }), {
+    status: 200, headers: { 'content-type': 'application/json' },
+  }))
+
+  const auth = useAuthStore()
+  await auth.init()
+  assert.equal(auth.status, STATUS.UNAUTHENTICATED)
+  assert.equal(_pendingTimer(), null)
+
+  const sibling = new FakeBroadcastChannel('jarvis-auth')
+  sibling.postMessage({
+    type: 'transition',
+    status: STATUS.AUTHENTICATED,
+    csrfToken: 'sib-csrf',
+    expiresIn: 3600,
+  })
+
+  assert.equal(auth.status, STATUS.AUTHENTICATED)
+  const t = _pendingTimer()
+  assert.ok(t, 'sibling-driven login must schedule a refresh')
+  assert.equal(t.ms, 3300 * 1000)
+})
+
+test('cross-tab UNAUTHENTICATED clears the local refresh timer', async () => {
+  _setFetch(async (url) => {
+    if (url.includes('/api/auth/whoami')) {
+      return new Response(JSON.stringify({ authenticated: true, expires_in: 3600 }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      })
+    }
+    return new Response('{}', { status: 200 })
+  })
+
+  const auth = useAuthStore()
+  await auth.init()
+  assert.equal(auth.status, STATUS.AUTHENTICATED)
+  assert.ok(_pendingTimer(), 'init authenticated → timer scheduled')
+
+  const sibling = new FakeBroadcastChannel('jarvis-auth')
+  sibling.postMessage({ type: 'transition', status: STATUS.UNAUTHENTICATED })
+
+  assert.equal(auth.status, STATUS.UNAUTHENTICATED)
+  assert.equal(_pendingTimer(), null, 'remote logout must cancel local refresh timer')
 })
 
 
