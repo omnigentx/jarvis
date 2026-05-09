@@ -51,7 +51,7 @@ class RuntimeRpcClient:
         method: str,
         params: Optional[dict] = None,
         *,
-        timeout: float = 30.0,
+        timeout: Optional[float] = 30.0,
     ) -> dict:
         """Send one request, return the result dict.
 
@@ -60,6 +60,12 @@ class RuntimeRpcClient:
         calling MCP tool can pass it straight back to the LLM. The MCP
         tool can distinguish a backend error from success by checking
         for the ``error`` key.
+
+        ``timeout=None`` puts the socket into blocking mode (no
+        deadline) — used by long-poll handlers like ``approval.wait``
+        that legitimately block until a human resolves an approval.
+        Caller is then responsible for retrying on transport drops
+        (e.g. backend restart).
 
         Raises ``RuntimeRpcError`` only for transport-level failures
         (socket missing, parse error, id mismatch).
@@ -128,8 +134,10 @@ def default_client() -> RuntimeRpcClient:
     return _default_client
 
 
-def call(method: str, params: Optional[dict] = None, *, timeout: float = 30.0) -> dict:
-    """Shortcut for ``default_client().call(...)``."""
+def call(method: str, params: Optional[dict] = None, *, timeout: Optional[float] = 30.0) -> dict:
+    """Shortcut for ``default_client().call(...)``. ``timeout=None`` for
+    long-poll handlers — see :meth:`RuntimeRpcClient.call`.
+    """
     return default_client().call(method, params, timeout=timeout)
 
 

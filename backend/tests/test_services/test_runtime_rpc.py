@@ -174,3 +174,78 @@ def test_client_with_dead_socket_raises_clear_error(tmp_path):
     with pytest.raises(RuntimeRpcError) as exc:
         client.call("anything")
     assert "Could not connect" in str(exc.value)
+
+
+# ----- Per-method timeout -----------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_default_timeout_still_applies(server):
+    """Existing handlers (registered without an explicit timeout kwarg)
+    keep the default 30s deadline. Covers backwards compatibility for
+    skill_rpc_handlers / mcp_rpc_handlers which call ``register(name,
+    handler)`` positional.
+    """
+    from services import runtime_rpc as rrpc
+
+    # Patch the default down so the test runs in milliseconds; restore
+    # automatically when the test ends so unrelated tests aren't slowed.
+    original = rrpc.DEFAULT_HANDLER_TIMEOUT
+    rrpc.DEFAULT_HANDLER_TIMEOUT = 0.1
+    try:
+        async def slow():
+            await asyncio.sleep(1.0)
+            return {"unreachable": True}
+
+        server.register("slow_default", slow)  # no timeout kwarg
+
+        t, r, e = _client_call(server._socket_path, "slow_default")
+        result = await _await_thread_result(t, r, e, timeout=5.0)
+    finally:
+        rrpc.DEFAULT_HANDLER_TIMEOUT = original
+
+    assert result["status"] == rrpc.RequestTimeout
+    assert "deadline" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_unbounded_handler_with_timeout_none(server):
+    """``timeout=None`` opts out of the dispatch deadline. Used by
+    long-poll handlers like ``approval.wait`` that legitimately block
+    until something signals them.
+    """
+    from services import runtime_rpc as rrpc
+
+    # Force the default to a tiny value so the test FAILS unless the
+    # opt-out actually works.
+    original = rrpc.DEFAULT_HANDLER_TIMEOUT
+    rrpc.DEFAULT_HANDLER_TIMEOUT = 0.05
+    try:
+        async def long_poll():
+            # Sleep longer than the default — and longer than the test
+            # would tolerate if dispatch enforced the default.
+            await asyncio.sleep(0.3)
+            return {"signalled": True}
+
+        server.register("long_poll", long_poll, timeout=None)
+
+        t, r, e = _client_call(server._socket_path, "long_poll")
+        result = await _await_thread_result(t, r, e, timeout=5.0)
+    finally:
+        rrpc.DEFAULT_HANDLER_TIMEOUT = original
+
+    assert result == {"signalled": True}
+
+
+@pytest.mark.asyncio
+async def test_per_method_timeout_override(server):
+    """An explicit ``timeout=`` on register supersedes the default."""
+    async def slow():
+        await asyncio.sleep(1.0)
+
+    server.register("slow_custom", slow, timeout=0.05)
+
+    t, r, e = _client_call(server._socket_path, "slow_custom")
+    result = await _await_thread_result(t, r, e, timeout=5.0)
+    from services import runtime_rpc as rrpc
+    assert result["status"] == rrpc.RequestTimeout
