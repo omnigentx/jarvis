@@ -91,6 +91,24 @@ export const useSetupStore = defineStore('setup', {
         })
         setApiKey(apiKey)
         this._applyStatus(res)
+
+        // Mint a session cookie now so the dashboard's auth.probe() at
+        // the next non-bare route resolves authenticated:true. Without
+        // this, the user finishes the wizard, navigates to /agents,
+        // and immediately hits the AuthGate modal with "session
+        // expired" — confusing UX since they just typed the key.
+        //
+        // Best-effort: if /api/auth/login is unreachable here (older
+        // backend, network blip), don't block the wizard. The
+        // dashboard will fall back to the modal which now serves as a
+        // proper recovery path. We import the auth store lazily to
+        // avoid pulling Pinia into module-init order assumptions of
+        // the setup store itself.
+        try {
+          const { useAuthStore } = await import('./auth.js')
+          await useAuthStore().login(apiKey)
+        } catch (_) { /* non-fatal */ }
+
         return res
       } catch (err) {
         this.lastSubmitError = _formatApiError(err)
