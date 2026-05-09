@@ -110,36 +110,48 @@ watch(
       <h1 class="stories-view__title">{{ selectedStory?.title || 'Stories' }}</h1>
     </div>
 
-    <!-- Split panel layout -->
-    <div class="stories-view__body">
+    <!-- Body — single full-width state when loading/error/empty,
+         split panel only when stories exist. -->
+    <div
+      v-if="isLoading"
+      class="stories-view__body stories-view__body--full"
+    >
+      <div class="stories-view__skeleton">
+        <div v-for="i in 4" :key="i" class="stories-view__skeleton-card"></div>
+      </div>
+    </div>
+
+    <div
+      v-else-if="error"
+      class="stories-view__body stories-view__body--full stories-view__body--center"
+    >
+      <div class="stories-view__error">
+        <p>{{ error }}</p>
+        <button @click="fetchStories" class="stories-view__retry-btn">Thử lại</button>
+      </div>
+    </div>
+
+    <div
+      v-else-if="stories.length === 0"
+      class="stories-view__body stories-view__body--full stories-view__body--center"
+    >
+      <div class="stories-view__empty">
+        <svg viewBox="0 0 24 24" fill="none" width="48" height="48" style="margin-bottom: 12px;">
+          <path d="M4 19.5A2.5 2.5 0 016.5 17H20" stroke="currentColor" stroke-width="1.5"/>
+          <path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z" stroke="currentColor" stroke-width="1.5"/>
+        </svg>
+        <p>Chưa có truyện nào</p>
+        <p style="font-size: 12px; color: var(--text-subtle);">Hãy dùng AI để crawl truyện từ web.</p>
+      </div>
+    </div>
+
+    <div v-else class="stories-view__body">
       <!-- Left: Library -->
       <div
         class="stories-view__library"
         :class="{ 'stories-view__library--hidden': isMobileChapterView }"
       >
-        <!-- Loading skeleton -->
-        <div v-if="isLoading" class="stories-view__skeleton">
-          <div v-for="i in 4" :key="i" class="stories-view__skeleton-card"></div>
-        </div>
-
-        <!-- Error state -->
-        <div v-else-if="error" class="stories-view__error">
-          <p>{{ error }}</p>
-          <button @click="fetchStories" class="stories-view__retry-btn">Thử lại</button>
-        </div>
-
-        <!-- Empty state -->
-        <div v-else-if="stories.length === 0" class="stories-view__empty">
-          <svg viewBox="0 0 24 24" fill="none" width="48" height="48" style="margin-bottom: 12px;">
-            <path d="M4 19.5A2.5 2.5 0 016.5 17H20" stroke="currentColor" stroke-width="1.5"/>
-            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z" stroke="currentColor" stroke-width="1.5"/>
-          </svg>
-          <p>Chưa có truyện nào</p>
-          <p style="font-size: 12px; color: var(--text-subtle);">Hãy dùng AI để crawl truyện từ web.</p>
-        </div>
-
-        <!-- Story cards -->
-        <div v-else class="stories-view__list">
+        <div class="stories-view__list">
           <StoryCard
             v-for="story in stories"
             :key="story.id"
@@ -217,6 +229,16 @@ watch(
   gap: 20px;
   flex: 1;
   min-height: 0;
+}
+/* Full-width body for loading/error/empty (no split). */
+.stories-view__body--full {
+  display: block;
+  overflow-y: auto;
+}
+.stories-view__body--center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 /* Library panel */
