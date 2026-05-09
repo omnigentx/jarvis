@@ -98,16 +98,35 @@ export const useSetupStore = defineStore('setup', {
         // and immediately hits the AuthGate modal with "session
         // expired" — confusing UX since they just typed the key.
         //
-        // Best-effort: if /api/auth/login is unreachable here (older
-        // backend, network blip), don't block the wizard. The
-        // dashboard will fall back to the modal which now serves as a
-        // proper recovery path. We import the auth store lazily to
-        // avoid pulling Pinia into module-init order assumptions of
-        // the setup store itself.
+        // Both wizard paths (typed key, "Generate" button) carry an
+        // apiKey value here: ``generateApiKey()`` runs client-side
+        // (crypto.getRandomValues), so the FE always knows the value
+        // it's sending and ``login(apiKey)`` will match against the
+        // ``apply_api_key`` the backend just performed for /setup/auth.
+        //
+        // SetupGate middleware exempts ``/api/auth/*`` (see
+        // ``backend/middleware/setup_gate.py::_ALLOWED_PREFIXES``), so
+        // calling /api/auth/login mid-wizard works even though
+        // ``overall_complete`` is still false. If a future change
+        // narrows that exemption, this call will start 503-ing and
+        // wizard users will hit the AuthGate after navigating out.
+        //
+        // Best-effort: programming-error try/catch (import failure)
+        // PLUS an explicit ok:false branch (login itself returns a
+        // structured failure for HTTP/network errors). Wizard
+        // completion is not blocked — AuthGate is the recovery path.
         try {
           const { useAuthStore } = await import('./auth.js')
-          await useAuthStore().login(apiKey)
-        } catch (_) { /* non-fatal */ }
+          const result = await useAuthStore().login(apiKey)
+          if (!result || !result.ok) {
+            console.warn(
+              '[setup] post-auth login() did not establish session:',
+              result?.status, result?.reason,
+            )
+          }
+        } catch (err) {
+          console.warn('[setup] post-auth login() threw:', err)
+        }
 
         return res
       } catch (err) {
