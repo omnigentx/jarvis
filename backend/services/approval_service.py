@@ -7,7 +7,7 @@ and realtime SSE broadcasting via ActivityStreamManager.
 Also exposes an in-process pub/sub for resolution events
 (:func:`wait_for_resolution`) so MCP subprocesses calling via
 ``approval.wait`` over Runtime RPC can block on the same event without
-polling. Single-worker only — see :data:`_resolution_waiters`.
+polling. Single-process by design — see :data:`_resolution_waiters`.
 """
 
 import asyncio
@@ -30,15 +30,17 @@ logger = logging.getLogger(__name__)
 # on the same approval). The dict key is approval_id, the value is the
 # list of futures to resolve when the approval reaches a terminal state.
 #
-# Single-worker assumption: this lives in one Python process. If we
-# scale to multiple gunicorn workers later, the resolve_approval call
-# may land on a different worker than the wait subscriber → signal would
-# be lost. Mitigations for that future scenario: (a) shared pub/sub
-# (Redis), (b) DB-poll fallback inside wait_for_resolution. The wait
-# handler always re-checks DB state on (re)subscribe, so a backend
-# restart that drops in-memory futures is recoverable: the next call
-# from a retrying client sees the resolved DB state and returns
-# immediately.
+# Single-process by design: Jarvis is a personal AI assistant — the
+# backend is heavily stateful (live FastAgent app, MCP subprocesses,
+# UDS runtime-RPC server, in-memory SSE fanout, PauseManager…), all of
+# which assume one Python process. Multi-worker would break far more
+# than this dict, so the in-memory pub/sub matches the rest of the
+# architecture rather than introducing a phantom dependency on Redis.
+#
+# Backend restart safety still matters and is handled separately: the
+# wait handler always re-reads DB state on (re)subscribe, so a restart
+# that drops in-memory futures is recoverable — the next call from a
+# retrying client sees the resolved DB state and returns immediately.
 _resolution_waiters: dict[str, list[asyncio.Future]] = {}
 
 
