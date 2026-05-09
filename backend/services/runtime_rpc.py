@@ -50,9 +50,12 @@ RequestTimeout = -32001  # custom — JSON-RPC reserves -32000..-32099 for serve
 DEFAULT_HANDLER_TIMEOUT = 30.0
 
 # Sentinel for ``register(..., timeout=)`` — distinct from ``None``
-# (which means *unbounded*). When passed, the module-level
-# ``DEFAULT_HANDLER_TIMEOUT`` is looked up at register-call time so a
-# test that patches the constant before registering takes effect.
+# (which means *unbounded*). When the caller omits the kwarg,
+# ``register`` reads ``DEFAULT_HANDLER_TIMEOUT`` at the moment it runs
+# and freezes that value into the handler tuple. Lookup is at
+# register-call time (not function-default time, not dispatch time) —
+# that's what lets a test patch the constant before registering and
+# have it take effect.
 _USE_DEFAULT_TIMEOUT = object()
 
 

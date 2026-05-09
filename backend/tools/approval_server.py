@@ -43,9 +43,18 @@ mcp = FastMCP("ApprovalService")
 
 
 # Backend restart / transient socket failures: retry the wait. Each
-# reconnect re-issues approval.wait, the handler re-checks DB state, so
-# resolution that landed during the gap is delivered immediately.
-_WAIT_RETRY_DELAY_SECONDS = 2.0
+# reconnect re-issues approval.wait; the handler re-reads DB state, so
+# any resolution that landed during the gap is delivered immediately.
+#
+# Infinite retry IS by design — human approvals legitimately span
+# hours-to-days, and a transient socket drop (backend restart, brief
+# network blip) is recoverable. A hard cap would convert a 30-second
+# restart into an uncaught failure that wedges the agent. We rely on
+# exponential backoff to keep log volume bounded if the backend stays
+# down for hours, and on the user/operator to notice the backend is
+# unreachable through other channels (dashboard, healthcheck).
+_WAIT_INITIAL_DELAY_SECONDS = 2.0
+_WAIT_MAX_DELAY_SECONDS = 30.0
 
 
 @mcp.tool()
@@ -121,6 +130,7 @@ async def request_approval(
     # Block until resolved. Auto-retry across backend restarts: each
     # reconnect's handler re-reads DB state and returns immediately if
     # the approval was resolved during the disconnect window.
+    delay = _WAIT_INITIAL_DELAY_SECONDS
     while True:
         try:
             result = await asyncio.to_thread(
@@ -130,9 +140,12 @@ async def request_approval(
         except RuntimeRpcError as exc:
             logger.warning(
                 "[approval] RPC dropped while waiting on %s — retrying in %.1fs: %s",
-                approval_id, _WAIT_RETRY_DELAY_SECONDS, exc,
+                approval_id, delay, exc,
             )
-            await asyncio.sleep(_WAIT_RETRY_DELAY_SECONDS)
+            await asyncio.sleep(delay)
+            # Backoff so an extended outage (backend down for hours)
+            # doesn't fill the log with one warning every 2 s.
+            delay = min(delay * 2, _WAIT_MAX_DELAY_SECONDS)
 
     if isinstance(result, dict) and "error" in result and "status" in result:
         # 404 / handler error — surface to the agent rather than guessing.
@@ -149,9 +162,14 @@ def _format_result(result: dict, original_content: str) -> str:
     inline_comments = result.get("inline_comments", []) or result.get("comments", [])
     content_lines = original_content.split("\n")
 
+    # Title is always present in the dict shape returned by approval.get
+    # / approval.wait today. Fall back to the approval id if a future
+    # response shape change drops it, so the agent at least sees an
+    # identifier instead of a blank "Title:" line.
+    title_or_id = result.get("title") or result.get("id") or "(unknown)"
     lines = [
         f"📋 Approval Result: **{decision.upper()}**",
-        f"📝 Title: {result.get('title', '')}",
+        f"📝 Title: {title_or_id}",
     ]
     if user_comment:
         lines.append(f"💬 User Comment: {user_comment}")
