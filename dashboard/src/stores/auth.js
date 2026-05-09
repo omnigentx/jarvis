@@ -44,9 +44,41 @@ const STATUS = Object.freeze({
 
 const BC_NAME = 'jarvis-auth'
 
+// Silent-refresh policy. Backend's session TTL is 1h with a 12h absolute
+// ceiling (see backend/core/session.py). We refresh ahead of expiry so
+// the user's working session is renewed transparently; only a 401
+// (max_lifetime_exceeded / key_rotated / invalid_signature) locks the UI.
+const REFRESH_LEAD_SECONDS = 5 * 60      // refresh 5 min before exp
+const REFRESH_MIN_DELAY_SECONDS = 30     // never schedule sooner than 30s
+const REFRESH_RETRY_SECONDS = 60         // retry after transient (5xx/network) failure
+
 let _probeInflight = null  // dedup concurrent probes
 let _channel = null
 let _channelInitialized = false
+let _refreshTimer = null   // setTimeout handle for the next silent refresh
+
+function _clearRefreshTimer() {
+  if (_refreshTimer !== null) {
+    clearTimeout(_refreshTimer)
+    _refreshTimer = null
+  }
+}
+
+function _scheduleRefresh(store, expiresIn) {
+  _clearRefreshTimer()
+  if (!expiresIn || expiresIn <= 0) return
+  const delaySec = Math.max(expiresIn - REFRESH_LEAD_SECONDS, REFRESH_MIN_DELAY_SECONDS)
+  _refreshTimer = setTimeout(() => {
+    _refreshTimer = null
+    // Return the promise so tests that fire the timer manually can
+    // await its full resolution. Production setTimeout ignores return
+    // values; the ``.catch`` ensures any unexpected rejection here
+    // can't surface as an unhandled promise rejection.
+    return store.refresh().catch((err) => {
+      console.warn('[auth/store] silent refresh threw:', err)
+    })
+  }, delaySec * 1000)
+}
 
 function _initChannel(store) {
   if (_channelInitialized) return
@@ -61,7 +93,7 @@ function _initChannel(store) {
       // accidental noise).
       if (msg.type === 'transition' && typeof msg.status === 'string') {
         // Apply silently — do NOT re-broadcast or we get a loop.
-        store._applyRemoteTransition(msg.status, msg.csrfToken)
+        store._applyRemoteTransition(msg.status, msg.csrfToken, msg.expiresIn)
       }
     }
   } catch (err) {
@@ -161,6 +193,49 @@ export const useAuthStore = defineStore('auth', {
       }
     },
 
+    /**
+     * Silently extend the session via /api/auth/refresh.
+     *
+     * Outcomes:
+     *   - 200 ok           → ``_setAuthenticated`` reschedules the next refresh
+     *   - 401              → user must re-login (abs_exp hit, key rotated,
+     *                        signature invalid). Locks the UI.
+     *   - 5xx / network    → keep current state; reschedule a short retry.
+     *                        We don't lock on transients because the cookie
+     *                        is still valid; the user shouldn't be kicked
+     *                        out for a flaky backend.
+     */
+    async refresh() {
+      if (this.status !== STATUS.AUTHENTICATED) return
+      try {
+        const resp = await fetch('/api/auth/refresh', {
+          method: 'POST',
+          credentials: 'include',
+        })
+        if (resp.status === 401) {
+          let reason = 'session_expired'
+          try {
+            const body = await resp.json()
+            reason = body?.detail?.reason || body?.detail || reason
+          } catch (_) { /* ignore */ }
+          this._setUnauthenticated(reason)
+          return
+        }
+        if (!resp.ok) {
+          console.warn('[auth/store] refresh got status', resp.status)
+          _scheduleRefresh(this, REFRESH_RETRY_SECONDS + REFRESH_LEAD_SECONDS)
+          return
+        }
+        const body = await resp.json()
+        // _setAuthenticated reschedules the next silent refresh based on
+        // the new expires_in window.
+        this._setAuthenticated(body.csrf_token, body.expires_in)
+      } catch (err) {
+        console.warn('[auth/store] refresh network error:', err)
+        _scheduleRefresh(this, REFRESH_RETRY_SECONDS + REFRESH_LEAD_SECONDS)
+      }
+    },
+
     /** Log out via the backend; clears cookies + local state. */
     async logout() {
       try {
@@ -205,9 +280,10 @@ export const useAuthStore = defineStore('auth', {
       this.csrfToken = csrfToken || getCsrfToken()
       this.lastReason = ''
       this.expiresAt = expiresIn ? Math.floor(Date.now() / 1000) + expiresIn : null
+      _scheduleRefresh(this, expiresIn)
       if (wasUnauth) {
         emit(EVENTS.RESTORED)
-        this._broadcast()
+        this._broadcast(expiresIn)
       }
     },
 
@@ -217,6 +293,7 @@ export const useAuthStore = defineStore('auth', {
       this.csrfToken = ''
       this.lastReason = reason || ''
       this.expiresAt = null
+      _clearRefreshTimer()
       // Always emit so SSE composables can stop their retry loops, even
       // if we were already in challenged/unknown — the contract is
       // "stop retrying when expired fires".
@@ -228,22 +305,28 @@ export const useAuthStore = defineStore('auth', {
      * Apply a transition received from another tab. Don't re-broadcast
      * (would loop). Do emit local bus events so SSE composables react.
      */
-    _applyRemoteTransition(status, csrfToken) {
+    _applyRemoteTransition(status, csrfToken, expiresIn) {
       if (status === STATUS.AUTHENTICATED) {
         const wasUnauth = this.status !== STATUS.AUTHENTICATED
         this.status = STATUS.AUTHENTICATED
         this.csrfToken = csrfToken || getCsrfToken()
         this.lastReason = ''
+        if (expiresIn) {
+          this.expiresAt = Math.floor(Date.now() / 1000) + expiresIn
+          _scheduleRefresh(this, expiresIn)
+        }
         if (wasUnauth) emit(EVENTS.RESTORED)
       } else if (status === STATUS.UNAUTHENTICATED) {
         const wasAuth = this.status === STATUS.AUTHENTICATED
         this.status = STATUS.UNAUTHENTICATED
         this.csrfToken = ''
+        this.expiresAt = null
+        _clearRefreshTimer()
         if (wasAuth) emit(EVENTS.EXPIRED, { reason: 'cross_tab' })
       }
     },
 
-    _broadcast() {
+    _broadcast(expiresIn) {
       _initChannel(this)
       if (!_channel) return
       try {
@@ -255,10 +338,15 @@ export const useAuthStore = defineStore('auth', {
         // instead of having to re-read document.cookie. Cheap
         // belt-and-suspenders; safe because cookies are not secret
         // anyway (the httpOnly session is the secret).
+        //
+        // ``expiresIn`` lets sibling tabs schedule their own silent
+        // refresh from the same baseline; without it they'd have to
+        // wait for /whoami or rely on stale local state.
         _channel.postMessage({
           type: 'transition',
           status: this.status,
           csrfToken: this.csrfToken,
+          expiresIn: expiresIn || null,
         })
       } catch (err) {
         console.warn('[auth/store] broadcast failed', err)
@@ -284,6 +372,7 @@ export function _resetAuthModuleForTests() {
   _channel = null
   _channelInitialized = false
   _probeInflight = null
+  _clearRefreshTimer()
 }
 
 export { STATUS }
