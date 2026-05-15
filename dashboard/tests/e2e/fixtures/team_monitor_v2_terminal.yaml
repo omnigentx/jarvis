@@ -1,7 +1,8 @@
-# Team Monitor v2 happy path — terminal-style, message_history-driven.
+# Team Monitor happy path — terminal-style, message_history-driven.
 #
-# The view boots in v2 (?monitor=v2), fetches the agent roster + the
-# initial message_history slice for the agent, then receives a live
+# The view boots on /monitor (terminal UI is the only monitor view —
+# v1 card grid was removed), fetches the agent roster + the initial
+# message_history slice for the agent, then receives a live
 # `message_turn` SSE event that appends a new turn. We also exercise
 # the "Show full" expand path: the assistant turn carries a truncated
 # text block and clicking expand triggers GET /turns/{idx}/full.
@@ -15,7 +16,6 @@ backend_source:
   - "backend/services/sse_progress.py::emit_message_history_delta"
   - "dashboard/src/composables/useAgentTurns.js"
   - "dashboard/src/components/monitor/AgentTerminal.vue"
-  - "dashboard/src/views/TeamMonitor.vue::useV2 feature flag"
 
 notes: |
   v2 monitor reads message_turn events from the activity-stream SSE

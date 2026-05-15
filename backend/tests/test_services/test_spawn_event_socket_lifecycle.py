@@ -171,14 +171,23 @@ async def test_stop_skips_unlink_when_inode_does_not_match(short_sock):
     await server_a._server.wait_closed()
     server_a._server = None  # Prevent stop() from re-closing.
 
-    # asyncio cleaned up the socket file. Place a sentinel file with a
-    # different inode — this represents a peer backend's freshly-bound
-    # file at the same path.
+    # asyncio cleaned up the socket file. Place a sentinel file at
+    # the same path — this represents a peer backend's freshly-bound
+    # file. To make the inode mismatch deterministic on every
+    # filesystem (Linux ext4 can recycle freshly-freed inodes; macOS
+    # APFS allocates new ones), we force ``_bound_inode`` to a value
+    # that can never collide with a real inode: 0. The kernel never
+    # hands out inode 0 — POSIX reserves it as a sentinel for
+    # "no inode" / unallocated. This keeps the assertion focused on
+    # ``stop()``'s mismatch-handling logic, not on the underlying
+    # filesystem's inode-recycling policy.
     sentinel = Path(short_sock)
     sentinel.touch()
+    server_a._bound_inode = 0
     sentinel_inode = sentinel.stat().st_ino
     assert sentinel_inode != server_a._bound_inode, (
-        "Setup: sentinel must have a different inode than what A bound."
+        "Setup: sentinel must have a different inode than what A bound. "
+        f"sentinel_inode={sentinel_inode}, bound_inode={server_a._bound_inode}"
     )
 
     # stop() now: should see inode mismatch and skip the unlink.

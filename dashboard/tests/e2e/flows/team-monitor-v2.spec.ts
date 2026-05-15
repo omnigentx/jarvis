@@ -1,11 +1,12 @@
 /**
- * E2E flow: Team Monitor v2 — terminal-style message_history view.
+ * E2E flow: Team Monitor — terminal-style message_history view.
  *
  * Guards the rebuilt monitor pipeline: agent.message_history → SSE
  * `message_turn` channel → useAgentTurns composable → AgentTerminal
  * component. Coverage points:
  *
- *   1. URL flag ?monitor=v2 selects the v2 grid (AgentTerminal renders).
+ *   1. The terminal grid renders on /monitor (no feature flag — v1
+ *      card view was removed; AgentTerminal is the only UI).
  *   2. Initial GET /messages populates the terminal with persisted turns.
  *   3. SSE message_turn appends a delta turn live (no duplicate).
  *   4. Truncated content shows a "Show full" affordance; clicking it
@@ -33,16 +34,14 @@ test('team monitor v2 — terminal renders persisted history + SSE delta turn', 
   const recorder = new NetworkRecorder()
   await recorder.attach(page)
 
-  // Visit with the v2 feature flag in the URL.
-  await page.goto('/monitor?monitor=v2')
+  // No feature flag — terminal UI is the only monitor view since the
+  // v1 card grid was removed.
+  await page.goto('/monitor')
 
-  // ── 1. v2 grid is selected ─────────────────────────────────────────
+  // ── 1. Terminal grid renders ────────────────────────────────────────
   // The .agent-terminal class is unique to AgentTerminal.vue.
   await expect(page.locator('.agent-terminal')).toHaveCount(1)
   await expect(page.locator('.agent-name', { hasText: 'Jarvis' })).toBeVisible()
-
-  // The version toggle should reflect v2.
-  await expect(page.locator('.version-btn.active', { hasText: 'v2' })).toBeVisible()
 
   // ── 2. Initial history fetched and rendered ────────────────────────
   // Two turns from /messages: turn_idx 0 (user) + turn_idx 1 (assistant).
@@ -81,7 +80,7 @@ test('team monitor v2 — Show full expands truncated assistant turn', async ({
   const recorder = new NetworkRecorder()
   await recorder.attach(page)
 
-  await page.goto('/monitor?monitor=v2')
+  await page.goto('/monitor')
 
   // Wait for the assistant turn (turn_idx=1) carrying the truncated block.
   const truncatedRow = page.locator('.turn-row.role-assistant', {
@@ -112,26 +111,10 @@ test('team monitor v2 — Show full expands truncated assistant turn', async ({
 })
 
 
-test('team monitor v2 — version toggle persists choice', async ({ page }) => {
-  await seedApiKey(page)
-  await mockBackend(page, [
-    NOISE,
-    join(FIXTURES, 'team_monitor_v2_terminal.yaml'),
-  ])
-
-  // Land in v1 (default) first.
-  await page.goto('/monitor')
-  await expect(page.locator('.agent-panel')).toHaveCount(1) // v1 .agent-panel
-  await expect(page.locator('.agent-terminal')).toHaveCount(0)
-
-  // Click the v2 toggle.
-  await page.locator('.version-btn', { hasText: 'v2' }).click()
-
-  // v2 grid replaces v1.
-  await expect(page.locator('.agent-terminal')).toHaveCount(1)
-  await expect(page.locator('.agent-panel')).toHaveCount(0)
-
-  // Reload — choice persisted via localStorage.
-  await page.reload()
-  await expect(page.locator('.agent-terminal')).toHaveCount(1)
-})
+// Removed: "version toggle persists choice" test.
+//
+// The TeamMonitor v1/v2 toggle was deleted (see the dashboard commit
+// "TeamMonitor terminal UI..."). The terminal grid is now the only
+// monitor view — there is nothing to toggle and no localStorage flag
+// to persist. Keeping a test for non-existent UI would be a
+// false-positive regression source.
