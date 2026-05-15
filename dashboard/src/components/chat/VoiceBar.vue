@@ -10,23 +10,21 @@
  * chatStore (addUserMessage / addAgentMessagePlaceholder /
  * finalizeAgentMessage), so voice and typed turns share one UI.
  */
-import { computed, onBeforeUnmount } from 'vue'
+import { computed } from 'vue'
 import { useVoiceSession } from '../../composables/useVoiceSession.js'
 
 const session = useVoiceSession()
 
-// Tear down on real unmount so navigating away doesn't leak the mic
-// / WS / AudioContext. Diagnostic-tagged so when the user sees an
-// unexpected "Mic Off" we can tell from the console what triggered
-// it (route nav vs HMR vs explicit stop button).
-onBeforeUnmount(() => {
-  console.debug('[voice] VoiceBar onBeforeUnmount → stop()', {
-    status: session.status.value,
-    hmr: !!import.meta.hot,
-    href: location.href,
-  })
-  Promise.resolve(session.stop()).catch(() => {})
-})
+// NOTE — no onBeforeUnmount stop() here. The voice session is now a
+// module-level singleton (see useVoiceSession.js) and the host route is
+// kept alive across nav (AppLayout's <keep-alive>), so the only legitimate
+// teardown triggers are:
+//   1. user clicks the Stop button in this bar (handled by toggle())
+//   2. user clicks the Stop button on the global indicator (same singleton)
+//   3. auth expiry (handled inside the singleton itself)
+//   4. browser tab close / refresh (browser tears down WS automatically)
+// Auto-stopping on component unmount used to fire on every route change,
+// dropping the mic mid-conversation when the user switched to /monitor.
 
 const STATUS_LABELS = {
   idle: 'Off',

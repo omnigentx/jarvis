@@ -11,6 +11,10 @@ import ChatMessages from '../components/chat/ChatMessages.vue'
 import ChatInput from '../components/chat/ChatInput.vue'
 import VoiceBar from '../components/chat/VoiceBar.vue'
 
+// Explicit name so AppLayout's `<keep-alive include="['Chat', ...]">` can
+// match this component and preserve in-flight chat state across nav.
+defineOptions({ name: 'Chat' })
+
 const { isMobile } = useBreakpoint()
 const showMobileConversations = ref(false)
 
