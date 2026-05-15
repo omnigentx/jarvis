@@ -364,6 +364,15 @@ class CronScheduler:
 
         logger.info("[CRON] Agent turn: '%s' → agent=%s payload='%s'", job.name, agent_name, payload[:80])
 
+        # Tag every LLM call this turn makes with a deterministic run_id
+        # so the dashboard can correlate ``token_usage`` rows back to the
+        # cron run. The always-on token-persistence hook (attached at app
+        # startup) reads this ContextVar at call time. Without setting
+        # it, rows would still be written but un-correlated.
+        from services.sse_progress import current_run_id
+        run_id = f"cron-{job.id}-{uuid.uuid4().hex[:8]}"
+        _run_token = current_run_id.set(run_id)
+
         try:
             # ``agent_name`` MUST flow through to resume_and_send. Without
             # it the call defaults to Jarvis and the configured target
@@ -401,6 +410,8 @@ class CronScheduler:
             return result
         except Exception as e:
             raise RuntimeError(f"Agent turn failed for '{agent_name}': {e}") from e
+        finally:
+            current_run_id.reset(_run_token)
 
     # ─── Lunar Calendar ───────────────────────────────────
 

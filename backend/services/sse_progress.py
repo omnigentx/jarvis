@@ -15,13 +15,33 @@ import json
 import time
 import logging
 import re
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Optional
 
 from fast_agent.agents.tool_runner import ToolRunnerHooks
 from fast_agent.types import PromptMessageExtended
 
+from services.agent_message_stream import emit_message_history_delta
+
 logger = logging.getLogger(__name__)
+
+# ──────────────────────────────────────────────────────────────
+# Token-persistence is always-on (a default hook attached at app
+# startup — see ``server.py`` lifespan). The default hook needs
+# a ``run_id`` to tag each ``token_usage`` row so the dashboard
+# can correlate rows back to the request/job that produced them.
+#
+# Callers (chat.py, ws_voice.py, inject.py, cron_scheduler.py)
+# set this ContextVar around their ``agent_app.send`` / ``resume_and_send``
+# / ``agent.generate`` call. The default hook reads it at call
+# time. ContextVar is asyncio-aware: each request task sees only
+# its own value even when many requests are inflight in parallel.
+#
+# Empty string is OK when no caller set it (legacy path): the row
+# still gets written, just without run_id correlation.
+# ──────────────────────────────────────────────────────────────
+current_run_id: ContextVar[str] = ContextVar("current_run_id", default="")
 
 # Lazy import to avoid circular — resolved at first use
 _activity_stream = None
@@ -212,6 +232,64 @@ def _persist_and_broadcast_token_usage(
         logger.warning(f"[TOKEN] Failed to persist token usage: {e}", exc_info=True)
 
 
+def create_token_persistence_hooks() -> ToolRunnerHooks:
+    """Always-on hook that persists every LLM call's token usage to SQLite.
+
+    Attached at app startup to every in-process agent (see ``server.py``
+    lifespan + ``attach_token_persistence_hooks_to_all``). Reads ``run_id``
+    from the ``current_run_id`` ContextVar set by the caller (chat / voice
+    / inject / cron). If no caller set it, the row is still written with
+    an empty ``run_id`` — better than silently losing the LLM call.
+
+    Why a separate factory (vs reusing ``create_progress_hooks``):
+      - ``create_progress_hooks`` requires a per-request ``request_id`` and
+        pushes events to the chat-stream SSE queue. That queue only has a
+        listener for chat / voice / inject — scheduler-triggered calls have
+        no SSE listener.
+      - Token persistence must run for EVERY LLM call (chat, voice, inject,
+        cron, future-callers). Decoupling it from the chat-stream UI lets
+        every in-process LLM call get tracked exactly once, regardless of
+        caller.
+    """
+    async def on_after_llm_call(runner, message: PromptMessageExtended) -> None:
+        agent = runner._agent
+        raw_name = getattr(agent, 'name', 'Agent')
+        agent_name = normalize_agent_name(raw_name)
+        tokens = _get_token_info(agent)
+        run_id = current_run_id.get() or ""
+        _persist_and_broadcast_token_usage(agent_name, run_id, tokens)
+
+    return ToolRunnerHooks(after_llm_call=on_after_llm_call)
+
+
+def attach_token_persistence_hooks_to_all(agent_app) -> int:
+    """Idempotently attach the always-on token-persistence hook to every
+    in-process agent in ``agent_app._agents``.
+
+    Idempotency is per-agent: a sentinel attribute ``_jarvis_token_hook``
+    is set so re-running this (e.g. after dynamic-agent reload) does not
+    stack duplicate hooks. Returns the number of agents NEWLY hooked.
+    """
+    token_hook = create_token_persistence_hooks()
+    newly = 0
+    try:
+        agents = getattr(agent_app, "_agents", {}) or {}
+    except Exception:
+        agents = {}
+    for name, ag in agents.items():
+        if getattr(ag, "_jarvis_token_hook", False):
+            continue
+        existing = getattr(ag, "tool_runner_hooks", None)
+        if existing:
+            ag.tool_runner_hooks = merge_hooks(existing, token_hook)
+        else:
+            ag.tool_runner_hooks = token_hook
+        ag._jarvis_token_hook = True
+        newly += 1
+        logger.debug("[TOKEN] Attached default token-persistence hook to '%s'", name)
+    return newly
+
+
 def _get_model_name(agent) -> str:
     """Get model name from agent."""
     try:
@@ -350,59 +428,52 @@ def create_progress_hooks(request_id: str, session_id: str | None = None) -> Too
         agent_name = normalize_agent_name(raw_name)
         display = humanize_agent_name(raw_name)
         tokens = _get_token_info(agent)
-        
-        # ── Persist + broadcast token usage (exactly once per LLM call) ──
-        _persist_and_broadcast_token_usage(agent_name, request_id, tokens)
-        
+
+        # Stream the new turn(s) appended to agent.message_history.
+        emit_message_history_delta(agent, agent_name, request_id)
+
+        # NOTE: token-usage persistence is NOT done here anymore. It's
+        # handled by the always-on ``create_token_persistence_hooks``
+        # attached at app startup (see ``server.py`` lifespan). Doing
+        # it here would double-count when both hook chains fire.
+        # The ``tokens`` dict above is still passed to progress events
+        # below so the chat UI can show realtime token usage.
+
+        # ── chat-stream progress events (powers the chat UI progress widgets) ──
+        # Activity-stream tool_call/response broadcasts were removed: the
+        # message_turn channel above is the canonical source for monitor UI.
+        # ``_persist_activity`` rows are still written for the legacy
+        # AgentDetail "Activity" tab and for audit.
         if message.tool_calls:
             tools_info = _extract_tool_info(message)
             tool_names_str = ", ".join(t["name"] for t in tools_info)
-            
-            # Store for duration tracking
+
             _tool_start_times[agent_name] = time.time()
             _tool_names[agent_name] = tools_info
-            
+
             progress_manager.push(request_id, "tool_request", {
                 "agent": agent_name,
                 "tools": tools_info,
                 "tokens": tokens,
                 "message": _make_message(display, "tool_request", tool_names_str),
             })
-            # Broadcast to central event bus for dashboard SSE
             tool_call_msg = f"🔧 {display} calling {tool_names_str}"
-            _get_activity_stream().broadcast({
-                "agent_name": agent_name,
-                "event_type": "tool_call",
-                "message": tool_call_msg,
-                "run_id": request_id,
-                "timestamp": time.time(),
-                "data": {"tools": tools_info},  # Include args for live dashboard
-            })
             _persist_activity(
                 agent_name, "tool_call", tool_call_msg,
                 run_id=request_id, session_id=session_id,
-                data={"tools": tools_info},  # Persist full tool info with args
+                data={"tools": tools_info},
             )
         else:
-            # Agent responded without tools
             preview = message.last_text()
             preview_short = (preview[:300] + "...") if preview and len(preview) > 300 else preview
-            
+
             progress_manager.push(request_id, "responding", {
                 "agent": agent_name,
                 "preview": preview_short,
                 "tokens": tokens,
                 "message": f"{display} responded",
             })
-            # Broadcast to central event bus for dashboard SSE
             response_msg = preview_short or f"{display} responded"
-            _get_activity_stream().broadcast({
-                "agent_name": agent_name,
-                "event_type": "response",
-                "message": response_msg,
-                "run_id": request_id,
-                "timestamp": time.time(),
-            })
             _persist_activity(agent_name, "response", response_msg, run_id=request_id, session_id=session_id)
     
     async def on_before_tool_call(runner, message: PromptMessageExtended) -> None:
@@ -425,7 +496,10 @@ def create_progress_hooks(request_id: str, session_id: str | None = None) -> Too
         raw_name = getattr(agent, 'name', 'Agent')
         agent_name = normalize_agent_name(raw_name)
         display = humanize_agent_name(raw_name)
-        
+
+        # Stream the tool_result turn appended after the tool ran.
+        emit_message_history_delta(agent, agent_name, request_id)
+
         # Calculate duration
         start = _tool_start_times.pop(agent_name, None)
         duration_ms = int((time.time() - start) * 1000) if start else None
@@ -436,6 +510,9 @@ def create_progress_hooks(request_id: str, session_id: str | None = None) -> Too
         tools_done = _tool_names.pop(agent_name, [])
         tool_str = ", ".join(t["name"] for t in tools_done) if tools_done else "tools"
         
+        # chat-stream progress event for the chat UI's per-tool progress widget.
+        # Activity-stream tool_result broadcast was removed — message_turn covers
+        # the monitor UI. Persistence kept for AgentDetail's audit history tab.
         progress_manager.push(request_id, "tool_done", {
             "agent": agent_name,
             "tools": tools_done,
@@ -443,22 +520,13 @@ def create_progress_hooks(request_id: str, session_id: str | None = None) -> Too
             "duration_ms": duration_ms,
             "message": f"{display} completed {tool_str}" + (f" ({duration_ms/1000:.1f}s)" if duration_ms else ""),
         })
-        # Broadcast to central event bus for dashboard SSE
         tool_done_msg = f"✅ {display} completed {tool_str}"
-        _get_activity_stream().broadcast({
-            "agent_name": agent_name,
-            "event_type": "tool_result",
-            "message": tool_done_msg,
-            "run_id": request_id,
-            "timestamp": time.time(),
-            "data": {"duration_ms": duration_ms, "result_preview": result_preview},
-        })
         _persist_activity(
             agent_name, "tool_result", tool_done_msg,
             run_id=request_id, session_id=session_id,
             data={
                 "duration_ms": duration_ms,
-                "tools": tools_done,  # Includes names + args
+                "tools": tools_done,
                 "result_preview": result_preview,
             },
         )

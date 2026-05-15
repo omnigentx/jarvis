@@ -68,6 +68,15 @@ async def signal_reload_loop(agent_app):
                     str(AGENT_CARDS_DIR), "Jarvis"
                 )
                 logger.info("[DYNAMIC] ✓ Reloaded agents: %s", loaded)
+                # Newly loaded agents need the always-on token-persistence
+                # hook attached too — without this their LLM calls would
+                # silently bypass token_usage tracking. Idempotent per
+                # agent via the sentinel attribute set inside the helper.
+                try:
+                    from services.sse_progress import attach_token_persistence_hooks_to_all
+                    attach_token_persistence_hooks_to_all(agent_app)
+                except Exception as _e:
+                    logger.warning("[DYNAMIC] Failed to re-attach token hook after reload: %s", _e)
             except Exception as e:
                 logger.error("[DYNAMIC] Reload failed: %s", e)
 
