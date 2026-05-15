@@ -227,9 +227,11 @@ Font:             Inter (all weights: Regular, Medium, Semi Bold, Bold)
 ### SSE Endpoints
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
-| `/api/agents/activity-stream` | GET | Global agent status stream (`ActivityStreamManager`) |
+| `/api/agents/activity-stream` | GET | Global agent status + `message_turn` stream (`ActivityStreamManager`) |
+| `/api/agents/{name}/messages` | GET | Initial / paginated `agent.message_history` for the v2 monitor (`?since=N`, `?limit=L`) |
+| `/api/agents/{name}/turns/{idx}/full` | GET | Untruncated PromptMessageExtended for one turn (used by "Show full") |
 | `/api/chat-stream` | POST | Chat with streaming progress (`ProgressManager` + `ToolRunnerHooks`) |
-| `/api/agents/{name}/timeline` | GET | Per-agent timeline events SSE |
+| `/api/agents/{name}/timeline` | GET | Per-agent timeline events SSE (legacy AgentDetail "Activity" tab) |
 | `/api/scheduler/stream` | GET | Cron job execution events SSE |
 
 ### SSE Event Flow (Chat)
@@ -253,10 +255,47 @@ MCP Subprocess (agent)
     → Team completion check → Notification (when all members finish)
 ```
 
+### Team Monitor v2 — message_history-driven (canonical)
+The monitor UI reads turns directly from `agent.message_history` rather
+than from synthesized `tool_call`/`tool_result`/`response` events. One
+event channel, one shape, no duplicates.
+
+```
+agent.message_history  ←  source of truth (fast-agent llm_decorator._persist_history)
+        │
+        ├─ in-process: ToolRunnerHooks.after_llm_call / after_tool_call
+        │     → services.agent_message_stream.emit_message_history_delta
+        │     → activity_stream broadcast: {event_type: "message_turn", data: {turn_idx, message}}
+        │
+        └─ subprocess: isolated_runner._install_tool_hooks
+              → emit_event("message_turn", run_id, role, turn_idx, message)
+              → SpawnProgressBridge._forward_message_turn (applies trim_message_for_stream)
+              → activity_stream broadcast (same shape)
+
+Frontend: useAgentTurns composable dedups by (agent, turn_idx) and bridges
+recentEvents → per-agent buffer. AgentTerminal.vue renders the buffer.
+```
+
+`trim_message_for_stream` caps any text block above 16 KiB, marking
+`_truncated=true` + `_full_size`. The UI fetches uncapped content from
+`/api/agents/{name}/turns/{idx}/full` when the user clicks "Show full".
+
+`tool_call`, `tool_result`, and `response` event_types are **no longer
+broadcast** on the activity-stream — they're contained within
+`message_turn`. Lifecycle events (`started`/`idle`/`error`/`thinking`/
+`agent_paused`/`agent_resumed`/`token_usage`/`agent_added`/
+`agent_removed`) stay as a separate channel.
+
+The terminal-style grid is the ONLY monitor UI — the legacy v1 card
+view was removed (see commit "feat(dashboard): TeamMonitor terminal UI
++ meeting transcript + voice"). No feature flag, no fallback.
+
 ### Rules
 - **No polling.** If you need data updates, use SSE or WebSocket.
 - SSE connections must implement exponential backoff (1s → 30s max) on disconnect.
 - Dashboard SSE reconnects on tab visibility change (`visibilitychange` event).
+- New monitor work should plug into `useAgentTurns` / `<AgentTerminal>`,
+  not synthesize parallel event types.
 
 ## Voice Architecture
 
@@ -389,7 +428,7 @@ Reference: [fast-agent Tool Runner docs](https://fast-agent.ai/agents/tool_runne
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **jarvis** (32588 symbols, 91071 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **jarvis** (35435 symbols, 99356 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
