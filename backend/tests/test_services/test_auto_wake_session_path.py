@@ -184,6 +184,116 @@ async def test_check_and_resume_warns_when_messages_dir_missing(tmp_path, caplog
 
 
 @pytest.mark.asyncio
+async def test_check_and_resume_hydrates_env_from_record_when_param_empty(tmp_path):
+    """SSoT contract (Layer B of the 2026-05-15 follow-up fix): when a
+    caller forgets to pass ``env_vars`` (the historical bug at
+    ``agent_spawner_server.send_to_pm`` — wrong kwarg list, swallowed
+    TypeError), ``_check_and_resume_on_inbox`` MUST hydrate env_vars
+    from ``record.original_config["env_vars"]`` before falling into
+    the legacy context-text regex path.
+
+    Without this, a working spawn record (env_vars stored correctly at
+    register-time) would still produce a "no TEAM_MESSAGES_DIR" WARNING
+    and the agent would not be respawned.
+    """
+    from fast_agent.spawn.message_bus import MessageBus
+    from fast_agent.spawn.isolated_spawner import _check_and_resume_on_inbox
+
+    backend_root = tmp_path / "backend"
+    session_id = "ssotsid"
+    session_msg_dir = backend_root / ".runtime" / "state" / "messages" / session_id
+    session_msg_dir.mkdir(parents=True)
+    MessageBus(messages_dir=str(session_msg_dir)).send(
+        from_name="System", to_name="Adrian [BA]", content="x", message_type="m",
+    )
+
+    fake_registry = MagicMock()
+    fake_registry.has_running_resume.return_value = False
+    fake_record = MagicMock()
+    fake_record.run_id = "rid"
+    fake_record.session_id = session_id
+    fake_record.original_config = {
+        "env_vars": {"TEAM_MESSAGES_DIR": str(session_msg_dir)},
+        "project_dir": str(backend_root),
+    }
+    fake_registry.get.return_value = fake_record
+
+    spawn_called: dict = {}
+
+    async def _fake_run_iso(*args, **kwargs):
+        spawn_called["agent_name"] = kwargs.get("agent_name")
+        return "new-run"
+
+    with patch(
+        "fast_agent.spawn.isolated_spawner.run_isolated_agent_background",
+        side_effect=_fake_run_iso,
+    ):
+        # NOTE: env_vars=None — simulates the broken caller path
+        await _check_and_resume_on_inbox(
+            run_id="rid",
+            agent_name="Adrian [BA]",
+            registry=fake_registry,
+            env_vars=None,
+        )
+
+    assert spawn_called.get("agent_name") == "Adrian [BA]", (
+        "Function should have hydrated env_vars from record.original_config "
+        f"and respawned the agent. spawn_called={spawn_called!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_check_and_resume_derives_path_from_session_id(tmp_path):
+    """SSoT contract (Layer C): when env_vars is empty AND record has a
+    ``session_id`` + ``project_dir``, the function MUST derive the
+    canonical messages_dir as ``{project_dir}/.runtime/state/messages/{sid}/``.
+    This is the durable truth source — workspace paths can go stale (move,
+    cleanup) but the (session_id, project_dir) pair survives.
+    """
+    from fast_agent.spawn.message_bus import MessageBus
+    from fast_agent.spawn.isolated_spawner import _check_and_resume_on_inbox
+
+    backend_root = tmp_path / "backend"
+    session_id = "canonical"
+    session_msg_dir = backend_root / ".runtime" / "state" / "messages" / session_id
+    session_msg_dir.mkdir(parents=True)
+    MessageBus(messages_dir=str(session_msg_dir)).send(
+        from_name="System", to_name="Adrian [BA]", content="x", message_type="m",
+    )
+
+    fake_registry = MagicMock()
+    fake_registry.has_running_resume.return_value = False
+    fake_record = MagicMock()
+    fake_record.run_id = "rid"
+    fake_record.session_id = session_id
+    # Intentionally NO env_vars in record — only session_id + project_dir.
+    fake_record.original_config = {"project_dir": str(backend_root)}
+    fake_registry.get.return_value = fake_record
+
+    spawn_called: dict = {}
+
+    async def _fake_run_iso(*args, **kwargs):
+        spawn_called["agent_name"] = kwargs.get("agent_name")
+        return "new-run"
+
+    with patch(
+        "fast_agent.spawn.isolated_spawner.run_isolated_agent_background",
+        side_effect=_fake_run_iso,
+    ):
+        await _check_and_resume_on_inbox(
+            run_id="rid",
+            agent_name="Adrian [BA]",
+            registry=fake_registry,
+            env_vars={},
+        )
+
+    assert spawn_called.get("agent_name") == "Adrian [BA]", (
+        "Function should derive canonical messages_dir from session_id + "
+        f"project_dir and respawn. spawn_called={spawn_called!r}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_check_and_resume_warns_when_inbox_empty(tmp_path, caplog):
     """When messages_dir is correctly resolved but the inbox is empty
     (no unread), the function must log an INFO/WARNING line saying so.
