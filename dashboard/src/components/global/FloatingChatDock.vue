@@ -15,7 +15,7 @@
  * Open/close state is local to this component (per browser tab) — not
  * persisted. User toggles freely.
  */
-import { ref, computed, watch, nextTick, onMounted } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useChatStore } from '../../stores/chat.js'
 import { useChatStream } from '../../composables/useChatStream.js'
@@ -54,7 +54,18 @@ const activeTitle = computed(() => chatStore.activeConversation?.title || 'Chat'
 
 function toggle() {
   expanded.value = !expanded.value
-  if (expanded.value) nextTick(() => scrollToBottom())
+  if (expanded.value) {
+    // Lazy fetch on first expand — keeps boot-time API surface clean
+    // on routes where the dock is mounted but never used (auth, setup,
+    // settings, audio-player, etc). Eager onMounted fetch was leaking
+    // ``GET /api/conversations`` requests into every page-load and
+    // breaking unrelated e2e fixtures that assert ``backend.unexpected
+    // .length === 0``.
+    if (chatStore.conversations.length === 0) {
+      chatStore.fetchConversations().catch(() => { /* ignored */ })
+    }
+    nextTick(() => scrollToBottom())
+  }
 }
 
 function popOut() {
@@ -138,14 +149,14 @@ function handleKeydown(e) {
   }
 }
 
-// Initial fetch — one-time, in case dock is the first chat surface the
-// user touches in this session. ChatView's onMounted handles it for the
-// /chat-first path.
-onMounted(() => {
-  if (chatStore.conversations.length === 0) {
-    chatStore.fetchConversations().catch(() => { /* ignored */ })
-  }
-})
+// NOTE: NO eager fetch on mount. The fetch is moved to ``toggle()``
+// (first expand) so the dock doesn't issue ``/api/conversations`` on
+// every page mount — that was leaking onto routes where the dock is
+// hidden via ``visible`` and breaking ``backend.unexpected.length===0``
+// assertions in unrelated e2e fixtures.
+// If the user goes /chat first, ChatView's own onMounted handles the
+// fetch and ``chatStore.conversations`` is populated before the dock
+// ever expands.
 </script>
 
 <template>

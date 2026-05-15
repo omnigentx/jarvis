@@ -455,6 +455,21 @@ class SpawnProgressBridge:
                 "[LIFECYCLE] Agent removed: %s (run_id=%s, lifecycle=%s, reason=%s)",
                 agent_name, run_id, lifecycle, reason,
             )
+
+            # Drop the per-agent turn cache for this name. Without this
+            # the global ``_recent_turns`` keyset grows unbounded across
+            # team spawns (each new team adds N agent names; old names
+            # never get evicted). Per-agent bucket is already capped at
+            # 200 turns, but keyset growth across weeks of spawns adds
+            # up. Clearing on lifecycle removal is the natural pairing.
+            try:
+                from services.agent_message_stream import reset_recent_turns
+                reset_recent_turns(agent_name)
+            except Exception as _evict_exc:
+                logger.warning(
+                    "Failed to evict _recent_turns for %s: %s",
+                    agent_name, _evict_exc,
+                )
         except Exception as e:
             logger.warning("Failed to broadcast agent_removed: %s", e)
 
@@ -1148,6 +1163,21 @@ class SpawnProgressBridge:
                     content_type="markdown",
                     is_read=0,
                     created_at=time.time(),
+                    # ⚠️ JSON SPACING IS LOAD-BEARING — do NOT change separators.
+                    #
+                    # ``json.dumps()`` default is ``separators=(', ', ': ')``.
+                    # ``routes/agents.delete_team`` and
+                    # ``_has_team_notification`` both query this column with
+                    # ``metadata_json.contains('"team_name": "X"')`` (note the
+                    # space after the colon). If you switch to
+                    # ``separators=(',', ':')`` here, BOTH queries silently
+                    # match nothing → dedupe breaks (duplicate notifs) AND
+                    # delete_team cleanup breaks (orphan notifs blocking
+                    # re-spawn of same team_name).
+                    #
+                    # Future migration: switch both sides to a real JSON1
+                    # query (``json_extract(metadata_json, '$.team_name')``)
+                    # so spacing becomes irrelevant.
                     metadata_json=json.dumps({
                         "agent": agent_name,
                         "team_name": team_name,

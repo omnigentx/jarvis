@@ -21,8 +21,62 @@ from agent import fast
 import time as _time
 
 
+def _fetch_latest_snapshots_batch(
+    agent_names: list[str], snapshots_db_path: str | None,
+) -> dict[str, tuple[str | None, float | None]]:
+    """Batch-fetch the latest snapshot ``(trigger, created_at)`` for every
+    agent name in one SQLite query.
+
+    Replaces per-agent ``SELECT ... WHERE agent_name = ?`` with a single
+    ``WHERE agent_name IN (...)`` + ``GROUP BY``. For a 30-agent roster
+    this drops 30 round-trips to 1. Returns a dict keyed by agent_name;
+    missing entries means the agent has no snapshot yet.
+
+    Empty list short-circuits to ``{}`` — caller doesn't have to check.
+    """
+    out: dict[str, tuple[str | None, float | None]] = {}
+    if not agent_names or not snapshots_db_path:
+        return out
+    # Deduplicate while preserving names — the SQL parameter list grows
+    # quadratically if the caller passes the same name twice.
+    unique_names = list(dict.fromkeys(agent_names))
+    placeholders = ",".join("?" for _ in unique_names)
+    try:
+        with sqlite3.connect(snapshots_db_path, timeout=0.5) as conn:
+            # ``ROWID`` (an alias for the auto-increment id) breaks ties
+            # in ``created_at`` and is always strictly increasing per
+            # insert, so taking MAX(id) per agent gives us the freshest
+            # snapshot deterministically without needing a window
+            # function (which isn't available in older SQLite builds).
+            rows = conn.execute(
+                f"SELECT s.agent_name, s.trigger, s.created_at "
+                f"FROM agent_context_snapshots s "
+                f"JOIN (SELECT agent_name, MAX(id) AS max_id "
+                f"      FROM agent_context_snapshots "
+                f"      WHERE agent_name IN ({placeholders}) "
+                f"      GROUP BY agent_name) latest "
+                f"ON s.agent_name = latest.agent_name "
+                f"AND s.id = latest.max_id",
+                unique_names,
+            ).fetchall()
+            for agent_name, trigger, created_at in rows:
+                try:
+                    ts = float(created_at) if created_at is not None else None
+                except (TypeError, ValueError):
+                    ts = None
+                out[agent_name] = (trigger, ts)
+    except sqlite3.Error:
+        # Probe failure is non-fatal — caller falls back to raw status.
+        # Single batch failure is preferable to N per-agent failures
+        # logged separately.
+        pass
+    return out
+
+
 def _compute_effective_status(
-    record: dict, *, snapshots_db_path: str | None = None,
+    record: dict, *,
+    snapshots_db_path: str | None = None,
+    snapshot_cache: dict[str, tuple[str | None, float | None]] | None = None,
 ) -> str:
     """Derive effective status from multi-signal evidence.
 
@@ -108,9 +162,18 @@ def _compute_effective_status(
 
     # Latest snapshot — trigger + created_at, written directly by the
     # subprocess to SQLite (independent of bridge health).
+    #
+    # Prefer the pre-fetched batch dict (one query for the whole roster
+    # via ``_fetch_latest_snapshots_batch``) over a per-agent SELECT.
+    # Per-agent fallback is kept for direct callers that don't go
+    # through ``list_agents`` (tests, debug endpoints).
     latest_trigger: str | None = None
     snapshot_ts: float | None = None
-    if snapshots_db_path:
+    if snapshot_cache is not None:
+        cached = snapshot_cache.get(agent_name)
+        if cached is not None:
+            latest_trigger, snapshot_ts = cached
+    elif snapshots_db_path:
         try:
             with sqlite3.connect(snapshots_db_path, timeout=0.5) as conn:
                 row = conn.execute(
@@ -551,12 +614,27 @@ async def list_agents(include_completed: bool = False):
         # re-running Path.resolve() per agent.
         _snap_db = _snapshots_db_path()
 
+        # Batch-fetch the latest snapshot for every agent in ONE query
+        # instead of one query per agent. For an N-agent roster this
+        # cuts SQLite round-trips from N to 1 — important once teams
+        # grow past ~10 agents (incident scale: 7-agent retro audit
+        # used to fan out 7 selects per ``/agents`` poll).
+        _all_names = [
+            r.get("agent_name") or r.get("role") or ""
+            for _, r in seen_names.values()
+        ]
+        _snapshot_cache = _fetch_latest_snapshots_batch(_all_names, _snap_db)
+
         for run_id, record in seen_names.values():
             agent_name = record.get("agent_name", record.get("role", "agent"))
             # Multi-signal status (channel sock + snapshot trigger) instead
             # of trusting the bridge-fed DB field alone. See
             # ``_compute_effective_status`` for the decision tree.
-            status = _compute_effective_status(record, snapshots_db_path=_snap_db)
+            status = _compute_effective_status(
+                record,
+                snapshots_db_path=_snap_db,
+                snapshot_cache=_snapshot_cache,
+            )
 
             role = record.get("role", "")
             icon = "smart_toy"
@@ -1240,6 +1318,17 @@ async def delete_team(team_name: str):
         from core.database import NotificationModel, get_db_session
         db = get_db_session()
         try:
+            # ⚠️ JSON SPACING IS LOAD-BEARING (matches writer in
+            # ``spawn_progress_bridge._create_team_notification``).
+            # ``json.dumps()`` default emits ``"key": "value"`` with a
+            # space after the colon. These ``LIKE %...%`` substring
+            # filters depend on that exact spacing. If the writer ever
+            # switches to ``separators=(',', ':')`` this filter silently
+            # matches nothing → cascade cleanup breaks → next re-spawn
+            # of same team_name hits stale notification → dedupe blocks
+            # the new completion notification.
+            # Proper migration path: SQLite's ``json_extract()`` on the
+            # metadata_json column — see GH issue for that work.
             q = db.query(NotificationModel).filter(
                 NotificationModel.metadata_json.contains('"source": "team_completion"'),
             )

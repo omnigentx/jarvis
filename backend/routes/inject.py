@@ -203,6 +203,22 @@ async def _inject_via_message_bus(
 
         logger.info("[INJECT] MessageBus: Dashboard → %s (queued)", agent_name)
 
+        # ── KNOWN GAP: token rows for this inject's LLM calls will carry
+        # an empty ``run_id`` (no correlation back to this request). See
+        # https://github.com/omnigentx/jarvis/issues/17.
+        #
+        # Why: setting ``current_run_id`` ContextVar here is useless. The
+        # LLM call that processes this inject fires in a DIFFERENT
+        # asyncio task — the alive agent's inbox-watcher loop running
+        # inside the spawned subprocess. ContextVar values don't
+        # propagate across that task boundary.
+        #
+        # The token hook still writes its row (with empty run_id) rather
+        # than silently dropping the LLM call. Dashboard per-conversation
+        # cost will be inaccurate for Path A injects until issue #17
+        # ships a proper fix (MessageBus context_meta → InboxWatcherHook
+        # → ContextVar bridging).
+
         # ── Wake agent NOW so it picks up the inbox message immediately ──
         # Without this, the agent only sees the message on the next
         # ``before_llm_call`` hook tick — which never fires if the agent
