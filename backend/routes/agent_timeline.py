@@ -77,11 +77,16 @@ def _load_meetings() -> list[dict]:
             state = json.loads(r["state_json"]) if r["state_json"] else {}
             mid = r["meeting_id"]
 
+            # config_json: write-once setup (agenda, description, created_by,
+            # created_at). state_json: ALL mutable fields, including
+            # participants, max_rounds, turn pointers (post-B1). Fall back
+            # to config_json for legacy rows written before the refactor.
             meetings.append({
                 "meeting_id": mid,
                 "agenda": config.get("agenda", ""),
-                "participants": config.get("participants", []),
-                "max_rounds": config.get("max_rounds"),
+                "description": config.get("description", ""),
+                "participants": state.get("participants") or config.get("participants", []),
+                "max_rounds": state.get("max_rounds") or config.get("max_rounds"),
                 "created_by": config.get("created_by", ""),
                 "created_at": r["created_at"],
                 "outcome": state.get("outcome"),
@@ -90,6 +95,7 @@ def _load_meetings() -> list[dict]:
                 "joined": state.get("joined", []),
                 "current_round": state.get("current_round"),
                 "current_turn": state.get("current_turn", 0),
+                "turn_started_at": state.get("turn_started_at"),
                 "transcript": transcripts.get(mid, []),
             })
     except Exception as e:

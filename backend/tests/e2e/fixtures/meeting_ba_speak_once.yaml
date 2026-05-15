@@ -1,0 +1,11 @@
+# Devon [BA] — single speak() in round 1 after receiving YOUR_TURN.
+turns:
+  - tool_calls:
+      c_speak:
+        name: speak
+        arguments:
+          meeting_id: "b61af7db"
+          message: "Devon [BA] here. I'll create the test-case matrix and Jira stories under JXCC-19."
+          agent_name: "Devon [BA]"
+
+  - content: "Spoken."

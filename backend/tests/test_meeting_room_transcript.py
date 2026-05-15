@@ -42,6 +42,184 @@ async def test_create_meeting_auto_joins_all():
     assert initial_state["started"] is True
 
 
+@pytest.mark.asyncio
+async def test_create_meeting_auto_includes_creator():
+    """Creator (my_name) is the chair — auto-prepended to participants."""
+    mock_storage = MagicMock()
+    mock_storage.create_meeting = MagicMock()
+
+    with patch("fast_agent.spawn.servers.meeting_room_server._storage", mock_storage):
+        with patch("fast_agent.spawn.servers.meeting_room_server._get_my_name", return_value="Cameron [PM]"):
+            with patch("fast_agent.spawn.servers.meeting_room_server._get_bus") as mock_bus:
+                mock_bus.return_value = MagicMock()
+                with patch("fast_agent.spawn.servers.meeting_room_server._auto_wake_if_idle"):
+                    with patch("fast_agent.spawn.servers.meeting_room_server._fire_hook"):
+                        from fast_agent.spawn.servers.meeting_room_server import create_meeting
+                        # Creator passes only OTHERS — should still be added at index 0
+                        result = await create_meeting(
+                            agenda="Sprint kickoff",
+                            participants="Devon [BA], Reese [Dev], Devon [QE]",
+                        )
+
+    result_data = json.loads(result)
+    parts = result_data["participants"]
+    assert parts[0] == "Cameron [PM]", f"Creator must speak first, got order: {parts}"
+    assert parts == ["Cameron [PM]", "Devon [BA]", "Reese [Dev]", "Devon [QE]"]
+
+    # Storage state must reflect the same ordered list with creator joined.
+    # Post-B1: participants live in state_json (mutable bucket), config_json
+    # only carries write-once setup (agenda, created_by, created_at).
+    call_args = mock_storage.create_meeting.call_args
+    stored_config, initial_state = call_args[0][1], call_args[0][2]
+    assert "participants" not in stored_config, (
+        "participants must NOT live in config_json (write-once bucket)"
+    )
+    assert initial_state["participants"][0] == "Cameron [PM]"
+    assert "Cameron [PM]" in initial_state["joined"]
+
+
+@pytest.mark.asyncio
+async def test_create_meeting_does_not_duplicate_creator():
+    """If creator is already in participants, don't add a duplicate."""
+    mock_storage = MagicMock()
+    mock_storage.create_meeting = MagicMock()
+
+    with patch("fast_agent.spawn.servers.meeting_room_server._storage", mock_storage):
+        with patch("fast_agent.spawn.servers.meeting_room_server._get_my_name", return_value="PM"):
+            with patch("fast_agent.spawn.servers.meeting_room_server._get_bus") as mock_bus:
+                mock_bus.return_value = MagicMock()
+                with patch("fast_agent.spawn.servers.meeting_room_server._auto_wake_if_idle"):
+                    with patch("fast_agent.spawn.servers.meeting_room_server._fire_hook"):
+                        from fast_agent.spawn.servers.meeting_room_server import create_meeting
+                        # Creator explicitly listed mid-list — preserve given position
+                        result = await create_meeting(
+                            agenda="Test",
+                            participants="BA, PM, Dev",
+                        )
+
+    parts = json.loads(result)["participants"]
+    assert parts.count("PM") == 1
+    assert parts == ["BA", "PM", "Dev"], f"Existing position preserved, got: {parts}"
+
+
+@pytest.mark.asyncio
+async def test_create_meeting_truncates_long_agenda():
+    """Agenda > 120 chars is truncated + warning surfaced.
+
+    Guards the b61af7db incident: PM stuffed a 50-line markdown brief
+    into ``agenda``, breaking the dashboard title clamp.
+    """
+    long_agenda = (
+        "## Project Context\n**Epic:** JXCC-19 - Tools & MCP Servers\n"
+        "## Objective\nComprehensive audit of all tools and MCP servers\n"
+        "## Scope — extensive list of every tool category goes here, "
+        "way past the 120 char limit on purpose to verify truncation"
+    )
+    assert len(long_agenda) > 120
+
+    mock_storage = MagicMock()
+    mock_storage.create_meeting = MagicMock()
+
+    with patch("fast_agent.spawn.servers.meeting_room_server._storage", mock_storage):
+        with patch("fast_agent.spawn.servers.meeting_room_server._get_my_name", return_value="PM"):
+            with patch("fast_agent.spawn.servers.meeting_room_server._get_bus") as mock_bus:
+                mock_bus.return_value = MagicMock()
+                with patch("fast_agent.spawn.servers.meeting_room_server._auto_wake_if_idle"):
+                    with patch("fast_agent.spawn.servers.meeting_room_server._fire_hook"):
+                        from fast_agent.spawn.servers.meeting_room_server import create_meeting
+                        result = await create_meeting(
+                            agenda=long_agenda,
+                            participants="BA, Dev",
+                            description="Long-form context belongs HERE, not in agenda.",
+                        )
+
+    payload = json.loads(result)
+    # Truncated agenda preserved in result + warning explains why.
+    assert len(payload["agenda"]) <= 121, (  # 120 + ellipsis "…"
+        f"Agenda must be truncated to ≤120 chars (+ ellipsis), got {len(payload['agenda'])}"
+    )
+    assert payload["agenda"].endswith("…"), "Truncation must use ellipsis marker"
+    assert "warning" in payload
+    assert "agenda truncated" in payload["warning"]
+    assert "description" in payload["warning"], (
+        "Warning must hint at the description param so the LLM corrects itself"
+    )
+
+    # Storage saw the truncated agenda; description preserved separately.
+    stored_config = mock_storage.create_meeting.call_args[0][1]
+    assert len(stored_config["agenda"]) <= 121
+    assert stored_config["description"] == "Long-form context belongs HERE, not in agenda."
+
+
+@pytest.mark.asyncio
+async def test_create_meeting_short_agenda_no_warning():
+    """Short agenda passes through unchanged, no warning field set."""
+    mock_storage = MagicMock()
+    mock_storage.create_meeting = MagicMock()
+
+    with patch("fast_agent.spawn.servers.meeting_room_server._storage", mock_storage):
+        with patch("fast_agent.spawn.servers.meeting_room_server._get_my_name", return_value="PM"):
+            with patch("fast_agent.spawn.servers.meeting_room_server._get_bus") as mock_bus:
+                mock_bus.return_value = MagicMock()
+                with patch("fast_agent.spawn.servers.meeting_room_server._auto_wake_if_idle"):
+                    with patch("fast_agent.spawn.servers.meeting_room_server._fire_hook"):
+                        from fast_agent.spawn.servers.meeting_room_server import create_meeting
+                        result = await create_meeting(
+                            agenda="Sprint 1 kickoff",
+                            participants="BA, Dev",
+                        )
+
+    payload = json.loads(result)
+    assert payload["agenda"] == "Sprint 1 kickoff"
+    assert "warning" not in payload
+    assert "…" not in payload["agenda"]
+
+
+@pytest.mark.asyncio
+async def test_create_meeting_description_persisted():
+    """Optional ``description`` parameter lands in config_json."""
+    mock_storage = MagicMock()
+    mock_storage.create_meeting = MagicMock()
+
+    with patch("fast_agent.spawn.servers.meeting_room_server._storage", mock_storage):
+        with patch("fast_agent.spawn.servers.meeting_room_server._get_my_name", return_value="PM"):
+            with patch("fast_agent.spawn.servers.meeting_room_server._get_bus") as mock_bus:
+                mock_bus.return_value = MagicMock()
+                with patch("fast_agent.spawn.servers.meeting_room_server._auto_wake_if_idle"):
+                    with patch("fast_agent.spawn.servers.meeting_room_server._fire_hook"):
+                        from fast_agent.spawn.servers.meeting_room_server import create_meeting
+                        await create_meeting(
+                            agenda="Audit",
+                            participants="BA, Dev",
+                            description="Full project brief with markdown links etc.",
+                        )
+
+    stored_config = mock_storage.create_meeting.call_args[0][1]
+    assert stored_config["description"] == "Full project brief with markdown links etc."
+
+
+@pytest.mark.asyncio
+async def test_create_meeting_solo_creator_rejected():
+    """Need at least 2 participants — creator alone is not enough."""
+    mock_storage = MagicMock()
+    mock_storage.create_meeting = MagicMock()
+
+    with patch("fast_agent.spawn.servers.meeting_room_server._storage", mock_storage):
+        with patch("fast_agent.spawn.servers.meeting_room_server._get_my_name", return_value="PM"):
+            with patch("fast_agent.spawn.servers.meeting_room_server._get_bus") as mock_bus:
+                mock_bus.return_value = MagicMock()
+                with patch("fast_agent.spawn.servers.meeting_room_server._auto_wake_if_idle"):
+                    with patch("fast_agent.spawn.servers.meeting_room_server._fire_hook"):
+                        from fast_agent.spawn.servers.meeting_room_server import create_meeting
+                        result = await create_meeting(
+                            agenda="Test",
+                            participants="",  # No others — only creator
+                        )
+
+    assert "error" in json.loads(result)
+    mock_storage.create_meeting.assert_not_called()
+
+
 # ── Test short meeting IDs ──
 
 @pytest.mark.asyncio

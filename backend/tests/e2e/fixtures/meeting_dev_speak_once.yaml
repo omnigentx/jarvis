@@ -1,0 +1,11 @@
+# Reese [Dev] — single speak() in round 1 after receiving YOUR_TURN.
+turns:
+  - tool_calls:
+      c_speak:
+        name: speak
+        arguments:
+          meeting_id: "b61af7db"
+          message: "Reese [Dev] here. I'll execute the tests on each MCP server once BA's stories are ready."
+          agent_name: "Reese [Dev]"
+
+  - content: "Spoken."

@@ -71,7 +71,9 @@ roles:
       5. **Spawn team** — `spawn_team_members(roles="ba,dev,qe", first_task="...")`
          - Include meeting_id + Jira link in `first_task` so members have everything they need
          - ⚠️ Do NOT send a separate email after spawning — `first_task` already delivers the assignment!
-      6. **Join and lead** — present agenda, assign work, get acknowledgments
+      6. **Join and lead** — present agenda, assign work, get acknowledgments.
+         Follow the two-speak verdict contract from `project-management`
+         skill (present first, verdict in a separate later speak).
       7. End with: `[DECISION] VERDICT: PASS — <summary>. Next actions: <list>`
 
       ### Phase 3: Execution & Monitoring
@@ -111,6 +113,7 @@ roles:
         team-roster,
         team-communication,
         jarvis-knowledge,
+        self-audit-tools,
       ]
     servers:
       [
@@ -161,7 +164,7 @@ roles:
       - Long-form analysis = Confluence page
       - DO NOT write standalone .md files to workspace as final deliverables
 
-    skills: [ba-workflow, team-roster, team-communication, jarvis-knowledge]
+    skills: [ba-workflow, team-roster, team-communication, jarvis-knowledge, self-audit-tools]
     servers:
       [
         filesystem,
@@ -212,7 +215,7 @@ roles:
       - Architecture comparison = Confluence page
 
     skills:
-      [software-architecture, team-roster, team-communication, jarvis-knowledge]
+      [software-architecture, team-roster, team-communication, jarvis-knowledge, self-audit-tools]
     servers:
       [
         filesystem,
@@ -285,6 +288,7 @@ roles:
         team-communication,
         jarvis-knowledge,
         jarvis-infra,
+        self-audit-tools,
       ]
     servers:
       [
@@ -335,7 +339,7 @@ roles:
       - Component specifications for Dev (spacing, responsive notes)
       - Screenshot of completed design (via figma_read screenshot)
 
-    skills: [figma-designer, team-roster, team-communication]
+    skills: [figma-designer, team-roster, team-communication, self-audit-tools]
     servers:
       [filesystem, meeting_room, email, github, mcp-atlassian, figma-ui-mcp]
     server_overrides:
@@ -393,6 +397,7 @@ roles:
         team-roster,
         team-communication,
         jarvis-knowledge,
+        self-audit-tools,
       ]
     servers:
       [
@@ -443,6 +448,7 @@ roles:
         team-communication,
         jarvis-knowledge,
         jarvis-infra,
+        self-audit-tools,
       ]
     servers:
       [

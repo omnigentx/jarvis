@@ -1,0 +1,11 @@
+# Devon [QE] — single speak() in round 1 after receiving YOUR_TURN.
+turns:
+  - tool_calls:
+      c_speak:
+        name: speak
+        arguments:
+          meeting_id: "b61af7db"
+          message: "Devon [QE] here. I'll review test coverage and compile the audit report on Confluence."
+          agent_name: "Devon [QE]"
+
+  - content: "Spoken."

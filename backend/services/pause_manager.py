@@ -194,13 +194,18 @@ class PauseManager:
         except Exception as e:
             logger.warning("[PAUSE] Failed to broadcast state change: %s", e)
 
-        # Update spawn_records DB
+        # Update spawn_records DB.
+        # Use find_by_name (not list_running) — list_running filters status to
+        # ('running', 'pending') so on the resume path the agent's row (still
+        # marked 'paused' from the previous pause call) is excluded → upsert
+        # is skipped → DB status stays 'paused' forever after resume. Mirrors
+        # the same fix already applied to ``_find_pid`` (see line 164).
         try:
             import services.shared_state as _state
             if _state.registry_db:
-                records = _state.registry_db.list_running()
+                records = _state.registry_db.find_by_name(agent_name)
                 for rec in records:
-                    if rec.get("agent_name") == agent_name and rec.get("run_id"):
+                    if rec.get("run_id"):
                         db_status = "paused" if new_state == "paused" else "running"
                         _state.registry_db.upsert_record(
                             rec["run_id"],

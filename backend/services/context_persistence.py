@@ -143,17 +143,94 @@ async def save_agent_context(
                 trigger, time.time(),
             ),
         )
-        conn.commit()
         snapshot_id = cursor.lastrowid
+
+        # Mirror the last assistant text into spawn_registry.result so
+        # consumers (team-completion notification, get_team_result) have
+        # a single source of truth without re-reading snapshot JSON.
+        # Resumable agents never hit isolated_spawner's update_status path
+        # after the first turn, so this hook is the only place that keeps
+        # `result` fresh across multi-turn lifetimes.
+        final_text = _extract_last_assistant_text(messages)
+        if final_text:
+            _update_spawn_registry_result(conn, run_id, final_text)
+
+        conn.commit()
         conn.close()
         logger.info(
-            "[CONTEXT] Saved %s: %d messages, trigger=%s, id=%d, size=%.0fKB",
-            resolved_name, len(messages), trigger, snapshot_id, context_size / 1024,
+            "[CONTEXT] Saved %s: %d messages, trigger=%s, id=%d, size=%.0fKB, "
+            "result_chars=%d",
+            resolved_name, len(messages), trigger, snapshot_id,
+            context_size / 1024, len(final_text),
         )
         return snapshot_id
     except Exception as exc:
         logger.error("[CONTEXT] DB write failed: %s — %s", resolved_name, exc, exc_info=True)
         return None
+
+
+def _extract_last_assistant_text(messages: list) -> str:
+    """Return concatenated text of the last assistant turn that has any
+    non-empty text content. Empty string if no such turn exists.
+
+    Used by ``save_agent_context`` to keep ``spawn_registry.result`` in
+    sync with the agent's actual final answer per turn, so notification
+    + ``get_team_result`` consumers can rely on a single field.
+    """
+    for msg in reversed(messages):
+        role = getattr(msg, "role", None)
+        if role != "assistant":
+            continue
+        parts: list[str] = []
+        for block in (getattr(msg, "content", None) or []):
+            if getattr(block, "type", None) == "text":
+                text = getattr(block, "text", "") or ""
+                if text.strip():
+                    parts.append(text)
+        body = "\n".join(parts).strip()
+        if body:
+            return body
+    return ""
+
+
+def _update_spawn_registry_result(
+    conn: sqlite3.Connection, run_id: str, result_text: str
+) -> None:
+    """Merge-upsert ``result`` into ``spawn_registry.data_json`` for run_id.
+
+    Preserves every other field already written by spawner/bridge —
+    we only overlay ``result`` + ``result_updated_at``. If the row does
+    not exist yet (race: snapshot saved before registry insert), this
+    is a no-op rather than creating a half-populated record; the next
+    turn will succeed once the spawner has written the row.
+    """
+    # spawn_registry is created by SqliteBackend in the spawner; this
+    # IF NOT EXISTS keeps the read defensive when the snapshot fires
+    # before the spawner has touched the table at all.
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS spawn_registry (
+            run_id TEXT PRIMARY KEY,
+            data_json TEXT NOT NULL
+        )"""
+    )
+    row = conn.execute(
+        "SELECT data_json FROM spawn_registry WHERE run_id = ?",
+        (run_id,),
+    ).fetchone()
+    if not row:
+        logger.warning(
+            "[CONTEXT] spawn_registry row missing for run_id=%s — "
+            "result not mirrored (will retry on next turn)",
+            run_id,
+        )
+        return
+    data = json.loads(row[0])
+    data["result"] = result_text
+    data["result_updated_at"] = time.time()
+    conn.execute(
+        "INSERT OR REPLACE INTO spawn_registry (run_id, data_json) VALUES (?, ?)",
+        (run_id, json.dumps(data, ensure_ascii=False)),
+    )
 
 
 def load_latest_context(

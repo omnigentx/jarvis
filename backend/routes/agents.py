@@ -7,6 +7,7 @@ Activities are persisted in SQLite and streamed via SSE.
 import os
 import re
 import logging
+import sqlite3
 from pathlib import Path
 
 import json as _json
@@ -18,6 +19,158 @@ from pydantic import BaseModel
 from core.auth import verify_api_key
 from agent import fast
 import time as _time
+
+
+def _compute_effective_status(
+    record: dict, *, snapshots_db_path: str | None = None,
+) -> str:
+    """Derive effective status from multi-signal evidence.
+
+    Background (the 2026-05-11 ``running``-stuck-forever UI bug):
+    ``spawn_registry.status`` is updated only via the spawn-event bridge
+    socket. If that socket dies (R1/R2 race, subprocess SIGKILL'd before
+    emitting final event), the DB value can be frozen at ``running``
+    indefinitely while the agent has actually exited or gone idle.
+
+    Instead of trusting the single bridge-fed field, cross-check with:
+
+    * **Channel sock probe** — file present + connect-test succeeds ⇒
+      subprocess is alive (sitting in keep-alive ``listen()``).
+    * **Latest agent snapshot** — the subprocess writes its
+      ``trigger`` (``task_complete`` / ``idle`` / ``error``) and
+      ``created_at`` DIRECTLY to SQLite, bypassing the bridge entirely.
+      That is our most trustworthy "what is the agent actually doing"
+      signal.
+    * **``record.last_active_at``** — the bridge updates this on every
+      thinking/tool_call/tool_result/response event. Compared against
+      the snapshot's ``created_at`` it tells us whether the latest idle
+      snapshot is fresh or stale-from-a-prior-turn.
+
+    All values returned are members of the canonical ``SpawnStatus``
+    set used by the bridge and startup cleanup
+    (``mark_stale_running``) so consumers do not see novel values.
+    Decision tree (only overrides the mutable states ``running`` /
+    ``starting`` / ``resumed`` / ``idle`` / ``pending`` / ``unknown`` —
+    terminal states like ``completed`` / ``error`` / ``paused`` are
+    trusted as-is):
+
+    Channel alive (subprocess in keep-alive):
+      * snapshot trigger ∈ {task_complete, idle} AND
+        snapshot.created_at >= record.last_active_at  → ``idle``
+        (subprocess wrote the idle snapshot AFTER its last bridge-
+        relayed activity event ⇒ genuinely idle now, not mid-turn).
+      * Otherwise → keep raw (likely mid-LLM call: prior idle snapshot
+        is stale relative to current activity).
+
+    Channel dead (subprocess exited):
+      * trigger = ``error`` → ``error``.
+      * trigger ∈ {task_complete, idle}:
+          - lifecycle ``oneshot`` → ``completed`` (one-and-done done).
+          - lifecycle ``resumable`` / missing → ``idle``. The agent is
+            hibernating: ``auto_wake_if_idle`` respawns it from snapshot
+            on the next inbound message. This matches the canonical
+            rule already enforced by ``spawn_progress_bridge`` (live
+            ``result`` event) and ``mark_stale_running`` (startup
+            cleanup) — see those for the same ``"idle" if lifecycle ==
+            "resumable" else "completed"`` pattern.
+      * No snapshot trigger → keep raw. Could be the spawn race window
+        (channel not yet bound, no snapshot yet) or a true crash with
+        no terminal event. Without snapshot evidence we cannot
+        distinguish; ``mark_stale_running`` will flip to idle/completed
+        on the next backend restart.
+
+    Probe exception → keep raw (don't invent a state from a failed
+    probe).
+    """
+    raw = (record.get("status") or "unknown")
+    # Terminal / overlay states are authoritative — never second-guess.
+    if raw in {"completed", "error", "killed", "failed", "cancelled",
+               "paused", "timeout"}:
+        return raw
+    # Anything outside the mutable set is unknown to the helper — defer
+    # to whatever the writer chose.
+    if raw not in {"running", "starting", "resumed", "idle", "pending",
+                   "unknown"}:
+        return raw
+
+    agent_name = record.get("agent_name") or record.get("role") or ""
+    if not agent_name:
+        return raw
+
+    # Probe channel liveness via connect (not just file-stat — orphan
+    # sock files from SIGKILL'd processes would otherwise lie).
+    channel_alive: bool | None
+    try:
+        from fast_agent.spawn.agent_channel import AgentChannel
+        channel_alive = AgentChannel.is_alive(agent_name)
+    except Exception:
+        channel_alive = None
+
+    # Latest snapshot — trigger + created_at, written directly by the
+    # subprocess to SQLite (independent of bridge health).
+    latest_trigger: str | None = None
+    snapshot_ts: float | None = None
+    if snapshots_db_path:
+        try:
+            with sqlite3.connect(snapshots_db_path, timeout=0.5) as conn:
+                row = conn.execute(
+                    "SELECT trigger, created_at FROM agent_context_snapshots "
+                    "WHERE agent_name = ? ORDER BY created_at DESC "
+                    "LIMIT 1",
+                    (agent_name,),
+                ).fetchone()
+                if row:
+                    latest_trigger = row[0]
+                    try:
+                        snapshot_ts = float(row[1]) if row[1] is not None else None
+                    except (TypeError, ValueError):
+                        snapshot_ts = None
+        except sqlite3.Error:
+            pass
+
+    lifecycle = (record.get("lifecycle") or "").lower()
+
+    if channel_alive is True:
+        if latest_trigger in {"task_complete", "idle"}:
+            # Disambiguate "fresh idle" from "stale snapshot during
+            # active turn". The bridge bumps ``last_active_at`` on every
+            # LLM-side event; the subprocess writes the idle snapshot
+            # AT THE END of a turn. If the snapshot is newer than the
+            # last activity event we know the subprocess has settled.
+            last_active = record.get("last_active_at") or 0.0
+            try:
+                last_active = float(last_active)
+            except (TypeError, ValueError):
+                last_active = 0.0
+            if snapshot_ts is None or snapshot_ts >= last_active:
+                return "idle"
+        # No fresh-idle evidence → trust raw (likely mid-LLM-call).
+        return raw
+
+    if channel_alive is False:
+        if latest_trigger == "error":
+            return "error"
+        if latest_trigger in {"task_complete", "idle"}:
+            # Canonical rule (matches spawn_progress_bridge + mark_stale_running):
+            # resumable agents go idle (respawnable); oneshot complete for good.
+            return "completed" if lifecycle == "oneshot" else "idle"
+        # Channel dead AND no snapshot evidence. Two indistinguishable
+        # scenarios — fresh-spawn race (channel about to bind) vs.
+        # silent crash. Trust raw; backend-restart cleanup will reconcile.
+        return raw
+
+    # Probe inconclusive (exception).
+    return raw
+
+
+def _snapshots_db_path() -> str | None:
+    """Resolve the path to the SQLite DB that holds ``agent_context_snapshots``.
+
+    Uses the same env var the spawn registry uses so both sides agree.
+    """
+    p = os.environ.get("SPAWN_REGISTRY_DB", "data/jarvis.db")
+    full = Path(p).resolve()
+    return str(full) if full.exists() else None
 
 
 _default_model_cache: str | None = None
@@ -394,10 +547,17 @@ async def list_agents(include_completed: bool = False):
             
             seen_names[agent_name] = (best_run_id, best_record)
         
+        # Resolve snapshot DB path once for the whole loop — avoids
+        # re-running Path.resolve() per agent.
+        _snap_db = _snapshots_db_path()
+
         for run_id, record in seen_names.values():
             agent_name = record.get("agent_name", record.get("role", "agent"))
-            status = record.get("status", "unknown")
-            
+            # Multi-signal status (channel sock + snapshot trigger) instead
+            # of trusting the bridge-fed DB field alone. See
+            # ``_compute_effective_status`` for the decision tree.
+            status = _compute_effective_status(record, snapshots_db_path=_snap_db)
+
             role = record.get("role", "")
             icon = "smart_toy"
             if "PM" in role:
@@ -987,20 +1147,22 @@ async def delete_team(team_name: str):
         raise HTTPException(status_code=404, detail=f"Team '{team_name}' not found")
     
     workspaces_root = project_root / ".runtime" / "data" / "workspaces"
-    
-    # ── 3. Scan session JSON files to find matching session_ids by team_name ──
-    # Session files store team_name inside JSON. Workspace dirs use template name
-    # (e.g. "agile-team_{sid}") not team_name, so we must scan session content.
-    sessions_dir = workspaces_root / "team_sessions"
-    if sessions_dir.is_dir():
-        for session_file in sessions_dir.glob("*.json"):
-            try:
-                session_data = _json.loads(session_file.read_text())
-                if session_data.get("team_name") == team_name:
-                    session_ids.add(session_file.stem)
-            except Exception:
-                continue
-    
+
+    # ── 3. Find session_ids that belong to this team (SoT = TeamSessionStore) ──
+    # Workspace dirs use template name (e.g. "agile-team_{sid}") not team_name,
+    # so we must look up sessions by team_name from the canonical store. The
+    # ``team_sessions`` data lives in SQLite (fast-agent's TeamSessionStore);
+    # there is no filesystem JSON copy any more — earlier versions of this
+    # route scanned a non-existent ``workspaces/team_sessions/*.json`` dir,
+    # which always matched zero files and silently leaked rows.
+    try:
+        from fast_agent.spawn.team_spawner import list_team_sessions as _list_team_sessions
+        for sess in _list_team_sessions():
+            if sess.get("team_name") == team_name and sess.get("session_id"):
+                session_ids.add(sess["session_id"])
+    except Exception as e:
+        logger.warning("[AGENTS API] team_sessions lookup error: %s", e)
+
     # ── 4. Remove workspace dirs (match by session_id suffix, not team_name) ──
     # Dirs are named "{template}_{session_id}", e.g. "agile-team_6d85b825"
     if workspaces_root.is_dir():
@@ -1028,16 +1190,26 @@ async def delete_team(team_name: str):
                 except Exception as e:
                     logger.warning("Failed to remove messages %s: %s", msg_dir, e)
     
-    # ── 6. Remove team session files ──
-    if sessions_dir.is_dir():
-        for sid in session_ids:
-            session_file = sessions_dir / f"{sid}.json"
-            if session_file.exists():
-                try:
-                    session_file.unlink()
-                    cleanup_log.append(f"session {sid}.json")
-                except Exception as e:
-                    logger.warning("Failed to remove session file %s: %s", session_file, e)
+    # ── 6. Drop team sessions from the canonical SoT ──
+    # Single owner of ``team_sessions`` (SQLite + in-memory cache) is
+    # ``fast_agent.spawn.team_spawner``. Going through its public delete
+    # function keeps the cache consistent with the row write — direct
+    # SQL from this route would leave the cached TeamSession objects
+    # stale, which used to surface as "Jarvis spawned a team that
+    # immediately self-resumed an orphan session" (incident 2026-05-10).
+    try:
+        from fast_agent.spawn.team_spawner import (
+            delete_team_session as _ts_delete,
+            delete_team_sessions_by_team_name as _ts_delete_by_name,
+        )
+        ts_deleted = sum(1 for sid in session_ids if _ts_delete(sid))
+        # Belt-and-braces: catch sessions that weren't in the resolved
+        # ``session_ids`` set but carry our team_name in their stored data.
+        ts_deleted += _ts_delete_by_name(team_name)
+        if ts_deleted:
+            cleanup_log.append(f"{ts_deleted} team_session(s)")
+    except Exception as e:
+        logger.warning("[AGENTS API] team_sessions cleanup error: %s", e)
     
     # ── 7. Clean up DB activities ──
     try:
@@ -1055,7 +1227,40 @@ async def delete_team(team_name: str):
             db.close()
     except Exception:
         pass
-    
+
+    # ── 7b. Clean up team_completion notifications ──
+    # Without this, a stale notification keyed on the team_name lingers
+    # in /notifications even after the user deletes the team — and
+    # blocks the dedupe of the next team that reuses the same name.
+    # (See 2026-05-14 toolset-self-audit incident.) We match both
+    # ``team_name`` (covers pre-2026-05-14 rows that lack session_id)
+    # and the resolved ``session_ids`` (covers post-fix rows that key
+    # dedupe by session).
+    try:
+        from core.database import NotificationModel, get_db_session
+        db = get_db_session()
+        try:
+            q = db.query(NotificationModel).filter(
+                NotificationModel.metadata_json.contains('"source": "team_completion"'),
+            )
+            patterns = [f'"team_name": "{team_name}"']
+            patterns.extend(f'"session_id": "{sid}"' for sid in session_ids)
+            from sqlalchemy import or_
+            q = q.filter(
+                or_(*(NotificationModel.metadata_json.contains(p) for p in patterns))
+            )
+            n_dropped = q.delete(synchronize_session=False)
+            db.commit()
+            if n_dropped:
+                cleanup_log.append(f"{n_dropped} notification(s)")
+        except Exception as e:
+            db.rollback()
+            logger.warning("[AGENTS API] notification cleanup error: %s", e)
+        finally:
+            db.close()
+    except Exception:
+        pass
+
     # (Context snapshots cleaned by lifecycle hook in spawn_progress_bridge._handle_removal)
     
     # ── 8. Remove agent card files ──
@@ -1111,6 +1316,45 @@ async def list_all_skills():
 
 
 # ─── Agent Activity Endpoints ─────────────────────────────────────────────────────
+
+
+@router.get("/{name}/messages", dependencies=[Depends(verify_api_key)])
+async def get_agent_messages(name: str, since: int = 0, limit: int = 200):
+    """Return PromptMessageExtended turns from agent.message_history.
+
+    Source of truth for the Team Monitor v2 UI. Each turn is one item:
+    ``{turn_idx, role, message: <PromptMessageExtended dump>}``.
+    Large text blocks are truncated — use ``/turns/{turn_idx}/full`` for
+    untruncated content when the user expands a turn.
+
+    Query params:
+      ``since`` — first turn_idx to include (used for delta fetch on
+                  reconnect; clients pass the highest turn_idx they have).
+      ``limit`` — cap on returned turns (latest ``limit`` if history is
+                  longer). Default 200; clamped to a sane range.
+    """
+    from services.agent_message_stream import list_agent_messages
+
+    if limit <= 0 or limit > 500:
+        limit = 200
+    return list_agent_messages(name, since=max(0, since), limit=limit)
+
+
+@router.get("/{name}/turns/{turn_idx}/full", dependencies=[Depends(verify_api_key)])
+async def get_agent_turn_full(name: str, turn_idx: int):
+    """Return the untruncated PromptMessageExtended for one turn.
+
+    Called when a user clicks "Show full" on a truncated content block.
+    """
+    from services.agent_message_stream import get_agent_turn_full as _get_full
+
+    result = _get_full(name, turn_idx)
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Turn {turn_idx} not found for agent '{name}'",
+        )
+    return result
 
 
 @router.get("/activities/recent", dependencies=[Depends(verify_api_key)])

@@ -173,17 +173,54 @@ class SpawnProgressBridge:
             "[SPAWN] [%s] %s | %s",
             agent_name,
             event_type_str,
-            json.dumps(data, ensure_ascii=False, default=str),
+            json.dumps(data, ensure_ascii=False, default=str)[:500],
         )
 
-        # 2. Persist to agent_activities DB (always, regardless of active request)
+        # 1b. message_turn — forward directly to activity stream after trimming
+        # large content blocks. Source-of-truth shape comes from the subprocess
+        # ``child_agent.message_history``; we don't synthesize anything here.
+        if event_type_str == "message_turn":
+            self._forward_message_turn(agent_name, data, event_data)
+            return
+
+        # 2. Persist to agent_activities DB (always, regardless of active request).
+        # Kept for the legacy AgentDetail "Activity" tab and audit log; no
+        # current monitor UI reads it as primary source.
         self._persist_activity(agent_name, event_type_str, data, event_data)
 
-        # 3. Broadcast via ActivityStreamManager (global SSE for monitoring)
-        self._broadcast_activity(agent_name, event_type_str, data, event_data)
+        # 3. Broadcast via ActivityStreamManager (global SSE for monitoring).
+        # tool_call / tool_result / response are intentionally NOT broadcast —
+        # the message_turn channel (handled at top of this function) is the
+        # canonical source for those. We still broadcast lifecycle events
+        # (started/idle/error/agent_paused/agent_resumed/...) and "thinking"
+        # so the running-status pulse appears between turns.
+        if event_type_str not in {"tool_call", "tool_result", "response"}:
+            self._broadcast_activity(agent_name, event_type_str, data, event_data)
 
         # 4. Upsert spawn_records on lifecycle events
         self._upsert_spawn_record(agent_name, event_type_str, data, event_data)
+
+        # 4·R2. Refresh ``last_active_at`` whenever the agent does
+        # something concrete (LLM call or tool round-trip). Lets
+        # ``get_team_status`` distinguish "agent X stuck for 60s" from
+        # "agent X actively working" — the visibility gap that left PM
+        # in incident b61af7db idling out after seeing identical
+        # ``running`` snapshots.
+        if (
+            run_id
+            and self._registry_db
+            and event_type_str in {"thinking", "response", "tool_call", "tool_result"}
+        ):
+            try:
+                import time as _time
+                self._registry_db.upsert_record(
+                    run_id, {"last_active_at": _time.time()}
+                )
+            except Exception as _exc:
+                logger.debug(
+                    "[REGISTRY] last_active_at update failed for %s: %s",
+                    agent_name, _exc,
+                )
 
         # 4a. Check team completion — notify when ALL team agents are done
         if event_type_str in ("result", "idle", "agent_completed"):
@@ -320,6 +357,49 @@ class SpawnProgressBridge:
                 db.close()
         except Exception as e:
             logger.warning("Could not import DB for activity persistence: %s", e)
+
+    def _forward_message_turn(self, agent_name: str, data: dict, raw: dict) -> None:
+        """Forward a subprocess ``message_turn`` event to the activity stream.
+
+        The subprocess sends the FULL PromptMessageExtended dump; we cache
+        that full payload, then apply truncation before broadcasting so
+        SSE chunks stay reasonable on the wire. The cache lets the
+        ``/messages`` and ``/turns/{idx}/full`` endpoints serve the
+        agent's history after the subprocess exits — same dual-track
+        contract used for in-process clones.
+        """
+        try:
+            import json as _json
+            import time
+            from services.activity_stream import activity_stream_manager
+            from services.agent_message_stream import (
+                trim_message_for_stream,
+                _record_recent_turn,
+            )
+
+            full = data.get("message") or {}
+            turn_idx = data.get("turn_idx")
+            if isinstance(turn_idx, int):
+                _record_recent_turn(agent_name, turn_idx, full)
+
+            try:
+                trimmed = trim_message_for_stream(_json.loads(_json.dumps(full)))
+            except Exception:
+                trimmed = full
+
+            activity_stream_manager.broadcast({
+                "agent_name": agent_name,
+                "event_type": "message_turn",
+                "run_id": raw.get("run_id") or data.get("run_id"),
+                "timestamp": raw.get("timestamp") or time.time(),
+                "data": {
+                    "turn_idx": turn_idx,
+                    "role": data.get("msg_role") or trimmed.get("role"),
+                    "message": trimmed,
+                },
+            })
+        except Exception as e:
+            logger.warning("[message_stream] forward failed for %s: %s", agent_name, e)
 
     def _broadcast_activity(self, role: str, event_type_str: str, data: dict, raw: dict) -> None:
         """Broadcast event via ActivityStreamManager for realtime monitoring."""
@@ -731,6 +811,123 @@ class SpawnProgressBridge:
                 agent_name, total_connected, total_configured,
             )
 
+    # ── Active-meeting awareness for completion notifications ──
+
+    @staticmethod
+    def _active_meetings_with_members(member_names: set[str]) -> list[dict]:
+        """Return active meetings (``ended=0``) whose participants overlap
+        with ``member_names``.
+
+        Used by both completion-notification paths to suppress the misleading
+        "team finished" message when the team is actually idled mid-meeting
+        (incident b61af7db: PM saw "All members finished | No output" while
+        meeting was hanging on a stuck speaker).
+
+        Returns a list of dicts with the fields needed for messaging:
+        ``meeting_id``, ``agenda``, ``current_speaker``, ``current_round``,
+        ``max_rounds``, ``last_action_at``, ``last_action_ago``,
+        ``last_3_turns``. Empty list if no overlap or DB unavailable.
+        """
+        import sqlite3 as _sqlite3
+        import time as _time
+
+        if not member_names:
+            return []
+
+        db_path = os.environ.get("SPAWN_REGISTRY_DB", "data/jarvis.db")
+        results: list[dict] = []
+
+        try:
+            with _sqlite3.connect(db_path, timeout=5) as conn:
+                conn.row_factory = _sqlite3.Row
+                rows = conn.execute(
+                    "SELECT meeting_id, config_json, state_json "
+                    "FROM meetings "
+                    "WHERE json_extract(state_json, '$.ended') = 0"
+                ).fetchall()
+
+                for r in rows:
+                    try:
+                        config = json.loads(r["config_json"]) if r["config_json"] else {}
+                        state = json.loads(r["state_json"]) if r["state_json"] else {}
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+
+                    parts = state.get("participants") or []
+                    if not (set(parts) & member_names):
+                        continue
+
+                    current_turn = state.get("current_turn", 0)
+                    speaker = parts[current_turn] if current_turn < len(parts) else "(unknown)"
+
+                    last_at = state.get("turn_started_at") or 0.0
+                    ago_sec = max(0, int(_time.time() - last_at)) if last_at else None
+
+                    # Pull last 3 turns for context preview
+                    turn_rows = conn.execute(
+                        "SELECT agent, message, round FROM meeting_transcripts "
+                        "WHERE meeting_id = ? ORDER BY id DESC LIMIT 3",
+                        (r["meeting_id"],),
+                    ).fetchall()
+                    last_3 = [
+                        {
+                            "agent": tr["agent"],
+                            "round": tr["round"],
+                            "message_preview": (tr["message"] or "")[:160].replace("\n", " "),
+                        }
+                        for tr in reversed(turn_rows)
+                    ]
+
+                    results.append({
+                        "meeting_id": r["meeting_id"],
+                        "agenda": config.get("agenda", ""),
+                        "current_speaker": speaker,
+                        "current_round": state.get("current_round", 1),
+                        "max_rounds": state.get("max_rounds", 0),
+                        "last_action_at": last_at,
+                        "last_action_ago_sec": ago_sec,
+                        "last_3_turns": last_3,
+                    })
+        except Exception as exc:
+            logger.debug("[ACTIVE_MEETING] Lookup failed: %s", exc)
+            return []
+
+        return results
+
+    @staticmethod
+    def _format_active_meetings_warning(active: list[dict]) -> str:
+        """Render the meeting-stalled warning block (markdown).
+
+        Caller embeds this into the team-completion message so the
+        orchestrator (PM) sees actionable state — bottleneck speaker,
+        time since last turn, last 3 turns — instead of "No output".
+        """
+        if not active:
+            return ""
+
+        lines = ["", "⚠️ **Active meetings detected — team is NOT done:**", ""]
+        for m in active:
+            ago_sec = m.get("last_action_ago_sec")
+            ago_str = f"{ago_sec}s ago" if ago_sec is not None else "(unknown)"
+            lines.append(
+                f"- Meeting `{m['meeting_id']}` — round {m['current_round']}/{m['max_rounds']}, "
+                f"waiting on **{m['current_speaker']}** (last action: {ago_str})"
+            )
+            agenda = (m.get("agenda") or "").strip()
+            if agenda:
+                lines.append(f"  - Agenda: {agenda[:120]}")
+            for t in m.get("last_3_turns", []):
+                lines.append(
+                    f"  - [{t['agent']} R{t['round']}] {t['message_preview']}"
+                )
+        lines.append("")
+        lines.append(
+            "Action: review transcript and either resume the bottleneck "
+            "speaker, end the meeting via verdict, or use ``leave_meeting`` "
+            "to release stuck participants."
+        )
+        return "\n".join(lines)
+
     # ── Team Completion Notification ──
 
     def _check_team_completion(self, trigger_agent: str, raw: dict) -> None:
@@ -754,8 +951,19 @@ class SpawnProgressBridge:
         if not team_name:
             return  # Solo agent, not part of a team
 
-        # Query ALL agents in this team from DB
-        members = self._registry_db.find_by_team_name(team_name)
+        # Restrict to members of THIS session — team_name is reused across
+        # spawns ("toolset-self-audit" may be re-run daily), so filtering
+        # by team_name alone would mix yesterday's idle agents into
+        # today's completion check and dedupe against an unrelated past
+        # notification. The session_id is the unique handle.
+        session_id = record.get("session_id", "")
+        if not session_id:
+            return  # Pre-session agents (very old rows) — skip safely
+
+        members = [
+            m for m in self._registry_db.find_by_team_name(team_name)
+            if m.get("session_id") == session_id
+        ]
         if not members:
             return
 
@@ -769,8 +977,10 @@ class SpawnProgressBridge:
         if not all_done:
             return
 
-        # Dedupe: skip if notification already exists for this team
-        if self._has_team_notification(team_name):
+        # Dedupe per-session, not per-team-name: a re-spawn of the same
+        # named team is a brand new completion event and deserves its
+        # own notification.
+        if self._has_team_notification(session_id):
             return
 
         # Find orchestrator result
@@ -778,7 +988,10 @@ class SpawnProgressBridge:
         result_text = orchestrator.get("result", "") if orchestrator else ""
         orch_name = orchestrator.get("agent_name", team_name) if orchestrator else team_name
 
-        self._create_team_notification(team_name, orch_name, result_text, spawned)
+        self._create_team_notification(
+            team_name, orch_name, result_text, spawned,
+            session_id=session_id,
+        )
 
     def _find_orchestrator(self, members: list[dict]) -> dict | None:
         """Find the orchestrator agent from team members.
@@ -794,15 +1007,77 @@ class SpawnProgressBridge:
         members_sorted = sorted(members, key=lambda m: m.get("started_at", 0))
         return members_sorted[0] if members_sorted else None
 
-    def _has_team_notification(self, team_name: str) -> bool:
-        """Dedupe: check if a team_completion notification already exists."""
+    def _compose_team_result_body(
+        self, *, team_name: str, agent_name: str, result: str
+    ) -> tuple[str, str]:
+        """Render notification (preview, content) from the orchestrator's
+        ``spawn_registry.result``.
+
+        Fails loud when the field is empty: emits an ERROR log so the
+        gap is visible in ops, and renders a notification body that
+        explicitly states which agent and run is missing data. We do
+        NOT substitute a generic "Team done" placeholder — that hides
+        the bug from the user. The proper data source is the per-turn
+        write hook in ``services.context_persistence.save_agent_context``;
+        if you see this body, that hook did not fire for this run.
+        """
+        if result and result.strip():
+            preview = result[:200].replace("\n", " ").strip()
+            return preview, result
+
+        logger.error(
+            "[TEAM_NOTIFY] Orchestrator result MISSING for team=%s agent=%s — "
+            "spawn_registry.result was empty at team_completion. Expected the "
+            "context_persistence write hook to have mirrored the last assistant "
+            "text on the agent's final turn. Check that save_agent_context ran "
+            "for this run and that the agent produced text content (not only "
+            "tool_calls) on its last turn.",
+            team_name, agent_name,
+        )
+        preview = (
+            f"⚠️ BUG: orchestrator result missing for {agent_name} "
+            f"(team {team_name}) — see logs"
+        )
+        content = (
+            f"## ⚠️ Orchestrator result missing\n\n"
+            f"- **Team:** `{team_name}`\n"
+            f"- **Orchestrator:** `{agent_name}`\n\n"
+            f"`spawn_registry.result` was empty when the team-completion "
+            f"notification fired. The notification creator does not fall "
+            f"back to other sources (per project policy: fail loud, no "
+            f"silent fallbacks).\n\n"
+            f"### Likely causes\n"
+            f"- The agent's last turn was a tool_call without any "
+            f"assistant text content.\n"
+            f"- `services.context_persistence.save_agent_context` did not "
+            f"run for this run (snapshot trigger missed).\n"
+            f"- `spawn_registry` row for this run was missing when the "
+            f"snapshot hook tried to mirror the result.\n\n"
+            f"Open the agent's latest snapshot in `agent_context_snapshots` "
+            f"to recover the response manually."
+        )
+        return preview, content
+
+    def _has_team_notification(self, session_id: str) -> bool:
+        """Dedupe: check if a team_completion notification already
+        exists FOR THIS SESSION.
+
+        Keyed by ``session_id`` (not ``team_name``): a reusable team
+        name ("toolset-self-audit") spawned twice on different days
+        produces two distinct completion events — each deserves its
+        own notification. Pre-2026-05-14 this dedupe was per
+        ``team_name`` and silently swallowed the second day's
+        notification.
+        """
+        if not session_id:
+            return False
         try:
             from core.database import NotificationModel, get_db_session
 
             db = get_db_session()
             try:
                 existing = db.query(NotificationModel).filter(
-                    NotificationModel.metadata_json.contains(f'"team_name": "{team_name}"'),
+                    NotificationModel.metadata_json.contains(f'"session_id": "{session_id}"'),
                     NotificationModel.metadata_json.contains('"source": "team_completion"'),
                 ).first()
                 return existing is not None
@@ -813,9 +1088,17 @@ class SpawnProgressBridge:
             return False
 
     def _create_team_notification(
-        self, team_name: str, agent_name: str, result: str, members: list[dict]
+        self, team_name: str, agent_name: str, result: str, members: list[dict],
+        *, session_id: str = "",
     ) -> None:
-        """Create notification + broadcast SSE for team completion."""
+        """Create notification + broadcast SSE for team completion.
+
+        If any team member is still a participant in an active meeting,
+        the notification is reframed from "Team finished" to "Team idled
+        with active meeting" — this surfaces meeting state (bottleneck
+        speaker, last action time, recent turns) so the user can
+        intervene instead of believing the team is done.
+        """
         try:
             import time
             from core.database import NotificationModel, get_db_session
@@ -824,12 +1107,36 @@ class SpawnProgressBridge:
             total = len(members)
             errors = sum(1 for m in members if m.get("status") == "error")
 
-            title = f"✅ Team {team_name} hoàn thành ({total} agents)"
-            if errors:
-                title = f"⚠️ Team {team_name} hoàn thành ({errors}/{total} lỗi)"
+            # Detect "idled mid-meeting" — flips the framing of this notification.
+            member_names = {
+                m.get("agent_name", "") for m in members if m.get("agent_name")
+            }
+            active_meetings = self._active_meetings_with_members(member_names)
 
-            preview = result[:200].replace("\n", " ").strip() if result else "Team đã hoàn thành công việc."
-            content = result or "Không có kết quả chi tiết từ orchestrator."
+            if active_meetings:
+                meeting_count = len(active_meetings)
+                title = (
+                    f"⏳ Team {team_name} idled with {meeting_count} active "
+                    f"meeting{'s' if meeting_count > 1 else ''} — needs intervention"
+                )
+                preview = (
+                    f"{meeting_count} meeting(s) still open — "
+                    f"last waiting on {active_meetings[0]['current_speaker']}"
+                )
+                content = (
+                    (result or "(no orchestrator result)")
+                    + self._format_active_meetings_warning(active_meetings)
+                )
+            elif errors:
+                title = f"⚠️ Team {team_name} hoàn thành ({errors}/{total} lỗi)"
+                preview, content = self._compose_team_result_body(
+                    team_name=team_name, agent_name=agent_name, result=result,
+                )
+            else:
+                title = f"✅ Team {team_name} hoàn thành ({total} agents)"
+                preview, content = self._compose_team_result_body(
+                    team_name=team_name, agent_name=agent_name, result=result,
+                )
 
             db = get_db_session()
             try:
@@ -844,6 +1151,7 @@ class SpawnProgressBridge:
                     metadata_json=json.dumps({
                         "agent": agent_name,
                         "team_name": team_name,
+                        "session_id": session_id,
                         "total_agents": total,
                         "errors": errors,
                         "source": "team_completion",
@@ -931,12 +1239,26 @@ class SpawnProgressBridge:
             return  # Already notified for this exact state
         self._orch_notify_hash[team_name] = status_hash
 
-        # 6. Build concise status report
+        # 6. Build status report — framing depends on whether the team is
+        # idled mid-meeting (b61af7db incident: "All finished | No output"
+        # was misleading because the team had stalled inside a meeting).
         status_icons = {
             "idle": "✅", "completed": "✅",
             "error": "❌", "timeout": "⏰", "cancelled": "🚫",
         }
-        lines = ["📋 **Team Status Update** — All members have finished.\n"]
+
+        member_names = {m.get("agent_name", "") for m in workers if m.get("agent_name")}
+        member_names.add(orch_name)
+        active_meetings = self._active_meetings_with_members(member_names)
+
+        if active_meetings:
+            header = (
+                f"⏳ **Team Status Update** — members are idle but {len(active_meetings)} "
+                f"meeting(s) still open. Team is NOT done."
+            )
+        else:
+            header = "📋 **Team Status Update** — All members have finished."
+        lines = [header, ""]
         lines.append("| Member | Status | Summary |")
         lines.append("|--------|--------|---------|")
         for m in workers:
@@ -950,7 +1272,10 @@ class SpawnProgressBridge:
             summary = summary.replace("\n", " ").replace("|", "/").strip()
             lines.append(f"| {name} | {icon} {status} | {summary} |")
 
-        lines.append("\nReview outputs and decide next actions.")
+        if active_meetings:
+            lines.append(self._format_active_meetings_warning(active_meetings))
+        else:
+            lines.append("\nReview outputs and decide next actions.")
         report = "\n".join(lines)
 
         # 7. Resolve messages_dir and send via MessageBus

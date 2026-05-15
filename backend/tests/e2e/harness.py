@@ -127,6 +127,13 @@ async def build_scripted_agent(
     """Build a ToolAgent whose LLM replays the given fixture.
 
     The agent is wired for in-process execution (no MCP server spawn).
+
+    ``tool_only=True`` keeps ``save_session_history`` (the after-turn hook
+    in fast-agent) from writing scripted runs into the host project's
+    ``.fast-agent/sessions/`` directory. Without it, every e2e test
+    leaks a real session and the chat UI fills up with rows like
+    "Run the kickoff for the audit project." — see hooks/session_history.py
+    line 39-40 for the early-return contract.
     """
     agent = ToolAgent(
         config=AgentConfig(
@@ -134,6 +141,7 @@ async def build_scripted_agent(
             instruction=instruction,
             servers=[],
             human_input=False,
+            tool_only=True,
         ),
         tools=list(tools),
         context=None,

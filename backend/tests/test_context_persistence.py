@@ -653,3 +653,150 @@ async def test_save_large_context_warns_but_saves(ctx_db):
 
     assert result is not None
     assert result > 0
+
+
+# ═══════════════════════════════════════════════
+# 9. Orchestrator-result mirror into spawn_registry
+#    (single source of truth for notification + get_team_result)
+# ═══════════════════════════════════════════════
+
+
+def _seed_spawn_registry_row(db_path: str, run_id: str, base_data: dict) -> None:
+    """Pre-create a spawn_registry row so the mirror hook can UPDATE it.
+
+    Real spawner writes this row at spawn time. Tests seed it directly so
+    the helper has a row to merge into.
+    """
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS spawn_registry (
+            run_id TEXT PRIMARY KEY,
+            data_json TEXT NOT NULL
+        )"""
+    )
+    conn.execute(
+        "INSERT OR REPLACE INTO spawn_registry (run_id, data_json) VALUES (?, ?)",
+        (run_id, json.dumps(base_data, ensure_ascii=False)),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _read_spawn_registry_row(db_path: str, run_id: str) -> dict | None:
+    conn = sqlite3.connect(db_path)
+    row = conn.execute(
+        "SELECT data_json FROM spawn_registry WHERE run_id = ?",
+        (run_id,),
+    ).fetchone()
+    conn.close()
+    return json.loads(row[0]) if row else None
+
+
+def test_extract_last_assistant_text_helper_walks_backwards():
+    """Helper returns the most recent assistant text turn, skipping
+    later user/tool turns and earlier assistant turns."""
+    from services.context_persistence import _extract_last_assistant_text
+
+    msgs = [
+        FakeMessage(role="assistant", text="early answer"),
+        FakeMessage(role="user", text="user follow-up"),
+        FakeMessage(role="assistant", text="LATEST ROLL-UP"),
+        FakeMessage(role="user", text="another user msg"),
+    ]
+    assert _extract_last_assistant_text(msgs) == "LATEST ROLL-UP"
+
+
+def test_extract_last_assistant_text_returns_empty_when_only_tool_calls():
+    """Assistant turns with no text content (only tool_calls in real
+    payloads) yield empty string — caller must NOT overwrite registry."""
+    from services.context_persistence import _extract_last_assistant_text
+
+    # Assistant turn with content=[] simulates tool_call-only turn
+    tool_only = FakeMessage(role="assistant", text="")
+    tool_only.content = []  # no text parts
+    user_msg = FakeMessage(role="user", text="hello")
+    assert _extract_last_assistant_text([user_msg, tool_only]) == ""
+
+
+def test_extract_last_assistant_text_returns_empty_for_no_assistant():
+    """Conversation with only user turns → empty."""
+    from services.context_persistence import _extract_last_assistant_text
+
+    assert _extract_last_assistant_text([FakeMessage(role="user", text="hi")]) == ""
+    assert _extract_last_assistant_text([]) == ""
+
+
+@pytest.mark.asyncio
+async def test_save_mirrors_last_assistant_text_into_spawn_registry(ctx_db):
+    """save_agent_context UPDATEs spawn_registry.data_json.result with
+    the agent's last assistant text — this is the write half of the
+    single-source-of-truth contract for orchestrator response."""
+    _seed_spawn_registry_row(
+        ctx_db, "run-mirror",
+        {"run_id": "run-mirror", "agent_name": "Morgan [PM]", "status": "running",
+         "result": "", "team_name": "demo-team"},
+    )
+
+    agent = FakeAgent(messages=[
+        FakeMessage(role="user", text="kickoff brief"),
+        FakeMessage(role="assistant", text="# Roll-up\nVerdict: PARTIAL"),
+    ])
+    with patch(_TO_JSON_PATCH, return_value='[{"m":1}]'):
+        from services.context_persistence import save_agent_context
+
+        snap_id = await save_agent_context(agent, "run-mirror", "idle")
+    assert snap_id is not None
+
+    row = _read_spawn_registry_row(ctx_db, "run-mirror")
+    assert row is not None
+    assert row["result"] == "# Roll-up\nVerdict: PARTIAL"
+    assert "result_updated_at" in row
+    # Other fields preserved (merge-upsert, not full replace)
+    assert row["agent_name"] == "Morgan [PM]"
+    assert row["team_name"] == "demo-team"
+
+
+@pytest.mark.asyncio
+async def test_save_does_not_overwrite_existing_result_with_empty(ctx_db):
+    """If the latest turn is tool-call only (no assistant text), the
+    helper returns "" and we MUST leave registry.result untouched —
+    otherwise a successful roll-up could be wiped by the next idle
+    turn that happens to be a tool call."""
+    _seed_spawn_registry_row(
+        ctx_db, "run-keep",
+        {"run_id": "run-keep", "result": "PREVIOUS ROLL-UP TEXT"},
+    )
+
+    tool_only = FakeMessage(role="assistant", text="")
+    tool_only.content = []
+    agent = FakeAgent(messages=[FakeMessage(role="user", text="ping"), tool_only])
+    with patch(_TO_JSON_PATCH, return_value='[{"m":1}]'):
+        from services.context_persistence import save_agent_context
+
+        await save_agent_context(agent, "run-keep", "idle")
+
+    row = _read_spawn_registry_row(ctx_db, "run-keep")
+    assert row is not None
+    assert row["result"] == "PREVIOUS ROLL-UP TEXT"
+
+
+@pytest.mark.asyncio
+async def test_save_skips_mirror_when_spawn_registry_row_missing(ctx_db, caplog):
+    """Race: snapshot fires before spawner has written the registry row.
+    Helper must log a warning and skip — never insert a half-populated
+    row that breaks the spawner's merge-upsert on first real write."""
+    # NO seed — spawn_registry row absent.
+    agent = FakeAgent(messages=[FakeMessage(role="assistant", text="hello")])
+    with patch(_TO_JSON_PATCH, return_value='[{"m":1}]'), \
+            caplog.at_level("WARNING"):
+        from services.context_persistence import save_agent_context
+
+        snap_id = await save_agent_context(agent, "run-noreg", "idle")
+
+    # Snapshot still saved
+    assert snap_id is not None
+    # No registry row was created by the mirror helper
+    row = _read_spawn_registry_row(ctx_db, "run-noreg")
+    assert row is None
+    # Warning surfaced loud — easy to grep in ops logs
+    assert any("spawn_registry row missing" in r.message for r in caplog.records)
