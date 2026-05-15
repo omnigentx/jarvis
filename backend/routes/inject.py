@@ -203,6 +203,41 @@ async def _inject_via_message_bus(
 
         logger.info("[INJECT] MessageBus: Dashboard → %s (queued)", agent_name)
 
+        # ── Wake agent NOW so it picks up the inbox message immediately ──
+        # Without this, the agent only sees the message on the next
+        # ``before_llm_call`` hook tick — which never fires if the agent
+        # is idle with no active tool loop. Result: the inject sits in
+        # the inbox forever and the dashboard sees no activity. Path B
+        # and Path C both kick off a fresh LLM call as part of their
+        # flow; Path A relies on the alive agent's inbox watcher, so we
+        # MUST send an explicit ``wake`` signal here for parity.
+        try:
+            from fast_agent.spawn.servers._team_helpers import auto_wake_if_idle
+            auto_wake_if_idle(agent_name)
+        except Exception as _wake_exc:
+            # Wake is best-effort — failure here doesn't fail the inject
+            # itself (the message is already in the inbox). Log loudly so
+            # we notice when the wake path regresses.
+            logger.warning(
+                "[INJECT] MessageBus: auto_wake_if_idle(%s) failed: %s. "
+                "Message is queued in inbox but agent will not start "
+                "processing until next external trigger.",
+                agent_name, _wake_exc,
+            )
+
+        # ── Broadcast ``started`` so the dashboard reflects active state ──
+        # Mirrors Path B (resume) and Path C (generate) which already do
+        # this. Without it, ``agent.status`` stays as ``idle`` until the
+        # spawned agent emits its first ``thinking`` / ``tool_call`` /
+        # ``message_turn`` event — a multi-second gap where the user
+        # sees no feedback after clicking submit.
+        activity_stream_manager.broadcast({
+            "event_type": "started",
+            "agent_name": agent_name,
+            "message": f"Processing inject: {message[:60]}{'…' if len(message) > 60 else ''}",
+            "timestamp": time.time(),
+        })
+
         return InjectResponse(
             status="queued",
             agent_name=agent_name,
@@ -319,6 +354,10 @@ async def _inject_via_generate(
         progress_hooks = create_progress_hooks(request_id)
 
         from services.pause_manager import pause_manager
+        # Tag every LLM call inside this inject with ``request_id`` so the
+        # always-on token-persistence hook can correlate token_usage rows.
+        from services.sse_progress import current_run_id
+        _run_token = current_run_id.set(request_id)
 
         for name, ag in agent_app._agents.items():
             original_hooks[name] = getattr(ag, 'tool_runner_hooks', None)
@@ -339,6 +378,7 @@ async def _inject_via_generate(
             for name, ag in agent_app._agents.items():
                 original = original_hooks.get(name)
                 ag.tool_runner_hooks = original if original else None
+            current_run_id.reset(_run_token)
 
         file_count = len(files_data) if files_data else 0
         logger.info(
