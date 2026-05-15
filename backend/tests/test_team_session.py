@@ -5,7 +5,7 @@ Covers:
 - create_team_store(): RuntimeError without SPAWN_REGISTRY_DB
 - TeamSession: project_brief required, from_dict/to_dict roundtrip, strict KeyError
 - get_team_session(): cache hit, DB fallback, not-found, corrupt-delete
-- list_team_sessions(): store + cache merged, in-memory authoritative
+- list_team_sessions(): reads SQLite only (cache removed 2026-05-14)
 - spawn_team_members_for_session(): ValueError when brief and first_task both empty
 """
 
@@ -226,30 +226,20 @@ class TestTeamSession:
 
 
 class TestGetTeamSession:
-    def test_returns_from_cache(self, monkeypatch):
-        import fast_agent.spawn.team_spawner as ts_module
-        from fast_agent.spawn.team_spawner import TeamSession
+    """``get_team_session`` reads SQLite on every call — there is no
+    in-memory cache. The original cache was a perf optimisation that
+    silently went stale when a sibling subprocess upserted (see the
+    2026-05-13 incident below), so it was removed entirely; the store
+    is now the only source of truth.
+    """
 
-        session = TeamSession("ses-cached", {}, Path("/tmp"), "brief")
-        monkeypatch.setattr(ts_module, "_team_sessions", {"ses-cached": session})
-
-        store_mock = MagicMock()
-        monkeypatch.setattr(ts_module, "_team_store", store_mock)
-
-        from fast_agent.spawn.team_spawner import get_team_session
-        result = get_team_session("ses-cached")
-
-        assert result is session
-        store_mock.get.assert_not_called()  # cache hit, no DB access
-
-    def test_falls_back_to_db(self, tmp_path, monkeypatch):
+    def test_reads_from_db(self, tmp_path, monkeypatch):
+        """Stored session deserialises into a fresh TeamSession."""
         import fast_agent.spawn.team_spawner as ts_module
         from fast_agent.spawn.registry_backends import TeamSessionStore
 
         store = TeamSessionStore(str(tmp_path / "test.db"))
         store.upsert("ses-db", _minimal_session_dict(session_id="ses-db"))
-
-        monkeypatch.setattr(ts_module, "_team_sessions", {})
         monkeypatch.setattr(ts_module, "_team_store", store)
 
         from fast_agent.spawn.team_spawner import get_team_session
@@ -258,14 +248,12 @@ class TestGetTeamSession:
         assert result is not None
         assert result.session_id == "ses-db"
         assert result.project_brief == "Build a REST API"
-        assert "ses-db" in ts_module._team_sessions
 
     def test_returns_none_when_not_found(self, tmp_path, monkeypatch):
         import fast_agent.spawn.team_spawner as ts_module
         from fast_agent.spawn.registry_backends import TeamSessionStore
 
         store = TeamSessionStore(str(tmp_path / "test.db"))
-        monkeypatch.setattr(ts_module, "_team_sessions", {})
         monkeypatch.setattr(ts_module, "_team_store", store)
 
         from fast_agent.spawn.team_spawner import get_team_session
@@ -279,8 +267,6 @@ class TestGetTeamSession:
         corrupt = {"session_id": "ses-bad", "template": {}, "workspace": "/tmp",
                    "agents": {}, "sprint_status": "pending"}
         store.upsert("ses-bad", corrupt)
-
-        monkeypatch.setattr(ts_module, "_team_sessions", {})
         monkeypatch.setattr(ts_module, "_team_store", store)
 
         from fast_agent.spawn.team_spawner import get_team_session
@@ -288,6 +274,69 @@ class TestGetTeamSession:
 
         assert result is None
         assert store.get("ses-bad") is None
+
+    def test_cross_process_agents_visible_after_child_upsert(
+        self, tmp_path, monkeypatch
+    ):
+        """REGRESSION (2026-05-13 incident): Jarvis (parent) saw
+        ``1/1 agents done`` because its in-memory cache from the
+        initial spawn held only the orchestrator. Morgan (child) had
+        since spawned 6 members and upserted SQLite, but the parent's
+        cache never refreshed — and the notification + Jarvis tool
+        both reported a "completed" team that hadn't finished kickoff.
+
+        Post-refactor the cache is gone; every call reads SQLite,
+        so the parent automatically sees whatever the child wrote.
+        """
+        import fast_agent.spawn.team_spawner as ts_module
+        from fast_agent.spawn.registry_backends import TeamSessionStore
+
+        store = TeamSessionStore(str(tmp_path / "test.db"))
+        monkeypatch.setattr(ts_module, "_team_store", store)
+
+        # Parent: writes session with only the orchestrator.
+        store.upsert("ses-cross", _minimal_session_dict(
+            session_id="ses-cross",
+            agents={"Morgan [PM]": {"run_id": "run-pm", "role": "pm", "status": "running"}},
+        ))
+
+        # Child: loads, mutates, upserts (simulated cross-process write).
+        from_db = store.get("ses-cross")
+        from_db["agents"].update({
+            "Ryan [BA]": {"run_id": "run-ba", "role": "ba", "status": "running"},
+            "Dakota [SA]": {"run_id": "run-sa", "role": "sa", "status": "running"},
+        })
+        from_db["sprint_status"] = "running"
+        store.upsert("ses-cross", from_db)
+
+        # Parent's next read sees the full roster.
+        from fast_agent.spawn.team_spawner import get_team_session
+        refreshed = get_team_session("ses-cross")
+        assert refreshed is not None
+        assert set(refreshed.agents.keys()) == {
+            "Morgan [PM]", "Ryan [BA]", "Dakota [SA]",
+        }
+        assert refreshed.sprint_status == "running"
+
+    def test_returns_fresh_instance_each_call(self, tmp_path, monkeypatch):
+        """Without a cache, two successive calls return distinct
+        TeamSession objects — callers that need a persistent reference
+        must keep their own, and any in-memory mutation must be
+        followed by ``_get_store().upsert(...)`` to be visible to
+        subsequent reads.
+        """
+        import fast_agent.spawn.team_spawner as ts_module
+        from fast_agent.spawn.registry_backends import TeamSessionStore
+
+        store = TeamSessionStore(str(tmp_path / "test.db"))
+        store.upsert("ses-fresh", _minimal_session_dict(session_id="ses-fresh"))
+        monkeypatch.setattr(ts_module, "_team_store", store)
+
+        from fast_agent.spawn.team_spawner import get_team_session
+        first = get_team_session("ses-fresh")
+        second = get_team_session("ses-fresh")
+        assert first is not second
+        assert first.session_id == second.session_id == "ses-fresh"
 
 
 # ── list_team_sessions ────────────────────────────────────────────────────────
@@ -301,8 +350,6 @@ class TestListTeamSessions:
         store = TeamSessionStore(str(tmp_path / "test.db"))
         store.upsert("s1", _minimal_session_dict(session_id="s1"))
         store.upsert("s2", _minimal_session_dict(session_id="s2"))
-
-        monkeypatch.setattr(ts_module, "_team_sessions", {})
         monkeypatch.setattr(ts_module, "_team_store", store)
 
         from fast_agent.spawn.team_spawner import list_team_sessions
@@ -310,32 +357,30 @@ class TestListTeamSessions:
         ids = {r["session_id"] for r in result}
         assert {"s1", "s2"}.issubset(ids)
 
-    def test_in_memory_overrides_store(self, tmp_path, monkeypatch):
-        """In-memory session (with unsaved state) beats stale DB record."""
+    def test_db_state_is_authoritative(self, tmp_path, monkeypatch):
+        """The DB row is what ``list_team_sessions`` returns. Callers
+        that hold an unsaved TeamSession reference do NOT see their
+        in-process mutations reflected here — they must upsert first.
+        This codifies the post-cache-removal contract.
+        """
         import fast_agent.spawn.team_spawner as ts_module
         from fast_agent.spawn.registry_backends import TeamSessionStore
-        from fast_agent.spawn.team_spawner import TeamSession
 
         store = TeamSessionStore(str(tmp_path / "test.db"))
-        store.upsert("s1", _minimal_session_dict(session_id="s1", sprint_status="pending"))
-
-        live_session = TeamSession("s1", {"name": "sprint"}, Path("/tmp/ws"), "brief")
-        live_session.sprint_status = "orchestrator_running"
-
-        monkeypatch.setattr(ts_module, "_team_sessions", {"s1": live_session})
+        store.upsert("s1", _minimal_session_dict(session_id="s1",
+                                                 sprint_status="pending"))
         monkeypatch.setattr(ts_module, "_team_store", store)
 
         from fast_agent.spawn.team_spawner import list_team_sessions
         result = list_team_sessions()
         s1 = next(r for r in result if r["session_id"] == "s1")
-        assert s1["sprint_status"] == "orchestrator_running"
+        assert s1["sprint_status"] == "pending"
 
     def test_returns_empty_when_nothing_stored(self, tmp_path, monkeypatch):
         import fast_agent.spawn.team_spawner as ts_module
         from fast_agent.spawn.registry_backends import TeamSessionStore
 
         store = TeamSessionStore(str(tmp_path / "test.db"))
-        monkeypatch.setattr(ts_module, "_team_sessions", {})
         monkeypatch.setattr(ts_module, "_team_store", store)
 
         from fast_agent.spawn.team_spawner import list_team_sessions
@@ -364,10 +409,9 @@ class TestSpawnTeamMembersFailLoud:
             "Minh [Dev]": {"run_id": "run-1", "role": "dev", "status": "available"},
         }
 
-        monkeypatch.setattr(ts_module, "_team_sessions", {"ses-fail": session})
-
         from fast_agent.spawn.registry_backends import TeamSessionStore
         store = TeamSessionStore(str(tmp_path / "test.db"))
+        store.upsert("ses-fail", session.to_dict())
         monkeypatch.setattr(ts_module, "_team_store", store)
 
         registry_mock = MagicMock()
@@ -402,7 +446,6 @@ class TestSpawnTeamMembersFailLoud:
         from fast_agent.spawn.registry_backends import TeamSessionStore
         store = TeamSessionStore(str(tmp_path / "test.db"))
         store.upsert("ses-ok", session.to_dict())
-        monkeypatch.setattr(ts_module, "_team_sessions", {"ses-ok": session})
         monkeypatch.setattr(ts_module, "_team_store", store)
 
         registry_mock = MagicMock()
@@ -441,7 +484,6 @@ class TestSpawnTeamMembersFailLoud:
         from fast_agent.spawn.registry_backends import TeamSessionStore
         store = TeamSessionStore(str(tmp_path / "test.db"))
         store.upsert("ses-brief", session.to_dict())
-        monkeypatch.setattr(ts_module, "_team_sessions", {"ses-brief": session})
         monkeypatch.setattr(ts_module, "_team_store", store)
 
         registry_mock = MagicMock()
@@ -465,7 +507,6 @@ class TestSpawnTeamMembersFailLoud:
         from fast_agent.spawn.registry_backends import TeamSessionStore
 
         store = TeamSessionStore(str(tmp_path / "test.db"))
-        monkeypatch.setattr(ts_module, "_team_sessions", {})
         monkeypatch.setattr(ts_module, "_team_store", store)
 
         registry_mock = MagicMock()

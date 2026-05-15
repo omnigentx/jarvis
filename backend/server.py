@@ -112,7 +112,10 @@ async def lifespan(app: FastAPI):
     event_socket_server = None
     try:
         from services.spawn_progress_bridge import SpawnProgressBridge
-        from services.spawn_event_socket import SpawnEventSocketServer
+        from services.spawn_event_socket import (
+            SpawnEventSocketServer,
+            _BackendAlreadyRunning,
+        )
         from services.sse_progress import progress_manager
         from core.agent_registry_db import AgentRegistryDB
 
@@ -126,9 +129,26 @@ async def lifespan(app: FastAPI):
         # Start Unix domain socket server for receiving events from MCP subprocesses
         socket_path = str(Path(".runtime/state/spawn_events.sock").resolve())
         event_socket_server = SpawnEventSocketServer(socket_path, state.spawn_bridge)
-        await event_socket_server.start()
+        try:
+            await event_socket_server.start()
+        except _BackendAlreadyRunning as exc:
+            # Single-instance enforcement: another backend already owns
+            # the spawn event socket. Refuse to continue — without the
+            # bridge, every spawned subprocess will emit events into the
+            # void (status updates lost, UI shows "running" forever).
+            # Fail loud so the operator notices instead of silently
+            # degrading to the broken state that motivated this fix.
+            logger.error(
+                "ABORT: %s\n"
+                "Hint: lsof -nP -iTCP:8000 -sTCP:LISTEN  (find live backend)\n"
+                "      pgrep -fa 'uvicorn server:app'    (find all uvicorn)\n",
+                exc,
+            )
+            raise SystemExit(2) from exc
         os.environ["SPAWN_EVENT_SOCKET"] = socket_path
         logger.info("Spawn event socket ready: %s", socket_path)
+    except SystemExit:
+        raise
     except Exception as e:
         logger.warning("Failed to start spawn event socket: %s", e)
 
@@ -393,16 +413,42 @@ async def lifespan(app: FastAPI):
     async with fast.run() as agent:
         state.agent_app = agent
         logger.info("FastAgent initialized.")
-        
+
+        # ── Always-on token-persistence hook ──────────────────
+        # Attached BEFORE the cron scheduler is wired so any
+        # scheduled agent_turn fired in the milliseconds between
+        # ``set_agent_refs`` and the loop's first tick still gets
+        # its tokens persisted. Callers (chat / voice / inject /
+        # cron) only need to set the ``current_run_id`` ContextVar
+        # around their send call — the hook reads it at LLM-call
+        # time. This is the single source of truth for token
+        # tracking on in-process agents; team-spawn subprocesses
+        # have their own emit_event path (see isolated_runner +
+        # spawn_progress_bridge._handle_token_usage).
+        try:
+            from services.sse_progress import attach_token_persistence_hooks_to_all
+            _n_hooked = attach_token_persistence_hooks_to_all(agent)
+            logger.info("[TOKEN] Default token-persistence hook attached to %d agent(s)", _n_hooked)
+        except Exception as _e:
+            logger.warning("[TOKEN] Failed to attach default token hook: %s", _e, exc_info=True)
+
         # Wire CronScheduler agent references (for agent_turn execution)
         if state.cron_scheduler:
             state.cron_scheduler.set_agent_refs(agent, state.session_service)
-        
+
         # Pre-load dynamic agent cards and attach to Jarvis
         from services.dynamic_agents import preload_agent_cards, signal_reload_loop
         loaded = await preload_agent_cards(agent)
         if loaded:
             logger.info("Dynamic agents ready: %s", loaded)
+            # Newly preloaded dynamic agents also need the token hook.
+            # ``attach_token_persistence_hooks_to_all`` is idempotent
+            # (per-agent sentinel) so re-running is safe.
+            try:
+                from services.sse_progress import attach_token_persistence_hooks_to_all
+                attach_token_persistence_hooks_to_all(agent)
+            except Exception as _e:
+                logger.warning("[TOKEN] Failed to re-attach hook after preload: %s", _e)
         
         # Start reload loop for hot-loading agent card changes
         reload_task = asyncio.create_task(signal_reload_loop(agent))

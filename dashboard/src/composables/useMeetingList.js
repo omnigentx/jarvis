@@ -82,6 +82,7 @@ export function useMeetingList() {
         meetings.value.unshift({
           meeting_id: meetingId,
           agenda: config.agenda || '',
+          description: config.description || '',
           participants: config.participants || [],
           max_rounds: config.max_rounds,
           created_by: config.created_by || '',
@@ -90,6 +91,7 @@ export function useMeetingList() {
           started: false,
           joined: [],
           turn_count: 0,
+          turn_started_at: null,
           participant_count: config.participants?.length || 0,
           current_speaker: null,
         })
@@ -129,6 +131,13 @@ export function useMeetingList() {
             agent: entry.agent || '',
             content: (entry.message || '').slice(0, 100),
             timestamp: entry.timestamp || '',
+          }
+          // Refresh "last action" anchor so the stalled-pulse indicator
+          // resets after each turn (R2 visibility).
+          const ts = entry.timestamp
+          if (ts) {
+            const parsed = typeof ts === 'number' ? ts : Date.parse(ts) / 1000
+            if (!Number.isNaN(parsed)) m.turn_started_at = parsed
           }
           meetings.value[idx] = m
         }

@@ -228,9 +228,9 @@ def _create_bridge_display(bridge: Any) -> Any:
     events from the child subprocess need to reach SpawnProgressBridge.
     Instead of going through the Unix socket, we forward in-process.
     """
-    from fast_agent.spawn.spawn_display import DisplayManager
+    from fast_agent.spawn.spawn_display import SpawnDisplayManager
 
-    dm = DisplayManager()
+    dm = SpawnDisplayManager()
 
     def _forward_to_bridge(event: Any) -> None:
         """Convert SpawnEvent → JSON line → bridge.process_event()."""

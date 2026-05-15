@@ -76,10 +76,37 @@ export const useAgentsStore = defineStore('agents', () => {
   }
 
   function upsertAgent(name, updates) {
-    const existing = agents.value.get(name) || { name }
-    agents.value.set(name, { ...existing, ...updates })
+    const existing = agents.value.get(name)
+    const isNew = !existing
+    agents.value.set(name, { ...(existing || { name }), ...updates })
     // Trigger reactivity
     agents.value = new Map(agents.value)
+
+    // SSE-only spawn path: bridge broadcasts ``started`` /
+    // ``lifecycle_registered`` for team members but does NOT broadcast
+    // ``agent_added`` (only manually-created cards via POST /api/agents
+    // get that). Without this self-heal, new team agents appear on the
+    // monitor without their ``team_name`` / ``description`` / ``tools``
+    // metadata until the user hard-refreshes — incident 2026-05-11:
+    // PM (Elliot [PM]) spawned but only visible after Cmd+Shift+R.
+    //
+    // Trigger a single coalesced refetch when an unknown name shows up.
+    // ``fetchAgents()`` preserves existing realtime state so this is
+    // safe even for the agent we just upserted.
+    if (isNew) {
+      _scheduleAgentRefetch()
+    }
+  }
+
+  // Coalesce burst of "agent_added" detections from a single team-spawn
+  // wave (PM + N members fire within ~50ms) into one /api/agents call.
+  let _refetchTimer = null
+  function _scheduleAgentRefetch() {
+    if (_refetchTimer) return
+    _refetchTimer = setTimeout(() => {
+      _refetchTimer = null
+      fetchAgents().catch(() => { /* ignored — store keeps realtime data */ })
+    }, 250)
   }
 
   function pushEvent(event) {
@@ -166,19 +193,58 @@ export const useAgentsStore = defineStore('agents', () => {
         agents.value = new Map(agents.value) // trigger reactivity
         break
 
-      case 'agent_paused':
+      case 'agent_paused': {
+        // Snapshot the pre-pause status so resume can restore it. Without
+        // this, resume blindly flips to 'running' even when the agent had
+        // already finished its turn before the pause click landed — UX
+        // confusion: user sees "running" badge after resume and assumes
+        // work is in progress, then is unsure whether to pause again.
+        const current = agents.value.get(agent_name)
+        const prior = current?.status
+        // Only remember statuses that make sense to restore — never restore
+        // back into 'paused' (would loop) or undefined.
+        const restorable = (prior && prior !== 'paused') ? prior : 'idle'
         upsertAgent(agent_name, {
           status: 'paused',
+          prePauseStatus: restorable,
           lastAction: { message: event.message || 'Paused', timestamp: event.timestamp },
         })
         break
+      }
 
-      case 'agent_resumed':
+      case 'agent_resumed': {
+        // Restore the pre-pause status (idle/running/completed/...) instead
+        // of forcing 'running'. If the agent has actual pending work, the
+        // next 'thinking' / 'tool_call' / 'message_turn' event arrives
+        // moments later and naturally bumps status to 'running' again — no
+        // need to lie about it here.
+        const current = agents.value.get(agent_name)
+        const restored = current?.prePauseStatus || 'idle'
         upsertAgent(agent_name, {
-          status: 'running',
+          status: restored,
+          prePauseStatus: undefined,
           lastAction: { message: event.message || 'Resumed', timestamp: event.timestamp },
         })
         break
+      }
+
+      case 'message_turn': {
+        // Source-of-truth event derived from agent.message_history.
+        // Subscribers (useAgentTurns composable) read it from
+        // recentEvents — the store only needs to keep status in sync.
+        const msg = event.data?.message
+        const stop = msg?.stop_reason
+        if (msg?.role === 'assistant' && msg?.tool_calls) {
+          // assistant turn that triggered a tool — agent is still working
+          const current = agents.value.get(agent_name)
+          const newStatus = current?.status === 'paused' ? 'paused' : 'running'
+          upsertAgent(agent_name, { status: newStatus })
+        } else if (msg?.role === 'assistant' && stop && stop !== 'toolUse') {
+          // Final assistant turn — agent is now idle
+          upsertAgent(agent_name, { status: 'idle' })
+        }
+        break
+      }
 
       case 'token_usage': {
         // Accumulate token metrics per agent from SSE

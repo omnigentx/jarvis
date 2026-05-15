@@ -1,0 +1,44 @@
+# PM (creator) full flow: create_meeting → speak kickoff → speak [DECISION] VERDICT: PASS.
+#
+# Drives two separate agent.generate() calls:
+#   1st generate("Run the kickoff"):
+#       turn 1: create_meeting(...)        — auto-prepends PM into participants
+#       turn 2: speak(kickoff message)     — turn 0 of round 1
+#       turn 3: END_TURN                    — PM done speaking for now
+#   2nd generate(YOUR_TURN inbox content for round 2):
+#       turn 4: speak("[DECISION] VERDICT: PASS — ...") — ends meeting
+#       turn 5: END_TURN
+#
+# meeting_id is fixed via monkeypatch on uuid.uuid4 in the test (see test file).
+
+turns:
+  - tool_calls:
+      c_create:
+        name: create_meeting
+        arguments:
+          agenda: "Sprint 1 kickoff"
+          # Creator deliberately omits self — exercising the auto-include fix
+          participants: "Devon [BA], Reese [Dev], Devon [QE]"
+          max_rounds: 2
+          my_name: "Cameron [PM]"
+          workspace_dir: ""
+
+  - tool_calls:
+      c_speak_kickoff:
+        name: speak
+        arguments:
+          meeting_id: "b61af7db"
+          message: "Welcome team. Goal today: align on the audit plan and produce action items by end of meeting."
+          agent_name: "Cameron [PM]"
+
+  - content: "Kickoff sent. Waiting for team responses."
+
+  - tool_calls:
+      c_speak_verdict:
+        name: speak
+        arguments:
+          meeting_id: "b61af7db"
+          message: "[DECISION] VERDICT: PASS — Plan accepted. BA owns story creation, Dev runs tests, QE compiles audit report."
+          agent_name: "Cameron [PM]"
+
+  - content: "Meeting concluded with verdict PASS."

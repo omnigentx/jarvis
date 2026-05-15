@@ -22,6 +22,95 @@ class TestSpawnProgressBridge:
 
     # ─── Event mapping tests (via _process_event_line) ───
 
+    def test_message_turn_forwards_to_activity_stream(self, monkeypatch):
+        """A subprocess ``message_turn`` event is forwarded directly to the
+        activity stream — no synth mapping, just trim + broadcast."""
+        captured: list[dict] = []
+
+        class _Stream:
+            @staticmethod
+            def broadcast(event: dict) -> None:
+                captured.append(event)
+
+        import services.activity_stream as act
+        monkeypatch.setattr(act, "activity_stream_manager", _Stream())
+
+        bridge, _pm = self._make_bridge()
+        line = json.dumps({
+            "agent_name": "FinanceAgent",
+            "event_type": "message_turn",
+            "run_id": "run-9",
+            "data": {
+                "turn_idx": 3,
+                "msg_role": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "summary"}],
+                    "stop_reason": "endTurn",
+                },
+            },
+        })
+        bridge._process_event_line(line)
+
+        assert len(captured) == 1
+        evt = captured[0]
+        assert evt["agent_name"] == "FinanceAgent"
+        assert evt["event_type"] == "message_turn"
+        assert evt["run_id"] == "run-9"
+        assert evt["data"]["turn_idx"] == 3
+        assert evt["data"]["role"] == "assistant"
+        assert evt["data"]["message"]["content"][0]["text"] == "summary"
+
+    def test_message_turn_truncates_large_blocks(self, monkeypatch):
+        """Large content blocks are trimmed before broadcast to keep SSE chunks small."""
+        from services.agent_message_stream import MAX_BLOCK_TEXT_BYTES
+
+        captured: list[dict] = []
+
+        class _Stream:
+            @staticmethod
+            def broadcast(event: dict) -> None:
+                captured.append(event)
+
+        import services.activity_stream as act
+        monkeypatch.setattr(act, "activity_stream_manager", _Stream())
+
+        big = "Z" * (MAX_BLOCK_TEXT_BYTES + 5000)
+        bridge, _pm = self._make_bridge()
+        line = json.dumps({
+            "agent_name": "ResearchAgent",
+            "event_type": "message_turn",
+            "run_id": "run-10",
+            "data": {
+                "turn_idx": 2,
+                "msg_role": "user",
+                "message": {
+                    "role": "user",
+                    "tool_results": {"tid": {"content": [{"type": "text", "text": big}]}},
+                },
+            },
+        })
+        bridge._process_event_line(line)
+
+        assert len(captured) == 1
+        block = captured[0]["data"]["message"]["tool_results"]["tid"]["content"][0]
+        assert block["_truncated"] is True
+        assert block["_full_size"] == len(big.encode("utf-8"))
+        assert len(block["text"].encode("utf-8")) <= MAX_BLOCK_TEXT_BYTES
+
+    def test_message_turn_does_not_push_to_chat_sse(self):
+        """message_turn lives on the global activity stream, not the per-request chat-stream."""
+        bridge, pm = self._make_bridge()
+        bridge.set_request_id("req-123")
+
+        line = json.dumps({
+            "agent_name": "Dev",
+            "event_type": "message_turn",
+            "data": {"turn_idx": 0, "message": {"role": "user", "content": []}},
+        })
+        bridge._process_event_line(line)
+        pm.push.assert_not_called()
+
     def test_thinking_event_is_filtered(self):
         """thinking events are intentionally filtered from chat SSE (no useful content)."""
         bridge, pm = self._make_bridge()

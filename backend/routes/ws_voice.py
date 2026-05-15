@@ -433,6 +433,13 @@ async def voice_ws(ws: WebSocket) -> None:
             progress_manager.create(req_id)
             progress_hooks = create_progress_hooks(req_id, session_id=session_id)
 
+            # Tag every LLM call this turn makes with req_id so the
+            # always-on token-persistence hook can correlate token_usage
+            # rows back to this voice turn. ContextVar is asyncio-aware:
+            # parallel turns on different sockets see their own values.
+            from services.sse_progress import current_run_id
+            _run_token = current_run_id.set(req_id)
+
             # Snapshot original hooks so we can restore even if the task is
             # cancelled mid-turn. We also remember the *exact* hook object
             # we attached so the restore step can detect when a newer
@@ -479,6 +486,7 @@ async def voice_ws(ws: WebSocket) -> None:
                 except (asyncio.CancelledError, Exception):
                     pass
                 progress_manager.remove(req_id)
+                current_run_id.reset(_run_token)
 
             # Cancellation absorbed by fast-agent: the OpenAI provider
             # (and likely others) catches ``asyncio.CancelledError`` from

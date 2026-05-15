@@ -26,7 +26,21 @@ import { EVENTS, on } from '../auth/bus.js'
 
 const PCM_PLAYBACK_RATE = 24000  // RealtimeTTS engines emit 24 kHz mono
 
+// ── Singleton ─────────────────────────────────────────────────────────────
+// Voice session must persist across route nav so the user can keep talking
+// while looking at /monitor, and so the global hands-free indicator (in
+// AppLayout) shares state with VoiceBar (in /chat). Without this, every
+// call to ``useVoiceSession()`` would create independent state and the
+// indicator would always show "Off" even when the mic was actually live.
+let _singleton = null
+
 export function useVoiceSession() {
+  if (_singleton) return _singleton
+  _singleton = _createVoiceSession()
+  return _singleton
+}
+
+function _createVoiceSession() {
   const chatStore = useChatStore()
   const status = ref('idle')  // 'idle' | 'connecting' | 'loading_stt' | 'listening' | 'thinking' | 'speaking' | 'error'
   const error = ref('')
@@ -531,13 +545,13 @@ export function useVoiceSession() {
   // Auth expiry: voice sessions are long-lived WebSockets that won't
   // notice a key rotation until the user speaks again. Tear down on
   // EXPIRED so the AuthGate doesn't have a ghost-streaming session
-  // behind it.
-  const offExpired = on(EVENTS.EXPIRED, () => {
+  // behind it. Registered at module-singleton init time — never
+  // unsubscribed (singleton lives for the page lifetime).
+  on(EVENTS.EXPIRED, () => {
     if (status.value !== 'idle') {
       stop().catch(() => { /* already torn */ })
     }
   })
-  onScopeDispose(() => offExpired())
 
   return {
     status, error,

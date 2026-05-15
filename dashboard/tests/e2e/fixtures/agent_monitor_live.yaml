@@ -43,6 +43,24 @@ responses:
     status: 200
     json: {}
 
+  # Per-agent message_history fetch fired by useAgentTurns.fetchInitial
+  # for every agent rendered in the AgentTerminal grid. Each agent in
+  # the roster triggers one of these on mount. Without the mock, the
+  # harness logs them as unexpected and ``backend.unexpected.length === 0``
+  # flips to red — same root cause as the FloatingChatDock leak: any
+  # new boot-time API call from a component the test mounts must be
+  # declared here.
+  "GET /api/agents/alpha-agent/messages":
+    status: 200
+    json:
+      agent_name: "alpha-agent"
+      turns: []
+  "GET /api/agents/beta-agent/messages":
+    status: 200
+    json:
+      agent_name: "beta-agent"
+      turns: []
+
 sse_streams:
   # Realtime activity SSE — override the noise fixture's single ping so the
   # onmessage handler receives a processable event that mutates the store.

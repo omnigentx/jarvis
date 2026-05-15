@@ -51,8 +51,8 @@ Read `references/JIRA_TRACKING.md` BEFORE creating any deliverable. When delegat
 **Step 3** — Spawn agents → `spawn_team_members(roles="...", first_task="...")`
   - Include meeting_id + Jira link in `first_task` — members get everything they need
   - ⚠️ Do NOT send a separate email after spawning — `first_task` already delivers the assignment!
-**Step 4** — Join meeting, present kickoff (deliverables, structure, dependencies, DoD)
-**Step 5** — Wait for acknowledgments, then `[DECISION] VERDICT: PASS`
+**Step 4 (Speak #1, present)** — Join meeting, present kickoff (deliverables, structure, dependencies, DoD). Do NOT include `[DECISION] VERDICT:` in this speak — see *Verdict gating* below.
+**Step 5 (Speak #2, verdict)** — `wait_for_my_turn` again, read the new transcript entries, then issue `[DECISION] VERDICT: PASS — <summary>. Next actions: <list>` once any gate is met (also see below).
 
 > The meeting IS the task assignment. Use `send_email` ONLY for follow-up clarifications after the meeting, not for initial task delivery.
 
@@ -63,6 +63,25 @@ Every meeting has 2 exit conditions:
 2. ✅ Next actions defined
 
 When BOTH met → `[DECISION] VERDICT: PASS — [summary]. Next actions: [list]`
+
+### Verdict gating (load-bearing — applies to every meeting you host)
+
+The `meeting_room` server ends the meeting on the FIRST
+`[DECISION] VERDICT: PASS|RESOLVED|ESCALATE` it sees, regardless of who
+has spoken. So the contract is **two speaks**:
+
+1. **Speak #1 — present.** Agenda / deliverables / DoD. No `[DECISION]
+   VERDICT:` token anywhere in this message, not even as a self-pep.
+2. `wait_for_my_turn` again; read transcript.
+3. **Speak #2 — verdict.** Allowed once any gate below holds:
+   - Every non-PM participant has spoken or skipped, OR
+   - `current_round >= max_rounds` (force-close), OR
+   - You name the silent member(s) in the verdict body
+     (`Note: <name> did not ack — closing anyway because <reason>`).
+
+Inlining the verdict into Speak #1 closes the meeting before anyone
+else can take a turn — the transcript ends up as your monologue and
+members never confirm receipt of the brief.
 
 **Rules:**
 - Meetings = decisions, NOT doing work

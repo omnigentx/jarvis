@@ -407,7 +407,16 @@ class AgentRegistryDB:
             return json.loads(row["data_json"]) if row else None
 
     def list_team_sessions(self) -> list[dict]:
-        """List all team sessions ordered by session_id descending."""
+        """List all team sessions ordered by session_id descending.
+
+        Note: read-side helper. Single source of truth for the
+        ``team_sessions`` table is ``fast_agent.spawn.registry_backends.
+        TeamSessionStore`` — write/delete operations should go through
+        ``fast_agent.spawn.team_spawner.delete_team_session`` /
+        ``delete_team_sessions_by_team_name`` so callers see one canonical
+        deletion path. ``team_spawner`` itself reads SQLite on every
+        access (no in-memory cache).
+        """
         with _connect() as conn:
             rows = conn.execute(
                 "SELECT data_json FROM team_sessions ORDER BY session_id DESC"

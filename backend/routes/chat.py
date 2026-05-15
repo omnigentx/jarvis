@@ -209,9 +209,16 @@ def _prepare_audio_url(book_id, tts_text, base_url=""):
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest, raw_request: Request = None, _=Depends(verify_api_key)):
     from services.shared_state import agent_app
+    from services.sse_progress import current_run_id
     _t0 = _time.time()
     _msg_preview = request.message[:80] + "..." if len(request.message) > 80 else request.message
     logger.info(f'[REQUEST] POST /chat cid={request.conversation_id} msg="{_msg_preview}"')
+    # Tag this call's token rows with a fresh run_id so the dashboard can
+    # correlate them back to this request. Without setting the ContextVar
+    # the always-on token-persistence hook would still write rows, just
+    # without correlation. See ``services/sse_progress.py``.
+    _run_id = f"chat-{uuid.uuid4().hex[:8]}"
+    _run_token = current_run_id.set(_run_id)
     try:
         raw_response, cid = await session_service.resume_and_send(
             agent_app, request.message, request.conversation_id
@@ -247,6 +254,8 @@ async def chat(request: ChatRequest, raw_request: Request = None, _=Depends(veri
         _duration = _time.time() - _t0
         logger.error(f"[RESPONSE] POST /chat duration={_duration:.1f}s status=error: {e}", exc_info=True)
         return ChatResponse(response=f"Error: {str(e)}")
+    finally:
+        current_run_id.reset(_run_token)
 
 
 @router.post("/chat-stream")
@@ -346,26 +355,31 @@ async def chat_stream(raw_request: Request, _=Depends(verify_api_key)):
         _state.spawn_bridge.set_request_id(request_id)
 
     async def run_chat():
+        # Tag every LLM call this request makes with ``request_id`` so the
+        # always-on token-persistence hook (attached at app startup) can
+        # write rows the dashboard can correlate back to this request.
+        from services.sse_progress import current_run_id
+        _run_token = current_run_id.set(request_id)
         try:
             original_hooks = {}
             progress_hooks = create_progress_hooks(request_id, session_id=conversation_id)
-            
+
             # Merge pause hooks for in-process agents
             from services.pause_manager import pause_manager
-            
+
             for name, agent in agent_app._agents.items():
                 original_hooks[name] = getattr(agent, 'tool_runner_hooks', None)
                 existing = original_hooks[name]
-                
+
                 # Create pause hooks for this agent
                 pause_hooks = pause_manager.create_pause_hooks(name)
                 combined = merge_hooks(progress_hooks, pause_hooks)
-                
+
                 if existing:
                     agent.tool_runner_hooks = merge_hooks(existing, combined)
                 else:
                     agent.tool_runner_hooks = combined
-            
+
             try:
                 # Expose conversation_id so spawn tools can auto-capture it
                 _state.current_conversation_id = conversation_id
@@ -475,7 +489,7 @@ async def chat_stream(raw_request: Request, _=Depends(verify_api_key)):
             _duration = _time.time() - _t0
             logger.error(f"[RESPONSE] POST /chat-stream duration={_duration:.1f}s status=error: {e}", exc_info=True)
             progress_manager.push(request_id, "error", {"message": str(e)})
-            
+
             # Broadcast idle even on error so dashboard cards don't stay "Running"
             try:
                 from services.activity_stream import activity_stream_manager
@@ -489,7 +503,9 @@ async def chat_stream(raw_request: Request, _=Depends(verify_api_key)):
                     })
             except Exception:
                 pass
-    
+        finally:
+            current_run_id.reset(_run_token)
+
     asyncio.create_task(run_chat())
     
     async def event_generator():

@@ -36,13 +36,15 @@ test('team monitor — roster renders and SSE event flips one agent status', asy
 
   await page.goto('/monitor')
 
-  // Assertion 1: both agents render as cards. Anchor on the stable count
-  // first — the grid hydrates from /api/agents and any assertion targeting
-  // a specific card before then would race.
-  await expect(page.locator('.agent-panel')).toHaveCount(2)
+  // Assertion 1: both agents render as terminal panels. Anchor on the
+  // stable count first — the grid hydrates from /api/agents and any
+  // assertion targeting a specific panel before then would race.
+  // ``.agent-terminal`` is the canonical v2 selector (v1 ``.agent-panel``
+  // was removed in the TeamMonitor terminal-UI commit).
+  await expect(page.locator('.agent-terminal')).toHaveCount(2)
 
-  const alphaCard = page.locator('.agent-panel').filter({ hasText: 'alpha-agent' })
-  const betaCard = page.locator('.agent-panel').filter({ hasText: 'beta-agent' })
+  const alphaCard = page.locator('.agent-terminal').filter({ hasText: 'alpha-agent' })
+  const betaCard = page.locator('.agent-terminal').filter({ hasText: 'beta-agent' })
   await expect(alphaCard).toBeVisible()
   await expect(betaCard).toBeVisible()
 
@@ -53,8 +55,9 @@ test('team monitor — roster renders and SSE event flips one agent status', asy
   // Initially alpha is "running" (from GET /api/agents); the SSE event
   // processed through stores/agents.js::processEvent mutates status to "idle".
   // Beta is seeded as "idle" and should stay "idle".
-  await expect(alphaCard.locator('.panel-status-badge')).toHaveText('Idle')
-  await expect(betaCard.locator('.panel-status-badge')).toHaveText('Idle')
+  // ``.status-label`` is the AgentTerminal status text node.
+  await expect(alphaCard.locator('.status-label')).toHaveText('Idle')
+  await expect(betaCard.locator('.status-label')).toHaveText('Idle')
 
   // Assertion 4: mount-time fetches fired.
   recorder.assertContains('GET', '/api/agents')
@@ -83,8 +86,8 @@ test('team monitor — empty roster renders empty-state placeholder', async ({
   // Assertion 2: empty-state placeholder renders (default filter is 'all').
   await expect(page.locator('.empty-state')).toContainText('No agents found')
 
-  // Assertion 3: no agent card rendered.
-  await expect(page.locator('.agent-panel')).toHaveCount(0)
+  // Assertion 3: no agent terminal rendered.
+  await expect(page.locator('.agent-terminal')).toHaveCount(0)
 
   // Assertion 4: boot-time fetches still fired.
   recorder.assertContains('GET', '/api/agents')

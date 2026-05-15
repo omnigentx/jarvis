@@ -1,0 +1,43 @@
+# Orchestrator-style script for the orchestrator-final-response E2E.
+#
+# Models the post-aggregation behaviour of Morgan [PM] in a self-audit run:
+# a single text turn that contains the complete roll-up. No tool calls —
+# we're exercising the save_agent_context → spawn_registry mirror path,
+# not the tool dispatch.
+
+turns:
+  - content: |
+      # Self-audit — Team Roll-up
+
+      Submissions: 3 of 3 (including yourself).
+      - Replied: Morgan [PM] (orchestrator, inline), Ryan [BA], Dakota [SA]
+      - Did not reply: none
+
+      Verdict: **PASS** — every member produced a non-trivial inventory and
+      the per-report self-reconcile holds.
+
+      ## Self-audit — Morgan [PM] (orchestrator)
+
+      Summary: **12** tools — **8** ok / **4** skipped (write/destructive) / **0** error.
+
+      ## Tool inventory
+
+      | # | Tool | Class | Status | Note / Usage |
+      |---:|---|---|---|---|
+      | 1 | filesystem__list_directory | READ | ok |  |
+      | 2 | agent_spawner__get_team_status | READ | ok |  |
+      | 3 | email__send_email | WRITE | skipped | used for follow-ups |
+
+      ## Per-member reports
+
+      ---
+
+      # Self-audit — Ryan [BA]
+
+      Summary: **15** tools — **10** ok / **5** skipped / **0** error.
+
+      ---
+
+      # Self-audit — Dakota [SA]
+
+      Summary: **18** tools — **12** ok / **6** skipped / **0** error.

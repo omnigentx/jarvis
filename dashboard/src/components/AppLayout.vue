@@ -13,6 +13,8 @@ import { useToast } from '../composables/useToast'
 import ConnectionBanner from './ConnectionBanner.vue'
 import MiniAudioPlayer from './stories/MiniAudioPlayer.vue'
 import FullAudioPlayer from './stories/FullAudioPlayer.vue'
+import GlobalVoiceIndicator from './global/GlobalVoiceIndicator.vue'
+import FloatingChatDock from './global/FloatingChatDock.vue'
 
 const approvalsStore = useApprovalsStore()
 const audioPlayerStore = useAudioPlayerStore()
@@ -290,13 +292,37 @@ onUnmounted(() => {
         class="app-main__content"
         :style="{ paddingBottom: isAudioPlaying ? '84px' : (isMobile ? '16px' : '24px') }"
       >
-        <RouterView />
+        <!--
+          ``<keep-alive>`` caches view component instances across route nav.
+          Without it, switching from /chat to /monitor and back unmounts
+          ChatView (and VoiceBar inside it) — losing in-flight conversation
+          state, killing the active SSE stream, and stopping hands-free
+          voice mid-turn.
+
+          ``include`` is an explicit allow-list so only routes that
+          legitimately benefit from cached state opt in. Everything else
+          (Settings, Approvals, etc.) keeps the default mount-on-enter
+          behaviour.
+        -->
+        <RouterView v-slot="{ Component }">
+          <keep-alive :include="['Chat', 'TeamMonitor']">
+            <component :is="Component" />
+          </keep-alive>
+        </RouterView>
       </div>
       <MiniAudioPlayer v-if="isAudioPlaying" />
     </main>
 
   </div>
   <FullAudioPlayer />
+
+  <!--
+    Global overlays — live OUTSIDE the layout flex so they float fixed-
+    position over any route. They self-hide on /chat (where their inline
+    counterparts already render) and on bare layouts (auth/setup).
+    -->
+  <GlobalVoiceIndicator />
+  <FloatingChatDock />
 </template>
 
 <style scoped>
