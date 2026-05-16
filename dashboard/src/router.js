@@ -6,6 +6,18 @@ const routes = [
     redirect: '/agents',
   },
   {
+    path: '/landing',
+    name: 'JarvisLanding',
+    component: () => import('./views/LandingView.vue'),
+    meta: {
+      title: 'Jarvis AI Assistant',
+      layout: 'public',
+      public: true,
+      canonical: 'https://jarvis.omnigentx.com/landing',
+      description: 'Jarvis is a self-hostable AI assistant that coordinates an expert agent team with MCP tools, voice interaction, and a production-ready dashboard.',
+    },
+  },
+  {
     path: '/agents',
     name: 'AgentsList',
     component: () => import('./views/AgentsList.vue'),
@@ -154,9 +166,36 @@ const router = createRouter({
   routes,
 })
 
-// Update page title
+function upsertMeta(name, content) {
+  if (!content) return
+  let tag = document.querySelector(`meta[name="${name}"]`)
+  if (!tag) {
+    tag = document.createElement('meta')
+    tag.setAttribute('name', name)
+    document.head.appendChild(tag)
+  }
+  tag.setAttribute('content', content)
+}
+
+function upsertCanonical(href) {
+  let tag = document.querySelector('link[rel="canonical"]')
+  if (!href) {
+    tag?.remove()
+    return
+  }
+  if (!tag) {
+    tag = document.createElement('link')
+    tag.setAttribute('rel', 'canonical')
+    document.head.appendChild(tag)
+  }
+  tag.setAttribute('href', href)
+}
+
+// Update document metadata for both dashboard and public landing routes.
 router.afterEach((to) => {
   document.title = `${to.meta.title || 'Dashboard'} — My Jarvis`
+  upsertMeta('description', to.meta.description)
+  upsertCanonical(to.meta.canonical)
 })
 
 export default router
