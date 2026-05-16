@@ -16,9 +16,11 @@ Architecture:
 Also logs all events to the spawn_activity logger for ops/debugging.
 """
 
+import asyncio
 import json
 import logging
 import os
+import uuid
 from typing import Any, Protocol
 
 logger = logging.getLogger("spawn_activity")
@@ -143,7 +145,10 @@ class SpawnProgressBridge:
         self._request_id: str | None = None
         self._registry_db = registry_db
         self._token_accumulators: dict[str, dict] = {}  # key → last-seen cumulative values
-        self._orch_notify_hash: dict[str, str] = {}  # team_name → status hash (dedup)
+        # Event-stream tables for team cycle notifications. Lazy-create
+        # via raw SQL (matches pattern in core/agent_registry_db.py) — kept
+        # local to this module since the bridge is the only consumer.
+        self._ensure_event_tables()
 
     def set_request_id(self, request_id: str | None) -> None:
         """Set the active chat request ID for SSE routing."""
@@ -222,13 +227,16 @@ class SpawnProgressBridge:
                     agent_name, _exc,
                 )
 
-        # 4a. Check team completion — notify when ALL team agents are done
-        if event_type_str in ("result", "idle", "agent_completed"):
-            self._check_team_completion(agent_name, event_data)
-
-        # 4b. Consolidated orchestrator notification — all workers idle
-        if event_type_str in ("result", "idle", "agent_completed"):
-            self._notify_orchestrator_on_members_idle(agent_name, event_data)
+        # 4a+b. Cycle-event dispatch — single entry point that emits
+        # ``team.worker_cycle_closed`` (PM inbox) when workers all stop
+        # running, and ``team.full_cycle_closed`` (user UI) when the
+        # whole team stops running. Idempotent via DB event_id PK.
+        # See _on_member_state_event docstring for the state machine.
+        if run_id and event_type_str in {
+            "started", "result", "idle", "agent_completed",
+            "error", "timeout", "cancelled", "killed",
+        }:
+            self._on_member_state_event(run_id)
 
         # 4c. Handle removal events — clean DB records
         if event_type_str == "removed":
@@ -943,71 +951,6 @@ class SpawnProgressBridge:
         )
         return "\n".join(lines)
 
-    # ── Team Completion Notification ──
-
-    def _check_team_completion(self, trigger_agent: str, raw: dict) -> None:
-        """Check if all team agents are done → create notification if so.
-
-        Uses spawn_registry DB as single source of truth.
-        """
-        if not self._registry_db:
-            return
-
-        # Resolve team_name from registry for this agent
-        run_id = raw.get("run_id") or raw.get("data", {}).get("run_id")
-        if not run_id:
-            return
-
-        record = self._registry_db.get_record(run_id)
-        if not record:
-            return
-
-        team_name = record.get("team_name", "")
-        if not team_name:
-            return  # Solo agent, not part of a team
-
-        # Restrict to members of THIS session — team_name is reused across
-        # spawns ("toolset-self-audit" may be re-run daily), so filtering
-        # by team_name alone would mix yesterday's idle agents into
-        # today's completion check and dedupe against an unrelated past
-        # notification. The session_id is the unique handle.
-        session_id = record.get("session_id", "")
-        if not session_id:
-            return  # Pre-session agents (very old rows) — skip safely
-
-        members = [
-            m for m in self._registry_db.find_by_team_name(team_name)
-            if m.get("session_id") == session_id
-        ]
-        if not members:
-            return
-
-        # Only consider spawned agents (exclude "available" = not yet spawned)
-        _terminal = {"completed", "idle", "error", "timeout", "cancelled"}
-        spawned = [m for m in members if m.get("status") not in ("available", None)]
-        if not spawned:
-            return
-
-        all_done = all(m.get("status") in _terminal for m in spawned)
-        if not all_done:
-            return
-
-        # Dedupe per-session, not per-team-name: a re-spawn of the same
-        # named team is a brand new completion event and deserves its
-        # own notification.
-        if self._has_team_notification(session_id):
-            return
-
-        # Find orchestrator result
-        orchestrator = self._find_orchestrator(spawned)
-        result_text = orchestrator.get("result", "") if orchestrator else ""
-        orch_name = orchestrator.get("agent_name", team_name) if orchestrator else team_name
-
-        self._create_team_notification(
-            team_name, orch_name, result_text, spawned,
-            session_id=session_id,
-        )
-
     def _find_orchestrator(self, members: list[dict]) -> dict | None:
         """Find the orchestrator agent from team members.
 
@@ -1072,35 +1015,6 @@ class SpawnProgressBridge:
             f"to recover the response manually."
         )
         return preview, content
-
-    def _has_team_notification(self, session_id: str) -> bool:
-        """Dedupe: check if a team_completion notification already
-        exists FOR THIS SESSION.
-
-        Keyed by ``session_id`` (not ``team_name``): a reusable team
-        name ("toolset-self-audit") spawned twice on different days
-        produces two distinct completion events — each deserves its
-        own notification. Pre-2026-05-14 this dedupe was per
-        ``team_name`` and silently swallowed the second day's
-        notification.
-        """
-        if not session_id:
-            return False
-        try:
-            from core.database import NotificationModel, get_db_session
-
-            db = get_db_session()
-            try:
-                existing = db.query(NotificationModel).filter(
-                    NotificationModel.metadata_json.contains(f'"session_id": "{session_id}"'),
-                    NotificationModel.metadata_json.contains('"source": "team_completion"'),
-                ).first()
-                return existing is not None
-            finally:
-                db.close()
-        except Exception as e:
-            logger.warning("Failed to check team notification dedupe: %s", e)
-            return False
 
     def _create_team_notification(
         self, team_name: str, agent_name: str, result: str, members: list[dict],
@@ -1210,160 +1124,6 @@ class SpawnProgressBridge:
         except Exception as e:
             logger.warning("Failed to create team notification: %s", e, exc_info=True)
 
-    # ── Consolidated Orchestrator Notification ──
-
-    def _notify_orchestrator_on_members_idle(
-        self, trigger_agent: str, raw: dict,
-    ) -> None:
-        """Send consolidated status report when ALL non-orch members stop running.
-
-        Trigger: agent_completed / result / idle events.
-        Delivery: MessageBus → orchestrator inbox.
-        If orchestrator is idle → explicitly triggers resume.
-        Dedup: status hash prevents duplicate notifications for same state.
-        """
-        if not self._registry_db:
-            return
-
-        # 1. Resolve team from trigger agent
-        run_id = raw.get("run_id") or raw.get("data", {}).get("run_id")
-        if not run_id:
-            return
-        record = self._registry_db.get_record(run_id)
-        if not record:
-            return
-        team_name = record.get("team_name", "")
-        if not team_name:
-            return  # Solo agent
-
-        # 2. Get all team members
-        members = self._registry_db.find_by_team_name(team_name)
-        if not members:
-            return
-
-        # 3. Separate orchestrator vs workers
-        orchestrator = self._find_orchestrator(members)
-        if not orchestrator:
-            return
-        orch_name = orchestrator.get("agent_name", "")
-
-        # Skip when the trigger IS the orchestrator. The notification is for
-        # "workers finished delegated work — PM should review". PM going idle
-        # itself (e.g. after replying to a user inject, or after processing
-        # a previous notify-resume) shouldn't re-fire the notification:
-        # PM doesn't need to be told to check its own inbox right after it
-        # just acted. Without this guard, every user inject triggered one
-        # extra round-trip (User → PM responds → idle → bridge sends
-        # "Check inbox" → PM wakes → no-op → idle → dedup hash catches),
-        # which appeared to the user as "agent gets an inbox after every
-        # inject". Production trace 2026-05-16 10:18 ICT.
-        if trigger_agent == orch_name:
-            return
-
-        _non_running = {"idle", "completed", "error", "timeout", "cancelled"}
-        workers = [
-            m for m in members
-            if m.get("agent_name") != orch_name
-            and m.get("status") not in ("available", None)
-        ]
-        if not workers:
-            return
-
-        # 4. ALL workers must be non-running
-        if not all(m.get("status") in _non_running for m in workers):
-            return
-
-        # 5. Dedup via status hash
-        status_parts = sorted(
-            f"{m.get('run_id', '')}:{m.get('status', '')}" for m in workers
-        )
-        status_hash = "|".join(status_parts)
-        if self._orch_notify_hash.get(team_name) == status_hash:
-            return  # Already notified for this exact state
-        self._orch_notify_hash[team_name] = status_hash
-
-        # 6. Build status report — framing depends on whether the team is
-        # idled mid-meeting (b61af7db incident: "All finished | No output"
-        # was misleading because the team had stalled inside a meeting).
-        status_icons = {
-            "idle": "✅", "completed": "✅",
-            "error": "❌", "timeout": "⏰", "cancelled": "🚫",
-        }
-
-        member_names = {m.get("agent_name", "") for m in workers if m.get("agent_name")}
-        member_names.add(orch_name)
-        active_meetings = self._active_meetings_with_members(member_names)
-
-        if active_meetings:
-            header = (
-                f"⏳ **Team Status Update** — members are idle but {len(active_meetings)} "
-                f"meeting(s) still open. Team is NOT done."
-            )
-        else:
-            header = "📋 **Team Status Update** — All members have finished."
-        lines = [header, ""]
-        lines.append("| Member | Status | Summary |")
-        lines.append("|--------|--------|---------|")
-        for m in workers:
-            name = m.get("agent_name", "?")
-            status = m.get("status", "?")
-            icon = status_icons.get(status, "❓")
-            if status == "error":
-                summary = (m.get("error", "") or "Unknown error")[:80]
-            else:
-                summary = (m.get("result", "") or "No output")[:80]
-            summary = summary.replace("\n", " ").replace("|", "/").strip()
-            lines.append(f"| {name} | {icon} {status} | {summary} |")
-
-        if active_meetings:
-            lines.append(self._format_active_meetings_warning(active_meetings))
-        else:
-            lines.append("\nReview outputs and decide next actions.")
-        report = "\n".join(lines)
-
-        # 7. Resolve messages_dir and send via MessageBus
-        messages_dir = self._resolve_messages_dir(members)
-        if not messages_dir:
-            logger.warning(
-                "[TEAM_NOTIFY] Cannot resolve messages_dir for team %s",
-                team_name,
-            )
-            return
-
-        try:
-            from fast_agent.spawn.message_bus import MessageBus
-
-            bus = MessageBus(messages_dir=messages_dir)
-            bus.send(
-                from_name="System",
-                to_name=orch_name,
-                content=report,
-                message_type="notification",
-                priority="high",
-            )
-            logger.info(
-                "[TEAM_NOTIFY] Sent consolidated status to %s (%d workers, team=%s)",
-                orch_name, len(workers), team_name,
-            )
-        except Exception as e:
-            logger.warning("[TEAM_NOTIFY] Failed to send via MessageBus: %s", e, exc_info=True)
-            return
-
-        # 8. If orchestrator is idle, trigger resume so it processes the report
-        orch_status = orchestrator.get("status", "")
-        if orch_status in _non_running:
-            import asyncio
-            try:
-                loop = asyncio.get_event_loop()
-                loop.create_task(
-                    self._trigger_orchestrator_resume(orchestrator, team_name)
-                )
-            except RuntimeError:
-                logger.warning(
-                    "[TEAM_NOTIFY] No event loop — cannot resume idle orchestrator %s",
-                    orch_name,
-                )
-
     def _resolve_messages_dir(self, members: list[dict]) -> str:
         """Resolve TEAM_MESSAGES_DIR from any team member's original_config."""
         from pathlib import Path
@@ -1407,4 +1167,340 @@ class SpawnProgressBridge:
                 "[TEAM_NOTIFY] Failed to resume orchestrator %s: %s",
                 orch_name, e, exc_info=True,
             )
+
+    # ── Event-stream cycle handler ────────────────────────────────────
+    #
+    # Replaces the previous dedup-based notification pair
+    # (``_check_team_completion`` + ``_notify_orchestrator_on_members_idle``)
+    # with a transition-based event stream. The previous design tried to
+    # silence duplicate notifications via in-memory hash or DB content
+    # filter, but the dedup keys were too coarse — once a session had
+    # ever notified, every subsequent "all idle" cycle was silently
+    # dropped (production 2026-05-16: session ``be885ae8`` only ever got
+    # 1 user notification despite N work cycles).
+    #
+    # New model:
+    #
+    #   * Two named cycles per session: ``worker_cycle`` (PM-facing) and
+    #     ``team_cycle`` (user-facing). Open when at least one relevant
+    #     agent is ``running``; close when all are non-running.
+    #   * On every member state-change event, recompute both cycles
+    #     from the registry (single source of truth) and compare to the
+    #     last persisted state. Emit close events on the open→closed
+    #     transition only.
+    #   * Idempotency lives at the DB layer via ``team_events.event_id``
+    #     PRIMARY KEY + ``INSERT ... ON CONFLICT DO NOTHING``. No
+    #     application-level dedup; no in-memory hash.
+    #   * Cycle state persists in ``team_cycle_state`` so backend
+    #     restarts resume the correct transition view (no false fire,
+    #     no missed close).
+
+    def _ensure_event_tables(self) -> None:
+        """Create event-stream tables on first use. Mirrors the lazy
+        ``CREATE TABLE IF NOT EXISTS`` pattern from
+        ``core.agent_registry_db._ensure_team_sessions_table``.
+        """
+        try:
+            from core.agent_registry_db import _connect
+
+            with _connect() as conn:
+                conn.execute(
+                    """CREATE TABLE IF NOT EXISTS team_events (
+                        event_id    TEXT PRIMARY KEY,
+                        event_type  TEXT NOT NULL,
+                        session_id  TEXT NOT NULL,
+                        team_name   TEXT NOT NULL,
+                        payload_json TEXT NOT NULL,
+                        created_at  REAL NOT NULL
+                    )"""
+                )
+                conn.execute(
+                    """CREATE INDEX IF NOT EXISTS ix_team_events_session
+                       ON team_events(session_id, created_at)"""
+                )
+                conn.execute(
+                    """CREATE TABLE IF NOT EXISTS team_cycle_state (
+                        session_id    TEXT PRIMARY KEY,
+                        worker_open   INTEGER NOT NULL DEFAULT 0,
+                        team_open     INTEGER NOT NULL DEFAULT 0,
+                        updated_at    REAL NOT NULL
+                    )"""
+                )
+        except Exception as e:
+            logger.warning("[CYCLE] _ensure_event_tables failed: %s", e, exc_info=True)
+
+    def _load_cycle_state(self, session_id: str) -> dict:
+        """Return ``{worker_open, team_open}`` for the session. Defaults
+        to both-closed when no row exists — first event after spawn will
+        update to open and persist."""
+        try:
+            from core.agent_registry_db import _connect
+
+            with _connect() as conn:
+                row = conn.execute(
+                    "SELECT worker_open, team_open FROM team_cycle_state "
+                    "WHERE session_id = ?",
+                    (session_id,),
+                ).fetchone()
+                if row is None:
+                    return {"worker_open": False, "team_open": False}
+                return {
+                    "worker_open": bool(row["worker_open"]),
+                    "team_open": bool(row["team_open"]),
+                }
+        except Exception as e:
+            logger.warning("[CYCLE] _load_cycle_state(%s) failed: %s", session_id, e)
+            return {"worker_open": False, "team_open": False}
+
+    def _save_cycle_state(
+        self, session_id: str, worker_open: bool, team_open: bool,
+    ) -> None:
+        try:
+            import time
+            from core.agent_registry_db import _connect
+
+            with _connect() as conn:
+                conn.execute(
+                    """INSERT INTO team_cycle_state(session_id, worker_open, team_open, updated_at)
+                       VALUES(?, ?, ?, ?)
+                       ON CONFLICT(session_id) DO UPDATE SET
+                         worker_open = excluded.worker_open,
+                         team_open   = excluded.team_open,
+                         updated_at  = excluded.updated_at""",
+                    (session_id, int(worker_open), int(team_open), time.time()),
+                )
+        except Exception as e:
+            logger.warning("[CYCLE] _save_cycle_state(%s) failed: %s", session_id, e)
+
+    def _insert_event(
+        self, event_id: str, event_type: str,
+        session_id: str, team_name: str, payload: dict,
+    ) -> bool:
+        """INSERT … ON CONFLICT DO NOTHING. Returns True iff the row was
+        newly inserted (i.e. caller should run side effects). False on
+        conflict or error — caller must skip downstream notifications.
+        """
+        try:
+            import time
+            from core.agent_registry_db import _connect
+
+            with _connect() as conn:
+                cur = conn.execute(
+                    """INSERT INTO team_events(event_id, event_type, session_id, team_name, payload_json, created_at)
+                       VALUES(?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(event_id) DO NOTHING""",
+                    (event_id, event_type, session_id, team_name,
+                     json.dumps(payload), time.time()),
+                )
+                return cur.rowcount > 0
+        except Exception as e:
+            logger.warning(
+                "[CYCLE] _insert_event(%s) failed: %s", event_id, e, exc_info=True,
+            )
+            return False
+
+    def _on_member_state_event(self, run_id: str) -> None:
+        """Single entry point for status-changing events.
+
+        Pure transition detector:
+
+          1. Load registry record for ``run_id`` → resolve ``session_id``
+             and ``team_name`` (skip for solo agents).
+          2. Snapshot current cycle state from the registry: workers
+             open iff any non-orch member is ``running``; team open iff
+             any team agent is ``running``.
+          3. Compare against the last persisted cycle state. On
+             ``open → closed`` transitions, emit the matching cycle
+             event (idempotent via DB PK).
+          4. Persist the new cycle state.
+
+        See module-level docstring for the full state machine and the
+        14-case edge-case table.
+        """
+        if not self._registry_db:
+            return
+
+        record = self._registry_db.get_record(run_id)
+        if not record:
+            return
+        session_id = record.get("session_id", "")
+        team_name = record.get("team_name", "")
+        if not session_id or not team_name:
+            return  # Solo agent or pre-session record — not in scope
+
+        members = [
+            m for m in self._registry_db.find_by_team_name(team_name)
+            if m.get("session_id") == session_id
+        ]
+        if not members:
+            return
+
+        orch = self._find_orchestrator(members)
+        orch_name = orch.get("agent_name", "") if orch else ""
+        # ``available`` = registered but not spawned yet; ``None`` = legacy
+        # rows. Exclude both from cycle calculations — they are not
+        # transitionable states.
+        spawned = [
+            m for m in members
+            if m.get("status") not in ("available", None)
+        ]
+        workers = [m for m in spawned if m.get("agent_name") != orch_name]
+
+        worker_open = any(m.get("status") == "running" for m in workers)
+        team_open = any(m.get("status") == "running" for m in spawned)
+
+        prev = self._load_cycle_state(session_id)
+
+        if prev["worker_open"] and not worker_open:
+            self._emit_worker_cycle_closed(
+                session_id, team_name, members, orch, workers,
+            )
+
+        if prev["team_open"] and not team_open:
+            # Meeting-aware: if a member is still mid-meeting, the team
+            # is NOT truly idle — defer the close. Meeting end events
+            # will re-trigger the handler and the next pass will fire.
+            member_names = {m.get("agent_name", "") for m in spawned}
+            if not self._active_meetings_with_members(member_names):
+                self._emit_full_cycle_closed(
+                    session_id, team_name, members, orch,
+                )
+
+        self._save_cycle_state(session_id, worker_open, team_open)
+
+    def _emit_worker_cycle_closed(
+        self, session_id: str, team_name: str,
+        members: list[dict], orch: dict | None, workers: list[dict],
+    ) -> None:
+        """PM-facing event: ALL non-orch members have stopped running.
+
+        Sends the consolidated worker status to PM's inbox so PM can
+        decide the next round. If PM itself is currently idle, also
+        triggers ``resume_with_inject`` so PM wakes to process it.
+        """
+        if not orch:
+            return
+        event_id = f"{session_id}:worker_cycle_closed:{uuid.uuid4().hex[:12]}"
+        if not self._insert_event(
+            event_id, "worker_cycle_closed", session_id, team_name,
+            {"workers": [
+                {"agent_name": w.get("agent_name"),
+                 "status": w.get("status"),
+                 "run_id": w.get("run_id")} for w in workers
+            ]},
+        ):
+            return  # Conflict — already emitted (defensive; shouldn't happen with uuid)
+
+        orch_name = orch.get("agent_name", "")
+        report = self._format_worker_status_report(workers, orch_name)
+        messages_dir = self._resolve_messages_dir(members)
+        if not messages_dir:
+            logger.warning(
+                "[CYCLE] worker_cycle_closed for %s: no messages_dir resolvable",
+                team_name,
+            )
+            return
+        try:
+            from fast_agent.spawn.message_bus import MessageBus
+
+            MessageBus(messages_dir=messages_dir).send(
+                from_name="System",
+                to_name=orch_name,
+                content=report,
+                message_type="notification",
+                priority="high",
+            )
+            logger.info(
+                "[CYCLE] worker_cycle_closed → %s (%d workers, team=%s, event=%s)",
+                orch_name, len(workers), team_name, event_id,
+            )
+        except Exception as e:
+            logger.warning("[CYCLE] worker_cycle_closed send failed: %s", e, exc_info=True)
+            return
+
+        # If PM is idle, resume so the inbox notification is consumed.
+        if orch.get("status") in ("idle", "completed", "error", "timeout", "cancelled"):
+            try:
+                loop = asyncio.get_event_loop()
+                loop.create_task(self._trigger_orchestrator_resume(orch, team_name))
+            except RuntimeError:
+                logger.warning(
+                    "[CYCLE] No event loop — cannot resume idle orchestrator %s",
+                    orch_name,
+                )
+
+    def _emit_full_cycle_closed(
+        self, session_id: str, team_name: str,
+        members: list[dict], orch: dict | None,
+    ) -> None:
+        """User-facing event: the ENTIRE team (incl. orchestrator) is
+        non-running and no active meeting is blocking. Creates a UI
+        notification via the existing ``_create_team_notification``
+        helper (which preserves meeting-aware framing and SSE broadcast).
+        """
+        event_id = f"{session_id}:full_cycle_closed:{uuid.uuid4().hex[:12]}"
+        if not self._insert_event(
+            event_id, "full_cycle_closed", session_id, team_name,
+            {"members": [
+                {"agent_name": m.get("agent_name"),
+                 "status": m.get("status"),
+                 "run_id": m.get("run_id")} for m in members
+            ]},
+        ):
+            return
+
+        result_text = orch.get("result", "") if orch else ""
+        orch_name = orch.get("agent_name", team_name) if orch else team_name
+        spawned = [
+            m for m in members
+            if m.get("status") not in ("available", None)
+        ]
+        self._create_team_notification(
+            team_name, orch_name, result_text, spawned,
+            session_id=session_id,
+        )
+        logger.info(
+            "[CYCLE] full_cycle_closed → user notify (team=%s, event=%s)",
+            team_name, event_id,
+        )
+
+    def _format_worker_status_report(
+        self, workers: list[dict], orch_name: str,
+    ) -> str:
+        """Build the markdown status report sent to PM's inbox on
+        ``worker_cycle_closed``. Preserves the meeting-aware framing
+        from the prior implementation (b61af7db incident) — if a member
+        is still mid-meeting the header reframes to "NOT done".
+        """
+        status_icons = {
+            "idle": "✅", "completed": "✅",
+            "error": "❌", "timeout": "⏰", "cancelled": "🚫",
+        }
+        member_names = {w.get("agent_name", "") for w in workers if w.get("agent_name")}
+        member_names.add(orch_name)
+        active_meetings = self._active_meetings_with_members(member_names)
+
+        if active_meetings:
+            header = (
+                f"⏳ **Team Status Update** — members are idle but "
+                f"{len(active_meetings)} meeting(s) still open. Team is NOT done."
+            )
+        else:
+            header = "📋 **Team Status Update** — All members have finished."
+        lines = [header, "", "| Member | Status | Summary |", "|--------|--------|---------|"]
+        for w in workers:
+            name = w.get("agent_name", "?")
+            status = w.get("status", "?")
+            icon = status_icons.get(status, "❓")
+            if status == "error":
+                summary = (w.get("error", "") or "Unknown error")[:80]
+            else:
+                summary = (w.get("result", "") or "No output")[:80]
+            summary = summary.replace("\n", " ").replace("|", "/").strip()
+            lines.append(f"| {name} | {icon} {status} | {summary} |")
+        if active_meetings:
+            lines.append(self._format_active_meetings_warning(active_meetings))
+        else:
+            lines.append("\nReview outputs and decide next actions.")
+        return "\n".join(lines)
 

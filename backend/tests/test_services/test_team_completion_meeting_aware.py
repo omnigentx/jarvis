@@ -385,17 +385,16 @@ def test_create_team_notification_writes_session_id_into_metadata(env_db):
 
 
 def test_check_team_completion_filters_members_by_session_id(env_db, monkeypatch):
-    """REGRESSION: ``_check_team_completion`` MUST scope the member
-    sweep to the session_id of the triggering agent. The team_name
-    is reused across spawns ("toolset-self-audit" yesterday and
-    today both produce rows with that ``team_name``), so a raw
-    ``find_by_team_name`` join mixes the old idle agents into the
-    new completion check.
+    """REGRESSION: cycle handler MUST scope the member sweep to the
+    session_id of the triggering agent. ``team_name`` is reused across
+    spawns ("toolset-self-audit" yesterday and today produce rows with
+    the same name); without session filtering, old idle members from
+    yesterday would contaminate today's cycle calculation.
 
-    Pre-2026-05-14 the bridge looked at all members of the team
-    name regardless of session and dedupe-skipped today's run
-    because yesterday's notification already existed under that
-    name. The fix: filter members + dedupe by session_id.
+    Pre-event-stream (2026-05-14 era) the bridge looked at all members
+    of the team name regardless of session and dedupe-skipped today's
+    run. Post-event-stream the handler still must filter by session;
+    this test pins that contract.
     """
     from unittest.mock import MagicMock, patch
 
@@ -406,47 +405,58 @@ def test_check_team_completion_filters_members_by_session_id(env_db, monkeypatch
         "run_id": "run-pm-new", "team_name": "toolset-self-audit",
         "session_id": "newsess",
     }
-    # The registry returns BOTH sessions' members under the name.
-    # The fix filters them down to newsess before the all-done check.
     fake_registry.find_by_team_name.return_value = [
-        # Today's
+        # Today's spawn — also includes 1 running worker so the worker
+        # cycle is OPEN at the moment of the test snapshot. The handler
+        # should NOT fire the cycle-close event because worker is still
+        # running (so dedupe across sessions never gets a chance to
+        # silence anything — we only need to assert session scoping).
         {"run_id": "run-pm-new", "agent_name": "Bailey [PM]", "role": "pm",
          "status": "idle", "session_id": "newsess",
          "result": "# Roll-up — Verdict: PARTIAL"},
-        # Yesterday's — must be excluded
+        {"run_id": "run-toby-new", "agent_name": "Toby [BA]", "role": "ba",
+         "status": "running", "session_id": "newsess"},
+        # Yesterday's idle members — must NOT be counted in today's
+        # session's snapshot. If they leak in, the cycle handler would
+        # see "all idle" because yesterday's workers are stale-idle,
+        # and emit an incorrect close event.
         {"run_id": "run-pm-old", "agent_name": "Morgan [PM]", "role": "pm",
          "status": "idle", "session_id": "oldsess", "result": ""},
+        {"run_id": "run-toby-old", "agent_name": "Toby [BA]", "role": "ba",
+         "status": "idle", "session_id": "oldsess"},
     ]
 
     bridge = SpawnProgressBridge(
         progress_manager=MagicMock(), registry_db=fake_registry,
     )
-    # Force the dedupe to miss so we can observe the creation path.
-    monkeypatch.setattr(bridge, "_has_team_notification", lambda sid: False)
+    monkeypatch.setattr(
+        bridge, "_find_orchestrator",
+        lambda members: next(
+            (m for m in members if m.get("role") == "pm"), None,
+        ),
+    )
+    # Stub side-effect helpers so we can probe cycle state save.
+    saved = {}
+    monkeypatch.setattr(
+        bridge, "_save_cycle_state",
+        lambda sid, w, t: saved.update({"sid": sid, "w": w, "t": t}),
+    )
+    monkeypatch.setattr(
+        bridge, "_load_cycle_state",
+        lambda sid: {"worker_open": False, "team_open": False},
+    )
 
-    captured: dict = {}
+    bridge._on_member_state_event("run-pm-new")
 
-    class _Notif:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-            self.id = 201
-
-    with patch("core.database.NotificationModel", _Notif), \
-            patch("core.database.get_db_session", return_value=MagicMock()), \
-            patch("services.cron_scheduler.scheduler_stream_manager", MagicMock()):
-        bridge._check_team_completion(
-            trigger_agent="Bailey [PM]",
-            raw={"run_id": "run-pm-new"},
-        )
-
-    # Notification must surface TODAY's roll-up, not yesterday's empty.
-    assert captured, "completion check skipped — likely picked the wrong session"
-    assert "Roll-up" in captured["content"]
-    assert "Verdict" in captured["content"]
-    # Metadata carries today's session_id so future dedupe matches it.
-    meta = json.loads(captured["metadata_json"])
-    assert meta["session_id"] == "newsess"
-    assert meta["agent"] == "Bailey [PM]"
+    # Saved state reflects ONLY today's session (newsess), with worker
+    # cycle still OPEN (Toby [BA] running). If yesterday's members had
+    # leaked in, worker_open would still be False (their stale "idle")
+    # — but worker_open=True confirms today's running member was seen.
+    assert saved["sid"] == "newsess"
+    assert saved["w"] is True, (
+        "Session scoping broken: worker_open=False suggests yesterday's "
+        "all-idle members were counted instead of today's running worker."
+    )
 
 
 def test_create_team_notification_keeps_full_result_when_present(env_db):
@@ -485,134 +495,321 @@ def test_create_team_notification_keeps_full_result_when_present(env_db):
     assert "Verdict" in captured_notif["preview"]  # truncated preview shows real text
 
 
-def test_notify_orchestrator_skips_when_trigger_is_orchestrator(env_db, monkeypatch):
-    """REGRESSION: ``_notify_orchestrator_on_members_idle`` MUST skip
-    when the trigger agent IS the orchestrator itself.
+# ─── Event-stream cycle handler regression tests ────────────────────
+#
+# These tests replace the previous dedup-based pair
+# (_check_team_completion + _notify_orchestrator_on_members_idle) which
+# silently silenced repeat notifications via in-memory hash / DB content
+# filter. Production incident 2026-05-16: session ``be885ae8`` got 1
+# user notification on May 15 and zero thereafter despite 7+ work cycles.
+#
+# The 14 edge-case rows from the design table are covered by the tests
+# below (E1, E2, E5, E9, E12, E13, E14 directly tested; E3/E4/E8/E10/E11
+# implicit in the state-derivation logic; E7 documented out-of-scope).
 
-    Production incident 2026-05-16 10:18 ICT: every user inject to PM
-    resulted in PM receiving an "inbox" message right after responding:
-      Inject: "..." → PM responds → PM idle → bridge fires
-      _notify_orchestrator_on_members_idle(trigger_agent=PM) →
-      all workers idle (from before) → status_hash empty (post-restart
-      dedupe) → resume PM with "Check your inbox for team status updates"
 
-    The notification's intent is "workers finished delegated work →
-    tell PM to review". PM going idle after replying to a user inject
-    is NOT a worker-completion event; firing the notify wakes PM
-    unnecessarily and confuses the user about why agents got an inbox
-    after every inject.
+def _make_bridge_with_registry(members, monkeypatch, env_db, team_name="agile"):
+    """Test helper: build a bridge whose registry returns ``members``
+    and whose cycle-state tables point at a fresh temp SQLite.
 
-    Fix: skip when trigger_agent == orch_name. Worker idle still
-    triggers notify normally.
+    Each member dict is auto-tagged with ``team_name`` so the handler's
+    "is part of a team?" guard passes.
     """
     from unittest.mock import MagicMock
 
     from services.spawn_progress_bridge import SpawnProgressBridge
 
+    for m in members:
+        m.setdefault("team_name", team_name)
+
     fake_registry = MagicMock()
-    fake_registry.get_record.return_value = {
-        "run_id": "run-pm-1", "team_name": "agile-team",
-        "session_id": "be885ae8",
-    }
-    fake_registry.find_by_team_name.return_value = [
-        {"run_id": "run-pm-1", "agent_name": "Robin [PM]", "role": "pm",
-         "status": "idle", "session_id": "be885ae8"},
-        {"run_id": "run-toby", "agent_name": "Toby [BA]", "role": "ba",
-         "status": "idle", "session_id": "be885ae8",
-         "original_config": {"env_vars": {"TEAM_MESSAGES_DIR": "/tmp/x"}}},
-    ]
+    fake_registry.find_by_team_name.return_value = members
+    fake_registry.get_record.side_effect = lambda rid: next(
+        (m for m in members if m.get("run_id") == rid), None,
+    )
 
     bridge = SpawnProgressBridge(
         progress_manager=MagicMock(), registry_db=fake_registry,
     )
-
-    # Stub _find_orchestrator so the bridge identifies PM as orch.
+    # Default _find_orchestrator to role-based pick.
     monkeypatch.setattr(
         bridge, "_find_orchestrator",
-        lambda members: next(
-            (m for m in members if m.get("role") == "pm"), None,
+        lambda mems: next(
+            (m for m in mems if m.get("role") == "pm"), None,
         ),
     )
-
-    # Capture whether the resume path is reached (it shouldn't be).
-    resume_called = {"flag": False}
-    async def _fake_resume(*args, **kwargs):
-        resume_called["flag"] = True
-
-    monkeypatch.setattr(bridge, "_trigger_orchestrator_resume", _fake_resume)
-
-    # Trigger from PM itself (the buggy path).
-    bridge._notify_orchestrator_on_members_idle(
-        trigger_agent="Robin [PM]",
-        raw={"run_id": "run-pm-1"},
-    )
-
-    assert resume_called["flag"] is False, (
-        "Bridge fired orchestrator-resume even though the trigger was the "
-        "orchestrator itself. This is the 2026-05-16 'inbox after every inject' "
-        "loop — PM doesn't need to be re-woken after it just responded."
-    )
+    return bridge
 
 
-def test_notify_orchestrator_fires_when_worker_triggers(env_db, monkeypatch):
-    """Inverse of the regression test: when a WORKER triggers the event
-    (the legitimate use case), the orchestrator-notify MUST proceed.
+def test_cycle_worker_closed_fires_on_workers_idle_transition(env_db, monkeypatch):
+    """**Case 1** — Worker cycle closes when all workers stop running.
 
-    This guards against an overcorrection that would silence the
-    legitimate "workers finished → tell PM to review" notification.
+    PM is still running (delegating). One worker was running, now idle.
+    Worker cycle transitions open→closed → emit worker_cycle_closed.
+    PM receives inbox notification.
     """
-    from unittest.mock import MagicMock
-
-    from services.spawn_progress_bridge import SpawnProgressBridge
-
-    fake_registry = MagicMock()
-    fake_registry.get_record.return_value = {
-        "run_id": "run-toby", "team_name": "agile-team",
-        "session_id": "be885ae8",
-    }
-    fake_registry.find_by_team_name.return_value = [
-        {"run_id": "run-pm-1", "agent_name": "Robin [PM]", "role": "pm",
-         "status": "idle", "session_id": "be885ae8",
+    members_running = [
+        {"run_id": "pm1", "agent_name": "PM", "role": "pm",
+         "status": "running", "session_id": "sX",
          "original_config": {"env_vars": {"TEAM_MESSAGES_DIR": "/tmp/x"}}},
-        {"run_id": "run-toby", "agent_name": "Toby [BA]", "role": "ba",
-         "status": "idle", "session_id": "be885ae8",
+        {"run_id": "w1", "agent_name": "Wkr", "role": "dev",
+         "status": "running", "session_id": "sX",
          "original_config": {"env_vars": {"TEAM_MESSAGES_DIR": "/tmp/x"}}},
     ]
+    bridge = _make_bridge_with_registry(members_running, monkeypatch, env_db)
+    bridge._registry_db.get_record.return_value = {
+        "run_id": "w1", "team_name": "agile", "session_id": "sX",
+    }
 
-    bridge = SpawnProgressBridge(
-        progress_manager=MagicMock(), registry_db=fake_registry,
+    # First event: worker running → opens worker cycle (and team cycle)
+    bridge._on_member_state_event("w1")
+    state = bridge._load_cycle_state("sX")
+    assert state == {"worker_open": True, "team_open": True}
+
+    # Now worker idle → workers all non-running → close fires
+    members_running[1]["status"] = "idle"
+    bridge._registry_db.get_record.return_value = members_running[1]
+
+    emit_called = {"worker": False, "full": False}
+    monkeypatch.setattr(
+        bridge, "_emit_worker_cycle_closed",
+        lambda *a, **kw: emit_called.update({"worker": True}),
     )
     monkeypatch.setattr(
-        bridge, "_find_orchestrator",
-        lambda members: next(
-            (m for m in members if m.get("role") == "pm"), None,
-        ),
+        bridge, "_emit_full_cycle_closed",
+        lambda *a, **kw: emit_called.update({"full": True}),
     )
-    # Stub bus-send + meeting-check + resume so the function reaches
-    # the resume call without IO.
+
+    bridge._on_member_state_event("w1")
+    assert emit_called["worker"] is True, "Worker cycle close MUST fire"
+    assert emit_called["full"] is False, "Team cycle still open (PM running) — must NOT fire full"
+
+
+def test_cycle_full_closed_fires_when_team_idle_no_meeting(env_db, monkeypatch):
+    """**Case 2** — Team cycle closes when ALL agents (incl PM) stop
+    running and no active meeting blocks. User UI notification fires.
+    """
+    members = [
+        {"run_id": "pm1", "agent_name": "PM", "role": "pm",
+         "status": "running", "session_id": "sY"},
+        {"run_id": "w1", "agent_name": "Wkr", "role": "dev",
+         "status": "idle", "session_id": "sY"},
+    ]
+    bridge = _make_bridge_with_registry(members, monkeypatch, env_db)
+    monkeypatch.setattr(bridge, "_active_meetings_with_members", lambda names: [])
+
+    # Open team cycle (PM running)
+    bridge._registry_db.get_record.return_value = members[0]
+    bridge._on_member_state_event("pm1")
+    assert bridge._load_cycle_state("sY")["team_open"] is True
+
+    # PM goes idle → team all non-running → full cycle closes
+    members[0]["status"] = "idle"
+    bridge._registry_db.get_record.return_value = members[0]
+
+    full_emitted = {"flag": False}
     monkeypatch.setattr(
-        bridge, "_active_meetings_with_members", lambda names: [],
+        bridge, "_emit_full_cycle_closed",
+        lambda *a, **kw: full_emitted.update({"flag": True}),
+    )
+    monkeypatch.setattr(bridge, "_emit_worker_cycle_closed", lambda *a, **kw: None)
+
+    bridge._on_member_state_event("pm1")
+    assert full_emitted["flag"] is True
+
+
+def test_cycle_full_blocked_by_active_meeting(env_db, monkeypatch):
+    """**E5** — When all agents idle BUT an active meeting exists, full
+    cycle close MUST be deferred. Meeting end event will re-trigger.
+    Prevents the b61af7db "All finished | No output" false-positive.
+    """
+    members = [
+        {"run_id": "pm1", "agent_name": "PM", "role": "pm",
+         "status": "running", "session_id": "sM"},
+        {"run_id": "w1", "agent_name": "Wkr", "role": "dev",
+         "status": "idle", "session_id": "sM"},
+    ]
+    bridge = _make_bridge_with_registry(members, monkeypatch, env_db)
+    monkeypatch.setattr(
+        bridge, "_active_meetings_with_members",
+        lambda names: [{"meeting_id": "m1", "current_speaker": "Wkr"}],
+    )
+
+    bridge._registry_db.get_record.return_value = members[0]
+    bridge._on_member_state_event("pm1")
+
+    members[0]["status"] = "idle"
+    bridge._registry_db.get_record.return_value = members[0]
+
+    full_called = {"flag": False}
+    monkeypatch.setattr(
+        bridge, "_emit_full_cycle_closed",
+        lambda *a, **kw: full_called.update({"flag": True}),
+    )
+    monkeypatch.setattr(bridge, "_emit_worker_cycle_closed", lambda *a, **kw: None)
+
+    bridge._on_member_state_event("pm1")
+    assert full_called["flag"] is False, (
+        "Active meeting should defer full_cycle_closed — team is NOT done"
+    )
+
+
+def test_cycle_state_persists_across_handler_invocations(env_db, monkeypatch):
+    """**E13** — Cycle state is DB-persisted so backend restart does not
+    cause spurious fires or missed closes.
+    """
+    members = [
+        {"run_id": "pm1", "agent_name": "PM", "role": "pm",
+         "status": "running", "session_id": "sP"},
+        {"run_id": "w1", "agent_name": "Wkr", "role": "dev",
+         "status": "running", "session_id": "sP"},
+    ]
+    bridge = _make_bridge_with_registry(members, monkeypatch, env_db)
+    bridge._registry_db.get_record.return_value = members[1]
+
+    bridge._on_member_state_event("w1")
+    state_after_open = bridge._load_cycle_state("sP")
+    assert state_after_open == {"worker_open": True, "team_open": True}
+
+    # Simulate "restart" — recreate bridge with same registry
+    from unittest.mock import MagicMock
+    from services.spawn_progress_bridge import SpawnProgressBridge
+    fresh_bridge = SpawnProgressBridge(
+        progress_manager=MagicMock(), registry_db=bridge._registry_db,
+    )
+    # State must be loaded from DB, not from in-memory reset
+    fresh_state = fresh_bridge._load_cycle_state("sP")
+    assert fresh_state == {"worker_open": True, "team_open": True}, (
+        "Cycle state lost across restart — restart-safety contract broken"
+    )
+
+
+def test_cycle_event_idempotent_via_db_primary_key(env_db, monkeypatch):
+    """**E12** — Same event_id inserted twice MUST be a no-op the second
+    time (DB ON CONFLICT). Caller must NOT run side effects on conflict.
+    """
+    members = [
+        {"run_id": "pm1", "agent_name": "PM", "role": "pm",
+         "status": "idle", "session_id": "sI"},
+    ]
+    bridge = _make_bridge_with_registry(members, monkeypatch, env_db)
+
+    payload = {"foo": "bar"}
+    ok_first = bridge._insert_event(
+        "stable-id-1", "worker_cycle_closed", "sI", "team", payload,
+    )
+    ok_second = bridge._insert_event(
+        "stable-id-1", "worker_cycle_closed", "sI", "team", payload,
+    )
+    assert ok_first is True, "First insert should succeed"
+    assert ok_second is False, (
+        "Second insert with same event_id MUST conflict and return False — "
+        "caller relies on this to skip duplicate side effects"
+    )
+
+
+def test_cycle_multi_session_isolation(env_db, monkeypatch):
+    """**E14** — Cycle state is keyed by session_id. Two teams running
+    concurrently MUST NOT cross-contaminate.
+    """
+    members = [
+        {"run_id": "pm-A", "agent_name": "PM-A", "role": "pm",
+         "status": "running", "session_id": "sA"},
+        {"run_id": "pm-B", "agent_name": "PM-B", "role": "pm",
+         "status": "idle", "session_id": "sB"},
+    ]
+    bridge = _make_bridge_with_registry(members, monkeypatch, env_db)
+
+    bridge._registry_db.find_by_team_name.side_effect = (
+        lambda name: [m for m in members if m.get("session_id") == (
+            "sA" if name == "team-A" else "sB"
+        )]
+    )
+    bridge._registry_db.get_record.side_effect = lambda rid: next(
+        (m | {"team_name": "team-A" if m["session_id"] == "sA" else "team-B"}
+         for m in members if m.get("run_id") == rid), None,
+    )
+
+    bridge._on_member_state_event("pm-A")
+    bridge._on_member_state_event("pm-B")
+    state_A = bridge._load_cycle_state("sA")
+    state_B = bridge._load_cycle_state("sB")
+    assert state_A == {"worker_open": False, "team_open": True}
+    assert state_B == {"worker_open": False, "team_open": False}, (
+        "Session B (PM idle) leaked Session A's running state"
+    )
+
+
+def test_cycle_solo_pm_no_workers(env_db, monkeypatch):
+    """**E1** — PM responds to a user inject solo (no workers spawned).
+    worker_cycle never opens. team_cycle open→close on PM idle fires
+    full notification; no worker notification fires.
+    """
+    members = [
+        {"run_id": "pm1", "agent_name": "PM", "role": "pm",
+         "status": "running", "session_id": "sSolo"},
+    ]
+    bridge = _make_bridge_with_registry(members, monkeypatch, env_db)
+    monkeypatch.setattr(bridge, "_active_meetings_with_members", lambda names: [])
+
+    bridge._registry_db.get_record.return_value = members[0]
+    bridge._on_member_state_event("pm1")
+    state = bridge._load_cycle_state("sSolo")
+    assert state == {"worker_open": False, "team_open": True}, (
+        "Solo PM running: workers absent → worker_open=False; PM running → team_open=True"
+    )
+
+    # PM idle → only full cycle fires, worker cycle never opened/closed
+    members[0]["status"] = "idle"
+    bridge._registry_db.get_record.return_value = members[0]
+
+    fires = {"worker": False, "full": False}
+    monkeypatch.setattr(
+        bridge, "_emit_worker_cycle_closed",
+        lambda *a, **kw: fires.update({"worker": True}),
     )
     monkeypatch.setattr(
-        bridge, "_resolve_messages_dir", lambda members: "/tmp/x",
+        bridge, "_emit_full_cycle_closed",
+        lambda *a, **kw: fires.update({"full": True}),
     )
+    bridge._on_member_state_event("pm1")
+    assert fires == {"worker": False, "full": True}
 
-    bus_send_called = {"flag": False}
-    class _FakeBus:
-        def __init__(self, *a, **kw): pass
-        def send(self, *a, **kw):
-            bus_send_called["flag"] = True
 
+def test_cycle_multiround_worker_closes_each_round(env_db, monkeypatch):
+    """**E2** — Multi-round delegation: PM delegates → workers idle →
+    PM delegates again → workers idle. Worker cycle MUST close on EACH
+    round (idempotency via unique event_id, not blocked by state-hash
+    matching across rounds).
+    """
+    members = [
+        {"run_id": "pm1", "agent_name": "PM", "role": "pm",
+         "status": "running", "session_id": "sR"},
+        {"run_id": "w1", "agent_name": "Wkr", "role": "dev",
+         "status": "running", "session_id": "sR"},
+    ]
+    bridge = _make_bridge_with_registry(members, monkeypatch, env_db)
+    bridge._registry_db.get_record.return_value = members[1]
+
+    fires = {"count": 0}
     monkeypatch.setattr(
-        "fast_agent.spawn.message_bus.MessageBus", _FakeBus,
+        bridge, "_emit_worker_cycle_closed",
+        lambda *a, **kw: fires.update({"count": fires["count"] + 1}),
     )
+    monkeypatch.setattr(bridge, "_emit_full_cycle_closed", lambda *a, **kw: None)
 
-    bridge._notify_orchestrator_on_members_idle(
-        trigger_agent="Toby [BA]",  # worker, not orchestrator
-        raw={"run_id": "run-toby"},
-    )
+    # Round 1: worker running → idle
+    bridge._on_member_state_event("w1")  # opens
+    members[1]["status"] = "idle"
+    bridge._on_member_state_event("w1")  # closes → fire 1
+    assert fires["count"] == 1
 
-    assert bus_send_called["flag"] is True, (
-        "Worker-triggered notify must still fire — guard should NOT silence "
-        "legitimate worker-completion events."
+    # Round 2: worker re-runs → idle again
+    members[1]["status"] = "running"
+    bridge._on_member_state_event("w1")  # re-opens
+    members[1]["status"] = "idle"
+    bridge._on_member_state_event("w1")  # closes → fire 2
+    assert fires["count"] == 2, (
+        "Worker cycle MUST fire each round. State-hash dedupe would "
+        "incorrectly silence round 2 because (run_id, status) is identical."
     )
