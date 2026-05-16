@@ -425,10 +425,41 @@ Reference: [fast-agent Tool Runner docs](https://fast-agent.ai/agents/tool_runne
 - Commit messages: concise, action-oriented (e.g. `chat: add SSE streaming to chat view`).
 - Docker uses `host.docker.internal` (via `extra_hosts: host-gateway`) to reach the separately deployed CLIProxyAPI service on the Ubuntu host.
 
+## MCP Atlassian — known incident pitfalls (read before debugging)
+
+These are pitfalls recovered from production incidents. Each one cost
+~10-30 minutes of agent retry-loops before being diagnosed. They live
+here so the next agent (LLM or human) doesn't re-discover them by
+trial and error.
+
+- **`jira_create_project.project_template_key` is REQUIRED on Cloud.**
+  Older descriptions said it was optional; modern Jira Cloud rejects
+  POST `/rest/api/3/project` with bare `HTTP 400: Invalid request payload`
+  (no structured fields) when omitted. As of 2026-05-16 the MCP tool
+  fills a per-type default (`software`→Scrum agility, `business`→process
+  control, `service_desk`→IT). Override only when needed. Evidence:
+  `jarvis.log:3322-3330`, 2026-05-16 00:34 ICT — agent burned 4
+  retries before fix landed.
+
+- **Confluence returns 403 (not 404) for pages in non-existent spaces.**
+  `confluence_create_page(space_key="X")` against a missing space `X`
+  comes back as `"The calling user does not have permission to view
+  the content"`. Always call `confluence_create_space("X", ...)`
+  BEFORE `create_page` when targeting a new key. The MCP tool now
+  rewrites the 403 with an actionable hint, but the underlying
+  Atlassian wording can change — if the hint disappears, this is
+  still the right diagnosis. Evidence: `jarvis.log:3296`, 2026-05-16
+  00:32 ICT.
+
+- **`lead_account_id` accepts `"me"` / email / display-name.** Agents
+  don't need to know their 24-char Cloud accountId. Pass `"me"` and
+  the server resolves via `/rest/api/3/myself`. Email/display-name
+  flow through the user-lookup chain. As of 2026-05-15.
+
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **jarvis** (35435 symbols, 99356 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **jarvis** (35826 symbols, 100473 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
