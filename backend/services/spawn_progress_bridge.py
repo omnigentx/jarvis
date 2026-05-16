@@ -1247,6 +1247,19 @@ class SpawnProgressBridge:
             return
         orch_name = orchestrator.get("agent_name", "")
 
+        # Skip when the trigger IS the orchestrator. The notification is for
+        # "workers finished delegated work — PM should review". PM going idle
+        # itself (e.g. after replying to a user inject, or after processing
+        # a previous notify-resume) shouldn't re-fire the notification:
+        # PM doesn't need to be told to check its own inbox right after it
+        # just acted. Without this guard, every user inject triggered one
+        # extra round-trip (User → PM responds → idle → bridge sends
+        # "Check inbox" → PM wakes → no-op → idle → dedup hash catches),
+        # which appeared to the user as "agent gets an inbox after every
+        # inject". Production trace 2026-05-16 10:18 ICT.
+        if trigger_agent == orch_name:
+            return
+
         _non_running = {"idle", "completed", "error", "timeout", "cancelled"}
         workers = [
             m for m in members

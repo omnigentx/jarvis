@@ -483,3 +483,136 @@ def test_create_team_notification_keeps_full_result_when_present(env_db):
     assert captured_notif["content"] == rollup
     assert "BUG" not in captured_notif["preview"]
     assert "Verdict" in captured_notif["preview"]  # truncated preview shows real text
+
+
+def test_notify_orchestrator_skips_when_trigger_is_orchestrator(env_db, monkeypatch):
+    """REGRESSION: ``_notify_orchestrator_on_members_idle`` MUST skip
+    when the trigger agent IS the orchestrator itself.
+
+    Production incident 2026-05-16 10:18 ICT: every user inject to PM
+    resulted in PM receiving an "inbox" message right after responding:
+      Inject: "..." → PM responds → PM idle → bridge fires
+      _notify_orchestrator_on_members_idle(trigger_agent=PM) →
+      all workers idle (from before) → status_hash empty (post-restart
+      dedupe) → resume PM with "Check your inbox for team status updates"
+
+    The notification's intent is "workers finished delegated work →
+    tell PM to review". PM going idle after replying to a user inject
+    is NOT a worker-completion event; firing the notify wakes PM
+    unnecessarily and confuses the user about why agents got an inbox
+    after every inject.
+
+    Fix: skip when trigger_agent == orch_name. Worker idle still
+    triggers notify normally.
+    """
+    from unittest.mock import MagicMock
+
+    from services.spawn_progress_bridge import SpawnProgressBridge
+
+    fake_registry = MagicMock()
+    fake_registry.get_record.return_value = {
+        "run_id": "run-pm-1", "team_name": "agile-team",
+        "session_id": "be885ae8",
+    }
+    fake_registry.find_by_team_name.return_value = [
+        {"run_id": "run-pm-1", "agent_name": "Robin [PM]", "role": "pm",
+         "status": "idle", "session_id": "be885ae8"},
+        {"run_id": "run-toby", "agent_name": "Toby [BA]", "role": "ba",
+         "status": "idle", "session_id": "be885ae8",
+         "original_config": {"env_vars": {"TEAM_MESSAGES_DIR": "/tmp/x"}}},
+    ]
+
+    bridge = SpawnProgressBridge(
+        progress_manager=MagicMock(), registry_db=fake_registry,
+    )
+
+    # Stub _find_orchestrator so the bridge identifies PM as orch.
+    monkeypatch.setattr(
+        bridge, "_find_orchestrator",
+        lambda members: next(
+            (m for m in members if m.get("role") == "pm"), None,
+        ),
+    )
+
+    # Capture whether the resume path is reached (it shouldn't be).
+    resume_called = {"flag": False}
+    async def _fake_resume(*args, **kwargs):
+        resume_called["flag"] = True
+
+    monkeypatch.setattr(bridge, "_trigger_orchestrator_resume", _fake_resume)
+
+    # Trigger from PM itself (the buggy path).
+    bridge._notify_orchestrator_on_members_idle(
+        trigger_agent="Robin [PM]",
+        raw={"run_id": "run-pm-1"},
+    )
+
+    assert resume_called["flag"] is False, (
+        "Bridge fired orchestrator-resume even though the trigger was the "
+        "orchestrator itself. This is the 2026-05-16 'inbox after every inject' "
+        "loop — PM doesn't need to be re-woken after it just responded."
+    )
+
+
+def test_notify_orchestrator_fires_when_worker_triggers(env_db, monkeypatch):
+    """Inverse of the regression test: when a WORKER triggers the event
+    (the legitimate use case), the orchestrator-notify MUST proceed.
+
+    This guards against an overcorrection that would silence the
+    legitimate "workers finished → tell PM to review" notification.
+    """
+    from unittest.mock import MagicMock
+
+    from services.spawn_progress_bridge import SpawnProgressBridge
+
+    fake_registry = MagicMock()
+    fake_registry.get_record.return_value = {
+        "run_id": "run-toby", "team_name": "agile-team",
+        "session_id": "be885ae8",
+    }
+    fake_registry.find_by_team_name.return_value = [
+        {"run_id": "run-pm-1", "agent_name": "Robin [PM]", "role": "pm",
+         "status": "idle", "session_id": "be885ae8",
+         "original_config": {"env_vars": {"TEAM_MESSAGES_DIR": "/tmp/x"}}},
+        {"run_id": "run-toby", "agent_name": "Toby [BA]", "role": "ba",
+         "status": "idle", "session_id": "be885ae8",
+         "original_config": {"env_vars": {"TEAM_MESSAGES_DIR": "/tmp/x"}}},
+    ]
+
+    bridge = SpawnProgressBridge(
+        progress_manager=MagicMock(), registry_db=fake_registry,
+    )
+    monkeypatch.setattr(
+        bridge, "_find_orchestrator",
+        lambda members: next(
+            (m for m in members if m.get("role") == "pm"), None,
+        ),
+    )
+    # Stub bus-send + meeting-check + resume so the function reaches
+    # the resume call without IO.
+    monkeypatch.setattr(
+        bridge, "_active_meetings_with_members", lambda names: [],
+    )
+    monkeypatch.setattr(
+        bridge, "_resolve_messages_dir", lambda members: "/tmp/x",
+    )
+
+    bus_send_called = {"flag": False}
+    class _FakeBus:
+        def __init__(self, *a, **kw): pass
+        def send(self, *a, **kw):
+            bus_send_called["flag"] = True
+
+    monkeypatch.setattr(
+        "fast_agent.spawn.message_bus.MessageBus", _FakeBus,
+    )
+
+    bridge._notify_orchestrator_on_members_idle(
+        trigger_agent="Toby [BA]",  # worker, not orchestrator
+        raw={"run_id": "run-toby"},
+    )
+
+    assert bus_send_called["flag"] is True, (
+        "Worker-triggered notify must still fire — guard should NOT silence "
+        "legitimate worker-completion events."
+    )
