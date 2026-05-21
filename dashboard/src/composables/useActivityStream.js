@@ -28,18 +28,17 @@ export function useActivityStream(options = {}) {
   // Active filter: 'all' | 'active' | 'team:<name>'
   const filter = ref('all')
 
-  // Agent selection. Filled by a watcher once the store roster loads so
-  // the dropdown opens with every agent already ticked AND the bulk-
-  // delete count badge shows the full roster size. Without this, an
-  // empty Set rendered visually as "all checked" (filter convention)
-  // while bulk-delete saw zero selections — see the 2026-05-21 thread
-  // about that mismatch.
+  // Agent selection. Empty Set = implicit-all (default state): the filter
+  // below treats ``size === 0`` as "no filter applied" and the checkboxes
+  // render as ✓ via ``size === 0 || has(name)``. We do NOT eagerly fill
+  // this with the roster — the store populates agents one-by-one, so a
+  // watcher that latched on first non-zero length would lock the set to
+  // whatever agent arrived first and silently drop later arrivals
+  // (regression 2026-05-21 e2e: ``agent-monitor.spec.ts`` saw only
+  // alpha-agent while beta was already in the store). The bulk-delete
+  // count badge derives its number from ``store.agentsList`` whenever
+  // ``selectedAgents`` is empty — display layer, not state layer.
   const selectedAgents = ref(new Set())
-  // Flips to true the first time the user touches the selection
-  // (toggleAgent / selectAll / clearAll / toggleSortLock... any explicit
-  // intent). Once flipped, the "auto-select-all-on-first-roster-load"
-  // watcher stops mutating selectedAgents — the user's choice wins.
-  const userTouchedSelection = ref(false)
 
   // Sort lock: freeze grid order so agents stop jumping
   const sortLocked = ref(false)
@@ -210,7 +209,6 @@ export function useActivityStream(options = {}) {
   //   grid", which is filtered out of explicit name lists.
 
   function toggleAgent(name) {
-    userTouchedSelection.value = true
     let s = new Set(selectedAgents.value)
     if (s.size === 0) {
       // Expand implicit-all → explicit roster so we can subtract from it.
@@ -223,7 +221,6 @@ export function useActivityStream(options = {}) {
   }
 
   function selectAll() {
-    userTouchedSelection.value = true
     // Materialize the roster so consumers see real names, not the
     // implicit-all empty Set. Drops the `__none__` sentinel implicitly
     // by overwriting the value.
@@ -231,31 +228,9 @@ export function useActivityStream(options = {}) {
   }
 
   function clearAll() {
-    userTouchedSelection.value = true
     // Select none — show empty grid
     selectedAgents.value = new Set(['__none__'])
   }
-
-  // Auto-fill selection on first roster load. Watches store.agentsList:
-  // the moment it transitions from empty → non-empty (initial fetch
-  // completes), populate selectedAgents with every name so default state
-  // is "all selected" (visual ✓ + state ✓ + delete button enabled with
-  // full count, all in sync). Stops mutating once the user has made any
-  // explicit choice — even back to "everything" — to avoid stomping on
-  // intent (e.g. user clears, new agent arrives later, the watcher
-  // should NOT re-select-all).
-  const stopRosterAutoSelect = watch(
-    () => store.agentsList.length,
-    (n) => {
-      if (n === 0) return
-      if (userTouchedSelection.value) return
-      if (selectedAgents.value.size > 0) return  // already populated
-      selectedAgents.value = new Set(store.agentsList.map(a => a.name))
-    },
-    { immediate: true },
-  )
-
-  onUnmounted(() => stopRosterAutoSelect())
 
   function toggleSortLock() {
     if (!sortLocked.value) {
