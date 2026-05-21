@@ -16,7 +16,7 @@ if [[ -z "${VERSION}" ]]; then
     exit 1
 fi
 
-IMAGE="felixnguyen95/jarvis-backend-base"
+IMAGE="omnigentx/jarvis-backend-base"
 BUILDER="jarvis-multiarch"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_DIR="$(dirname "${SCRIPT_DIR}")"

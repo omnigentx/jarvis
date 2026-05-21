@@ -1,0 +1,105 @@
+name: Bug report
+description: Report a reproducible problem in Jarvis (backend, dashboard, agents, MCP servers).
+title: "[bug] "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. Please fill in the fields below — issues missing
+        reproduction steps or version info will be closed as `needs-info`.
+
+        Security vulnerabilities: **do NOT file as a public issue**. Report privately via
+        [GitHub Security Advisory](https://github.com/omnigentx/jarvis/security/advisories/new).
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: One-sentence description of the bug.
+      placeholder: e.g. "Dashboard turn dedup drops the second tool call when two runs share a timestamp."
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Minimal, numbered steps. Include test data / config snippets if relevant.
+      placeholder: |
+        1. `docker compose up`
+        2. Open dashboard at http://localhost:3000
+        3. Send "/team agile" → click run #2 in sidebar
+        4. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include exact error messages, screenshots, or short log excerpts. For long logs, link a gist.
+    validations:
+      required: true
+
+  - type: input
+    id: commit
+    attributes:
+      label: Commit SHA / version
+      description: Output of `git rev-parse --short HEAD` (or release tag).
+      placeholder: e.g. 4c293fb
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      multiple: true
+      options:
+        - backend (FastAPI / fast-agent)
+        - dashboard (Flutter web)
+        - MCP server (built-in)
+        - MCP server (self-generated)
+        - team templates / orchestrator
+        - voice (TTS / STT / wake-word)
+        - docker / deploy / CI
+        - docs
+        - other
+    validations:
+      required: true
+
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: OS, Docker version (if used), Python version (if native).
+      placeholder: e.g. macOS 14.5, Docker 27.0, Python 3.12
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: |
+        Backend log lines from `backend/fastagent.jsonl`, container logs, or browser console.
+        Wrap in triple backticks. **Redact any API keys / tokens before pasting.**
+      render: shell
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-submit checks
+      options:
+        - label: I searched [existing issues](https://github.com/omnigentx/jarvis/issues?q=is%3Aissue) and didn't find a duplicate.
+          required: true
+        - label: I redacted secrets (API keys, tokens, personal info) from logs and screenshots.
+          required: true

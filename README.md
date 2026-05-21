@@ -1,5 +1,10 @@
 # Jarvis
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
+[![Code of Conduct](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](CODE_OF_CONDUCT.md)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+
 Self-hostable AI assistant built on [fast-agent](https://github.com/evalstate/fast-agent) with the Model Context Protocol (MCP). Spawns a multi-agent team that can plan, research, design, code, test, and deploy together.
 
 > **Status:** active development. Public release lineage starts at `v1.0.0`.
@@ -17,7 +22,7 @@ Self-hostable AI assistant built on [fast-agent](https://github.com/evalstate/fa
 ## Quick start
 
 ```bash
-git clone --recurse-submodules https://github.com/<your-user-or-org>/jarvis.git
+git clone --recurse-submodules https://github.com/omnigentx/jarvis.git
 cd jarvis
 
 # Copy and edit secrets
@@ -50,7 +55,7 @@ jarvis/
 │   ├── realtimestt_src/        Submodule — fork of KoljaB/RealtimeSTT (hands-free STT)
 │   └── realtimetts_src/        Submodule — fork of KoljaB/RealtimeTTS (streaming TTS)
 ├── dashboard/                  Vue 3 + Vite web UI (the active frontend)
-├── xiaozhi_integration/        Bridges a Xiaozhi ESP32 device to the backend over MCP
+├── xiaozhi_integration/        🧪 Experimental — bridges a Xiaozhi ESP32 device to the backend over MCP
 ├── docs/                       Self-hosting and architecture docs
 └── docker-compose.yaml         Top-level stack (backend + web)
 ```
@@ -58,6 +63,12 @@ jarvis/
 ## Architecture in one paragraph
 
 Jarvis is a `fast-agent` application. A root agent (Jarvis) delegates tool calls to a curated set of sub-agents, each backed by its own MCP servers. The spawn system lets Jarvis (or a PM agent) dynamically launch isolated agent subprocesses for parallel work. Agents communicate via an inter-agent email bus and a meeting-room protocol. Sessions, agent registry, and secrets live in SQLite under `backend/data/` (gitignored). Skills (Markdown files with YAML frontmatter) inject reusable prompts and references at runtime. See [`AGENTS.md`](AGENTS.md) for a deeper tour.
+
+## Community
+
+- Questions, ideas, show-and-tell → [GitHub Discussions](https://github.com/omnigentx/jarvis/discussions)
+- Actionable bugs / feature requests → [GitHub Issues](https://github.com/omnigentx/jarvis/issues)
+- All participants are expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Contributing
 

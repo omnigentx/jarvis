@@ -3,7 +3,7 @@
 ## Full Project Structure
 
 ```
-jarvis_v3/
+jarvis/
 ├── backend/
 │   ├── agent.py                ← Agent definitions (Jarvis, PersonalAgent, IoT, Music, Audio)
 │   ├── server.py               ← FastAPI app entry point + lifespan

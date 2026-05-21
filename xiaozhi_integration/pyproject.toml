@@ -1,7 +1,8 @@
 [project]
 name = "xiaozhi-integration"
 version = "0.1.0"
-description = "Add your description here"
+description = "Bridges a Xiaozhi ESP32 voice device with the Jarvis backend over MCP (experimental)."
+license = "MIT"
 requires-python = ">=3.13"
 dependencies = [
     "fastmcp>=2.14.3",

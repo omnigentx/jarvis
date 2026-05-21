@@ -11,16 +11,16 @@ description: >
 
 | Repo | URL | Access |
 |------|-----|--------|
-| **Origin** (user-managed) | https://github.com/phucly95/jarvis-v3 | User only |
-| **Agent** (agents use this) | https://github.com/phucnv31/jarvis-v3 | Full access — commit, push, create MR/issues, deploy via GitHub Actions |
+| **Upstream** (source of truth) | https://github.com/omnigentx/jarvis | Public read-only |
+| **Your fork** (agents push here) | https://github.com/<your-username>/jarvis | Full access — commit, push, create PR/issues, deploy via GitHub Actions |
 
-> Agents (Jarvis, sub-agents) use the `phucnv31/jarvis-v3` repo for all Git operations.
+> 🧪 **Experimental**: When agent self-improvement is enabled, agents (Jarvis, sub-agents) push to your personal fork — never to upstream. Configure the fork URL in `fastagent.secrets.yaml`.
 
 
 ## Project Structure
 
 ```
-jarvis_v3/
+jarvis/
 ├── backend/
 │   ├── agent.py                ← Agent definitions (Jarvis, PersonalAgent, IoT, Music, Audio)
 │   ├── server.py               ← FastAPI app entry point + lifespan

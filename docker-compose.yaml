@@ -1,7 +1,7 @@
 services:
   jarvis-backend:
     build: ./backend
-    image: felixnguyen95/jarvis-backend:latest
+    image: omnigentx/jarvis-backend:latest
     container_name: jarvis_backend
     ports:
       - "127.0.0.1:8000:8000"
@@ -47,7 +47,7 @@ services:
 
   jarvis-web:
     build: ./dashboard
-    image: felixnguyen95/jarvis-web:latest
+    image: omnigentx/jarvis-web:latest
     container_name: jarvis_web
     ports:
       - "127.0.0.1:80:80"

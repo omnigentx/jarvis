@@ -65,7 +65,7 @@ roles:
 
       ### Phase 2: Kickoff
       4. **Create kickoff meeting** — `create_meeting(max_rounds=6)` with:
-         - **OBJECTIVE** (1 sentence MAX): the goal/decision expected, e.g. "Kick off Sprint 1 backlog for jarvis_v3 improvements"
+         - **OBJECTIVE** (1 sentence MAX): the goal/decision expected, e.g. "Kick off Sprint 1 backlog for jarvis improvements"
          - **agenda** (body): project context, Jira link, role assignments, deliverables, DoD
          - ⚠️ Do NOT put role assignments or context in the OBJECTIVE field — keep it short!
       5. **Spawn team** — `spawn_team_members(roles="ba,dev,qe", first_task="...")`

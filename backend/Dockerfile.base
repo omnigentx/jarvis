@@ -3,8 +3,8 @@
 # Contains all system-level deps that rarely change: Python 3.13, Node 22 + npm 10,
 # uv/uvx, gitnexus CLI, and native libs for audio/video/gcc builds.
 #
-# Published to Docker Hub as `felixnguyen95/jarvis-backend-base:<version>`.
-# The main Dockerfile does `FROM felixnguyen95/jarvis-backend-base:<version>`
+# Published to Docker Hub as `omnigentx/jarvis-backend-base:<version>`.
+# The main Dockerfile does `FROM omnigentx/jarvis-backend-base:<version>`
 # so every app build skips the slow apt/npm steps.
 #
 # ─── When to rebuild ───
@@ -21,13 +21,13 @@
 # ─── Build + Push (multi-arch) ───
 #   export VERSION=1.1.0
 #   docker buildx build --platform linux/amd64,linux/arm64 \
-#     -t felixnguyen95/jarvis-backend-base:${VERSION} \
-#     -t felixnguyen95/jarvis-backend-base:latest \
+#     -t omnigentx/jarvis-backend-base:${VERSION} \
+#     -t omnigentx/jarvis-backend-base:latest \
 #     -f Dockerfile.base --push .
 #
 # Single-arch quick build (amd64 only, faster for local testing):
-#   docker build -t felixnguyen95/jarvis-backend-base:${VERSION} -f Dockerfile.base .
-#   docker push felixnguyen95/jarvis-backend-base:${VERSION}
+#   docker build -t omnigentx/jarvis-backend-base:${VERSION} -f Dockerfile.base .
+#   docker push omnigentx/jarvis-backend-base:${VERSION}
 #
 # Version log:
 #   1.1.0 — added docker.io (CLI) so MCP servers that wrap `docker run` work
