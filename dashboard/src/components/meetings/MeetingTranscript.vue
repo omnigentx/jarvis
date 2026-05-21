@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import MarkdownRenderer from '../MarkdownRenderer.vue'
+import { normalizeTs } from '../../utils/timeFormat.js'
 
 const props = defineProps({
   meeting: { type: Object, default: null },
@@ -134,9 +135,10 @@ function agentInitial(name) {
 }
 
 function formatTimestamp(ts) {
-  if (!ts) return ''
+  const ms = normalizeTs(ts)
+  if (ms === null) return ''
   try {
-    const d = new Date(ts)
+    const d = new Date(ms)
     return d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
   } catch {
     return ''

@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useActivityStream } from '../composables/useActivityStream'
 import { useAgentTurns } from '../composables/useAgentTurns'
 import { apiFetch } from '../api'
@@ -39,9 +39,17 @@ watch(
 
 // Dropdown state
 const showAgentDropdown = ref(false)
+const dropdownSearchInput = ref(null)
 
 function toggleDropdown() {
   showAgentDropdown.value = !showAgentDropdown.value
+  if (showAgentDropdown.value) {
+    // Autofocus the search input so users can type immediately.
+    nextTick(() => dropdownSearchInput.value?.focus())
+  } else {
+    // Clear search when closing so reopening starts clean.
+    dropdownSearch.value = ''
+  }
 }
 
 function closeDropdown(e) {
@@ -55,20 +63,28 @@ function closeDropdown(e) {
 function handleClickOutside(e) {
   if (showAgentDropdown.value && !e.target.closest('.agent-dropdown')) {
     showAgentDropdown.value = false
-  }
-  if (showDisbandMenu.value && !e.target.closest('.disband-dropdown')) {
-    showDisbandMenu.value = false
+    dropdownSearch.value = ''
   }
 }
 onMounted(() => document.addEventListener('click', handleClickOutside))
 onUnmounted(() => document.removeEventListener('click', handleClickOutside))
 
-// Label for the dropdown button
+// Label for the dropdown button. Includes a "· K deletable" suffix
+// whenever the selection contains built-in agents (which view fine but
+// are skipped by bulk-delete). Without it, users see "16 selected" next
+// to a "Delete (11)" badge and can't tell where the 5-agent gap came
+// from — same confusion that prompted this whole thread.
 const dropdownLabel = computed(() => {
-  if (selectedAgents.value.size === 0) return 'All Agents'
+  if (selectedAgents.value.size === 0) return 'All Agents'   // implicit-all (initial)
   if (selectedAgents.value.has('__none__')) return 'None Selected'
   const count = selectedAgents.value.size
-  return `${count} agent${count > 1 ? 's' : ''} selected`
+  const total = store.agentsList.length
+  const deletable = deletableSelectedNames.value.length
+  let main = (total > 0 && count === total)
+    ? `All ${total} selected`
+    : `${count} agent${count > 1 ? 's' : ''} selected`
+  if (deletable < count) main += ` · ${deletable} deletable`
+  return main
 })
 
 // Status helpers (used by dropdown item dots and other shared UI)
@@ -139,59 +155,187 @@ const agentsGrouped = computed(() => {
   return groups
 })
 
-function selectTeam(teamName) {
-  const teamAgents = store.agentsList.filter(a => a.team_name === teamName)
-  const s = new Set(selectedAgents.value)
-  const allSelected = teamAgents.every(a => s.has(a.name))
+// Search-by-name filter for the dropdown. Case-insensitive substring match
+// against agent.name AND team header (so typing a team name still surfaces
+// its members). Empty query → returns all groups untouched.
+const dropdownSearch = ref('')
+const agentsGroupedFiltered = computed(() => {
+  const q = dropdownSearch.value.trim().toLowerCase()
+  if (!q) return agentsGrouped.value
+  const out = []
+  for (const group of agentsGrouped.value) {
+    const headerHit = group.name.toLowerCase().includes(q)
+    const agents = headerHit
+      ? group.agents  // team name matched — keep the whole roster
+      : group.agents.filter(a => a.name.toLowerCase().includes(q))
+    if (agents.length) out.push({ ...group, agents })
+  }
+  return out
+})
+
+/**
+ * Toggle select-all for the agents currently shown in a dropdown group.
+ *
+ * Works for BOTH team groups and the synthetic "Individual Agents" group.
+ * Crucially, operates on ``group.agents`` (which is already narrowed by
+ * the search filter via ``agentsGroupedFiltered``) so users can search
+ * for "agent-0", click the header, and select exactly those matches —
+ * not the entire roster.
+ */
+function toggleGroup(group) {
+  const agents = group.agents || []
+  if (!agents.length) return
+  let s = new Set(selectedAgents.value)
+  // ── Order matters: check size BEFORE stripping the ``__none__``
+  // sentinel — same contract as toggleAgent. Three starting states:
+  //   {__none__}   user explicitly cleared → start blank (size=1, skip
+  //                expand). After delete sentinel, s = {} and we
+  //                proceed to add the clicked group's agents.
+  //   {} (empty)   implicit-all / pre-roster-load → expand to all so
+  //                toggling a group means "subtract from all".
+  //   {names...}   explicit selection → use as-is.
+  // The previous order (delete first, then size check) collapsed
+  // {__none__} into {} → triggered the expand-to-all path → flipped
+  // a "Clear → click team" into "select all-except-team". That's
+  // exactly the 29-selected bug user reported.
+  if (s.size === 0) {
+    s = new Set(store.agentsList.map(a => a.name))
+  }
+  s.delete('__none__')
+  const allSelected = agents.every(a => s.has(a.name))
   if (allSelected) {
-    teamAgents.forEach(a => s.delete(a.name))
+    agents.forEach(a => s.delete(a.name))
   } else {
-    teamAgents.forEach(a => s.add(a.name))
+    agents.forEach(a => s.add(a.name))
   }
-  selectedAgents.value = s.size === store.agentsList.length ? new Set() : s
+  // No auto-collapse to empty when full: the new contract requires
+  // explicit Set membership so destructive actions (bulk delete) know
+  // exactly which agents the user consented to.
+  selectedAgents.value = s
 }
 
-const disbandModal = ref({ visible: false, teamName: '', loading: false, error: '' })
-const showDisbandMenu = ref(false)
+// ── Bulk delete: remove every agent currently in ``selectedAgents`` ──
+//
+// Replaces the old "Disband Team" button: instead of deleting a whole
+// team in one shot, the user picks exactly which agents (via the multi-
+// select dropdown + search) and confirms a single bulk delete.
 
-function requestDisband(teamName) {
-  disbandModal.value = { visible: true, teamName, loading: false, error: '' }
+const bulkDeleteModal = ref({ visible: false, names: [], protected: [], loading: false, error: '' })
+
+// ── Two views of the same selection ────────────────────────────────
+//
+// The dropdown is shared by two concerns:
+//   1. View filter — pick which agents to show in the activity stream.
+//   2. Bulk delete — pick which agents to remove.
+//
+// (1) needs to include built-in agents (Jarvis, PersonalAgent, etc.)
+// because users legitimately want to monitor their conversations.
+// (2) MUST exclude them — they're not deletable by design (backend
+// would reject anyway). So derive two lists from one selection:
+//   - selectedAgentNames     → for any general "what did the user pick"
+//   - deletableSelectedNames → for the bulk-delete action specifically
+// Plus a protected list so the confirm modal can tell the user
+// explicitly which built-ins are being kept, instead of silently
+// dropping them.
+
+function _isBuiltin(agent) {
+  return agent?.type === 'builtin'
 }
 
-function cancelDisband() {
-  disbandModal.value = { visible: false, teamName: '', loading: false, error: '' }
-}
+const selectedAgentNames = computed(() => {
+  const known = new Set(store.agentsList.map(a => a.name))
+  return [...selectedAgents.value].filter(n => n !== '__none__' && known.has(n))
+})
 
-async function confirmDisband() {
-  const name = disbandModal.value.teamName
-  disbandModal.value.loading = true
-  disbandModal.value.error = ''
-  try {
-    const result = await apiFetch(`/api/agents/teams/${encodeURIComponent(name)}`, { method: 'DELETE' })
-    const removedAgents = result.removed_agents || []
-    const removedCount = removedAgents.length
+const deletableSelectedNames = computed(() => {
+  const byName = new Map(store.agentsList.map(a => [a.name, a]))
+  return selectedAgentNames.value.filter(n => !_isBuiltin(byName.get(n)))
+})
 
-    // Reset filter if currently filtering by this team
-    if (filter.value === `team:${name}`) {
-      filter.value = 'all'
-    }
-    disbandModal.value = { visible: false, teamName: '', loading: false, error: '' }
-    showDisbandMenu.value = false
+// Built-ins inside the current selection — surfaced in the confirm
+// modal as "kept" so the user understands why the delete count is
+// smaller than their visible tick count.
+const protectedSelectedNames = computed(() => {
+  const byName = new Map(store.agentsList.map(a => [a.name, a]))
+  return selectedAgentNames.value.filter(n => _isBuiltin(byName.get(n)))
+})
 
-    // Note: agents are removed from the store reactively via SSE 'agent_removed' events
-    // broadcast by the backend. No manual store mutation needed.
-    toast.success(`Team "${name}" disbanded successfully`, {
-      description: `${removedCount} agent${removedCount !== 1 ? 's' : ''} removed: ${removedAgents.join(', ')}`,
-      duration: 5000,
-    })
-  } catch (err) {
-    disbandModal.value.loading = false
-    disbandModal.value.error = err.message || 'Failed to disband team'
-    toast.error(`Failed to disband team "${name}"`, {
-      description: err.message,
-      duration: 5000,
-    })
+const canBulkDelete = computed(() => deletableSelectedNames.value.length > 0)
+
+// Tooltip text reflects all three cases the user might be in: nothing
+// to delete, some deletable, or selection contains only built-ins
+// (visible but protected).
+const bulkDeleteTooltip = computed(() => {
+  const n = deletableSelectedNames.value.length
+  const skipped = protectedSelectedNames.value.length
+  if (n === 0 && skipped > 0) {
+    return `Only built-in agents are selected — built-ins cannot be deleted. Tick some user agents first.`
   }
+  if (n === 0) return 'Select agents from the dropdown first'
+  const plural = n !== 1 ? 's' : ''
+  return skipped > 0
+    ? `Delete ${n} agent${plural} (${skipped} built-in kept)`
+    : `Delete ${n} agent${plural}`
+})
+
+function requestBulkDelete() {
+  if (!canBulkDelete.value) return
+  bulkDeleteModal.value = {
+    visible: true,
+    names: deletableSelectedNames.value.slice(),
+    protected: protectedSelectedNames.value.slice(),
+    loading: false,
+    error: '',
+  }
+}
+
+function cancelBulkDelete() {
+  bulkDeleteModal.value = { visible: false, names: [], protected: [], loading: false, error: '' }
+}
+
+async function confirmBulkDelete() {
+  const names = bulkDeleteModal.value.names
+  if (!names.length) return
+  bulkDeleteModal.value.loading = true
+  bulkDeleteModal.value.error = ''
+  // Fire DELETEs in parallel — independent records, safe to overlap.
+  // Use allSettled so a partial failure surfaces every error rather than
+  // hiding all but the first.
+  const results = await Promise.allSettled(
+    names.map(n => apiFetch(`/api/agents/${encodeURIComponent(n)}`, { method: 'DELETE' })),
+  )
+  const ok = []
+  const fail = []
+  results.forEach((r, i) => {
+    if (r.status === 'fulfilled') ok.push(names[i])
+    else fail.push({ name: names[i], err: r.reason?.message || String(r.reason) })
+  })
+
+  // Clear selection of the agents we actually removed. Backend broadcasts
+  // ``agent_removed`` SSE so the store drops them reactively — we just
+  // need to keep selectedAgents in sync.
+  const s = new Set(selectedAgents.value)
+  ok.forEach(n => s.delete(n))
+  selectedAgents.value = s
+
+  bulkDeleteModal.value.loading = false
+  if (fail.length) {
+    bulkDeleteModal.value.error =
+      `${fail.length}/${names.length} failed:\n` +
+      fail.map(f => `• ${f.name}: ${f.err}`).join('\n')
+    toast.error(`Bulk delete: ${fail.length} of ${names.length} failed`, {
+      description: fail.map(f => `${f.name}: ${f.err}`).join('\n'),
+      duration: 6000,
+    })
+    // Keep modal open so the user can read the per-agent errors.
+    return
+  }
+
+  bulkDeleteModal.value = { visible: false, names: [], protected: [], loading: false, error: '' }
+  toast.success(`Deleted ${ok.length} agent${ok.length !== 1 ? 's' : ''}`, {
+    description: ok.join(', '),
+    duration: 5000,
+  })
 }
 
 /**
@@ -271,27 +415,16 @@ onMounted(() => {
           <span class="stat-pill stat-idle">{{ store.stats.idle }} idle</span>
           <span v-if="store.stats.error" class="stat-pill stat-error">{{ store.stats.error }} error</span>
         </div>
-        <!-- Disband Team dropdown -->
-        <div v-if="teamNames.length" class="disband-dropdown" ref="disbandDropdownRef">
-          <button class="disband-team-btn" @click="showDisbandMenu = !showDisbandMenu">
-            🗑 Disband Team
-            <span class="dropdown-caret" :class="{ open: showDisbandMenu }">▾</span>
-          </button>
-          <Transition name="dropdown-fade">
-            <div v-if="showDisbandMenu" class="disband-menu">
-              <button
-                v-for="tn in teamNames"
-                :key="tn"
-                class="disband-menu-item"
-                @click="requestDisband(tn); showDisbandMenu = false"
-              >
-                <span class="disband-menu-icon">🗑</span>
-                <span>{{ tn }}</span>
-                <span class="disband-menu-count">{{ store.agentsList.filter(a => a.team_name === tn).length }} agents</span>
-              </button>
-            </div>
-          </Transition>
-        </div>
+        <!-- Bulk delete selected (deletable) agents -->
+        <button
+          class="bulk-delete-btn"
+          :disabled="!canBulkDelete"
+          :title="bulkDeleteTooltip"
+          @click="requestBulkDelete"
+        >
+          🗑 Delete Selected
+          <span v-if="canBulkDelete" class="bulk-delete-count">{{ deletableSelectedNames.length }}</span>
+        </button>
       </div>
     </div>
 
@@ -372,10 +505,29 @@ onMounted(() => {
               <span class="dropdown-divider">|</span>
               <button class="dropdown-action" @click="selectedAgents = new Set(['__none__'])">Clear</button>
             </div>
-            <div class="dropdown-list">
-              <template v-for="group in agentsGrouped" :key="group.name">
+            <div class="dropdown-search">
+              <input
+                ref="dropdownSearchInput"
+                v-model="dropdownSearch"
+                class="dropdown-search-input"
+                type="text"
+                placeholder="Search by name…"
+                @keydown.escape.stop="dropdownSearch = ''"
+              />
+              <button
+                v-if="dropdownSearch"
+                class="dropdown-search-clear"
+                title="Clear search"
+                @click="dropdownSearch = ''"
+              >×</button>
+            </div>
+            <div v-if="!agentsGroupedFiltered.length" class="dropdown-empty">
+              No agents match "{{ dropdownSearch }}"
+            </div>
+            <div v-else class="dropdown-list">
+              <template v-for="group in agentsGroupedFiltered" :key="group.name">
                 <!-- Team header -->
-                <div class="dropdown-team-header" @click="group.type === 'team' && selectTeam(group.name)">
+                <div class="dropdown-team-header" @click="toggleGroup(group)">
                   <span v-if="group.color" class="team-dot" :style="{ background: group.color }"></span>
                   <span>{{ group.name }}</span>
                   <span class="dropdown-team-count">{{ group.agents.length }}</span>
@@ -393,6 +545,16 @@ onMounted(() => {
                   />
                   <span class="dropdown-item-dot" :style="{ background: statusColor(a.status) }"></span>
                   <span class="dropdown-item-name">{{ a.name }}</span>
+                  <!-- Built-in agents can be selected for VIEW filter,
+                       but the bulk-delete action skips them. The lock
+                       icon plus title tooltip make that clear up front
+                       so users don't expect a Delete-Selected click to
+                       remove Jarvis et al. -->
+                  <span
+                    v-if="a.type === 'builtin'"
+                    class="dropdown-item-builtin"
+                    title="Built-in agent — protected from bulk delete"
+                  >🔒</span>
                 </label>
               </template>
             </div>
@@ -438,19 +600,31 @@ onMounted(() => {
       This will delete its card file, registry entries, and activity history.
     </ConfirmModal>
 
-    <!-- Disband Team Confirmation Modal -->
+    <!-- Bulk Delete Confirmation Modal -->
     <ConfirmModal
-      :visible="disbandModal.visible"
-      title="Disband Team"
-      confirm-text="Disband Team"
+      :visible="bulkDeleteModal.visible"
+      :title="`Delete ${bulkDeleteModal.names.length} agent${bulkDeleteModal.names.length !== 1 ? 's' : ''}?`"
+      :confirm-text="`Delete ${bulkDeleteModal.names.length}`"
       variant="danger"
-      :loading="disbandModal.loading"
-      :error="disbandModal.error"
-      @confirm="confirmDisband"
-      @cancel="cancelDisband"
+      :loading="bulkDeleteModal.loading"
+      :error="bulkDeleteModal.error"
+      @confirm="confirmBulkDelete"
+      @cancel="cancelBulkDelete"
     >
-      Are you sure you want to disband team <strong>{{ disbandModal.teamName }}</strong>?
-      This will remove all agents, sessions, workspaces, and activity data for this team.
+      <p>The following agents and their conversation history will be permanently removed:</p>
+      <ul class="bulk-delete-list">
+        <li v-for="n in bulkDeleteModal.names" :key="n">{{ n }}</li>
+      </ul>
+      <!-- Built-in agents inside the selection are surfaced explicitly so
+           the user understands why the delete count is smaller than
+           their tick count — never silently dropped. -->
+      <div v-if="bulkDeleteModal.protected.length" class="bulk-delete-protected">
+        <span class="bulk-delete-protected-icon">🔒</span>
+        <div>
+          <strong>{{ bulkDeleteModal.protected.length }} built-in agent{{ bulkDeleteModal.protected.length !== 1 ? 's' : '' }} will be kept:</strong>
+          <span class="bulk-delete-protected-names">{{ bulkDeleteModal.protected.join(', ') }}</span>
+        </div>
+      </div>
     </ConfirmModal>
     </template>
 
@@ -548,6 +722,68 @@ onMounted(() => {
 .stat-running { background: rgba(245, 158, 11, 0.12); color: #f59e0b; }
 .stat-idle { background: rgba(16, 185, 129, 0.12); color: #10b981; }
 .stat-error { background: rgba(239, 68, 68, 0.12); color: #ef4444; }
+
+/* ─── Bulk delete: outline-danger button per design system ─── */
+.bulk-delete-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 12px;
+  background: var(--bg-button);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-body);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+
+.bulk-delete-btn:not(:disabled):hover {
+  border-color: var(--negative-red);
+  color: var(--negative-red);
+}
+
+.bulk-delete-btn:not(:disabled):active {
+  background: rgba(255, 69, 96, 0.08);
+}
+
+.bulk-delete-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.bulk-delete-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  background: var(--negative-red);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  border-radius: 10px;
+}
+
+/* Confirm-modal body list */
+.bulk-delete-list {
+  list-style: disc;
+  padding-left: 20px;
+  margin-top: 8px;
+  max-height: 240px;
+  overflow-y: auto;
+  font-size: 12px;
+  color: var(--text-body);
+}
+
+.bulk-delete-list li {
+  padding: 2px 0;
+}
 
 /* ─── Filter Bar ─── */
 .filter-bar {
@@ -697,6 +933,57 @@ onMounted(() => {
   font-size: 11px;
 }
 
+.dropdown-search {
+  position: relative;
+  padding: 8px 12px;
+  border-bottom: 1px solid #1a1d2e;
+}
+
+.dropdown-search-input {
+  width: 100%;
+  background: #0f1322;
+  border: 1px solid #1f2540;
+  border-radius: 6px;
+  color: #e2e8f0;
+  font-size: 12px;
+  padding: 6px 26px 6px 10px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.dropdown-search-input::placeholder {
+  color: #5b6481;
+}
+
+.dropdown-search-input:focus {
+  border-color: #3b82f6;
+}
+
+.dropdown-search-clear {
+  position: absolute;
+  right: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: #64748b;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.dropdown-search-clear:hover {
+  color: #cbd5e1;
+}
+
+.dropdown-empty {
+  padding: 14px 12px;
+  font-size: 12px;
+  color: #64748b;
+  text-align: center;
+}
+
 .dropdown-list {
   max-height: 260px;
   overflow-y: auto;
@@ -754,6 +1041,41 @@ onMounted(() => {
   height: 6px;
   border-radius: 50%;
   flex-shrink: 0;
+}
+
+.dropdown-item-builtin {
+  margin-left: auto;
+  font-size: 11px;
+  opacity: 0.6;
+  flex-shrink: 0;
+  cursor: help;
+}
+
+/* Confirm modal: protected (built-in) agents notice */
+.bulk-delete-protected {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-body);
+}
+
+.bulk-delete-protected-icon {
+  font-size: 14px;
+  line-height: 1.2;
+  flex-shrink: 0;
+}
+
+.bulk-delete-protected-names {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-sub);
+  font-size: 11px;
 }
 
 .dropdown-item-name {
@@ -961,8 +1283,8 @@ onMounted(() => {
     gap: 8px;
   }
 
-  /* Disband button: full width on mobile */
-  .disband-team-btn {
+  /* Bulk delete button: full width on mobile */
+  .bulk-delete-btn {
     width: 100%;
     justify-content: center;
   }

@@ -19,7 +19,6 @@ const statusConfig = {
   idle:      { label: 'Idle',      dotColor: '#64748b', textColor: '#64748b', bgColor: 'rgba(100,116,139,0.12)', pulse: false },
   blocked:   { label: 'Blocked',   dotColor: '#ef4444', textColor: '#ef4444', bgColor: 'rgba(239,68,68,0.15)', pulse: false },
   error:     { label: 'Error',     dotColor: '#ff4560', textColor: '#ff4560', bgColor: 'rgba(255,69,96,0.15)', pulse: false },
-  completed: { label: 'Completed', dotColor: '#00c896', textColor: '#00c896', bgColor: 'rgba(0,200,150,0.15)', pulse: false },
   spawning:  { label: 'Spawning',  dotColor: '#ffb547', textColor: '#ffb547', bgColor: 'rgba(255,181,71,0.15)', pulse: true },
 }
 </script>

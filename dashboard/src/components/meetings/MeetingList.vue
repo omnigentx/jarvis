@@ -1,5 +1,6 @@
 <script setup>
 import { computed } from 'vue'
+import { normalizeTs } from '../../utils/timeFormat.js'
 
 const props = defineProps({
   meetings: { type: Array, required: true },
@@ -32,9 +33,10 @@ function statusIcon(meeting) {
 }
 
 function formatTime(ts) {
-  if (!ts) return ''
+  const ms = normalizeTs(ts)
+  if (ms === null) return ''
   try {
-    const d = new Date(ts)
+    const d = new Date(ms)
     const now = new Date()
     const isToday = d.toDateString() === now.toDateString()
     if (isToday) {
