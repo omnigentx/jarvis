@@ -100,10 +100,26 @@ mcp:
         BRAVE_API_KEY: "${BRAVE_API_KEY}"
     filesystem:
       command: "npx"
-      args: ["-y", "@modelcontextprotocol/server-filesystem", "./data", "./jarvis_workspace"]
+      # Default allowed roots ONLY include paths guaranteed to exist after a
+      # clean install. Per-role spawns override these via team_templates
+      # (e.g. agile_team.yaml.server_overrides.filesystem.args → workspace_dir
+      # + skills dir). Adding a path here that doesn't exist on disk causes
+      # @modelcontextprotocol/server-filesystem to fail startup → MCP
+      # handshake fails → agent sees no filesystem tool (incident 2026-05-17
+      # Designer: previous default included `./jarvis_workspace` which is
+      # never created; resumed agents with dropped server_overrides fell
+      # back here and silently lost filesystem access).
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "./data"]
     chrome-devtools:
       command: "npx"
       args: ["-y", "chrome-devtools-mcp@latest"]
+    # Playwright MCP — browser automation + screenshots in headless mode.
+    # Pinned to 0.0.75 (not @latest) so upstream releases can't silently break
+    # Jarvis. Bump deliberately after verifying compatibility.
+    # First-time browser install: `npx playwright install chromium`.
+    playwright:
+      command: "npx"
+      args: ["-y", "@playwright/mcp@0.0.75", "--headless"]
     serpapi:
       url: "https://mcp.serpapi.com/${SERPAPI_API_KEY}/mcp"
     sequential-thinking:
@@ -217,3 +233,25 @@ mcp:
         CONFLUENCE_URL: "${CONFLUENCE_URL}"
         CONFLUENCE_USERNAME: "${CONFLUENCE_USERNAME}"
         CONFLUENCE_API_TOKEN: "${CONFLUENCE_API_TOKEN}"
+        # Explicit toolset allowlist — do NOT rely on upstream's default behaviour.
+        # Upstream is shifting "TOOLSETS unset" from all-enabled to 6-core-only
+        # in v0.22.0. Pinning the list here freezes Jarvis behaviour across
+        # upstream upgrades. Bump deliberately when adding new flows.
+        #   default          = jira_issues,jira_fields,jira_comments,jira_transitions,
+        #                      confluence_pages,confluence_comments
+        #   + jira_users     = get_my_account_id (PM auto-assignee), user_profile lookup
+        #   + jira_projects  = create_project / get_all_projects
+        #   + jira_agile     = boards / sprints
+        #   + jira_links     = link_to_epic / link_types
+        #   + jira_attachments     = upload/download/get images
+        #   + confluence_spaces    = create_space
+        #   + confluence_attachments = upload/download
+        #   + confluence_labels    = tag pages by agent / sprint / phase for filtering
+        # NOT enabled (intentional):
+        #   - jira_watchers  → all agents share 1 account; watchers no-op
+        #   - jira_metrics   → SLA/cycle-time tracking not required for this team
+        #   - jira_worklog   → no time-tracking discipline
+        #   - jira_service_desk, jira_forms → not a customer-support flow
+        #   - confluence_users     → duplicate of jira_users
+        #   - confluence_analytics → page-view tracking not needed
+        TOOLSETS: "default,jira_users,jira_projects,jira_agile,jira_links,jira_attachments,confluence_spaces,confluence_attachments,confluence_labels"

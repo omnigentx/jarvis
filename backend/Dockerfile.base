@@ -47,14 +47,29 @@ FROM python:3.13-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl ca-certificates gnupg \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && mkdir -p -m 755 /etc/apt/keyrings \
+    && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+       -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+    && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+       > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update \
     && apt-get install -y --no-install-recommends \
         git nodejs portaudio19-dev gcc g++ make python3-dev \
         alsa-utils flac ffmpeg docker.io \
         libnspr4 libnss3 libatk1.0-0t64 libatk-bridge2.0-0t64 \
         libcups2t64 libatspi2.0-0t64 libxcomposite1 libxdamage1 \
+        gh=2.68.1 \
     && rm -rf /var/lib/apt/lists/* \
     && npm install -g gitnexus@1.6.2 \
     && npm cache clean --force
+
+# gh CLI auth: agents invoke ``gh`` via the execute shell tool for CI/PR/release
+# ops. ``GH_CONFIG_DIR`` points at a Jarvis-private directory so gh reads from
+# our hosts.yml (written by services/gh_credential_sync.py on every boot) and
+# never falls back to the host user's personal ~/.config/gh/. Must match
+# _GH_CONFIG_DIR in gh_credential_sync.py (../.gh-config relative to JARVIS_PERSIST_DIR).
+ENV GH_CONFIG_DIR=/app/.gh-config
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uvx /bin/uvx
