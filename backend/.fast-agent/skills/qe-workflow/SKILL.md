@@ -76,21 +76,7 @@ gh run rerun <run-id> --failed             # SAFE: retry only failed jobs
 - Local inspection: `ls`, `cat`, `grep`, `find`
 - Run tests: `npm test`, `uv run pytest`, `playwright test`
 
-## Escalation flow
-
-```python
-send_email(
-    to="<PM name>",
-    subject="[APPROVAL-REQUEST] <one-line summary>",
-    body="""
-Need approval to run: `<exact command>`
-Why: <task this unblocks>
-Risk: <what could go wrong>
-Alternatives considered: <list, or 'none'>
-""",
-)
-# Stop and wait. PM relays via approval-server MCP → user decides.
-```
+For 🟡 escalation, see `team-communication` skill: "Approval escalation".
 
 ## Fixing Failing Tests
 

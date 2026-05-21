@@ -4,6 +4,7 @@ Verifies that _notify_turn_agent embeds unread transcript and
 advances read cursors, and that auto-join works correctly.
 """
 import json
+import os
 import pytest
 from unittest.mock import MagicMock, patch, AsyncMock
 
@@ -389,13 +390,34 @@ def test_get_transcript_not_available():
 
 
 def _identity_check(caller_env_name: str, param_agent_name: str):
-    """Drive _assert_self_identity directly with the env name patched in."""
-    with patch(
-        "fast_agent.spawn.servers.meeting_room_server._get_my_name",
-        return_value=caller_env_name,
+    """Drive _assert_self_identity directly with the env name set.
+
+    The helper reads ``TEAM_MY_NAME`` from ``os.environ`` directly (NOT
+    via ``_get_my_name()``) — only that env var proves the process was
+    spawned as a specific team member. We set it via ``patch.dict`` so
+    the value is restored after the test. Empty string means "env var
+    unset" (the test for the permissive non-team contract).
+    """
+    env_patch = {"TEAM_MY_NAME": caller_env_name} if caller_env_name else {}
+    with patch.dict(
+        "os.environ",
+        env_patch,
+        clear=False if caller_env_name else False,
     ):
-        from fast_agent.spawn.servers.meeting_room_server import _assert_self_identity
-        return _assert_self_identity(param_agent_name)
+        # When caller_env_name is empty, remove TEAM_MY_NAME so the
+        # "unset env" branch is exercised. patch.dict's clear=False
+        # leaves untouched keys alone, so we drop the key explicitly.
+        if not caller_env_name:
+            os.environ.pop("TEAM_MY_NAME", None)
+        # ``_get_my_name`` is still consulted ONLY when ``param_agent_name``
+        # is empty (auto-detect). Patch it too so that branch produces
+        # the env name verbatim instead of falling back to TEAM_MY_ROLE.
+        with patch(
+            "fast_agent.spawn.servers.meeting_room_server._get_my_name",
+            return_value=caller_env_name or "agent",
+        ):
+            from fast_agent.spawn.servers.meeting_room_server import _assert_self_identity
+            return _assert_self_identity(param_agent_name)
 
 
 def test_speak_refuses_impersonation_via_self_identity_check():
@@ -440,12 +462,13 @@ def test_identity_check_auto_detects_when_param_empty():
     assert resolved == "Taylor [PM]"
 
 
-def test_identity_check_treats_agent_sentinel_as_no_identity():
-    """When TEAM_MY_NAME/TEAM_MY_ROLE both unset, _get_my_name returns
-    the literal ``"agent"`` sentinel — that's not a real identity, so
-    we don't have anything to compare against. Allow the param-supplied
-    name through (no impersonation possible without a real caller)."""
-    resolved, err = _identity_check("agent", "Sawyer [BA]")
+def test_identity_check_allows_any_name_when_env_unset():
+    """When TEAM_MY_NAME is unset, the process is NOT a team-spawned
+    agent (CLI tests, dashboard direct calls, library callers). There
+    is no real identity to compare against, so the caller-supplied
+    ``agent_name`` is accepted as-is — preserves the legacy permissive
+    contract for non-team contexts."""
+    resolved, err = _identity_check("", "Sawyer [BA]")
     assert err is None
     assert resolved == "Sawyer [BA]"
 

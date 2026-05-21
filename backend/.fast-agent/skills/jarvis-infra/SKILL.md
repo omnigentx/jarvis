@@ -100,21 +100,7 @@ gh release view v1.2.3
 
 🟢 **SAFE** (run freely): all read-only `gh run/release/pr/workflow view/list`, `docker compose logs/ps`, local file inspection.
 
-### Escalation flow
-
-```python
-send_email(
-    to="<PM name>",
-    subject="[APPROVAL-REQUEST] <one-line summary>",
-    body="""
-Need approval to run: `<exact command>`
-Why: <task this unblocks>
-Risk: <what could go wrong>
-Rollback: <how to undo if it goes wrong>
-""",
-)
-# Wait for PM. PM uses approval-server MCP to ask user.
-```
+For 🟡 escalation, see `team-communication` skill: "Approval escalation". Infra requests should include a **Rollback** line in the body (how to undo if the action goes wrong).
 
 ## Build & Run Commands
 

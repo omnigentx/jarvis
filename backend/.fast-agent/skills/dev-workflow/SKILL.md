@@ -68,24 +68,7 @@ gh run view <run-id> --log-failed  # only failed step logs (saves context)
 gh run rerun <run-id> --failed
 ```
 
-For `gh pr merge` / `gh release create` / `gh repo delete` → escalate to PM first.
-
-## Escalation flow (when blocked by a 🟡 ESCALATE action)
-
-```python
-send_email(
-    to="<PM name>",
-    subject="[APPROVAL-REQUEST] <one-line summary of action>",
-    body="""
-Need approval to run: `<exact command>`
-Why: <user-facing reason — what task this unblocks>
-Risk: <what could go wrong if approved>
-Alternatives considered: <list, or 'none — only path forward'>
-""",
-)
-# Stop and wait for PM reply. PM will relay via approval-server MCP to user.
-# When PM emails back [APPROVED] or [DENIED], proceed accordingly.
-```
+For `gh pr merge` / `gh release create` / `gh repo delete` → escalate to PM first (see `team-communication` skill: "Approval escalation" — the canonical request/response flow).
 
 ## TDD Cycle
 
