@@ -301,6 +301,7 @@ roles:
         mcp-atlassian,
         scrapling-server,
         figma-ui-mcp,
+        playwright,
       ]
     server_overrides:
       filesystem:
@@ -408,6 +409,7 @@ roles:
         mcp-atlassian,
         scrapling-server,
         figma-ui-mcp,
+        playwright,
       ]
     server_overrides:
       filesystem:
