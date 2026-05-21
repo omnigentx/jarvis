@@ -2,6 +2,7 @@
 import { ref, watch, nextTick, computed, reactive } from 'vue'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import { parseYoutubeTags, youtubeEmbedUrl } from '../../utils/youtubeTags'
+import { normalizeTs } from '../../utils/timeFormat.js'
 import MarkdownRenderer from '../MarkdownRenderer.vue'
 
 const props = defineProps({
@@ -49,8 +50,9 @@ const agentInitials = computed(() => {
 })
 
 function formatTime(ts) {
-  if (!ts) return ''
-  const d = new Date(ts)
+  const ms = normalizeTs(ts)
+  if (ms === null) return ''
+  const d = new Date(ms)
   const now = new Date()
   const diff = now - d
   if (diff < 60000) return 'just now'

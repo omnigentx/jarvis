@@ -303,6 +303,12 @@ async def lifespan(app: FastAPI):
     from services.config_service import config_service as _cfg_for_git_sync
     from services import git_credential_sync
     git_credential_sync.reconcile_from_db(_cfg_for_git_sync)
+    # Companion sync: same DB token → $GH_CONFIG_DIR/hosts.yml so the gh CLI
+    # (invoked by team agents via the execute shell tool for CI/PR/release
+    # ops) authenticates from a file rather than an env var. Same fail-loud
+    # rationale as git_credential_sync above.
+    from services import gh_credential_sync
+    gh_credential_sync.reconcile_from_db(_cfg_for_git_sync)
     
     # Restore pending approvals — re-register paused agents from DB
     try:

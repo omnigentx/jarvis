@@ -53,3 +53,13 @@ When you receive 🔔 MEETING INVITE → follow the `meeting-participant` skill 
 BEFORE going idle or completing work, you MUST:
 1. Send a `[DONE]` report to the PM: `send_email(to="Linh - PM", subject="[DONE] <deliverable summary>", body="<list of deliverables, files, outcomes, open items>")`
 2. NEVER go idle without sending the report — this is **required**.
+
+## Approval escalation
+
+When your role skill flags a command 🟡 ESCALATE:
+
+1. **Don't run it.** Email PM with subject `[APPROVAL-REQUEST] <summary>` and body containing: exact command, why, risk, alternatives (infra adds: rollback).
+2. Wait for `[APPROVED]` / `[DENIED]` reply. PM forwards via `approval-server` MCP.
+3. APPROVED → run exactly the command from the request. DENIED → re-plan.
+
+**PM only:** verify the requester's role can do the action (Dev/QE/DSO yes; Designer/BA/SA no — redirect), call `request_approval()`, email back the verdict.

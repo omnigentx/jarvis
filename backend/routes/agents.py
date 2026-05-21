@@ -137,6 +137,16 @@ def _compute_effective_status(
     probe).
     """
     raw = (record.get("status") or "unknown")
+    lifecycle_raw = (record.get("lifecycle") or "").lower()
+    # ``completed`` is only authoritative for oneshot agents — they really
+    # are done forever. For resumable agents (post-2026-05-20 merge: every
+    # non-oneshot agent), ``completed`` is a stale label written by the old
+    # spawner; the canonical post-task state is ``idle`` (the agent is
+    # waiting for a follow-up via resume_spawn / auto-resume on inbox).
+    # Mirror the same rule used by ``spawn_progress_bridge`` (live result
+    # event) and ``mark_stale_running`` (startup cleanup).
+    if raw == "completed" and lifecycle_raw and lifecycle_raw != "oneshot":
+        return "idle"
     # Terminal / overlay states are authoritative — never second-guess.
     if raw in {"completed", "error", "killed", "failed", "cancelled",
                "paused", "timeout"}:
@@ -224,6 +234,61 @@ def _compute_effective_status(
 
     # Probe inconclusive (exception).
     return raw
+
+
+def _icon_for_role(record: dict, *, default: str = "smart_toy") -> str:
+    """Pick a Material Symbol icon based on whether this agent is the
+    team's orchestrator.
+
+    Why orchestrator-vs-worker and not role-name lookup? Templates are
+    user-editable and may define arbitrary role names (PM, lead,
+    scrum_master, BA, dev, designer, …). Hard-coding per-role icons
+    (the prior implementation: ``if "PM" in role: icon = ...``) only
+    worked for one specific template and silently fell back to the
+    generic icon for any other naming. The orchestrator concept is the
+    only system-wide invariant — template.orchestrator names whichever
+    role coordinates the team.
+
+    Resolution order:
+      1. ``record["is_orchestrator"]`` if the registry row was tagged
+         (forward-compatible — registry doesn't yet set this).
+      2. Lookup ``team_sessions.template.orchestrator`` for this team
+         and compare to the record's role.
+      3. Fall through to ``default`` for workers.
+    """
+    if record.get("is_orchestrator"):
+        return "assignment_ind"
+
+    team_name = record.get("team_name") or ""
+    role = (record.get("role") or "").strip()
+    if not team_name or not role:
+        return default
+
+    try:
+        # Cheap lookup — one DB read per agent card. The dashboard list
+        # already issues N reads per refresh; this adds 1 SQL query per
+        # team-managed row, so the cost stays in the same order.
+        import json
+
+        from core.agent_registry_db import _connect
+
+        with _connect() as conn:
+            row = conn.execute(
+                """SELECT data_json FROM team_sessions
+                   WHERE json_extract(data_json, '$.team_name') = ?
+                   LIMIT 1""",
+                (team_name,),
+            ).fetchone()
+        if row is None:
+            return default
+        data = json.loads(row["data_json"])
+        orch_role = ((data.get("template") or {}).get("orchestrator") or "").strip()
+        if orch_role and orch_role.lower() == role.lower():
+            return "assignment_ind"
+    except Exception:
+        # Best-effort cosmetic — never block the response on an icon.
+        pass
+    return default
 
 
 def _snapshots_db_path() -> str | None:
@@ -637,15 +702,13 @@ async def list_agents(include_completed: bool = False):
             )
 
             role = record.get("role", "")
-            icon = "smart_toy"
-            if "PM" in role:
-                icon = "assignment_ind"
-            elif "BA" in role:
-                icon = "analytics"
-            elif "Dev" in role:
-                icon = "code"
-            elif "QE" in role or "test" in role.lower():
-                icon = "bug_report"
+            # Icon based on whether this agent is the team's
+            # orchestrator (per template.orchestrator). Worker roles
+            # share a generic icon — adding role-specific icons here
+            # would re-introduce the hard-code we removed in the
+            # 2026-05-19 audit (templates can define arbitrary role
+            # names; only "orchestrator" is a system-wide concept).
+            icon = _icon_for_role(record, default="smart_toy")
             
             model = record.get("original_config", {}).get("model", "")
             if not model:
@@ -827,16 +890,8 @@ def _build_spawn_agent_detail(name: str) -> dict | None:
     role = record.get("role", "")
     team_name = record.get("team_name") or ""
     
-    # Icon based on role
-    icon = "smart_toy"
-    if "PM" in role or "pm" in role:
-        icon = "assignment_ind"
-    elif "BA" in role or "ba" in role:
-        icon = "analytics"
-    elif "Dev" in role or "dev" in role:
-        icon = "code"
-    elif "QE" in role or "test" in role.lower():
-        icon = "bug_report"
+    # Icon by orchestrator-or-not (see _icon_for_role).
+    icon = _icon_for_role(record, default="smart_toy")
     
     # Extract model
     model = orig_cfg.get("model", "")

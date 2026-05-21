@@ -1,5 +1,9 @@
 import { ref, shallowRef, triggerRef, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useAgentsStore } from '../stores/agents'
+import { normalizeTs, formatTimestamp } from '../utils/timeFormat.js'
+
+// Re-export for callers that still import these from here.
+export { normalizeTs, formatTimestamp }
 
 /**
  * Activity Stream composable for Team Monitor.
@@ -24,7 +28,16 @@ export function useActivityStream(options = {}) {
   // Active filter: 'all' | 'active' | 'team:<name>'
   const filter = ref('all')
 
-  // Agent selection filter (empty = show all)
+  // Agent selection. Empty Set = implicit-all (default state): the filter
+  // below treats ``size === 0`` as "no filter applied" and the checkboxes
+  // render as ✓ via ``size === 0 || has(name)``. We do NOT eagerly fill
+  // this with the roster — the store populates agents one-by-one, so a
+  // watcher that latched on first non-zero length would lock the set to
+  // whatever agent arrived first and silently drop later arrivals
+  // (regression 2026-05-21 e2e: ``agent-monitor.spec.ts`` saw only
+  // alpha-agent while beta was already in the store). The bulk-delete
+  // count badge derives its number from ``store.agentsList`` whenever
+  // ``selectedAgents`` is empty — display layer, not state layer.
   const selectedAgents = ref(new Set())
 
   // Sort lock: freeze grid order so agents stop jumping
@@ -134,7 +147,14 @@ export function useActivityStream(options = {}) {
 
   // --- Computed: filtered agent panels ---
   const filteredAgents = computed(() => {
-    let agents = store.agentsList
+    // Team Monitor does NOT use status-priority sort (running/error first).
+    // Keep Jarvis (is_default) pinned at top, then alphabetical by name —
+    // stable layout so panels don't reshuffle as agents transition status.
+    let agents = [...store.agentsList].sort((a, b) => {
+      if (a.is_default && !b.is_default) return -1
+      if (!a.is_default && b.is_default) return 1
+      return a.name.localeCompare(b.name)
+    })
 
     // Apply status filter
     switch (filter.value) {
@@ -169,15 +189,42 @@ export function useActivityStream(options = {}) {
   })
 
   // Selection helpers
+  //
+  // Selection-state contract (post-2026-05-21):
+  // - Empty Set = "no explicit selection" (initial state). Visual:
+  //   all checkboxes render checked because the filter is inactive;
+  //   `dropdownLabel` says "All Agents". BUT downstream consumers that
+  //   need an explicit name list (e.g. bulk-delete) MUST treat this as
+  //   zero selection — never as "all". This guards destructive actions
+  //   from firing without user consent.
+  // - `selectAll()` PROMOTES the implicit-all state to an explicit Set
+  //   containing every name from the store, so the delete button (and
+  //   the count badge) match the visual.
+  // - Toggling an individual when starting from empty: the click means
+  //   "I want all EXCEPT this one" — expand the implicit-all into an
+  //   explicit Set, then remove the clicked name. Without this, the
+  //   first click flips from "all checked" to "only this one checked"
+  //   which is the opposite of what the checkbox visually promised.
+  // - `clearAll()` writes the `__none__` sentinel to signal "show empty
+  //   grid", which is filtered out of explicit name lists.
+
   function toggleAgent(name) {
-    const s = new Set(selectedAgents.value)
+    let s = new Set(selectedAgents.value)
+    if (s.size === 0) {
+      // Expand implicit-all → explicit roster so we can subtract from it.
+      s = new Set(store.agentsList.map(a => a.name))
+    }
+    s.delete('__none__')
     if (s.has(name)) s.delete(name)
     else s.add(name)
     selectedAgents.value = s
   }
 
   function selectAll() {
-    selectedAgents.value = new Set() // empty = show all
+    // Materialize the roster so consumers see real names, not the
+    // implicit-all empty Set. Drops the `__none__` sentinel implicitly
+    // by overwriting the value.
+    selectedAgents.value = new Set(store.agentsList.map(a => a.name))
   }
 
   function clearAll() {
@@ -240,71 +287,3 @@ export function useActivityStream(options = {}) {
   }
 }
 
-/**
- * Normalize any timestamp value to milliseconds.
- *
- * Handles:
- * - Unix seconds (float or int, e.g. 1775967073.51)
- * - Unix milliseconds (e.g. 1775967073000)
- * - ISO 8601 strings (e.g. "2026-04-12T12:30:00Z")
- * - null / undefined / 0 / NaN → returns null
- *
- * Heuristic: numeric values < 1e12 (~year 2001 in ms) are treated as seconds.
- */
-export function normalizeTs(ts) {
-  if (ts == null || ts === 0 || ts === '') return null
-
-  if (typeof ts === 'number') {
-    if (!Number.isFinite(ts)) return null
-    // seconds → ms (timestamps < 1e12 are definitely in seconds)
-    return ts < 1e12 ? Math.round(ts * 1000) : Math.round(ts)
-  }
-
-  if (typeof ts === 'string') {
-    // Try numeric string first (e.g. "1775967073.51")
-    const num = Number(ts)
-    if (Number.isFinite(num) && num > 0) {
-      return num < 1e12 ? Math.round(num * 1000) : Math.round(num)
-    }
-    // Try ISO / date string
-    const d = new Date(ts)
-    return Number.isFinite(d.getTime()) ? d.getTime() : null
-  }
-
-  return null
-}
-
-/**
- * Format a timestamp for display: 24h, dd/MM/YYYY.
- *
- * @param {number|string|null} ts - raw timestamp (seconds, ms, or ISO string)
- * @param {Object} opts
- * @param {boolean} [opts.dateOnly=false] - show only date without time
- * @param {boolean} [opts.timeOnly=false] - show only time without date
- * @returns {string} formatted string like "14:30:05 12/04/2026" or "" if invalid
- */
-export function formatTimestamp(ts, opts = {}) {
-  const ms = normalizeTs(ts)
-  if (ms === null) return ''
-
-  const d = new Date(ms)
-  if (!Number.isFinite(d.getTime())) return ''
-
-  const hh = String(d.getHours()).padStart(2, '0')
-  const mm = String(d.getMinutes()).padStart(2, '0')
-  const ss = String(d.getSeconds()).padStart(2, '0')
-  const dd = String(d.getDate()).padStart(2, '0')
-  const MM = String(d.getMonth() + 1).padStart(2, '0')
-  const yyyy = d.getFullYear()
-
-  if (opts.timeOnly) return `${hh}:${mm}:${ss}`
-  if (opts.dateOnly) return `${dd}/${MM}/${yyyy}`
-
-  // Same day → show time only to save space
-  const now = new Date()
-  if (d.getDate() === now.getDate() && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()) {
-    return `${hh}:${mm}:${ss}`
-  }
-
-  return `${hh}:${mm}:${ss} ${dd}/${MM}/${yyyy}`
-}

@@ -80,6 +80,52 @@ test('isResetSignal false: non-zero turn_idx delta', () => {
   assert.equal(isResetSignal(arr, { turn_idx: 2 }), false)
 })
 
+test('isResetSignal false: turn_idx=0 with new run_id (resume_spawn case)', () => {
+  // The previous run finished at turn_idx>=1. resume_spawn starts a new
+  // subprocess with run_id="r2" whose first turn is turn_idx=0. This is
+  // a fresh run of the same agent — old turns must be kept so the user
+  // sees the conversation stacked, not reset.
+  const arr = [
+    { turn_idx: 0, run_id: 'r1' },
+    { turn_idx: 1, run_id: 'r1' },
+  ]
+  assert.equal(isResetSignal(arr, { turn_idx: 0, run_id: 'r2' }), false)
+})
+
+test('isResetSignal true: turn_idx=0 with same run_id (real history reset)', () => {
+  // Same run_id restarting at turn_idx=0 is a real history clear — this
+  // is the legacy ``compact`` / ``new conversation`` signal.
+  const arr = [
+    { turn_idx: 0, run_id: 'r1' },
+    { turn_idx: 1, run_id: 'r1' },
+  ]
+  assert.equal(isResetSignal(arr, { turn_idx: 0, run_id: 'r1' }), true)
+})
+
+test('insertTurn dedups within same run, stacks across runs (resume case)', () => {
+  // r1 contributed turn_idx 0 and 1. r2 (resumed) starts a new turn_idx=0
+  // — must NOT replace r1's turn 0. Bucket should hold all 3 turns.
+  let arr = []
+  arr = insertTurn(arr, { turn_idx: 0, run_id: 'r1', ts: 100, role: 'user' }, 100)
+  arr = insertTurn(arr, { turn_idx: 1, run_id: 'r1', ts: 101, role: 'assistant' }, 100)
+  arr = insertTurn(arr, { turn_idx: 0, run_id: 'r2', ts: 200, role: 'user' }, 100)
+  assert.equal(arr.length, 3)
+  assert.deepEqual(arr.map(t => [t.run_id, t.turn_idx]), [
+    ['r1', 0], ['r1', 1], ['r2', 0],
+  ])
+})
+
+test('insertTurn still replaces an exact (run_id, turn_idx) duplicate', () => {
+  // SSE replay scenario: same run, same turn arrives twice with later
+  // payload (e.g. tool_result attached). Must replace, not duplicate.
+  let arr = [
+    { turn_idx: 0, run_id: 'r1', ts: 100, message: { content: [{ text: 'partial' }] } },
+  ]
+  arr = insertTurn(arr, { turn_idx: 0, run_id: 'r1', ts: 100, message: { content: [{ text: 'final' }] } }, 100)
+  assert.equal(arr.length, 1)
+  assert.equal(arr[0].message.content[0].text, 'final')
+})
+
 
 // ── lastAssistantText ───────────────────────────────────────────────
 

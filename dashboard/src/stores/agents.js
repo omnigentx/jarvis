@@ -11,8 +11,13 @@ export const useAgentsStore = defineStore('agents', () => {
   const tokenMetrics = ref(new Map()) // per-agent token accumulation from SSE
 
   // --- Computed ---
-  // Sort priority: running > error > default(Jarvis) > completed > idle
-  const STATUS_PRIORITY = { running: 0, paused: 1, error: 2, completed: 3, idle: 4 }
+  // Sort priority: running > error > default(Jarvis) > idle.
+  // After the 2026-05-20 lifecycle merge, only oneshot agents transit
+  // through ``completed`` and they're removed by the cleanup hook
+  // immediately — non-oneshot agents settle into ``idle``. No status
+  // badge for ``completed`` is rendered anywhere, so it's omitted from
+  // the priority table too.
+  const STATUS_PRIORITY = { running: 0, paused: 1, error: 2, idle: 3 }
   const agentsList = computed(() => {
     return Array.from(agents.value.values()).sort((a, b) => {
       const aPri = a.is_default ? 0 : (STATUS_PRIORITY[a.status] ?? 4)
@@ -30,7 +35,6 @@ export const useAgentsStore = defineStore('agents', () => {
       paused: list.filter(a => a.status === 'paused').length,
       idle: list.filter(a => a.status === 'idle').length,
       error: list.filter(a => a.status === 'error').length,
-      completed: list.filter(a => a.status === 'completed').length,
     }
   })
 
@@ -147,9 +151,12 @@ export const useAgentsStore = defineStore('agents', () => {
       }
 
       case 'result':
+        // Post-2026-05-20: all agents settle into 'idle' after task done.
+        // Oneshot agents are removed seconds later by the cleanup hook;
+        // resumable agents stay idle until the next resume.
         upsertAgent(agent_name, {
-          status: 'completed',
-          lastAction: { message: event.message || 'Completed', timestamp: event.timestamp },
+          status: 'idle',
+          lastAction: { message: event.message || 'Done', timestamp: event.timestamp },
         })
         break
 

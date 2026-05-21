@@ -323,6 +323,38 @@ class AgentContextSnapshot(Base):
     created_at = Column(Float, default=lambda: datetime.now().timestamp(), index=True)
 
 
+class TeamTemplateHistory(Base):
+    """Audit log for ``team_sessions.template`` edits.
+
+    Append-only: every PATCH / rollback / yaml-reset writes one row. Lets the
+    UI show "who changed what when" and supports 1-click rollback. Schema is
+    identical to the raw DDL emitted by ``scripts/patch_team_template.py``
+    (Phase 0) so audit history is continuous across the migration.
+
+    Field-level granularity (``field`` + ``before_json`` / ``after_json``)
+    means we can attribute and rollback individual server / instruction /
+    skill / override edits without serialising the whole template each time.
+    """
+    __tablename__ = "team_template_history"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String(100), nullable=False, index=True)
+    # role is the key inside template.roles (e.g. "qe", "dev"). NULL means a
+    # template-level edit (e.g. team-wide setting). NOT a foreign key — team
+    # sessions can be deleted while we keep the audit trail.
+    role = Column(String(100), nullable=True)
+    # Specific field inside the role config (e.g. "servers", "instruction",
+    # "server_overrides"). NULL means whole-role replace.
+    field = Column(String(100), nullable=True)
+    before_json = Column(Text, nullable=True)  # JSON-encoded prior value
+    after_json = Column(Text, nullable=True)   # JSON-encoded new value
+    # 'ui' | 'api' | 'yaml-reset' | 'phase0-script' | 'rollback'
+    source = Column(String(50), nullable=False)
+    edited_by = Column(String(100), nullable=True, default="system")
+    edited_at = Column(Float, default=lambda: datetime.now().timestamp(), index=True)
+    comment = Column(Text, nullable=True)
+
+
 class CronJobModel(Base):
     """Cron job definition — unified cron model (solar/lunar, one-shot/recurring)."""
     __tablename__ = "cron_jobs"

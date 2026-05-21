@@ -56,6 +56,28 @@ async def resume_with_inject(
             f"No original_config for agent '{agent_name}'. Cannot resume."
         )
 
+    # 0. Refresh role-level config from the live team template.
+    #
+    # Why: ``original_config`` is a FROZEN snapshot taken at first spawn.
+    # When a user edits the team template later (add an MCP server, change
+    # instruction, swap a skill), the canonical state lives in
+    # ``team_sessions.template.roles[role]`` — but unless we re-read it here,
+    # resume passes the stale 7-server list and the new tool silently
+    # disappears (incident 2026-05-18: ``playwright`` added to QE template
+    # via patch script, but every resume still got the old server list
+    # because we were reading the snapshot, not the canonical row).
+    #
+    # The /reload endpoint already kills + re-resumes the agent — but the
+    # respawn only picks up template changes if THIS function reads them.
+    # See ``services/team_reload.py`` for the kill half of the flow.
+    team_session_id = (original_config.get("env_vars") or {}).get(
+        "TEAM_SESSION_ID", ""
+    )
+    role = original_config.get("role", "")
+    fresh_role_cfg = _load_role_from_template(team_session_id, role)
+    if fresh_role_cfg is not None:
+        _log_template_drift(agent_name, original_config, fresh_role_cfg)
+
     # 1. Load context from DB — single source of truth
     context_json = _load_context_from_db(agent_name)
     history_file = None
@@ -82,11 +104,26 @@ async def resume_with_inject(
 
     # Re-inject team roster if this is a team agent
     enriched_context = inject_message
-    team_session_id = env_vars.get("TEAM_SESSION_ID", "")
     if team_session_id:
         enriched_context = _reinject_team_context(
-            inject_message, team_session_id, original_config.get("role", ""),
+            inject_message, team_session_id, role,
         )
+
+    # Resolve EACH spawn input through one helper so the SSoT rule
+    # ("prefer live template; fall back to snapshot") is in one place
+    # rather than scattered across keyword arguments.
+    def _resolve(key: str, default: Any = None) -> Any:
+        if fresh_role_cfg is not None and key in fresh_role_cfg:
+            value = fresh_role_cfg.get(key)
+            if value is not None:
+                return value
+        return original_config.get(key, default)
+
+    servers = _resolve("servers", [])
+    server_overrides = _resolve("server_overrides", None)
+    instruction = _resolve("instruction", "")
+    skills = _resolve("skills", [])
+    model = _resolve("model", "")
 
     # 3. Create SpawnRegistry (same file as MCP spawner — concurrent-safe)
     registry = _create_registry(project_dir)
@@ -100,12 +137,12 @@ async def resume_with_inject(
     new_run_id = await run_isolated_agent_background(
         task=inject_message,
         project_dir=project_dir,
-        instruction=original_config.get("instruction", ""),
+        instruction=instruction,
         context=enriched_context,
-        servers=original_config.get("servers", []),
-        model=original_config.get("model", ""),
+        servers=servers,
+        model=model,
         timeout_seconds=original_config.get("timeout_seconds", 0),
-        role=original_config.get("role", ""),
+        role=role,
         agent_name=agent_name,
         team_name=original_config.get("team_name", spawn_record.get("team_name", "")),
         workspace_dir=original_config.get("workspace_dir") or None,
@@ -113,10 +150,16 @@ async def resume_with_inject(
         registry=registry,
         display_manager=display_manager,
         env_vars=env_vars or None,
-        skills=original_config.get("skills", []),
+        skills=skills,
         history_file=history_file,
         spawn_lifecycle_hooks=None,  # Subprocess events (stderr) are sufficient
         session_id=team_session_id,
+        # Without this, every dashboard "Send message" / inject path falls back
+        # to the BASE fastagent.config.yaml filesystem args (./data only) and
+        # the agent silently loses workspace + skills access (incident
+        # 2026-05-17: Designer broken filesystem after restore — fix landed in
+        # auto-resume/restart/resume but THIS code path was missed).
+        server_overrides=server_overrides,
     )
 
     logger.info(
@@ -134,6 +177,93 @@ async def resume_with_inject(
 
 
 # ── Helper functions ─────────────────────────────────────────────────────
+
+
+def _load_role_from_template(
+    team_session_id: str,
+    role: str,
+) -> dict | None:
+    """Read the live role config from ``team_sessions.template.roles[role]``.
+
+    Returns the role dict (with keys like ``servers``, ``server_overrides``,
+    ``instruction``, ``skills``, ``model``) or ``None`` when:
+
+    - ``team_session_id`` is empty (this is an ad-hoc spawn, not team-managed)
+    - the role is empty
+    - the team session no longer exists (deleted / migrated)
+    - the role was removed from the template after the agent spawned
+
+    Callers MUST treat ``None`` as "fall back to original_config snapshot"
+    — never as an error. The point of this helper is purely to refresh
+    template-driven fields while keeping the registry snapshot as a safety
+    net for non-template fields (env_vars, workspace_dir, project_dir).
+    """
+    if not team_session_id or not role:
+        return None
+    try:
+        from fast_agent.spawn.team_spawner import get_team_session
+
+        session = get_team_session(team_session_id)
+    except Exception as exc:
+        logger.warning(
+            "[INJECT-RESUME] Failed to load team session '%s' for fresh "
+            "role refresh: %s — falling back to original_config.",
+            team_session_id, exc,
+        )
+        return None
+    if session is None:
+        return None
+    roles = (session.template or {}).get("roles") or {}
+    role_cfg = roles.get(role)
+    if not isinstance(role_cfg, dict):
+        return None
+    return role_cfg
+
+
+def _log_template_drift(
+    agent_name: str,
+    original_config: dict,
+    fresh_role_cfg: dict,
+) -> None:
+    """Log when template-driven fields differ from the snapshot.
+
+    Silent drift is exactly how the 2026-05-18 ``playwright`` incident hid
+    — patch updated the canonical template but every resume read the stale
+    snapshot. By emitting a single INFO line listing the diff, the next
+    operator who tails the log can immediately see "ah, the live template
+    is ahead of the snapshot, that's why this agent has different servers
+    after resume" instead of spelunking two tables.
+
+    Best-effort only — no exception raised. We never want this helper to
+    block a resume.
+    """
+    try:
+        changes: list[str] = []
+        for key in ("servers", "server_overrides", "instruction", "skills", "model"):
+            old = original_config.get(key)
+            new = fresh_role_cfg.get(key, old)
+            if old != new:
+                if key in ("servers", "skills"):
+                    old_set = set(old or [])
+                    new_set = set(new or [])
+                    added = sorted(new_set - old_set)
+                    removed = sorted(old_set - new_set)
+                    parts = []
+                    if added:
+                        parts.append(f"+{added}")
+                    if removed:
+                        parts.append(f"-{removed}")
+                    if parts:
+                        changes.append(f"{key} {' '.join(parts)}")
+                else:
+                    changes.append(f"{key} changed")
+        if changes:
+            logger.info(
+                "[INJECT-RESUME] Template drift for %s — using live template: %s",
+                agent_name, "; ".join(changes),
+            )
+    except Exception as exc:  # pragma: no cover — diagnostic only
+        logger.debug("[INJECT-RESUME] drift logging failed: %s", exc)
 
 
 def _load_context_from_db(agent_name: str) -> str | None:

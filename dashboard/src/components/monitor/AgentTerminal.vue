@@ -81,11 +81,11 @@ onMounted(() => nextTick(() => scrollToBottom()))
 
 // ── Status helpers ──
 function statusColor(s) {
-  const m = { running: '#f59e0b', paused: '#8b5cf6', idle: '#10b981', error: '#ef4444', completed: '#3b82f6' }
+  const m = { running: '#f59e0b', paused: '#8b5cf6', idle: '#10b981', error: '#ef4444' }
   return m[s] || '#555872'
 }
 function statusLabel(s) {
-  const m = { running: 'Running', paused: 'Paused', idle: 'Idle', error: 'Error', completed: 'Completed' }
+  const m = { running: 'Running', paused: 'Paused', idle: 'Idle', error: 'Error' }
   return m[s] || 'Unknown'
 }
 

@@ -4,6 +4,7 @@ Verifies that _notify_turn_agent embeds unread transcript and
 advances read cursors, and that auto-join works correctly.
 """
 import json
+import os
 import pytest
 from unittest.mock import MagicMock, patch, AsyncMock
 
@@ -371,3 +372,125 @@ def test_get_transcript_not_available():
     """get_transcript should no longer be importable as a tool."""
     import fast_agent.spawn.servers.meeting_room_server as mod
     assert not hasattr(mod, "get_transcript") or not callable(getattr(mod, "get_transcript", None))
+
+
+# ── Impersonation refusal in speak() / skip_turn() ──
+#
+# Production incident 2026-05-20 (agile-team_ccd1adb9): Taylor [PM]
+# force-skipped 6 teammates in a single round by calling
+# ``skip_turn(agent_name="<teammate>", reason="PM force-advancing...")``
+# six times. The MCP server only validated "is agent_name the current
+# speaker?" — not "is the caller actually that agent". The transcript
+# falsely attributed identical placeholder responses to BA / SA / Dev /
+# Designer / QE / DSO, breaking the audit value of the meeting record.
+#
+# Fix: _assert_self_identity() pins ``agent_name`` to the caller's
+# spawn-time TEAM_MY_NAME (read via _get_my_name). A mismatch returns
+# an error JSON instead of writing to the transcript.
+
+
+def _identity_check(caller_env_name: str, param_agent_name: str):
+    """Drive _assert_self_identity directly with the env name set.
+
+    The helper reads ``TEAM_MY_NAME`` from ``os.environ`` directly (NOT
+    via ``_get_my_name()``) — only that env var proves the process was
+    spawned as a specific team member. We set it via ``patch.dict`` so
+    the value is restored after the test. Empty string means "env var
+    unset" (the test for the permissive non-team contract).
+    """
+    env_patch = {"TEAM_MY_NAME": caller_env_name} if caller_env_name else {}
+    with patch.dict(
+        "os.environ",
+        env_patch,
+        clear=False if caller_env_name else False,
+    ):
+        # When caller_env_name is empty, remove TEAM_MY_NAME so the
+        # "unset env" branch is exercised. patch.dict's clear=False
+        # leaves untouched keys alone, so we drop the key explicitly.
+        if not caller_env_name:
+            os.environ.pop("TEAM_MY_NAME", None)
+        # ``_get_my_name`` is still consulted ONLY when ``param_agent_name``
+        # is empty (auto-detect). Patch it too so that branch produces
+        # the env name verbatim instead of falling back to TEAM_MY_ROLE.
+        with patch(
+            "fast_agent.spawn.servers.meeting_room_server._get_my_name",
+            return_value=caller_env_name or "agent",
+        ):
+            from fast_agent.spawn.servers.meeting_room_server import _assert_self_identity
+            return _assert_self_identity(param_agent_name)
+
+
+def test_speak_refuses_impersonation_via_self_identity_check():
+    """Caller env=Taylor [PM] passes agent_name=Sawyer [BA] → REJECT."""
+    resolved, err = _identity_check("Taylor [PM]", "Sawyer [BA]")
+    assert resolved == ""
+    assert err is not None
+    err_data = json.loads(err)
+    assert "Impersonation refused" in err_data["error"]
+    assert err_data["caller"] == "Taylor [PM]"
+    assert err_data["claimed_agent_name"] == "Sawyer [BA]"
+
+
+def test_skip_turn_refuses_impersonation_via_self_identity_check():
+    """Same contract for skip_turn — both share _assert_self_identity."""
+    resolved, err = _identity_check("Taylor [PM]", "Reagan [SA]")
+    assert resolved == ""
+    assert err is not None
+    assert json.loads(err)["error"].startswith("Impersonation refused")
+
+
+def test_identity_check_allows_self_call_with_matching_agent_name():
+    """Passing your own name explicitly is fine (no impersonation)."""
+    resolved, err = _identity_check("Taylor [PM]", "Taylor [PM]")
+    assert err is None
+    assert resolved == "Taylor [PM]"
+
+
+def test_identity_check_is_case_insensitive_and_strips_whitespace():
+    """Match is case-insensitive and trims surrounding whitespace —
+    the LLM occasionally lowercases or pads role tags."""
+    resolved, err = _identity_check("Taylor [PM]", "  taylor [pm]  ")
+    assert err is None
+    assert resolved == "  taylor [pm]  "  # caller's spelling preserved, just normalized for comparison
+
+
+def test_identity_check_auto_detects_when_param_empty():
+    """Empty agent_name param → falls back to caller's TEAM_MY_NAME.
+    Preserves the legacy convenience contract."""
+    resolved, err = _identity_check("Taylor [PM]", "")
+    assert err is None
+    assert resolved == "Taylor [PM]"
+
+
+def test_identity_check_allows_any_name_when_env_unset():
+    """When TEAM_MY_NAME is unset, the process is NOT a team-spawned
+    agent (CLI tests, dashboard direct calls, library callers). There
+    is no real identity to compare against, so the caller-supplied
+    ``agent_name`` is accepted as-is — preserves the legacy permissive
+    contract for non-team contexts."""
+    resolved, err = _identity_check("", "Sawyer [BA]")
+    assert err is None
+    assert resolved == "Sawyer [BA]"
+
+
+def test_identity_check_pm_force_skip_pattern_all_six_blocked():
+    """End-to-end replay of the 2026-05-20 incident: PM tries to skip
+    all 6 teammates' turns. Every one must be refused."""
+    pm_env = "Taylor [PM]"
+    teammates = [
+        "Sawyer [BA]",
+        "Reagan [SA]",
+        "Eden [Dev]",
+        "Devon [Designer]",
+        "Kai [QE]",
+        "Kai [DSO]",
+    ]
+    blocked = 0
+    for mate in teammates:
+        _, err = _identity_check(pm_env, mate)
+        if err and "Impersonation refused" in json.loads(err)["error"]:
+            blocked += 1
+    assert blocked == len(teammates), (
+        f"Expected all {len(teammates)} impersonation attempts to be "
+        f"blocked; only {blocked} were."
+    )

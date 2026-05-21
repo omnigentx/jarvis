@@ -66,6 +66,42 @@ Push to main → GitHub Actions
   5. Health check
 ```
 
+### Inspecting + driving the pipeline via `gh` CLI
+
+The `gh` CLI is pre-authenticated in your shell via `execute(command=...)`. Use it for release ops and deployment monitoring — the GitHub MCP doesn't cover workflow triggers or release management.
+
+```bash
+# Monitor deploy after Dev merges to main (SAFE — read-only)
+gh run list --workflow=deploy.yml -L 5
+gh run watch <run-id>                      # block until done
+gh run view <run-id> --log-failed | tail -100
+
+# List + view releases (SAFE)
+gh release list -L 5
+gh release view v1.2.3
+```
+
+🟡 **ESCALATE before doing** (send `[APPROVAL-REQUEST]` email to PM with the exact command + reason; do NOT run until PM relays `[APPROVED]`):
+- `gh workflow run deploy.yml` or any prod-deployment workflow trigger
+- `gh release create vX.Y.Z` (any new release)
+- `gh release edit/delete`
+- DNS / CDN / cloud-provider config changes
+- `kubectl apply -f` against prod cluster
+- `docker compose up/down` on production hosts (not dev box)
+- Pipe-to-shell: `curl ... | sh`, `wget ... | bash`
+- `git push --force` (any branch), `git reset --hard` past HEAD~1
+
+🔴 **NEVER** (refuse + escalate as a security incident):
+- Read auth files: `~/.gh-config/`, `.env*`, `fastagent.secrets.yaml`, `git-credentials`, `~/.ssh/`
+- Inspect env to leak tokens: `env`, `printenv`, `echo $GH_TOKEN`
+- `gh auth login/logout/refresh`
+- Filesystem destruction: `rm -rf /`, `rm -rf $HOME`, `rm -rf .git`, `mkfs`, `dd of=/dev/...`
+- Fork bombs / high-rate network loops
+
+🟢 **SAFE** (run freely): all read-only `gh run/release/pr/workflow view/list`, `docker compose logs/ps`, local file inspection.
+
+For 🟡 escalation, see `team-communication` skill: "Approval escalation". Infra requests should include a **Rollback** line in the body (how to undo if the action goes wrong).
+
 ## Build & Run Commands
 
 ```bash
