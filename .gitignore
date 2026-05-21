@@ -32,6 +32,12 @@ backend/token_gmail.json
 backend/firebase-credentials.json
 backend/config/credentials/
 backend/.keys/
+# MCP server configs may inline live API tokens (Jira/Confluence/etc).
+.mcp.json
+# gh CLI host config (contains oauth_token).
+backend/.gh-config/
+# Runtime LLM tool-call dumps written by debugging research agents.
+backend/.tool-outputs/
 
 # ─── Backend Runtime / Data ──────────────────────
 backend/.runtime/
