@@ -838,3 +838,71 @@ class TestTemplate:
         fm, _ = svc.parse_frontmatter(content)
         assert "name" in fm
         assert "description" in fm
+
+
+# ============================================================
+# L. Skill reload (preview + force-kill respawn across teams)
+#
+# Pins the dynamic-skill-update flow from 2026-05-17:
+#   1. Editing a skill .md doesn't auto-restart agents (they cached at spawn)
+#   2. /reload-preview shows blast radius without side-effects
+#   3. /reload requires explicit confirm: true (else 400)
+#   4. /reload calls team_reload.reload_by_skill with the skill name
+# ============================================================
+
+
+class TestSkillReload:
+    def test_preview_returns_zero_when_unused(self, client, monkeypatch):
+        from services import team_reload as tr
+
+        monkeypatch.setattr(tr, "find_sessions_using_skill", lambda name: [])
+        resp = client.get("/api/skills/some-skill/reload-preview", headers=AUTH)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["skill"] == "some-skill"
+        assert body["session_count"] == 0
+        assert body["approx_agent_count"] == 0
+        assert "no-op" in body["warning"].lower()
+
+    def test_preview_returns_blast_radius(self, client, monkeypatch):
+        from services import team_reload as tr
+
+        fake = [
+            {"session_id": "s1", "team_name": "alpha", "roles": ["qe", "dev"]},
+            {"session_id": "s2", "team_name": "beta", "roles": ["ba"]},
+        ]
+        monkeypatch.setattr(tr, "find_sessions_using_skill", lambda name: fake)
+        resp = client.get("/api/skills/team-comm/reload-preview", headers=AUTH)
+        body = resp.json()
+        assert body["session_count"] == 2
+        assert body["approx_agent_count"] == 3  # 2 roles + 1 role
+        assert "SIGKILL" in body["warning"]
+
+    def test_reload_requires_confirm(self, client):
+        resp = client.post(
+            "/api/skills/team-comm/reload", json={"confirm": False}, headers=AUTH,
+        )
+        assert resp.status_code == 400
+        assert "confirm" in resp.json()["detail"]
+
+    def test_reload_calls_helper_with_skill_name(self, client, monkeypatch):
+        from unittest.mock import AsyncMock
+
+        from services import team_reload as tr
+
+        fake_result = {"skill": "team-comm", "sessions": [{"session_id": "s1", "results": {}}]}
+        mock_reload = AsyncMock(return_value=fake_result)
+        monkeypatch.setattr(tr, "reload_by_skill", mock_reload)
+
+        resp = client.post(
+            "/api/skills/team-comm/reload",
+            json={"confirm": True, "inject_message": "custom msg"},
+            headers=AUTH,
+        )
+        assert resp.status_code == 200
+        assert resp.json() == fake_result
+        mock_reload.assert_called_once()
+        # Positional skill name + keyword inject_message
+        args, kwargs = mock_reload.call_args
+        assert args == ("team-comm",) or kwargs.get("skill_name") == "team-comm"
+        assert kwargs.get("inject_message") == "custom msg"

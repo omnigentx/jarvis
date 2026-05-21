@@ -431,7 +431,7 @@ def test_check_team_completion_filters_members_by_session_id(env_db, monkeypatch
     )
     monkeypatch.setattr(
         bridge, "_find_orchestrator",
-        lambda members: next(
+        lambda members, session_id="": next(
             (m for m in members if m.get("role") == "pm"), None,
         ),
     )
@@ -439,11 +439,15 @@ def test_check_team_completion_filters_members_by_session_id(env_db, monkeypatch
     saved = {}
     monkeypatch.setattr(
         bridge, "_save_cycle_state",
-        lambda sid, w, t: saved.update({"sid": sid, "w": w, "t": t}),
+        lambda sid, w, t, orch: saved.update(
+            {"sid": sid, "w": w, "t": t, "orch": orch},
+        ),
     )
     monkeypatch.setattr(
         bridge, "_load_cycle_state",
-        lambda sid: {"worker_open": False, "team_open": False},
+        lambda sid: {
+            "worker_open": False, "team_open": False, "orch_running": False,
+        },
     )
 
     bridge._on_member_state_event("run-pm-new")
@@ -531,10 +535,13 @@ def _make_bridge_with_registry(members, monkeypatch, env_db, team_name="agile"):
     bridge = SpawnProgressBridge(
         progress_manager=MagicMock(), registry_db=fake_registry,
     )
-    # Default _find_orchestrator to role-based pick.
+    # Default _find_orchestrator to role-based pick. Accept the new
+    # ``session_id`` kwarg (2026-05-19 refactor — production lookup
+    # reads ``template.orchestrator`` from ``team_sessions``; in the
+    # bridge unit tests we pin the role directly).
     monkeypatch.setattr(
         bridge, "_find_orchestrator",
-        lambda mems: next(
+        lambda mems, session_id="": next(
             (m for m in mems if m.get("role") == "pm"), None,
         ),
     )
@@ -561,10 +568,13 @@ def test_cycle_worker_closed_fires_on_workers_idle_transition(env_db, monkeypatc
         "run_id": "w1", "team_name": "agile", "session_id": "sX",
     }
 
-    # First event: worker running → opens worker cycle (and team cycle)
+    # First event: worker running → opens worker cycle (and team cycle);
+    # the orchestrator (PM) is also running → orch_running=True.
     bridge._on_member_state_event("w1")
     state = bridge._load_cycle_state("sX")
-    assert state == {"worker_open": True, "team_open": True}
+    assert state == {
+        "worker_open": True, "team_open": True, "orch_running": True,
+    }
 
     # Now worker idle → workers all non-running → close fires
     members_running[1]["status"] = "idle"
@@ -598,12 +608,16 @@ def test_cycle_full_closed_fires_when_team_idle_no_meeting(env_db, monkeypatch):
     bridge = _make_bridge_with_registry(members, monkeypatch, env_db)
     monkeypatch.setattr(bridge, "_active_meetings_with_members", lambda names: [])
 
-    # Open team cycle (PM running)
+    # Open team cycle (orchestrator running). orch_running=True is the
+    # transition we now gate on (2026-05-19 refactor).
     bridge._registry_db.get_record.return_value = members[0]
     bridge._on_member_state_event("pm1")
-    assert bridge._load_cycle_state("sY")["team_open"] is True
+    state = bridge._load_cycle_state("sY")
+    assert state["orch_running"] is True
+    assert state["team_open"] is True
 
-    # PM goes idle → team all non-running → full cycle closes
+    # PM goes idle → orch_running flips True→False, no workers running →
+    # full cycle closes.
     members[0]["status"] = "idle"
     bridge._registry_db.get_record.return_value = members[0]
 
@@ -669,7 +683,9 @@ def test_cycle_state_persists_across_handler_invocations(env_db, monkeypatch):
 
     bridge._on_member_state_event("w1")
     state_after_open = bridge._load_cycle_state("sP")
-    assert state_after_open == {"worker_open": True, "team_open": True}
+    assert state_after_open == {
+        "worker_open": True, "team_open": True, "orch_running": True,
+    }
 
     # Simulate "restart" — recreate bridge with same registry
     from unittest.mock import MagicMock
@@ -679,7 +695,9 @@ def test_cycle_state_persists_across_handler_invocations(env_db, monkeypatch):
     )
     # State must be loaded from DB, not from in-memory reset
     fresh_state = fresh_bridge._load_cycle_state("sP")
-    assert fresh_state == {"worker_open": True, "team_open": True}, (
+    assert fresh_state == {
+        "worker_open": True, "team_open": True, "orch_running": True,
+    }, (
         "Cycle state lost across restart — restart-safety contract broken"
     )
 
@@ -734,10 +752,12 @@ def test_cycle_multi_session_isolation(env_db, monkeypatch):
     bridge._on_member_state_event("pm-B")
     state_A = bridge._load_cycle_state("sA")
     state_B = bridge._load_cycle_state("sB")
-    assert state_A == {"worker_open": False, "team_open": True}
-    assert state_B == {"worker_open": False, "team_open": False}, (
-        "Session B (PM idle) leaked Session A's running state"
-    )
+    assert state_A == {
+        "worker_open": False, "team_open": True, "orch_running": True,
+    }
+    assert state_B == {
+        "worker_open": False, "team_open": False, "orch_running": False,
+    }, "Session B (orch idle) leaked Session A's running state"
 
 
 def test_cycle_solo_pm_no_workers(env_db, monkeypatch):
@@ -755,11 +775,15 @@ def test_cycle_solo_pm_no_workers(env_db, monkeypatch):
     bridge._registry_db.get_record.return_value = members[0]
     bridge._on_member_state_event("pm1")
     state = bridge._load_cycle_state("sSolo")
-    assert state == {"worker_open": False, "team_open": True}, (
-        "Solo PM running: workers absent → worker_open=False; PM running → team_open=True"
+    assert state == {
+        "worker_open": False, "team_open": True, "orch_running": True,
+    }, (
+        "Solo orchestrator running: no workers → worker_open=False; "
+        "orchestrator running → team_open=True, orch_running=True"
     )
 
-    # PM idle → only full cycle fires, worker cycle never opened/closed
+    # Orchestrator idle → only full cycle fires, worker cycle never
+    # opened/closed. New gating is on orch_running transition.
     members[0]["status"] = "idle"
     bridge._registry_db.get_record.return_value = members[0]
 
@@ -813,3 +837,127 @@ def test_cycle_multiround_worker_closes_each_round(env_db, monkeypatch):
         "Worker cycle MUST fire each round. State-hash dedupe would "
         "incorrectly silence round 2 because (run_id, status) is identical."
     )
+
+
+# ── Regression: dedupe by agent_name across stale run_ids ────────────
+#
+# Tracks the 2026-05-17 notif #28 incident: PM with 10 historical resume
+# rows + 6 stale worker rows produced "16 agents hoàn thành" and fired
+# while PM's latest run was still mid-turn. The bridge MUST collapse all
+# run_ids of the same agent_name down to the latest row.
+
+
+def test_cycle_dedupe_keeps_latest_run_per_agent(env_db, monkeypatch):
+    """When an agent has multiple registry rows (1 per resume), only the
+    LATEST row should be considered for cycle status + count.
+    """
+    members = [
+        # 3 historical PM rows — all idle, oldest first
+        {"run_id": "pm_old1", "agent_name": "PM", "role": "pm",
+         "status": "idle", "session_id": "sD", "started_at": 100.0},
+        {"run_id": "pm_old2", "agent_name": "PM", "role": "pm",
+         "status": "idle", "session_id": "sD", "started_at": 200.0},
+        # Latest PM — currently RUNNING (this is the truth)
+        {"run_id": "pm_latest", "agent_name": "PM", "role": "pm",
+         "status": "running", "session_id": "sD", "started_at": 999.0},
+        # Worker — single row, idle
+        {"run_id": "w_old", "agent_name": "Wkr", "role": "dev",
+         "status": "idle", "session_id": "sD", "started_at": 150.0},
+    ]
+    bridge = _make_bridge_with_registry(members, monkeypatch, env_db)
+    bridge._registry_db.get_record.return_value = members[2]  # latest PM
+
+    fires = {"worker": False, "full": False}
+    monkeypatch.setattr(
+        bridge, "_emit_worker_cycle_closed",
+        lambda *a, **kw: fires.update({"worker": True}),
+    )
+    monkeypatch.setattr(
+        bridge, "_emit_full_cycle_closed",
+        lambda *a, **kw: fires.update({"full": True}),
+    )
+
+    # Open cycle first (so prev[orch_running] is True for the next
+    # call). New 4-arg signature includes orch_running.
+    bridge._save_cycle_state(
+        "sD", worker_open=False, team_open=True, orch_running=True,
+    )
+    bridge._on_member_state_event("pm_latest")
+
+    # Latest orchestrator is running → orch_running MUST stay True →
+    # no full fire. Stale idle rows must NOT dominate the latest row.
+    state = bridge._load_cycle_state("sD")
+    assert state["orch_running"] is True, (
+        "Latest orchestrator row is running — bridge MUST treat it as "
+        "running. Stale idle rows must NOT dominate the latest row's "
+        "status."
+    )
+    assert fires["full"] is False, (
+        "Premature full_cycle_closed would mean dedupe is missing — "
+        "the stale idle rows are masking the real running row."
+    )
+
+
+def test_cycle_dedupe_count_collapses_stale_rows(env_db, monkeypatch):
+    """``_emit_full_cycle_closed`` MUST receive a member list with N unique
+    agents, not N*resume_count rows. Otherwise notif title shows
+    "16 agents hoàn thành" instead of the real team size.
+    """
+    captured: dict = {}
+    members = [
+        # 3 stale PM rows (different run_ids, same agent) + 1 latest idle
+        {"run_id": "pm_a", "agent_name": "PM", "role": "pm",
+         "status": "idle", "session_id": "sE", "started_at": 100.0},
+        {"run_id": "pm_b", "agent_name": "PM", "role": "pm",
+         "status": "idle", "session_id": "sE", "started_at": 200.0},
+        {"run_id": "pm_c", "agent_name": "PM", "role": "pm",
+         "status": "idle", "session_id": "sE", "started_at": 300.0},
+        # Single worker, idle
+        {"run_id": "w1", "agent_name": "Wkr", "role": "dev",
+         "status": "idle", "session_id": "sE", "started_at": 250.0},
+    ]
+    bridge = _make_bridge_with_registry(members, monkeypatch, env_db)
+    bridge._registry_db.get_record.return_value = members[2]
+    monkeypatch.setattr(
+        bridge, "_active_meetings_with_members", lambda names: False,
+    )
+    monkeypatch.setattr(
+        bridge, "_emit_full_cycle_closed",
+        lambda sid, tname, members_list, orch, **kw: captured.setdefault(
+            "members", members_list,
+        ),
+    )
+
+    # Pretend orchestrator was running then idled. The new state
+    # machine requires orch_running=True in the prev snapshot so the
+    # transition T→F triggers a close.
+    bridge._save_cycle_state(
+        "sE", worker_open=False, team_open=True, orch_running=True,
+    )
+    bridge._on_member_state_event("pm_c")
+
+    captured_members = captured.get("members") or []
+    names = sorted(m.get("agent_name") for m in captured_members)
+    assert names == ["PM", "Wkr"], (
+        f"Expected 2 unique agents, got {len(captured_members)} rows: {names}. "
+        "Stale resume rows must be deduped before emitting."
+    )
+
+
+def test_cycle_dedupe_skips_rows_with_empty_agent_name(env_db, monkeypatch):
+    """Rows where ``agent_name`` is missing or empty must be filtered out,
+    not crash the dedupe (defensive against corrupted/legacy registry data).
+    """
+    members = [
+        {"run_id": "pm1", "agent_name": "PM", "role": "pm",
+         "status": "running", "session_id": "sF", "started_at": 100.0},
+        {"run_id": "ghost", "agent_name": "", "role": "",
+         "status": "idle", "session_id": "sF", "started_at": 50.0},
+    ]
+    bridge = _make_bridge_with_registry(members, monkeypatch, env_db)
+    bridge._registry_db.get_record.return_value = members[0]
+
+    # Must not crash, must treat as 1-member team.
+    bridge._on_member_state_event("pm1")
+    state = bridge._load_cycle_state("sF")
+    assert state["team_open"] is True

@@ -86,9 +86,30 @@ def test_terminal_status_passes_through(terminal):
     """Once an agent is in a terminal/overlay state, the helper must
     NOT second-guess it. Bridge / cleanup / PauseManager are
     authoritative for these.
+
+    Note: the ``completed`` + non-oneshot lifecycle case is exempted —
+    see ``test_completed_resumable_record_overrides_to_idle``.
     """
     record = {"agent_name": "X", "status": terminal}
     assert _compute_effective_status(record) == terminal
+
+
+def test_completed_resumable_record_overrides_to_idle():
+    """Post-2026-05-20 lifecycle merge: legacy DB rows had
+    ``status="completed"`` written by the old spawner for what is now a
+    ``resumable`` agent. The canonical state for a non-oneshot agent
+    after task completion is ``idle`` (waiting for follow-up). Override
+    at the API layer so UI doesn't render a misleading "Completed" badge
+    while the same agent is still resumable from inbox or resume_spawn.
+    """
+    record = {"agent_name": "X", "status": "completed", "lifecycle": "resumable"}
+    assert _compute_effective_status(record) == "idle"
+
+
+def test_completed_oneshot_record_stays_completed():
+    """Oneshot agents really ARE done — the override must not touch them."""
+    record = {"agent_name": "X", "status": "completed", "lifecycle": "oneshot"}
+    assert _compute_effective_status(record) == "completed"
 
 
 def test_unrecognized_status_passes_through():

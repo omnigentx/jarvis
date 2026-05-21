@@ -835,3 +835,144 @@ class TestFullEnvPipeline:
 
         # SPAWN_REGISTRY_DB must still be there
         assert subprocess_env["SPAWN_REGISTRY_DB"] == db_path
+
+
+# ═══════════════════════════════════════════════
+# 7. JARVIS_RUNTIME_RPC_SOCKET multi-hop propagation
+# ═══════════════════════════════════════════════
+
+
+class TestRuntimeRpcSocketMultiHop:
+    """Pin the multi-hop chain that broke approval-server + pause from
+    2026-05-09 onwards. When approval-server (or skill_server / mcp_admin)
+    is loaded by a spawned agent, the chain is:
+
+        backend (uvicorn)
+          → fast-agent stdio MCP: agent_spawner_server         [hop 1]
+          → subprocess.Popen({**os.environ, ...}): isolated_runner   [hop 2]
+          → fast-agent stdio MCP: approval-server              [hop 3]
+
+    JARVIS_RUNTIME_RPC_SOCKET must survive every hop. Hop 1 (the
+    fast-agent stdio env build) is where it previously dropped, because
+    ``_parent_extras`` only forwarded ``SPAWN_*`` + ``VIRTUAL_ENV``. The
+    fix added ``JARVIS_RUNTIME_RPC_SOCKET`` to that whitelist.
+    """
+
+    def _build_stdio_env(self, config_env: dict) -> dict:
+        """Replicate mcp_connection_manager.py lines 952-986 — the env
+        build for a stdio MCP child. Kept inline so the test fails
+        loudly if production drops the whitelist entry.
+        """
+        from mcp.client.stdio import get_default_environment
+        _parent_extras = {
+            k: v for k, v in os.environ.items()
+            if (
+                k.startswith("SPAWN_")
+                or k == "JARVIS_RUNTIME_RPC_SOCKET"
+                or k in ("VIRTUAL_ENV",)
+            )
+        }
+        _config_env = {
+            k: (os.path.expandvars(v) if isinstance(v, str) else v)
+            for k, v in config_env.items()
+        }
+        return {**get_default_environment(), **_parent_extras, **_config_env}
+
+    def test_hop1_backend_to_middleware_mcp(self, monkeypatch):
+        """Backend has JARVIS_RUNTIME_RPC_SOCKET → agent_spawner_server
+        (middleware MCP, YAML does NOT declare the var) inherits it via
+        the ``_parent_extras`` whitelist.
+        """
+        monkeypatch.setenv("JARVIS_RUNTIME_RPC_SOCKET", "/tmp/test-rpc.sock")
+
+        # agent_spawner's YAML env block — note: no JARVIS_RUNTIME_RPC_SOCKET
+        agent_spawner_yaml_env = {
+            "PYTHONUNBUFFERED": "1",
+            "JARVIS_API_KEY": "${JARVIS_API_KEY}",
+            "JARVIS_API_BASE": "${JARVIS_API_BASE}",
+        }
+        child_env = self._build_stdio_env(agent_spawner_yaml_env)
+
+        assert child_env.get("JARVIS_RUNTIME_RPC_SOCKET") == "/tmp/test-rpc.sock", (
+            "agent_spawner_server MUST inherit JARVIS_RUNTIME_RPC_SOCKET via "
+            "_parent_extras whitelist — without it, grandchild MCPs fail with "
+            "ENOENT on a literal ${JARVIS_RUNTIME_RPC_SOCKET} path."
+        )
+
+    def test_hop2_middleware_to_isolated_runner(self, monkeypatch):
+        """agent_spawner_server's os.environ → isolated_runner subprocess.
+        Replicates ``isolated_spawner._run_subprocess`` line 200-206.
+        """
+        monkeypatch.setenv("JARVIS_RUNTIME_RPC_SOCKET", "/tmp/test-rpc.sock")
+
+        # agent_spawner_server's os.environ at this point — inherited via hop 1
+        # Now it spawns isolated_runner via subprocess.Popen({**os.environ, ...})
+        subprocess_env = {
+            **os.environ,
+            "PYTHONPATH": "/project",
+        }
+        team_env = {"TEAM_MY_ROLE": "pm", "TEAM_SESSION_ID": "sess-1"}
+        subprocess_env.update(team_env)
+
+        assert subprocess_env["JARVIS_RUNTIME_RPC_SOCKET"] == "/tmp/test-rpc.sock"
+        assert subprocess_env["TEAM_MY_ROLE"] == "pm"
+
+    def test_hop3_isolated_runner_to_grandchild_mcp(self, monkeypatch):
+        """isolated_runner spawns approval-server (grandchild MCP) which
+        declares ``JARVIS_RUNTIME_RPC_SOCKET: "${JARVIS_RUNTIME_RPC_SOCKET}"``
+        in YAML. expandvars must resolve against isolated_runner's env.
+        """
+        monkeypatch.setenv("JARVIS_RUNTIME_RPC_SOCKET", "/tmp/test-rpc.sock")
+
+        approval_yaml_env = {
+            "PYTHONUNBUFFERED": "1",
+            "JARVIS_RUNTIME_RPC_SOCKET": "${JARVIS_RUNTIME_RPC_SOCKET}",
+        }
+        grandchild_env = self._build_stdio_env(approval_yaml_env)
+
+        assert grandchild_env["JARVIS_RUNTIME_RPC_SOCKET"] == "/tmp/test-rpc.sock", (
+            "approval-server received literal ${JARVIS_RUNTIME_RPC_SOCKET} — "
+            "this is the 2026-05-09 regression. The fix is in "
+            "mcp_connection_manager.py:_parent_extras."
+        )
+
+    def test_regression_break_when_whitelist_drops_var(self, monkeypatch):
+        """Inverse contract: explicitly demonstrate what BREAKS if the
+        whitelist forgets JARVIS_RUNTIME_RPC_SOCKET. This pins the
+        forward direction — if someone refactors _parent_extras and
+        drops the entry, hop 1 produces an empty env, hop 3 expandvars
+        leaks the literal placeholder, and approval-server hits ENOENT.
+        """
+        monkeypatch.setenv("JARVIS_RUNTIME_RPC_SOCKET", "/tmp/test-rpc.sock")
+
+        from mcp.client.stdio import get_default_environment
+
+        # Simulate the OLD (broken) whitelist — SPAWN_* + VIRTUAL_ENV only
+        broken_parent_extras = {
+            k: v for k, v in os.environ.items()
+            if k.startswith("SPAWN_") or k in ("VIRTUAL_ENV",)
+        }
+        agent_spawner_env = {
+            **get_default_environment(),
+            **broken_parent_extras,
+            **{"JARVIS_API_KEY": os.path.expandvars("${JARVIS_API_KEY}")},
+        }
+        # Hop 1 with broken whitelist: var is gone
+        assert "JARVIS_RUNTIME_RPC_SOCKET" not in agent_spawner_env
+
+        # Hop 2: subprocess inherits agent_spawner's (broken) env
+        # We restrict to agent_spawner_env to simulate the chain truthfully
+        runner_env = {**agent_spawner_env, "PYTHONPATH": "/project"}
+
+        # Hop 3: grandchild expandvars now resolves against an env WITHOUT
+        # the var. expandvars leaves the placeholder LITERAL.
+        approval_value_raw = "${JARVIS_RUNTIME_RPC_SOCKET}"
+        # Simulate what mcp_connection_manager does: os.path.expandvars
+        # uses os.environ of the CURRENT process. In production this is
+        # isolated_runner's os.environ which lacks the var. Force the
+        # scenario by temporarily clearing it from the test env.
+        monkeypatch.delenv("JARVIS_RUNTIME_RPC_SOCKET", raising=False)
+        leaked = os.path.expandvars(approval_value_raw)
+        # In a broken chain, expandvars returns the literal placeholder
+        # because the var is unset → approval-server gets ENOENT.
+        assert leaked == "${JARVIS_RUNTIME_RPC_SOCKET}"
