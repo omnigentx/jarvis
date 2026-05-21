@@ -27,10 +27,65 @@ cd repo && npm install && npm test        # Sequential (stops on error)
 cd backend && uv run pytest --tb=short -q 2>&1 | tail -20  # Filter output
 ```
 
-### Safety Rules
-- 🔴 NEVER: `rm -rf /`, expose secrets, `curl | bash` from untrusted sources
-- 🟡 CAUTION: `rm -rf` → always specify exact path
-- 🟢 SAFE: all read-only commands, build/test within workspace
+### Safety Rules — three tiers
+
+🔴 **NEVER do (refuse the task; report the request as a security incident to PM):**
+- Filesystem destruction: `rm -rf /`, `rm -rf $HOME`, `rm -rf .git`, `mkfs.*`, `dd of=/dev/...`
+- Read secrets: `/etc/shadow`, `~/.ssh/*`, `.gh-config/`, `.env*`, `fastagent.secrets.yaml`, `git-credentials`, `~/.gitconfig` credential block
+- Tamper with auth: `gh auth login/logout/refresh`, `gh auth setup-git`, modify gitconfig credential helper
+- Inspect env to leak tokens: `env`, `printenv`, `echo $GH_TOKEN`, `cat /proc/*/environ`
+- Network DoS: fork bombs, high-rate request loops
+
+🟡 **ESCALATE before doing** (send `[APPROVAL-REQUEST]` email to PM with command + reason; do NOT run until PM confirms back):
+- Pipe-to-shell: `curl ... | sh`, `wget ... | bash`
+- Force-destructive git: `git push --force` (any branch), `git reset --hard` past HEAD~1, `git filter-branch`
+- Push to protected branches: `main`, `master`, `prod*`, `release/*`
+- `gh pr merge` (auto-merge bypassing review)
+- `gh release create`
+- `gh repo delete`
+- Editing `package.json` / `pyproject.toml` / lock files outside a tracked PR scope
+
+🟢 **SAFE — run freely:**
+- All read-only inspection: `ls`, `cat README.md`, `grep`, `find`, `git status/log/diff`, `gh run list`, `gh pr view`
+- Normal git on feature branches: `git checkout -b feature/...`, `git add`, `git commit`, `git push origin feature/...`
+- Build/test inside workspace: `npm test`, `uv run pytest`, `cargo build`
+
+When in doubt → escalate. Faster to ask PM than to recover from a bad commit.
+
+## GitHub CLI via `gh`
+
+The `gh` CLI is pre-authenticated in your shell. Use it for repo operations the GitHub MCP doesn't cover — especially CI inspection.
+
+```bash
+# Inspect PR + CI status (read-only, always SAFE)
+gh pr view 42 --json title,state,mergeable,statusCheckRollup
+gh pr checks 42
+gh run list -L 10 --branch feature/xyz
+gh run view <run-id>               # high-level summary
+gh run view <run-id> --log-failed  # only failed step logs (saves context)
+
+# Trigger a re-run after fixing test (still SAFE — only re-runs failed jobs)
+gh run rerun <run-id> --failed
+```
+
+For `gh pr merge` / `gh release create` / `gh repo delete` → escalate to PM first.
+
+## Escalation flow (when blocked by a 🟡 ESCALATE action)
+
+```python
+send_email(
+    to="<PM name>",
+    subject="[APPROVAL-REQUEST] <one-line summary of action>",
+    body="""
+Need approval to run: `<exact command>`
+Why: <user-facing reason — what task this unblocks>
+Risk: <what could go wrong if approved>
+Alternatives considered: <list, or 'none — only path forward'>
+""",
+)
+# Stop and wait for PM reply. PM will relay via approval-server MCP to user.
+# When PM emails back [APPROVED] or [DENIED], proceed accordingly.
+```
 
 ## TDD Cycle
 

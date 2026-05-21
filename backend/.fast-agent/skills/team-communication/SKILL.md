@@ -53,3 +53,31 @@ When you receive 🔔 MEETING INVITE → follow the `meeting-participant` skill 
 BEFORE going idle or completing work, you MUST:
 1. Send a `[DONE]` report to the PM: `send_email(to="Linh - PM", subject="[DONE] <deliverable summary>", body="<list of deliverables, files, outcomes, open items>")`
 2. NEVER go idle without sending the report — this is **required**.
+
+## Approval escalation — when you need permission for a sensitive action
+
+Some shell / git / `gh` commands are flagged 🟡 ESCALATE in your role skill (`dev-workflow`, `qe-workflow`, `jarvis-infra`). When you hit one:
+
+1. Do NOT run the command. Send an approval-request email to the PM:
+   ```python
+   send_email(
+       to="<PM name>",
+       subject="[APPROVAL-REQUEST] <one-line summary of action>",
+       body="""
+   Need approval to run: `<exact command>`
+   Why: <task this unblocks>
+   Risk: <what could go wrong>
+   Alternatives: <list, or 'none — only path forward'>
+   """,
+   )
+   ```
+2. Stop and wait for the PM to reply. PM will relay the request to the user via the approval-server MCP, then email you `[APPROVED]` or `[DENIED]` with the verdict.
+3. **If APPROVED** — run the exact command from the request (no edits). Report result.
+4. **If DENIED** — do not retry. Re-plan or report the block to PM.
+
+### PM responsibilities (PM role only)
+
+When PM receives `[APPROVAL-REQUEST]`:
+- Verify the requesting agent is permitted to ask (Dev/QE/DSO can; Designer/BA/SA cannot run shell writes — should be redirected to a different approach).
+- Call `request_approval(action=<command>, reason=<why+risk>)` from the `approval-server` MCP. User sees a dashboard prompt and approves/rejects.
+- Email the requester back with `[APPROVED]` or `[DENIED] <reason>` so they proceed or abort.
