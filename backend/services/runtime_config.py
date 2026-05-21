@@ -296,10 +296,11 @@ def _on_config_change(event) -> None:
         if cat == "service.github":
             # GitHub service fields (personal_access_token, user_name, user_email)
             # don't match the ENV_SHAPED_KEY pattern — they drive file sinks
-            # (git-credentials + gitconfig + fastagent.secrets.yaml) instead of
-            # os.environ. Must run before the generic service.* env branch.
-            from services import git_credential_sync
+            # (git-credentials + gitconfig + fastagent.secrets.yaml + .gh-config/hosts.yml)
+            # instead of os.environ. Must run before the generic service.* env branch.
+            from services import git_credential_sync, gh_credential_sync
             git_credential_sync.apply_change(key, new_value, action=action)
+            gh_credential_sync.apply_change(key, new_value, action=action)
             return
 
         if cat.startswith("service.") and _ENV_SHAPED_KEY_RE.match(key):

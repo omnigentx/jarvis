@@ -24,6 +24,7 @@ from routes.oauth import router as oauth_router
 from routes.system import router as system_router
 from routes.voice import router as voice_router
 from routes.ws_voice import router as ws_voice_router
+from routes.team_template import router as team_template_router
 
 all_routers: list[APIRouter] = [
     auth_router,
@@ -49,4 +50,5 @@ all_routers: list[APIRouter] = [
     system_router,
     voice_router,
     ws_voice_router,
+    team_template_router,
 ]
