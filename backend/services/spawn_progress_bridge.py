@@ -20,7 +20,6 @@ import asyncio
 import json
 import logging
 import os
-import uuid
 from typing import Any, Protocol
 
 logger = logging.getLogger("spawn_activity")
@@ -208,7 +207,7 @@ class SpawnProgressBridge:
         # 4·R2. Refresh ``last_active_at`` whenever the agent does
         # something concrete (LLM call or tool round-trip). Lets
         # ``get_team_status`` distinguish "agent X stuck for 60s" from
-        # "agent X actively working" — the visibility gap that left PM
+        # "agent X actively working" — the visibility gap that left the orchestrator
         # in incident b61af7db idling out after seeing identical
         # ``running`` snapshots.
         if (
@@ -228,7 +227,7 @@ class SpawnProgressBridge:
                 )
 
         # 4a+b. Cycle-event dispatch — single entry point that emits
-        # ``team.worker_cycle_closed`` (PM inbox) when workers all stop
+        # ``team.worker_cycle_closed`` (orchestrator inbox) when workers all stop
         # running, and ``team.full_cycle_closed`` (user UI) when the
         # whole team stops running. Idempotent via DB event_id PK.
         # See _on_member_state_event docstring for the state machine.
@@ -843,7 +842,7 @@ class SpawnProgressBridge:
 
         Used by both completion-notification paths to suppress the misleading
         "team finished" message when the team is actually idled mid-meeting
-        (incident b61af7db: PM saw "All members finished | No output" while
+        (incident b61af7db: the orchestrator saw "All members finished | No output" while
         meeting was hanging on a stuck speaker).
 
         Returns a list of dicts with the fields needed for messaging:
@@ -922,7 +921,7 @@ class SpawnProgressBridge:
         """Render the meeting-stalled warning block (markdown).
 
         Caller embeds this into the team-completion message so the
-        orchestrator (PM) sees actionable state — bottleneck speaker,
+        orchestrator sees actionable state — bottleneck speaker,
         time since last turn, last 3 turns — instead of "No output".
         """
         if not active:
@@ -951,19 +950,74 @@ class SpawnProgressBridge:
         )
         return "\n".join(lines)
 
-    def _find_orchestrator(self, members: list[dict]) -> dict | None:
+    def _find_orchestrator(
+        self, members: list[dict], session_id: str = "",
+    ) -> dict | None:
         """Find the orchestrator agent from team members.
 
-        Preference: role containing 'pm' or 'orchestrator'.
-        Fallback: first spawned agent (orchestrator spawns first).
+        The orchestrator is whichever role the team's *template* declares
+        as the orchestrator — read from
+        ``team_sessions.template.orchestrator`` (the single source of
+        truth). The earlier implementation matched substring "pm" /
+        "orchestrator" in the role string; that broke any template whose
+        orchestrator role wasn't literally named "pm" (a hard-coded
+        assumption the rest of the architecture has long since outgrown).
+
+        Args:
+            members: registry rows for this team
+            session_id: team session id — used to look up the template's
+                ``orchestrator`` field. When empty (legacy callers), we
+                fall through to the spawn-order fallback below.
+
+        Returns:
+            The member dict whose ``role`` equals
+            ``template.orchestrator`` (case-insensitive), or — only if
+            that lookup fails or no member matches — the first member by
+            ``started_at`` (because the orchestrator spawns first).
         """
-        for m in members:
-            role = (m.get("role") or "").lower()
-            if "pm" in role or "orchestrator" in role:
-                return m
-        # Fallback: first agent by started_at (orchestrator spawns first)
+        orch_role = self._lookup_orchestrator_role(session_id) if session_id else ""
+        if orch_role:
+            target = orch_role.lower()
+            for m in members:
+                if (m.get("role") or "").lower() == target:
+                    return m
+            # Template named an orchestrator role but no member has it —
+            # likely a transient state during respawn. Log so the gap is
+            # visible, then fall through to spawn-order fallback.
+            logger.warning(
+                "[CYCLE] session=%s: template.orchestrator=%r but no "
+                "member has that role; falling back to first-spawned.",
+                session_id, orch_role,
+            )
+        # Fallback: first agent by started_at (orchestrator spawns first).
+        # Kept for: (a) ad-hoc spawns with no session_id, (b) the rare
+        # window between template edit and registry resync, (c) defensive
+        # protection so the bridge never returns None for a non-empty team.
         members_sorted = sorted(members, key=lambda m: m.get("started_at", 0))
         return members_sorted[0] if members_sorted else None
+
+    def _lookup_orchestrator_role(self, session_id: str) -> str:
+        """Return ``template.orchestrator`` (role key) for the session.
+
+        Reads through ``get_team_session`` which is the canonical accessor
+        for the team_sessions row. Returns ``""`` if the session does not
+        exist, the template is missing, or the lookup raises — callers
+        treat empty string as "fall back to heuristic".
+        """
+        try:
+            from fast_agent.spawn.team_spawner import get_team_session
+
+            session = get_team_session(session_id)
+            if session is None:
+                return ""
+            template = getattr(session, "template", None) or {}
+            return str(template.get("orchestrator", "") or "")
+        except Exception as exc:
+            logger.debug(
+                "[CYCLE] _lookup_orchestrator_role(%s) failed: %s",
+                session_id, exc,
+            )
+            return ""
 
     def _compose_team_result_body(
         self, *, team_name: str, agent_name: str, result: str
@@ -1181,7 +1235,7 @@ class SpawnProgressBridge:
     #
     # New model:
     #
-    #   * Two named cycles per session: ``worker_cycle`` (PM-facing) and
+    #   * Two named cycles per session: ``worker_cycle`` (orchestrator-facing) and
     #     ``team_cycle`` (user-facing). Open when at least one relevant
     #     agent is ``running``; close when all are non-running.
     #   * On every member state-change event, recompute both cycles
@@ -1226,51 +1280,243 @@ class SpawnProgressBridge:
                         updated_at    REAL NOT NULL
                     )"""
                 )
+                # 2026-05-19 migration — see _on_member_state_event docstring.
+                # Adds:
+                #   * orch_running       — tracks whether the team's
+                #     orchestrator (per template.orchestrator — the
+                #     system makes no role-name assumption; every
+                #     template names its own orchestrator role) is
+                #     currently ``running``. With the
+                #     old gating ``team_open = any(spawned running)``,
+                #     full_cycle_closed fired the moment workers stopped
+                #     even though the orchestrator had not yet had a
+                #     chance to process the worker reports pushed via
+                #     _trigger_orchestrator_resume — producing a bogus
+                #     "team done" notify (incident 2026-05-19 notify
+                #     #39) which the real "orchestrator idled after
+                #     work" notify (#40) then duplicated.
+                #   * team_close_seq / worker_close_seq — replace the
+                #     uuid-in-event_id dedupe key that was silently
+                #     defeating ``team_events`` PK conflict detection.
+                #     Counters increment atomically inside a guarded
+                #     UPDATE so the cycle's canonical close handler is
+                #     race-free.
+                # ``ALTER TABLE ADD COLUMN`` is idempotent across SQLite
+                # restarts because we swallow ``duplicate column name``
+                # OperationalError. NOT NULL DEFAULT 0 backfills existing
+                # rows so old sessions resume cleanly without crash.
+                for ddl in (
+                    "ALTER TABLE team_cycle_state ADD COLUMN orch_running INTEGER NOT NULL DEFAULT 0",
+                    "ALTER TABLE team_cycle_state ADD COLUMN team_close_seq INTEGER NOT NULL DEFAULT 0",
+                    "ALTER TABLE team_cycle_state ADD COLUMN worker_close_seq INTEGER NOT NULL DEFAULT 0",
+                ):
+                    try:
+                        conn.execute(ddl)
+                    except Exception as exc:
+                        # SQLite raises OperationalError("duplicate column name")
+                        # when the column already exists. Anything else is a
+                        # real schema problem worth surfacing — but never a
+                        # reason to crash the bridge.
+                        if "duplicate column" not in str(exc).lower():
+                            logger.warning(
+                                "[CYCLE] migration %r failed: %s",
+                                ddl, exc, exc_info=True,
+                            )
         except Exception as e:
             logger.warning("[CYCLE] _ensure_event_tables failed: %s", e, exc_info=True)
 
     def _load_cycle_state(self, session_id: str) -> dict:
-        """Return ``{worker_open, team_open}`` for the session. Defaults
-        to both-closed when no row exists — first event after spawn will
-        update to open and persist."""
+        """Return cycle state for the session.
+
+        Keys:
+          * ``worker_open`` — bool, any non-orchestrator member is ``running``
+          * ``orch_running`` — bool, the team's orchestrator
+            (per ``template.orchestrator``) is ``running``
+          * ``team_open`` — bool, legacy ``any(spawned running)``; kept
+            for backward compat with the existing column, do NOT use
+            for the full-cycle-close gating.
+
+        Defaults to all-closed when no row exists — first event after
+        spawn will update to open and persist.
+
+        ``team_open`` is retained as a column but is no longer the
+        gating signal for ``full_cycle_closed`` — see the 2026-05-19
+        incident write-up in ``_ensure_event_tables`` for why.
+        """
         try:
             from core.agent_registry_db import _connect
 
             with _connect() as conn:
                 row = conn.execute(
-                    "SELECT worker_open, team_open FROM team_cycle_state "
-                    "WHERE session_id = ?",
+                    """SELECT worker_open, team_open, orch_running
+                       FROM team_cycle_state WHERE session_id = ?""",
                     (session_id,),
                 ).fetchone()
                 if row is None:
-                    return {"worker_open": False, "team_open": False}
+                    return {
+                        "worker_open": False,
+                        "team_open": False,
+                        "orch_running": False,
+                    }
                 return {
                     "worker_open": bool(row["worker_open"]),
                     "team_open": bool(row["team_open"]),
+                    "orch_running": bool(row["orch_running"]),
                 }
         except Exception as e:
             logger.warning("[CYCLE] _load_cycle_state(%s) failed: %s", session_id, e)
-            return {"worker_open": False, "team_open": False}
+            return {
+                "worker_open": False,
+                "team_open": False,
+                "orch_running": False,
+            }
 
     def _save_cycle_state(
-        self, session_id: str, worker_open: bool, team_open: bool,
+        self,
+        session_id: str,
+        worker_open: bool,
+        team_open: bool,
+        orch_running: bool,
     ) -> None:
+        """Persist the post-event cycle snapshot.
+
+        Called AFTER ``_try_close_team_cycle`` / ``_try_close_worker_cycle``
+        — those helpers handle the close transitions atomically. This
+        function exists for the non-close paths (reopen, no-change).
+        """
         try:
             import time
             from core.agent_registry_db import _connect
 
             with _connect() as conn:
                 conn.execute(
-                    """INSERT INTO team_cycle_state(session_id, worker_open, team_open, updated_at)
-                       VALUES(?, ?, ?, ?)
+                    """INSERT INTO team_cycle_state
+                          (session_id, worker_open, team_open, orch_running, updated_at)
+                       VALUES(?, ?, ?, ?, ?)
                        ON CONFLICT(session_id) DO UPDATE SET
-                         worker_open = excluded.worker_open,
-                         team_open   = excluded.team_open,
-                         updated_at  = excluded.updated_at""",
-                    (session_id, int(worker_open), int(team_open), time.time()),
+                         worker_open   = excluded.worker_open,
+                         team_open     = excluded.team_open,
+                         orch_running  = excluded.orch_running,
+                         updated_at    = excluded.updated_at""",
+                    (
+                        session_id,
+                        int(worker_open),
+                        int(team_open),
+                        int(orch_running),
+                        time.time(),
+                    ),
                 )
         except Exception as e:
             logger.warning("[CYCLE] _save_cycle_state(%s) failed: %s", session_id, e)
+
+    def _try_close_team_cycle(
+        self,
+        session_id: str,
+        new_worker_open: bool,
+        new_team_open: bool,
+        new_orch_running: bool,
+    ) -> int | None:
+        """Atomically close the team cycle for ``session_id`` if and only
+        if the orchestrator just transitioned ``running → not-running``.
+
+        The gating predicate ``WHERE orch_running = 1`` is the only place
+        in the code that decides "is this caller the canonical close
+        handler for this cycle?". Two concurrent callers observing the
+        same transition will race to this UPDATE; SQLite serialises
+        them, so only the first sees ``WHERE`` match → returns the new
+        ``team_close_seq``. The loser sees 0 rows updated → returns
+        ``None`` → caller skips the notify side effect.
+
+        This is the *only* primitive that should ever raise the team
+        close_seq counter or persist ``orch_running = 0``.
+
+        Returns the new ``team_close_seq`` if this caller won the close,
+        otherwise ``None``.
+        """
+        if new_orch_running:
+            return None
+        try:
+            import time
+            from core.agent_registry_db import _connect
+
+            with _connect() as conn:
+                cur = conn.execute(
+                    """UPDATE team_cycle_state
+                       SET team_close_seq = team_close_seq + 1,
+                           orch_running   = 0,
+                           worker_open    = ?,
+                           team_open      = ?,
+                           updated_at     = ?
+                       WHERE session_id = ? AND orch_running = 1
+                       RETURNING team_close_seq""",
+                    (
+                        int(new_worker_open),
+                        int(new_team_open),
+                        time.time(),
+                        session_id,
+                    ),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    return None
+                return int(row[0])
+        except Exception as exc:
+            logger.warning(
+                "[CYCLE] _try_close_team_cycle(%s) failed: %s",
+                session_id, exc, exc_info=True,
+            )
+            return None
+
+    def _try_close_worker_cycle(
+        self,
+        session_id: str,
+        new_worker_open: bool,
+        new_team_open: bool,
+        new_orch_running: bool,
+    ) -> int | None:
+        """Atomically close the worker cycle for ``session_id`` if the
+        last non-orchestrator member just stopped running.
+
+        Same race-free protocol as :py:meth:`_try_close_team_cycle`. The
+        WHERE predicate is ``worker_open = 1`` — only the caller that
+        flips it to 0 wins.
+
+        Returns the new ``worker_close_seq`` if this caller won, else
+        ``None``.
+        """
+        if new_worker_open:
+            return None
+        try:
+            import time
+            from core.agent_registry_db import _connect
+
+            with _connect() as conn:
+                cur = conn.execute(
+                    """UPDATE team_cycle_state
+                       SET worker_close_seq = worker_close_seq + 1,
+                           worker_open      = 0,
+                           team_open        = ?,
+                           orch_running     = ?,
+                           updated_at       = ?
+                       WHERE session_id = ? AND worker_open = 1
+                       RETURNING worker_close_seq""",
+                    (
+                        int(new_team_open),
+                        int(new_orch_running),
+                        time.time(),
+                        session_id,
+                    ),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    return None
+                return int(row[0])
+        except Exception as exc:
+            logger.warning(
+                "[CYCLE] _try_close_worker_cycle(%s) failed: %s",
+                session_id, exc, exc_info=True,
+            )
+            return None
 
     def _insert_event(
         self, event_id: str, event_type: str,
@@ -1306,16 +1552,36 @@ class SpawnProgressBridge:
 
           1. Load registry record for ``run_id`` → resolve ``session_id``
              and ``team_name`` (skip for solo agents).
-          2. Snapshot current cycle state from the registry: workers
-             open iff any non-orch member is ``running``; team open iff
-             any team agent is ``running``.
-          3. Compare against the last persisted cycle state. On
-             ``open → closed`` transitions, emit the matching cycle
-             event (idempotent via DB PK).
-          4. Persist the new cycle state.
+          2. Snapshot current cycle state from the registry:
+               - ``worker_open``  — any non-orchestrator member running
+               - ``orch_running`` — the orchestrator (per
+                 ``template.orchestrator``) is running
+               - ``team_open``    — legacy "any spawned member running",
+                 kept for observability but NOT the gating signal.
+          3. Compare against the last persisted cycle state and emit:
+               - ``worker_cycle_closed`` when ``worker_open`` flips T→F
+               - ``full_cycle_closed``  when ``orch_running`` flips T→F
+                 AND no workers running AND no active meetings
+          4. Atomic close primitives (``_try_close_*_cycle``) own the
+             post-close state update AND the close_seq increment, so a
+             race between two callers observing the same transition
+             produces exactly one notify (the WHERE predicate matches
+             only the first caller).
+          5. For non-close paths (reopen / no-change), persist the new
+             snapshot via ``_save_cycle_state``.
 
-        See module-level docstring for the full state machine and the
-        14-case edge-case table.
+        Why ``orch_running`` and not ``team_open``? Incident 2026-05-19:
+        with ``team_open = any(spawned running)``, the bridge fired
+        ``full_cycle_closed`` the moment the last worker idled — even
+        though the orchestrator was already idle and had not yet had a
+        chance to process the worker reports pushed via
+        ``_trigger_orchestrator_resume``. The orchestrator was then
+        woken, did its post-cycle work, and idled again → a second,
+        valid ``full_cycle_closed`` fired → user saw 2 notifications.
+        Gating on the orchestrator's OWN transition makes
+        ``full_cycle_closed`` mean exactly "the orchestrator finished
+        its turn after acknowledging workers" — which is what the user
+        is being notified about.
         """
         if not self._registry_db:
             return
@@ -1328,14 +1594,42 @@ class SpawnProgressBridge:
         if not session_id or not team_name:
             return  # Solo agent or pre-session record — not in scope
 
-        members = [
+        # Dedupe by agent_name, keep ONLY the latest run per agent. The
+        # registry uses ``run_id`` as primary key and resumable agents
+        # (the orchestrator in particular) get a NEW row on every
+        # resume — so over N injects the orchestrator accumulates N
+        # rows. Without this dedupe, ``len(members)`` and the "running"
+        # check both treat each historical row as a distinct member.
+        # Side effects observed in incident 2026-05-17 notif #28:
+        #   * "16 agents" instead of 7 (10 stale orchestrator rows + 6
+        #     worker rows).
+        #   * Premature full_cycle_closed: only the latest orchestrator
+        #     run is actually running at any time; the 9 stale rows are
+        #     idle. With dedupe, ``orch_running = (latest orchestrator
+        #     row is running)`` — which correctly stays True while it
+        #     is mid-turn.
+        # Tie-break: highest ``started_at`` wins; ``last_active_at``
+        # would also work but ``started_at`` is monotonic per row
+        # creation, so it's the safer monotonic ordering for "latest
+        # spawn".
+        raw_members = [
             m for m in self._registry_db.find_by_team_name(team_name)
             if m.get("session_id") == session_id
         ]
+        latest_by_name: dict[str, dict] = {}
+        for m in raw_members:
+            name = m.get("agent_name", "")
+            if not name:
+                continue
+            started = m.get("started_at", 0) or 0
+            prev_row = latest_by_name.get(name)
+            if prev_row is None or (prev_row.get("started_at", 0) or 0) < started:
+                latest_by_name[name] = m
+        members = list(latest_by_name.values())
         if not members:
             return
 
-        orch = self._find_orchestrator(members)
+        orch = self._find_orchestrator(members, session_id=session_id)
         orch_name = orch.get("agent_name", "") if orch else ""
         # ``available`` = registered but not spawned yet; ``None`` = legacy
         # rows. Exclude both from cycle calculations — they are not
@@ -1348,39 +1642,77 @@ class SpawnProgressBridge:
 
         worker_open = any(m.get("status") == "running" for m in workers)
         team_open = any(m.get("status") == "running" for m in spawned)
+        orch_running = bool(orch and orch.get("status") == "running")
 
         prev = self._load_cycle_state(session_id)
 
+        # ── Worker cycle close ──
+        # Atomic: WHERE worker_open=1 lets exactly one concurrent caller
+        # take the close, and increments worker_close_seq for a stable
+        # event_id. Loser callers see ``close_seq is None`` → skip emit.
+        worker_close_seq: int | None = None
         if prev["worker_open"] and not worker_open:
-            self._emit_worker_cycle_closed(
-                session_id, team_name, members, orch, workers,
+            worker_close_seq = self._try_close_worker_cycle(
+                session_id, worker_open, team_open, orch_running,
             )
-
-        if prev["team_open"] and not team_open:
-            # Meeting-aware: if a member is still mid-meeting, the team
-            # is NOT truly idle — defer the close. Meeting end events
-            # will re-trigger the handler and the next pass will fire.
-            member_names = {m.get("agent_name", "") for m in spawned}
-            if not self._active_meetings_with_members(member_names):
-                self._emit_full_cycle_closed(
-                    session_id, team_name, members, orch,
+            if worker_close_seq is not None:
+                self._emit_worker_cycle_closed(
+                    session_id, team_name, members, orch, workers,
+                    close_seq=worker_close_seq,
                 )
 
-        self._save_cycle_state(session_id, worker_open, team_open)
+        # ── Full cycle close ──
+        # Gate on the orchestrator's own transition, NOT on
+        # ``team_open``. See docstring incident 2026-05-19.
+        team_close_seq: int | None = None
+        if prev["orch_running"] and not orch_running and not worker_open:
+            # Meeting-aware: if any member is still mid-meeting, the
+            # team is NOT truly idle — defer the close. Meeting end
+            # events will re-trigger the handler and the next pass will
+            # fire.
+            member_names = {m.get("agent_name", "") for m in spawned}
+            if not self._active_meetings_with_members(member_names):
+                team_close_seq = self._try_close_team_cycle(
+                    session_id, worker_open, team_open, orch_running,
+                )
+                if team_close_seq is not None:
+                    self._emit_full_cycle_closed(
+                        session_id, team_name, members, orch,
+                        close_seq=team_close_seq,
+                    )
+
+        # ── Non-close path: persist new snapshot ──
+        # Atomic close helpers already updated the row on the close
+        # path; only run the upsert when neither close fired. Keeps the
+        # "one writer per event" invariant tight.
+        if worker_close_seq is None and team_close_seq is None:
+            self._save_cycle_state(
+                session_id, worker_open, team_open, orch_running,
+            )
 
     def _emit_worker_cycle_closed(
         self, session_id: str, team_name: str,
         members: list[dict], orch: dict | None, workers: list[dict],
+        *, close_seq: int,
     ) -> None:
-        """PM-facing event: ALL non-orch members have stopped running.
+        """Orchestrator-facing event: ALL non-orchestrator members have
+        stopped running.
 
-        Sends the consolidated worker status to PM's inbox so PM can
-        decide the next round. If PM itself is currently idle, also
-        triggers ``resume_with_inject`` so PM wakes to process it.
+        Sends the consolidated worker status to the orchestrator's
+        inbox so it can decide the next round. If the orchestrator is
+        currently idle, also triggers ``resume_with_inject`` so it
+        wakes to process it.
+
+        ``close_seq`` is the canonical worker-close sequence number
+        (incremented atomically by :py:meth:`_try_close_worker_cycle`).
+        It is embedded into the event_id PK so concurrent callers
+        observing the same close cannot generate distinct event_ids
+        (the old uuid-based key silently defeated PK conflict dedupe —
+        incident 2026-05-19).
         """
         if not orch:
             return
-        event_id = f"{session_id}:worker_cycle_closed:{uuid.uuid4().hex[:12]}"
+        event_id = f"{session_id}:worker_cycle_closed:{close_seq}"
         if not self._insert_event(
             event_id, "worker_cycle_closed", session_id, team_name,
             {"workers": [
@@ -1389,7 +1721,7 @@ class SpawnProgressBridge:
                  "run_id": w.get("run_id")} for w in workers
             ]},
         ):
-            return  # Conflict — already emitted (defensive; shouldn't happen with uuid)
+            return  # Conflict — another caller already emitted this close.
 
         orch_name = orch.get("agent_name", "")
         report = self._format_worker_status_report(workers, orch_name)
@@ -1418,7 +1750,12 @@ class SpawnProgressBridge:
             logger.warning("[CYCLE] worker_cycle_closed send failed: %s", e, exc_info=True)
             return
 
-        # If PM is idle, resume so the inbox notification is consumed.
+        # If the orchestrator is idle, resume so the inbox notification
+        # is consumed. This is the contract the team flow expects: a
+        # worker_cycle close MUST give the orchestrator a turn — that
+        # turn is what later transitions ``orch_running`` False→True
+        # then True→False, which is the canonical full_cycle_closed
+        # trigger.
         if orch.get("status") in ("idle", "completed", "error", "timeout", "cancelled"):
             try:
                 loop = asyncio.get_event_loop()
@@ -1432,13 +1769,19 @@ class SpawnProgressBridge:
     def _emit_full_cycle_closed(
         self, session_id: str, team_name: str,
         members: list[dict], orch: dict | None,
+        *, close_seq: int,
     ) -> None:
-        """User-facing event: the ENTIRE team (incl. orchestrator) is
-        non-running and no active meeting is blocking. Creates a UI
-        notification via the existing ``_create_team_notification``
-        helper (which preserves meeting-aware framing and SSE broadcast).
+        """User-facing event: the orchestrator has just finished its
+        post-worker turn and the team has nothing pending. Creates a
+        UI notification via the existing ``_create_team_notification``
+        helper (which preserves meeting-aware framing and SSE
+        broadcast).
+
+        ``close_seq`` is the canonical team-close sequence number
+        (incremented atomically by :py:meth:`_try_close_team_cycle`).
+        Embedded into the event_id PK to make concurrent emits idempotent.
         """
-        event_id = f"{session_id}:full_cycle_closed:{uuid.uuid4().hex[:12]}"
+        event_id = f"{session_id}:full_cycle_closed:{close_seq}"
         if not self._insert_event(
             event_id, "full_cycle_closed", session_id, team_name,
             {"members": [
@@ -1467,7 +1810,7 @@ class SpawnProgressBridge:
     def _format_worker_status_report(
         self, workers: list[dict], orch_name: str,
     ) -> str:
-        """Build the markdown status report sent to PM's inbox on
+        """Build the markdown status report sent to the orchestrator's inbox on
         ``worker_cycle_closed``. Preserves the meeting-aware framing
         from the prior implementation (b61af7db incident) — if a member
         is still mid-meeting the header reframes to "NOT done".

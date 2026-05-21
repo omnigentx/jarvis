@@ -170,6 +170,7 @@ if _SPAWNER_ENABLED:
         "list_active_spawns",
         "cancel_spawn_tool",
         "restart_spawn",
+        "resume_spawn",
         "remove_spawned_agent",
         "list_available_servers_tool",
         "spawn_team_tool",
