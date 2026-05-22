@@ -293,3 +293,182 @@ def test_state_of_defaults_to_running(fresh_manager):
     """Unknown agent → state_of returns 'running' (the safe default —
     UI treats unknown agents as idle/working, never as paused)."""
     assert fresh_manager.state_of("Unknown") == "running"
+
+
+# ─── Phase 3: instant LLM cancel ────────────────────────────────────
+
+
+def test_pause_cancels_in_flight_llm_task():
+    """When the pause hook has captured a task ref (= agent is mid-LLM),
+    ``pause()`` must call ``task.cancel()`` to interrupt the LLM stream.
+    """
+    from services.pause_controller import PauseController
+    import services.activity_stream as act
+
+    class FakeMgr:
+        def broadcast(self, p): pass
+
+    original = act.activity_stream_manager
+    act.activity_stream_manager = FakeMgr()
+
+    async def run():
+        ctrl = PauseController()
+        ctrl.create_pause_hooks("LLMer")
+
+        # Simulate before_llm_call having captured a task. We use a
+        # task that just sleeps, so we can assert it was cancelled.
+        async def sleeper():
+            await asyncio.sleep(60)
+
+        task = asyncio.create_task(sleeper())
+        # Let the task actually start running before we register it.
+        await asyncio.sleep(0)
+        ctrl._current_tasks["LLMer"] = task
+        ctrl._active["LLMer"] = True
+
+        ctrl.pause("LLMer")
+
+        # Task should be cancelled. Awaiting it raises CancelledError.
+        try:
+            await task
+            cancelled = False
+        except asyncio.CancelledError:
+            cancelled = True
+        assert cancelled, "pause() must cancel the in-flight LLM task"
+
+    try:
+        asyncio.run(run())
+    finally:
+        act.activity_stream_manager = original
+
+
+def test_pause_does_not_cancel_when_no_task_registered():
+    """If no task ref is registered (agent is between LLM call and
+    next tool / turn end), ``pause()`` must NOT crash — just clear the
+    event and let cooperative checkpoint handle it.
+    """
+    from services.pause_controller import PauseController
+    import services.activity_stream as act
+
+    class FakeMgr:
+        def broadcast(self, p): pass
+
+    original = act.activity_stream_manager
+    act.activity_stream_manager = FakeMgr()
+    try:
+        ctrl = PauseController()
+        # _current_tasks is empty for "Idle". pause() must succeed.
+        assert ctrl.pause("Idle") is True
+        assert ctrl.is_paused("Idle") is True
+    finally:
+        act.activity_stream_manager = original
+
+
+def test_on_pause_cancel_hook_returns_true_when_paused_then_resumed():
+    """The on_pause_cancel hook awaits resume and returns True so the
+    tool_runner retries the LLM call. Validates the contract that
+    tool_runner.__anext__ uses to decide between retry and propagate.
+    """
+    from services.pause_controller import PauseController
+    import services.activity_stream as act
+
+    class FakeMgr:
+        def broadcast(self, p): pass
+
+    original = act.activity_stream_manager
+    act.activity_stream_manager = FakeMgr()
+
+    async def run():
+        ctrl = PauseController()
+        hooks = ctrl.create_pause_hooks("Retrier")
+        # ``create_pause_hooks`` captured the event by reference, so
+        # subsequent ``pause()``/``resume()`` calls toggle the SAME
+        # event the hook awaits — that's the contract we rely on.
+
+        ctrl.pause("Retrier")  # event cleared
+
+        # The on_pause_cancel hook should block until we set the event,
+        # then return True.
+        task = asyncio.create_task(hooks.on_pause_cancel(runner=None))
+        await asyncio.sleep(0.05)
+        assert not task.done(), "on_pause_cancel must block while paused"
+
+        ctrl.resume("Retrier")  # event set → hook wakes
+        result = await task
+
+        assert result is True, "must return True so runner retries the LLM call"
+
+    try:
+        asyncio.run(run())
+    finally:
+        act.activity_stream_manager = original
+
+
+def test_on_pause_cancel_returns_false_when_not_paused():
+    """If event is set (= agent not paused), on_pause_cancel returns False
+    so the runner re-raises the CancelledError (genuine cancel, e.g.
+    chat request was aborted client-side).
+    """
+    from services.pause_controller import PauseController
+    import services.activity_stream as act
+
+    class FakeMgr:
+        def broadcast(self, p): pass
+
+    original = act.activity_stream_manager
+    act.activity_stream_manager = FakeMgr()
+
+    async def run():
+        ctrl = PauseController()
+        hooks = ctrl.create_pause_hooks("Genuine")
+        # event is set by default — not paused.
+        result = await hooks.on_pause_cancel(runner=None)
+        assert result is False
+
+    try:
+        asyncio.run(run())
+    finally:
+        act.activity_stream_manager = original
+
+
+def test_after_llm_call_clears_task_ref_so_pause_during_tool_does_not_cancel():
+    """Strategy B: pause during tool-call must not cancel anything (tool
+    side-effects should complete). The after_llm_call hook clears
+    ``_current_tasks`` so a subsequent pause has no task to cancel.
+    """
+    from services.pause_controller import PauseController
+    import services.activity_stream as act
+
+    class FakeMgr:
+        def broadcast(self, p): pass
+
+    original = act.activity_stream_manager
+    act.activity_stream_manager = FakeMgr()
+
+    async def run():
+        ctrl = PauseController()
+        hooks = ctrl.create_pause_hooks("ToolGuy")
+
+        async def some_task():
+            await asyncio.sleep(60)
+
+        task = asyncio.create_task(some_task())
+        await asyncio.sleep(0)
+
+        # Simulate before_llm_call having captured this task.
+        ctrl._current_tasks["ToolGuy"] = task
+
+        # Simulate the LLM call finishing → after_llm_call fires.
+        await hooks.after_llm_call(runner=None, message=None)
+
+        # Now a pause during the tool phase should NOT cancel ``task``.
+        assert "ToolGuy" not in ctrl._current_tasks
+        ctrl.pause("ToolGuy")
+        assert not task.done(), "tool-phase pause must not cancel the prior task"
+
+        task.cancel()  # clean up
+
+    try:
+        asyncio.run(run())
+    finally:
+        act.activity_stream_manager = original

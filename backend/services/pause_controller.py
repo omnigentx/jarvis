@@ -1,7 +1,7 @@
 """
 Pause Controller — single source of truth for agent pause/resume.
 
-Lifecycle (Phase 2 — three-state machine + correct SSE timing):
+Lifecycle (Phase 3 — three-state machine + instant LLM pause via task cancel):
 
     running ──pause()──► pausing ──[hook at checkpoint]──► paused
        ▲                                                     │
@@ -39,8 +39,36 @@ Public API (unchanged from Phase 1)::
     pause_controller.state_of(name)         # 'running'|'pausing'|'paused'|'resuming'
     hooks = pause_controller.create_pause_hooks("jarvis")
 
+Instant pause for in-flight LLM calls
+-------------------------------------
+Cooperative pause (block at the next ``before_llm_call`` / ``before_tool_call``
+checkpoint) leaves the agent running until the current step finishes —
+acceptable for tools (typically <2s, side-effect-bearing so safer to let
+finish) but painful for LLM streams (often 10-60s on long responses).
+
+Strategy "B" from the design discussion: cancel mid-LLM-call, leave
+tools alone. Implementation:
+
+  1. The pause hook captures ``asyncio.current_task()`` in
+     ``_current_tasks[agent_name]`` when ``before_llm_call`` fires.
+     The same task ref is used by ``pause()`` to interrupt the LLM stream.
+  2. ``pause()`` checks ``_current_tasks[name]``. If a task is registered,
+     it calls ``task.cancel()`` *in addition* to clearing the event.
+  3. The cancellation surfaces inside ``_tool_runner_llm_step`` as
+     ``asyncio.CancelledError``. The tool_runner has a retry loop
+     wrapping the LLM call: when the new ``on_pause_cancel`` hook
+     (provided by this controller) returns True, the runner calls
+     ``task.uncancel()`` and reissues the LLM call with the unchanged
+     ``_delta_messages``.
+  4. On resume, ``event.set()`` releases the on_pause_cancel hook (which
+     was awaiting ``event.wait()``). The retry then proceeds with the
+     same state — satisfying requirement #3 ("resume from prior state").
+
+Tool calls are not cancelled — the ``_current_tasks`` ref is cleared on
+``after_llm_call`` (i.e. before any tool-call phase begins). Pause during
+tool-call falls back to cooperative blocking at the next checkpoint.
+
 Later phases extend this module with:
-  - Phase 3: LLM-task cancel for instant pause (uses ``_active`` flag)
   - Phase 4: team-wide pause + late-joiner hook
   - Phase 5: ``attach(agent, team_name)`` auto-wiring helper
   - Phase 6: restart recovery for manual pauses
@@ -85,6 +113,11 @@ class PauseController:
         # needs to emit the terminal event itself (idle agent) or wait
         # for the hook to do it (active agent).
         self._active: dict[str, bool] = {}
+        # Task ref of the in-flight LLM call. Set by the ``before_llm_call``
+        # hook (captures ``asyncio.current_task()``), cleared by
+        # ``after_llm_call``. ``pause()`` cancels this task to interrupt
+        # long-running LLM streams — see module docstring "Instant pause".
+        self._current_tasks: dict[str, asyncio.Task] = {}
 
     def _get_event(self, agent_name: str) -> asyncio.Event:
         """Get or create an asyncio.Event for the given agent (default: set = not paused)."""
@@ -130,6 +163,19 @@ class PauseController:
         # 2. Clear in-process event (blocks hook's await event.wait()).
         event = self._get_event(agent_name)
         event.clear()
+
+        # 2b. Instant-pause: cancel the in-flight LLM call if we have a
+        # registered task ref. ``_current_tasks`` is populated by the
+        # ``before_llm_call`` hook and cleared by ``after_llm_call``, so a
+        # ref existing here means we *are* mid-LLM (not mid-tool — strategy B
+        # leaves tool calls running to completion). The cancel surfaces
+        # inside ``_tool_runner_llm_step`` as CancelledError; the runner's
+        # retry loop calls ``on_pause_cancel`` (defined below in
+        # ``create_pause_hooks``) which awaits resume and signals retry.
+        task = self._current_tasks.get(agent_name)
+        if task is not None and not task.done():
+            task.cancel()
+            logger.info("[PAUSE] Cancelled in-flight LLM task for %s", agent_name)
 
         # 3. Send SIGUSR1 to subprocess (if it exists). Subprocess runs
         # its own state machine and will emit ``agent_paused`` itself.
@@ -210,19 +256,33 @@ class PauseController:
     def create_pause_hooks(self, agent_name: str) -> ToolRunnerHooks:
         """Create ToolRunnerHooks that drive the state machine.
 
-        - ``before_llm_call`` / ``before_tool_call``: if paused, emit
-          ``agent_paused`` then block on the event. After the event
-          resumes the coroutine, emit ``agent_resumed``.
-        - ``before_llm_call`` also flips ``_active`` to True so the
-          pause/resume methods know whether to emit terminal events
-          themselves.
-        - ``after_turn_complete``: flip ``_active`` to False — turn is
-          finished, agent is idle.
+        Hook responsibilities:
+          - ``before_llm_call``: cooperative checkpoint + register the
+            current task for instant-pause cancellation + flip ``_active``.
+          - ``after_llm_call``: clear the registered task ref so a pause
+            mid-tool doesn't cancel the wrong task.
+          - ``before_tool_call``: cooperative checkpoint only (no cancel
+            — strategy B leaves tools alone).
+          - ``after_turn_complete``: flip ``_active`` to False, clean up
+            task ref.
+          - ``on_pause_cancel``: the LLM call inside the tool_runner just
+            took CancelledError. If we initiated the cancel via ``pause()``,
+            await resume and return True (the runner retries the LLM
+            call with the same delta_messages). Otherwise return False
+            (genuine cancel — propagate).
         """
         event = self._get_event(agent_name)
 
         async def on_before_llm_call(runner: Any, messages: Any) -> None:
             self._active[agent_name] = True
+            # Register the running task so ``pause()`` can interrupt the
+            # LLM call it's about to make. Capture happens here (rather
+            # than wrapping the LLM call) because hooks are already in
+            # the call site and we don't have to touch tool_runner.
+            try:
+                self._current_tasks[agent_name] = asyncio.current_task()
+            except RuntimeError:
+                pass  # not in a task context — skip cancel support
             if not event.is_set():
                 self._agent_state[agent_name] = STATE_PAUSED
                 self._emit_sse(agent_name, "agent_paused", STATE_PAUSED)
@@ -231,6 +291,11 @@ class PauseController:
                 self._agent_state[agent_name] = STATE_RUNNING
                 self._emit_sse(agent_name, "agent_resumed", STATE_RUNNING)
                 logger.info("[PAUSE] Agent %s unblocked, continuing", agent_name)
+
+        async def on_after_llm_call(runner: Any, message: Any) -> None:
+            # LLM call finished — pause() must not cancel anything after
+            # this point until the next ``before_llm_call``.
+            self._current_tasks.pop(agent_name, None)
 
         async def on_before_tool_call(runner: Any, request: Any) -> None:
             if not event.is_set():
@@ -244,11 +309,33 @@ class PauseController:
 
         async def on_after_turn_complete(runner: Any, message: Any) -> None:
             self._active[agent_name] = False
+            self._current_tasks.pop(agent_name, None)
+
+        async def on_pause_cancel(runner: Any) -> bool:
+            """Called by tool_runner when a CancelledError surfaces inside
+            the LLM call. Return True if it was our doing (= we're paused
+            and the agent should wait for resume then retry the LLM call).
+            """
+            if not event.is_set():
+                # Emit terminal paused state — the cancellation interrupted
+                # the LLM call we were about to await, so this is the moment
+                # the agent is genuinely "paused" rather than "pausing".
+                self._agent_state[agent_name] = STATE_PAUSED
+                self._emit_sse(agent_name, "agent_paused", STATE_PAUSED)
+                logger.info("[PAUSE] Agent %s blocked after LLM-cancel", agent_name)
+                await event.wait()
+                self._agent_state[agent_name] = STATE_RUNNING
+                self._emit_sse(agent_name, "agent_resumed", STATE_RUNNING)
+                logger.info("[PAUSE] Agent %s unblocked, retrying LLM call", agent_name)
+                return True
+            return False
 
         return ToolRunnerHooks(
             before_llm_call=on_before_llm_call,
+            after_llm_call=on_after_llm_call,
             before_tool_call=on_before_tool_call,
             after_turn_complete=on_after_turn_complete,
+            on_pause_cancel=on_pause_cancel,
         )
 
     def cleanup(self, agent_name: str) -> None:
@@ -256,6 +343,7 @@ class PauseController:
         self._paused_agents.discard(agent_name)
         self._agent_state.pop(agent_name, None)
         self._active.pop(agent_name, None)
+        self._current_tasks.pop(agent_name, None)
         evt = self._events.pop(agent_name, None)
         if evt and not evt.is_set():
             evt.set()  # Unblock any waiting coroutine
