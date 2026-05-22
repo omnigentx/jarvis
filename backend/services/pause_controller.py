@@ -248,6 +248,10 @@ class PauseController:
         # the transient pausing/resuming nuance).
         self._update_db_status(agent_name, "paused")
 
+        # 4b. Cross-restart persistence — upsert into agent_pause_state
+        # so this pause survives a backend restart.
+        self._persist_pause(agent_name)
+
         # 5. Idle-agent terminal transition. Only applies to in-process
         # agents; subprocess agents emit their own paused event from
         # the subprocess hook chain. We gate on ``pid is None`` so we
@@ -290,6 +294,9 @@ class PauseController:
 
         # 4. Persist DB status back to running.
         self._update_db_status(agent_name, "running")
+
+        # 4b. Drop the agent_pause_state row — pause is no longer active.
+        self._persist_resume(agent_name)
 
         # 5. Idle-agent terminal transition (mirror of pause path).
         if pid is None and not self._active.get(agent_name, False):
@@ -554,6 +561,94 @@ class PauseController:
             })
         except Exception as e:
             logger.warning("[PAUSE] Failed to broadcast SSE: %s", e)
+
+    def _persist_pause(self, agent_name: str) -> None:
+        """Upsert ``agent_pause_state`` row so the pause survives a
+        backend restart. Best-effort — never raise (don't break a
+        live pause click because of a DB hiccup).
+        """
+        try:
+            from core.database import SessionLocal, AgentPauseStateModel
+            db = SessionLocal()
+            try:
+                row = db.query(AgentPauseStateModel).filter_by(agent_name=agent_name).first()
+                team_name = self._team_of(agent_name)
+                if row is None:
+                    db.add(AgentPauseStateModel(
+                        agent_name=agent_name,
+                        paused_at=time.time(),
+                        team_name=team_name,
+                        reason="manual",
+                    ))
+                else:
+                    row.paused_at = time.time()
+                    row.team_name = team_name
+                db.commit()
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning("[PAUSE] persist failed for %s: %s", agent_name, e)
+
+    def _persist_resume(self, agent_name: str) -> None:
+        """Delete the agent_pause_state row on resume."""
+        try:
+            from core.database import SessionLocal, AgentPauseStateModel
+            db = SessionLocal()
+            try:
+                db.query(AgentPauseStateModel).filter_by(agent_name=agent_name).delete()
+                db.commit()
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning("[PAUSE] persist-resume failed for %s: %s", agent_name, e)
+
+    def _team_of(self, agent_name: str) -> Optional[str]:
+        """Lookup ``agent_name``'s team via spawn_records. None if solo."""
+        try:
+            import services.shared_state as _state
+            if _state.registry_db:
+                for rec in _state.registry_db.find_by_name(agent_name):
+                    if rec.get("team_name"):
+                        return rec["team_name"]
+        except Exception:
+            pass
+        return None
+
+    def restore_on_startup(self) -> int:
+        """Re-apply pauses recorded in ``agent_pause_state`` so a manual
+        pause (or approval-driven pause that's still pending) survives
+        a backend restart. Returns the count of agents restored.
+
+        Idempotent — safe to call multiple times. Skips agents already
+        in ``_paused_agents`` (e.g. if approval_service.restore ran
+        first and the user paused that team's orchestrator manually
+        too, we don't double-pause).
+        """
+        try:
+            from core.database import SessionLocal, AgentPauseStateModel
+            db = SessionLocal()
+            try:
+                rows = db.query(AgentPauseStateModel).all()
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning("[PAUSE] restore_on_startup: DB read failed: %s", e)
+            return 0
+
+        count = 0
+        for row in rows:
+            agent_name = row.agent_name
+            if agent_name in self._paused_agents:
+                continue
+            # ``_pause_one`` re-runs the full pause flow (SSE + DB upsert
+            # + signal). On startup the subprocess may or may not still
+            # be alive — signal send is wrapped in try/except so a stale
+            # PID is harmless.
+            if self._pause_one(agent_name):
+                count += 1
+        if count:
+            logger.info("[PAUSE] restored %d agent(s) from agent_pause_state", count)
+        return count
 
     def _update_db_status(self, agent_name: str, db_status: str) -> None:
         """Upsert spawn_records.status. DB sees only ``paused`` / ``running`` —

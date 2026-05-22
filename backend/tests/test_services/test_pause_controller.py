@@ -696,6 +696,101 @@ def test_attach_skips_agent_without_name(fresh_manager, caplog):
     assert getattr(agent, "_pause_attached", False) is False
 
 
+# ─── Phase 6: restart recovery ──────────────────────────────────────
+
+
+@pytest.fixture
+def isolated_pause_state_db():
+    """Truncate ``agent_pause_state`` before and after each test so rows
+    don't bleed between cases.
+
+    Uses the session-shared test DB set up in tests/conftest.py — much
+    simpler than reloading core.database (which fights the global
+    JARVIS_DB_PATH override).
+    """
+    import core.database as _db
+
+    # Ensure table exists (handles fresh test sessions before any other
+    # fixture has touched the DB).
+    _db.Base.metadata.create_all(_db.engine)
+
+    def _wipe():
+        db = _db.SessionLocal()
+        try:
+            db.query(_db.AgentPauseStateModel).delete()
+            db.commit()
+        finally:
+            db.close()
+
+    _wipe()
+    yield _db
+    _wipe()
+
+
+def test_pause_persists_then_restore_re_pauses(
+    isolated_pause_state_db, fresh_manager, fake_registry, captured_sse,
+):
+    """End-to-end: pause an agent, simulate restart by creating a fresh
+    PauseController, call restore_on_startup → the new controller knows
+    the agent is paused (matches what was persisted).
+    """
+    fresh_manager.pause("Jarvis")
+    assert fresh_manager.is_paused("Jarvis")
+
+    # Verify the row exists in the table.
+    db = isolated_pause_state_db.SessionLocal()
+    try:
+        rows = db.query(isolated_pause_state_db.AgentPauseStateModel).all()
+        assert len(rows) == 1
+        assert rows[0].agent_name == "Jarvis"
+    finally:
+        db.close()
+
+    # Simulate restart: fresh controller, no in-memory state.
+    from services.pause_controller import PauseController
+    new_ctrl = PauseController()
+    assert not new_ctrl.is_paused("Jarvis")
+
+    restored = new_ctrl.restore_on_startup()
+
+    assert restored == 1
+    assert new_ctrl.is_paused("Jarvis"), \
+        "restore must re-apply the pause from agent_pause_state"
+
+
+def test_resume_deletes_pause_state_row(
+    isolated_pause_state_db, fresh_manager, fake_registry, captured_sse,
+):
+    """resume() must drop the row so a subsequent restart doesn't
+    spuriously re-pause an agent the user has already resumed.
+    """
+    fresh_manager.pause("Dev")
+    fresh_manager.resume("Dev")
+
+    db = isolated_pause_state_db.SessionLocal()
+    try:
+        rows = db.query(isolated_pause_state_db.AgentPauseStateModel).all()
+        assert len(rows) == 0, "resume must delete the persisted pause row"
+    finally:
+        db.close()
+
+
+def test_restore_is_idempotent(
+    isolated_pause_state_db, fresh_manager, fake_registry, captured_sse,
+):
+    """Calling restore twice doesn't double-pause (or thrash SSE)."""
+    fresh_manager.pause("PM")
+
+    from services.pause_controller import PauseController
+    new_ctrl = PauseController()
+    first = new_ctrl.restore_on_startup()
+    second = new_ctrl.restore_on_startup()
+
+    assert first == 1
+    assert second == 0  # already restored, no-op
+    assert new_ctrl.is_paused("PM")
+
+
 def test_late_joiner_starts_paused_when_team_already_paused(
     fresh_manager, fake_registry, captured_sse,
 ):
