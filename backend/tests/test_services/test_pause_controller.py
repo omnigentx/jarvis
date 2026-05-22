@@ -15,6 +15,7 @@ already in ``_find_pid``.
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import MagicMock
 
 import pytest
@@ -127,3 +128,168 @@ def test_resume_uses_find_by_name_not_list_running(fresh_manager, fake_registry)
 
     fake_registry.find_by_name.assert_called_with("QE")
     fake_registry.list_running.assert_not_called()
+
+
+# ─── Phase 2: state machine + SSE timing ────────────────────────────
+
+
+@pytest.fixture
+def captured_sse(monkeypatch):
+    """Capture SSE events emitted via activity_stream_manager.broadcast."""
+    import services.activity_stream as act
+
+    events: list[dict] = []
+
+    class FakeManager:
+        def broadcast(self, payload: dict) -> None:
+            events.append(payload)
+
+    fake = FakeManager()
+    original = act.activity_stream_manager
+    act.activity_stream_manager = fake
+    yield events
+    act.activity_stream_manager = original
+
+
+def test_idle_pause_emits_both_pausing_and_paused(
+    fresh_manager, fake_registry, captured_sse,
+):
+    """Idle agent (no in-flight turn) → pause() must emit BOTH
+    ``agent_pausing`` AND ``agent_paused`` so the UI doesn't get stuck
+    on the transitional "Pausing…" spinner forever.
+    """
+    fake_registry.find_by_name.return_value = []  # in-process, no subprocess pid
+
+    fresh_manager.pause("Jarvis")
+
+    types = [e["event_type"] for e in captured_sse]
+    assert types == ["agent_pausing", "agent_paused"], types
+    assert fresh_manager.state_of("Jarvis") == "paused"
+
+
+def test_idle_resume_emits_both_resuming_and_resumed(
+    fresh_manager, fake_registry, captured_sse,
+):
+    """Idle agent → resume() must emit BOTH ``agent_resuming`` AND
+    ``agent_resumed`` so the UI can leave the "Resuming…" spinner.
+    """
+    fake_registry.find_by_name.return_value = []
+    fresh_manager.pause("Jarvis")
+    captured_sse.clear()
+
+    fresh_manager.resume("Jarvis")
+
+    types = [e["event_type"] for e in captured_sse]
+    assert types == ["agent_resuming", "agent_resumed"], types
+    assert fresh_manager.state_of("Jarvis") == "running"
+
+
+def test_active_pause_emits_only_pausing(
+    fresh_manager, fake_registry, captured_sse,
+):
+    """Active agent (in-flight turn) → pause() only emits ``agent_pausing``.
+    The terminal ``agent_paused`` event comes later from the hook,
+    when the agent reaches a checkpoint.
+    """
+    fake_registry.find_by_name.return_value = []
+    # Simulate an in-flight turn — before_llm_call hook would have
+    # flipped this to True.
+    fresh_manager._active["Jarvis"] = True
+
+    fresh_manager.pause("Jarvis")
+
+    types = [e["event_type"] for e in captured_sse]
+    assert types == ["agent_pausing"], types
+    # State stays in 'pausing' until the hook fires the terminal transition.
+    assert fresh_manager.state_of("Jarvis") == "pausing"
+
+
+def test_subprocess_pause_does_not_double_emit_paused(
+    fresh_manager, fake_registry, captured_sse, monkeypatch,
+):
+    """Subprocess agent (has PID) → main process emits ``agent_pausing``
+    only. The terminal ``agent_paused`` is emitted by the subprocess
+    itself from its own hook chain. If main process also emitted
+    ``agent_paused``, UI would see duplicate events.
+    """
+    fake_registry.find_by_name.return_value = [{
+        "run_id": "run-sub",
+        "agent_name": "Dev",
+        "status": "running",
+        "pid": 99999,  # nonexistent — but os.kill(pid, 0) check matters
+    }]
+    # Make os.kill(pid, 0) succeed so _find_pid returns the pid, and
+    # neutralize the SIGUSR1 send so the test doesn't actually signal.
+    import services.pause_controller as pc
+
+    monkeypatch.setattr(pc.os, "kill", lambda *a, **kw: None)
+
+    fresh_manager.pause("Dev")
+
+    types = [e["event_type"] for e in captured_sse]
+    assert types == ["agent_pausing"], types
+    assert fresh_manager.state_of("Dev") == "pausing"
+
+
+def test_hook_emits_paused_when_blocked_then_resumed_when_woken():
+    """Verify the in-hook state transitions:
+    ``pausing → paused`` before ``await event.wait()``,
+    ``resuming → running`` after the await returns.
+    """
+    from services.pause_controller import PauseController
+    import services.activity_stream as act
+
+    events: list[dict] = []
+
+    class FakeMgr:
+        def broadcast(self, p):
+            events.append(p)
+
+    original = act.activity_stream_manager
+    act.activity_stream_manager = FakeMgr()
+
+    async def run():
+        ctrl = PauseController()
+        hooks = ctrl.create_pause_hooks("HookAgent")
+
+        # Simulate before_llm_call firing (flips _active to True).
+        async def hook_phase():
+            await hooks.before_llm_call(None, None)
+
+        # Pause externally.
+        ctrl._active["HookAgent"] = True
+        ctrl.pause("HookAgent")
+        # No 'agent_paused' yet — agent is "active" so emit is hook's job.
+        assert [e["event_type"] for e in events] == ["agent_pausing"]
+        events.clear()
+
+        # Schedule the hook on a task; it should block at await event.wait().
+        task = asyncio.create_task(hook_phase())
+        await asyncio.sleep(0.05)  # let hook reach `await event.wait()`
+
+        # Hook should have emitted 'agent_paused' and is now blocked.
+        assert events[0]["event_type"] == "agent_paused"
+        assert not task.done()
+        events.clear()
+
+        # Resume — hook wakes, emits agent_resumed.
+        ctrl.resume("HookAgent")
+        await task
+
+        # Order: resume() emits agent_resuming, hook emits agent_resumed.
+        types = [e["event_type"] for e in events]
+        assert "agent_resuming" in types
+        assert "agent_resumed" in types
+        # Resuming must come before resumed.
+        assert types.index("agent_resuming") < types.index("agent_resumed")
+
+    try:
+        asyncio.run(run())
+    finally:
+        act.activity_stream_manager = original
+
+
+def test_state_of_defaults_to_running(fresh_manager):
+    """Unknown agent → state_of returns 'running' (the safe default —
+    UI treats unknown agents as idle/working, never as paused)."""
+    assert fresh_manager.state_of("Unknown") == "running"

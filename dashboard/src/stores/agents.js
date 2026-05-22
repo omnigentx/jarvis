@@ -200,17 +200,32 @@ export const useAgentsStore = defineStore('agents', () => {
         agents.value = new Map(agents.value) // trigger reactivity
         break
 
-      case 'agent_paused': {
-        // Snapshot the pre-pause status so resume can restore it. Without
-        // this, resume blindly flips to 'running' even when the agent had
-        // already finished its turn before the pause click landed — UX
-        // confusion: user sees "running" badge after resume and assumes
-        // work is in progress, then is unsure whether to pause again.
+      case 'agent_pausing': {
+        // Transitional: pause request received, agent still finishing
+        // its in-flight LLM/tool call. Show a "Pausing…" spinner.
+        // Snapshot the pre-pause status now (not at agent_paused) because
+        // by the time we hit agent_paused the agent may have moved on.
         const current = agents.value.get(agent_name)
         const prior = current?.status
-        // Only remember statuses that make sense to restore — never restore
-        // back into 'paused' (would loop) or undefined.
-        const restorable = (prior && prior !== 'paused') ? prior : 'idle'
+        const restorable = (prior && prior !== 'paused' && prior !== 'pausing')
+          ? prior : 'idle'
+        upsertAgent(agent_name, {
+          status: 'pausing',
+          prePauseStatus: restorable,
+          lastAction: { message: event.message || 'Pausing…', timestamp: event.timestamp },
+        })
+        break
+      }
+
+      case 'agent_paused': {
+        // Terminal: agent has actually blocked at a checkpoint (or was
+        // already idle when pause arrived). prePauseStatus was captured
+        // on agent_pausing — preserve it.
+        const current = agents.value.get(agent_name)
+        const fallbackPrior = current?.status
+        const restorable = current?.prePauseStatus
+          || ((fallbackPrior && fallbackPrior !== 'paused' && fallbackPrior !== 'pausing')
+              ? fallbackPrior : 'idle')
         upsertAgent(agent_name, {
           status: 'paused',
           prePauseStatus: restorable,
@@ -219,12 +234,22 @@ export const useAgentsStore = defineStore('agents', () => {
         break
       }
 
+      case 'agent_resuming': {
+        // Transitional: resume request received, agent still blocked at
+        // checkpoint waiting for the await to wake. Show "Resuming…".
+        upsertAgent(agent_name, {
+          status: 'resuming',
+          lastAction: { message: event.message || 'Resuming…', timestamp: event.timestamp },
+        })
+        break
+      }
+
       case 'agent_resumed': {
-        // Restore the pre-pause status (idle/running/completed/...) instead
-        // of forcing 'running'. If the agent has actual pending work, the
+        // Terminal: agent has woken from the checkpoint await. Restore
+        // the pre-pause status (idle/running/completed/...) instead of
+        // forcing 'running'. If the agent has actual pending work, the
         // next 'thinking' / 'tool_call' / 'message_turn' event arrives
-        // moments later and naturally bumps status to 'running' again — no
-        // need to lie about it here.
+        // moments later and naturally bumps status to 'running' again.
         const current = agents.value.get(agent_name)
         const restored = current?.prePauseStatus || 'idle'
         upsertAgent(agent_name, {
@@ -294,15 +319,18 @@ export const useAgentsStore = defineStore('agents', () => {
   }
 
   async function pauseAgent(name) {
+    // Optimistic transition to 'pausing' for snappy UI (SSE for
+    // 'agent_pausing' usually arrives within ~50ms but the optimistic
+    // hop avoids a "nothing happened" flash if SSE is briefly delayed).
+    // The SSE event handler will upgrade to terminal 'paused' once the
+    // agent actually blocks at a checkpoint — do NOT pre-jump to 'paused'
+    // here, that hides the in-flight transition the user needs to see.
+    upsertAgent(name, {
+      status: 'pausing',
+      lastAction: { message: 'Pausing…', timestamp: Date.now() / 1000 },
+    })
     try {
-      const result = await apiFetch(`/api/agents/${encodeURIComponent(name)}/pause`, { method: 'POST' })
-      if (result.status === 'paused') {
-        upsertAgent(name, {
-          status: 'paused',
-          lastAction: { message: 'Paused by user', timestamp: Date.now() / 1000 },
-        })
-      }
-      return result
+      return await apiFetch(`/api/agents/${encodeURIComponent(name)}/pause`, { method: 'POST' })
     } catch (e) {
       console.error('[Store] Failed to pause agent:', e)
       throw e
@@ -310,15 +338,12 @@ export const useAgentsStore = defineStore('agents', () => {
   }
 
   async function resumeAgent(name) {
+    upsertAgent(name, {
+      status: 'resuming',
+      lastAction: { message: 'Resuming…', timestamp: Date.now() / 1000 },
+    })
     try {
-      const result = await apiFetch(`/api/agents/${encodeURIComponent(name)}/resume`, { method: 'POST' })
-      if (result.status === 'resumed') {
-        upsertAgent(name, {
-          status: 'running',
-          lastAction: { message: 'Resumed by user', timestamp: Date.now() / 1000 },
-        })
-      }
-      return result
+      return await apiFetch(`/api/agents/${encodeURIComponent(name)}/resume`, { method: 'POST' })
     } catch (e) {
       console.error('[Store] Failed to resume agent:', e)
       throw e

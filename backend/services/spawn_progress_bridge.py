@@ -109,8 +109,13 @@ _EVENT_MAP = {
     "lifecycle_cancelled": ("spawn_lifecycle", "🚫 {agent_name} cancelled"),
     "lifecycle_pre_cleanup": ("spawn_lifecycle", "🧹 {agent_name} cleaning up..."),
     "lifecycle_after_cleanup": ("agent_removed", "🗑️ {agent_name} removed"),
-    # Pause/Resume events (from PauseSignalHandler in subprocess)
+    # Pause/Resume events (from PauseSignalHandler in subprocess).
+    # Four-event state machine — pausing/resuming are the transitional
+    # "request received" states (UI renders a spinner), paused/resumed
+    # are the terminal states emitted when the agent actually blocks/wakes.
+    "agent_pausing": ("agent_pausing", "⏸️ {agent_name} pausing…"),
     "agent_paused": ("agent_paused", "⏸️ {agent_name} paused"),
+    "agent_resuming": ("agent_resuming", "▶️ {agent_name} resuming…"),
     "agent_resumed": ("agent_resumed", "▶️ {agent_name} resumed"),
     "token_usage": ("spawn_token_usage", "📊 {agent_name} token usage"),
     "runtime_config": ("spawn_runtime_config", "⚙️ {agent_name} runtime config loaded"),
