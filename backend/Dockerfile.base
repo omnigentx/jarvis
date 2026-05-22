@@ -19,7 +19,7 @@
 # a base rebuild — they're handled by the main Dockerfile's deps/final stages.
 #
 # ─── Build + Push (multi-arch) ───
-#   export VERSION=1.1.0
+#   export VERSION=1.2.0
 #   docker buildx build --platform linux/amd64,linux/arm64 \
 #     -t omnigentx/jarvis-backend-base:${VERSION} \
 #     -t omnigentx/jarvis-backend-base:latest \
@@ -30,6 +30,11 @@
 #   docker push omnigentx/jarvis-backend-base:${VERSION}
 #
 # Version log:
+#   1.2.0 — added gh=2.92.0 (GitHub CLI) + GH_CONFIG_DIR=/app/.gh-config so
+#           agents can shell out to `gh` for CI/PR/release ops via the
+#           Jarvis-private gh config written by services/gh_credential_sync.py.
+#           NOTE: cli.github.com apt repo rolls forward and prunes old point
+#           releases — bump this pin when rebuilding if apt complains.
 #   1.1.0 — added docker.io (CLI) so MCP servers that wrap `docker run` work
 #   1.0.0 — initial base image
 
@@ -59,7 +64,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         alsa-utils flac ffmpeg docker.io \
         libnspr4 libnss3 libatk1.0-0t64 libatk-bridge2.0-0t64 \
         libcups2t64 libatspi2.0-0t64 libxcomposite1 libxdamage1 \
-        gh=2.68.1 \
+        gh=2.92.0 \
     && rm -rf /var/lib/apt/lists/* \
     && npm install -g gitnexus@1.6.2 \
     && npm cache clean --force

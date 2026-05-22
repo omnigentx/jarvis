@@ -2,7 +2,7 @@
 # System deps (apt + npm + uv + gitnexus) live in the public base image so CI
 # doesn't re-run apt-get / npm install on every build. Rebuild + bump the tag
 # only when Dockerfile.base changes — see Dockerfile.base header for steps.
-ARG BASE_IMAGE=omnigentx/jarvis-backend-base:1.1.0
+ARG BASE_IMAGE=omnigentx/jarvis-backend-base:1.2.0
 FROM ${BASE_IMAGE} AS base
 
 # ─── Stage 2: Python dependencies (cached unless pyproject/lock/fast-agent change) ───
