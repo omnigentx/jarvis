@@ -21,7 +21,7 @@ jobs:
             chown -R $(id -u):$(id -g) "$GITHUB_WORKSPACE" || true
 
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: recursive
           token: ${{ secrets.GH_PAT }}
