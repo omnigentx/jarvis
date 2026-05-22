@@ -579,9 +579,13 @@ def _build_agent_dict(name: str, agent_data: dict) -> dict:
         "instruction": resolved or raw_instruction,
         "model": getattr(config, "model", None) or _get_default_model(),
         "servers": list(getattr(config, "servers", []) or []),
-        # The wire label "card" is preserved this phase so the dashboard
-        # keeps rendering correctly. Phase 5 renames this to "dynamic"
-        # everywhere — backend response + frontend checks — in one commit.
+        # Wire labels (intentional vocab — see test_agents and dashboard):
+        # - "card": template loaded from services.agent_definitions (DB-backed)
+        # - "builtin": defined in code via @fast.agent in backend/agent.py
+        # - "team" / "dynamic" are reserved for spawn_registry instances
+        #   emitted by _build_spawn_agent_detail. The DB-backed templates
+        #   here MUST NOT use "dynamic" — that label is the dashboard's
+        #   marker for live spawn instances (see AgentDetail.vue:isSpawnedAgent).
         "type": "card" if name in fast._agent_card_sources else "builtin",
         "icon": AGENT_ICONS.get(name, "smart_toy"),
         "child_agents": child_agents,

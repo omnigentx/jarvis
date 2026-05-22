@@ -58,7 +58,7 @@ const filtered = computed(() => {
 const agentChoices = computed(() => {
   return [...store.agents.values()].map((a) => ({
     name: a.name,
-    type: a.type, // 'card' or 'builtin' (= code-based)
+    type: a.type, // 'card' (DB-backed) | 'builtin' (code-defined) | 'team' | 'dynamic' (spawn instances)
     is_card_based: a.type === 'card',
   }))
 })
