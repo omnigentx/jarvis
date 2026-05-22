@@ -1,4 +1,4 @@
-"""Regression tests for ``services.pause_manager.PauseManager``.
+"""Regression tests for ``services.pause_controller.PauseController``.
 
 Guards the resume-doesn't-update-DB-status bug observed during the
 2026-05-10 dev session: ``_broadcast_state_change`` looked up the
@@ -22,11 +22,11 @@ import pytest
 
 @pytest.fixture
 def fresh_manager():
-    """Module-level singleton ``pause_manager`` survives across tests; we
-    need a clean instance for deterministic assertions.
+    """Module-level singleton ``pause_controller`` survives across tests;
+    we need a clean instance for deterministic assertions.
     """
-    from services.pause_manager import PauseManager
-    return PauseManager()
+    from services.pause_controller import PauseController
+    return PauseController()
 
 
 @pytest.fixture
