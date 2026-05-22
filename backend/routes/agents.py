@@ -1126,6 +1126,11 @@ def _merge_spawn_tool_status(
     mcp_status.servers (per-server is_connected + error_message) into the
     unified ``{server: {tools, status, error}}`` shape that the built-in agent
     path also returns.
+
+    Note: the ``mcp_servers`` payload emitted by isolated_runner._emit_mcp_status
+    carries BOTH ``status`` ("connected"/"failed") and ``is_connected`` (bool).
+    We read ``is_connected``; the spawn_progress_bridge log path reads ``status``.
+    Both fields are load-bearing — dropping either silently regresses one reader.
     """
     result: dict[str, dict] = {}
     for server_name, tools_list in (rt_tools or {}).items():

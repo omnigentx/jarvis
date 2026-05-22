@@ -58,17 +58,29 @@ onMounted(() => {
 // runtime introspection it broadcasts `runtime_config_ready` over the global
 // activity stream. AppLayout already opens that EventSource at boot and routes
 // events through agentsStore.recentEvents, so we just listen here.
+//
+// We walk newly-prepended events from the head until the last one we already
+// processed instead of just reading events[0]. Vue coalesces same-tick array
+// mutations, so if a runtime_config_ready and an unrelated event land in the
+// same microtask, an events[0] check would miss the one that isn't last.
+let _lastSeenEvent = null
 const _stopRuntimeWatch = watch(
   () => store.recentEvents,
   (events) => {
     if (!events?.length) return
-    const ev = events[0]
-    if (
-      ev?.event_type === 'runtime_config_ready'
-      && ev?.agent_name === agentName.value
-    ) {
-      fetchAgentDetail()
+    let hit = false
+    for (let i = 0; i < events.length; i++) {
+      if (events[i] === _lastSeenEvent) break
+      const ev = events[i]
+      if (
+        ev?.event_type === 'runtime_config_ready'
+        && ev?.agent_name === agentName.value
+      ) {
+        hit = true
+      }
     }
+    _lastSeenEvent = events[0]
+    if (hit) fetchAgentDetail()
   },
   { flush: 'post' },
 )

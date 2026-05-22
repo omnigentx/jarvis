@@ -707,3 +707,46 @@ class TestRuntimeReadyBroadcast:
         ev = next(b for b in broadcasted if b["event_type"] == "runtime_config_ready")
         assert ev["agent_name"] == "Linh - PM"
         assert ev["run_id"] == "run-001"
+
+    def test_handle_mcp_status_broadcasts(self):
+        """``_handle_mcp_status`` mirrors ``_handle_runtime_config``: after
+        persisting MCP attach state it must publish a refresh event so the
+        dashboard picks up the new connection / error info without polling."""
+        from services import spawn_progress_bridge as spb
+
+        broadcasted = []
+
+        class _Stream:
+            def broadcast(self, payload):
+                broadcasted.append(payload)
+
+        class _Registry:
+            def upsert_record(self, *_args, **_kwargs):
+                pass
+
+        bridge = spb.SpawnProgressBridge.__new__(spb.SpawnProgressBridge)
+        bridge._registry_db = _Registry()
+        bridge._request_id = None
+        bridge._pm = None
+
+        with patch.object(spb, "logger", MagicMock()), \
+             patch("services.activity_stream.activity_stream_manager", _Stream()):
+            bridge._handle_mcp_status(
+                "Linh - PM",
+                {
+                    "total_configured": 2,
+                    "total_connected": 1,
+                    "total_failed": 1,
+                    "servers": {
+                        "alpha": {"is_connected": True},
+                        "beta": {"is_connected": False, "error": "no route"},
+                    },
+                },
+                {"run_id": "run-002"},
+            )
+
+        events = [b["event_type"] for b in broadcasted]
+        assert "runtime_config_ready" in events
+        ev = next(b for b in broadcasted if b["event_type"] == "runtime_config_ready")
+        assert ev["agent_name"] == "Linh - PM"
+        assert ev["run_id"] == "run-002"
