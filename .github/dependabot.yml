@@ -18,6 +18,11 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    ignore:
+      # Vite major bumps break config/plugin API (verified: v6→v8 PR #39 broke
+      # build + e2e CI). Hold majors for separate manual migration PRs.
+      - dependency-name: "vite"
+        update-types: ["version-update:semver-major"]
     groups:
       npm-minor:
         update-types:

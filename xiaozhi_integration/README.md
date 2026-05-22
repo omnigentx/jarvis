@@ -1,6 +1,6 @@
 # Xiaozhi MCP Integration
 
-> 🧪 **Status: Experimental integration.** This module is experimental — the interface (tool names, env vars, pipe architecture) may change or be removed without backwards-compat guarantees. Not recommended for production use.
+> 🚧 **Status: Inactive (paused).** This module is not currently being developed. Code is left in-tree for reference; **no security patches will be applied** to its dependencies until work resumes. Run at your own risk if you fork this directory standalone. The Jarvis backend deploy does not load these packages — vulnerabilities only matter when running the standalone xiaozhi MCP server.
 
 Bridges a [Xiaozhi](https://xiaozhi.me) ESP32 voice device with the Jarvis backend over the Model Context Protocol (MCP). The Xiaozhi device sends a voice request to Xiaozhi Cloud; Cloud forwards it to a local MCP server (`jarvis_mcp_server.py`) over a WebSocket relay (`mcp_pipe.py`); the MCP server calls the Jarvis HTTP API and returns the answer (plus optional audio URL for media playback).
 
