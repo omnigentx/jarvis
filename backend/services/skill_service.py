@@ -314,9 +314,10 @@ def _used_by(skill_name: str, code_index: dict[str, set[str]] | None = None) -> 
     the FastAgent app is up and reports any agents, we read directly from
     `config.skill_manifests`.
 
-    Static analysis (parsing agent.py + agent_cards/*.md) is the fallback
-    for when the runtime isn't available — unit tests without the live app,
-    or API hits during early boot before agents register.
+    Static analysis (parsing agent.py + reading the agent_definitions
+    SQLite table) is the fallback for when the runtime isn't available —
+    unit tests without the live app, or API hits during early boot
+    before agents register.
     """
     fast_obj, _state, _rebuild = _runtime_handles()
     runtime_pairs = list(_iter_agents_with_names(fast_obj)) if fast_obj is not None else []

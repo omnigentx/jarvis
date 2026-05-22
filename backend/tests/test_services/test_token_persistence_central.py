@@ -135,8 +135,9 @@ def test_attach_to_all_is_idempotent_and_merges_with_existing_hooks():
     assert getattr(agent_a, "_jarvis_token_hook") is True
     assert getattr(agent_b, "_jarvis_token_hook") is True
 
-    # Re-attach (simulates dynamic_agents.signal_reload_loop firing a
-    # second time). Must be a no-op per agent — idempotency guard.
+    # Re-attach (simulates dynamic_agents.db_rev_poll_loop firing a
+    # second time after a rev bump). Must be a no-op per agent —
+    # idempotency guard.
     n2 = attach_token_persistence_hooks_to_all(fake_app)
     assert n2 == 0, f"second attach must be no-op; got {n2}"
 
