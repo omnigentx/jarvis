@@ -1,7 +1,7 @@
 [submodule "backend/fast-agent"]
 	path = backend/fast-agent
 	url = https://github.com/omnigentx/fast-agent.git
-	branch = feat/spawn-v2
+	branch = main
 [submodule "backend/figma-ui-mcp"]
 	path = backend/figma-ui-mcp
 	url = https://github.com/omnigentx/figma-ui-mcp.git
