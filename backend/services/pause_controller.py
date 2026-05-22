@@ -438,6 +438,66 @@ class PauseController:
             on_pause_cancel=on_pause_cancel,
         )
 
+    def attach(self, agent: Any) -> None:
+        """Auto-wire pause hooks onto ``agent.tool_runner_hooks``.
+
+        Single entry point replacing the previously scattered "merge
+        pause hooks into agent" pattern across ``routes/chat.py``,
+        ``routes/inject.py``, and the subprocess hook chain. After this
+        call, the agent participates in:
+
+          - Cooperative checkpoint blocking at before_llm_call /
+            before_tool_call (Phase 2 state machine).
+          - Instant LLM cancel on pause via current-task tracking
+            + on_pause_cancel retry contract (Phase 3).
+          - Team-wide pause propagation through ``_resolve_scope`` when
+            the controller's ``pause(team_name)`` is called (Phase 4).
+
+        Idempotent: a sentinel attribute ``_pause_attached`` on the
+        agent prevents double-merging if attach is called twice on the
+        same agent without an intervening hook reset. Callers that
+        snapshot+restore ``tool_runner_hooks`` per request (chat.py,
+        inject.py) should also call ``detach(agent)`` on restore so a
+        later attach takes effect again.
+
+        ``agent.name`` is used as the controller key so subsequent
+        ``pause_controller.pause(agent.name)`` and ``pause(team_name)``
+        calls reach this attached agent.
+        """
+        if getattr(agent, "_pause_attached", False):
+            return
+
+        name = getattr(agent, "name", None)
+        if not name:
+            logger.warning("[PAUSE] attach(): agent has no .name attribute — skipping")
+            return
+
+        from services.sse_progress import merge_hooks
+
+        pause_hooks = self.create_pause_hooks(name)
+        existing = getattr(agent, "tool_runner_hooks", None)
+        if existing is None:
+            agent.tool_runner_hooks = pause_hooks
+        else:
+            agent.tool_runner_hooks = merge_hooks(existing, pause_hooks)
+
+        agent._pause_attached = True
+        logger.debug("[PAUSE] attached hooks for agent %s", name)
+
+    def detach(self, agent: Any) -> None:
+        """Mark agent as no longer pause-attached.
+
+        Does NOT undo the hook merge — that's the caller's concern
+        (typically a snapshot+restore around a per-request hook
+        modification). Just clears the sentinel so a subsequent
+        ``attach()`` re-wires onto the restored hooks.
+        """
+        if hasattr(agent, "_pause_attached"):
+            try:
+                delattr(agent, "_pause_attached")
+            except AttributeError:
+                pass
+
     def cleanup(self, agent_name: str) -> None:
         """Remove pause state for an agent (e.g., when agent is destroyed)."""
         self._paused_agents.discard(agent_name)

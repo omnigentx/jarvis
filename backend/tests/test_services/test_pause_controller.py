@@ -593,6 +593,109 @@ def test_is_team_paused_returns_false_for_non_team_name(fresh_manager, fake_regi
     assert fresh_manager.is_team_paused("Jarvis") is False
 
 
+# ─── Phase 5: auto-attach ────────────────────────────────────────────
+
+
+class _FakeAgent:
+    """Stand-in for fast-agent's McpAgent — only what attach() reads."""
+
+    def __init__(self, name, existing_hooks=None):
+        self.name = name
+        self.tool_runner_hooks = existing_hooks
+
+
+def test_attach_merges_pause_hooks_when_no_existing(fresh_manager):
+    """Agent with no prior hooks → after attach, ``tool_runner_hooks``
+    is the controller's pause hooks (verbatim — no merge wrapper)."""
+    agent = _FakeAgent("Solo")
+    fresh_manager.attach(agent)
+
+    hooks = agent.tool_runner_hooks
+    assert hooks is not None
+    assert hooks.before_llm_call is not None
+    assert hooks.on_pause_cancel is not None  # Phase 3 contract
+    assert agent._pause_attached is True
+
+
+def test_attach_merges_with_existing_hooks(fresh_manager):
+    """When agent already has hooks (progress/RTAC/card-defined), attach
+    merges pause hooks alongside via merge_hooks — both pre-existing
+    and pause hooks must fire on every callback.
+    """
+    from fast_agent.agents.tool_runner import ToolRunnerHooks
+
+    progress_fired = []
+
+    async def progress_before_llm(runner, messages):
+        progress_fired.append("progress_before_llm")
+
+    progress_hooks = ToolRunnerHooks(before_llm_call=progress_before_llm)
+    agent = _FakeAgent("Merged", existing_hooks=progress_hooks)
+
+    fresh_manager.attach(agent)
+
+    async def run():
+        await agent.tool_runner_hooks.before_llm_call(None, None)
+
+    asyncio.run(run())
+
+    assert "progress_before_llm" in progress_fired, \
+        "merged hook must still invoke the original progress hook"
+
+
+def test_attach_is_idempotent(fresh_manager):
+    """Calling attach twice on the same agent without detach in between
+    must NOT double-merge pause hooks (would create two separate
+    captures of ``_current_tasks`` writing to the same dict key — wasted
+    work + confusing log spam).
+    """
+    agent = _FakeAgent("Twice")
+
+    fresh_manager.attach(agent)
+    hooks_after_first = agent.tool_runner_hooks
+
+    fresh_manager.attach(agent)
+    hooks_after_second = agent.tool_runner_hooks
+
+    assert hooks_after_first is hooks_after_second, \
+        "second attach must be no-op (same hooks object)"
+
+
+def test_detach_clears_sentinel_so_attach_re_wires(fresh_manager):
+    """After detach, a subsequent attach must take effect — this is the
+    chat.py per-request lifecycle: snapshot original → attach → restore
+    original → detach → next request can attach again.
+    """
+    agent = _FakeAgent("Cycle")
+
+    fresh_manager.attach(agent)
+    assert agent._pause_attached is True
+
+    # Simulate chat.py's restore: hooks go back to original (None here).
+    agent.tool_runner_hooks = None
+    fresh_manager.detach(agent)
+    assert not hasattr(agent, "_pause_attached")
+
+    fresh_manager.attach(agent)
+    assert agent._pause_attached is True
+    assert agent.tool_runner_hooks is not None, \
+        "re-attach must wire hooks back onto the restored state"
+
+
+def test_attach_skips_agent_without_name(fresh_manager, caplog):
+    """Defensive guard: agent objects without ``.name`` get logged and
+    skipped, not crashed (some test mocks / partial objects could trip
+    this; PauseController must not abort the whole hook wiring).
+    """
+    class Nameless:
+        tool_runner_hooks = None
+
+    agent = Nameless()
+    fresh_manager.attach(agent)  # must not raise
+
+    assert getattr(agent, "_pause_attached", False) is False
+
+
 def test_late_joiner_starts_paused_when_team_already_paused(
     fresh_manager, fake_registry, captured_sse,
 ):

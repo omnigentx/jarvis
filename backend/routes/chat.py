@@ -364,21 +364,23 @@ async def chat_stream(raw_request: Request, _=Depends(verify_api_key)):
             original_hooks = {}
             progress_hooks = create_progress_hooks(request_id, session_id=conversation_id)
 
-            # Merge pause hooks for in-process agents
-            from services.pause_manager import pause_manager
+            # Wire request-scoped progress hooks + pause hooks. The merge
+            # logic that used to live inline here (create_pause_hooks +
+            # double merge_hooks + branch on existing) is now centralized
+            # in ``PauseController.attach``. After attach, the agent has
+            # both progress AND pause hooks merged in.
+            from services.pause_controller import pause_controller
 
             for name, agent in agent_app._agents.items():
                 original_hooks[name] = getattr(agent, 'tool_runner_hooks', None)
                 existing = original_hooks[name]
 
-                # Create pause hooks for this agent
-                pause_hooks = pause_manager.create_pause_hooks(name)
-                combined = merge_hooks(progress_hooks, pause_hooks)
-
                 if existing:
-                    agent.tool_runner_hooks = merge_hooks(existing, combined)
+                    agent.tool_runner_hooks = merge_hooks(existing, progress_hooks)
                 else:
-                    agent.tool_runner_hooks = combined
+                    agent.tool_runner_hooks = progress_hooks
+
+                pause_controller.attach(agent)
 
             try:
                 # Expose conversation_id so spawn tools can auto-capture it
@@ -482,6 +484,10 @@ async def chat_stream(raw_request: Request, _=Depends(verify_api_key)):
                             agent.tool_runner_hooks = original
                         else:
                             agent.tool_runner_hooks = None
+                        # Clear the attach sentinel so the next request's
+                        # ``pause_controller.attach(agent)`` re-merges
+                        # pause hooks onto the restored ``original``.
+                        pause_controller.detach(agent)
                             
         except asyncio.CancelledError:
             raise
