@@ -38,7 +38,7 @@
 #   1.1.0 — added docker.io (CLI) so MCP servers that wrap `docker run` work
 #   1.0.0 — initial base image
 
-FROM python:3.13-slim
+FROM python:3.14-slim
 
 # Node 22 via NodeSource. Debian 13's apt nodejs ships Node 20 + a broken
 # node-gyp path (`from gyp import script_main` fails because the Debian
