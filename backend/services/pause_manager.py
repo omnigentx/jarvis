@@ -187,7 +187,7 @@ class PauseManager:
             activity_stream_manager.broadcast({
                 "agent_name": agent_name,
                 "event_type": event_type,
-                "message": f"{icon} {agent_name} {'đã tạm dừng' if new_state == 'paused' else 'đã tiếp tục'}",
+                "message": f"{icon} {agent_name} {'paused' if new_state == 'paused' else 'resumed'}",
                 "timestamp": time.time(),
                 "data": {"status": new_state},
             })

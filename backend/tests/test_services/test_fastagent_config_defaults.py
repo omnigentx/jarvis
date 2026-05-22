@@ -1,6 +1,6 @@
 """Regression tests for fastagent.config.yaml MCP server defaults.
 
-Incident 2026-05-17 (Designer "không thấy filesystem MCP"):
+Incident 2026-05-17 (Designer "can't see filesystem MCP"):
 
   ``fastagent.config.yaml`` declared the ``filesystem`` MCP server with
   default args ``["-y", "@modelcontextprotocol/server-filesystem", "./data",

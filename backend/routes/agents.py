@@ -599,8 +599,8 @@ def _build_agents_from_runtime() -> list[dict]:
 STATIC_AGENTS = [
     {
         "name": "PersonalAgent",
-        "description": "Email, lịch, nhắc nhở cá nhân",
-        "instruction": "Quản lý email, lịch hẹn, và các nhắc nhở cá nhân cho người dùng.",
+        "description": "Email, calendar, personal reminders",
+        "instruction": "Manage the user's email, calendar appointments, and personal reminders.",
         "model": "openai.gpt-4o-mini",
         "servers": ["personal-service", "calendar-service", "time-service"],
         "type": "static",
@@ -608,8 +608,8 @@ STATIC_AGENTS = [
     },
     {
         "name": "IoTAgent",
-        "description": "Điều khiển thiết bị IoT, đèn, quạt",
-        "instruction": "Điều khiển các thiết bị IoT trong nhà: đèn, quạt, cảm biến.",
+        "description": "Control IoT devices: lights, fans",
+        "instruction": "Control IoT devices in the home: lights, fans, sensors.",
         "model": "openai.gpt-4o-mini",
         "servers": ["iot-service"],
         "type": "static",
@@ -617,8 +617,8 @@ STATIC_AGENTS = [
     },
     {
         "name": "MusicAgent",
-        "description": "Phát nhạc, tìm bài hát",
-        "instruction": "Phát nhạc và tìm kiếm bài hát trên YouTube theo yêu cầu.",
+        "description": "Play music, find songs",
+        "instruction": "Play music and search for songs on YouTube on request.",
         "model": "openai.gpt-4o-mini",
         "servers": ["youtube-service"],
         "type": "static",
@@ -626,8 +626,8 @@ STATIC_AGENTS = [
     },
     {
         "name": "AudioReaderAgent",
-        "description": "Đọc/phát audio truyện",
-        "instruction": "Đọc và phát audio truyện dạng text-to-speech.",
+        "description": "Read/play story audio",
+        "instruction": "Read and play stories as text-to-speech audio.",
         "model": "openai.gpt-4o-mini",
         "servers": ["story-server"],
         "type": "static",

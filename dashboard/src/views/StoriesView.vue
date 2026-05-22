@@ -1,11 +1,11 @@
 <script setup>
 /**
- * StoriesView — Trang chính Stories (Library + Chapter detail).
+ * StoriesView — Main Stories page (Library + Chapter detail).
  *
- * Desktop: Split panel (library trái + chapter list phải)
- * Mobile: Chuyển trang giữa library ↔ chapter list
+ * Desktop: Split panel (library left + chapter list right)
+ * Mobile: Toggle between library ↔ chapter list
  *
- * Dùng chung cho routes:
+ * Shared by routes:
  *  - /stories (library)
  *  - /stories/:storyId (library + chapter detail)
  */
@@ -66,13 +66,13 @@ async function handleDelete(storyId) {
       method: 'DELETE',
     })
     stories.value = stories.value.filter(s => s.id !== storyId)
-    toast.success('Đã xóa truyện')
+    toast.success('Story deleted')
     // If viewing this story, go back to library
     if (selectedStoryId.value === storyId) {
       router.push({ name: 'Stories' })
     }
   } catch (e) {
-    toast.error('Xóa thất bại', { description: e.message })
+    toast.error('Delete failed', { description: e.message })
   }
 }
 
@@ -127,7 +127,7 @@ watch(
     >
       <div class="stories-view__error">
         <p>{{ error }}</p>
-        <button @click="fetchStories" class="stories-view__retry-btn">Thử lại</button>
+        <button @click="fetchStories" class="stories-view__retry-btn">Retry</button>
       </div>
     </div>
 
@@ -140,8 +140,8 @@ watch(
           <path d="M4 19.5A2.5 2.5 0 016.5 17H20" stroke="currentColor" stroke-width="1.5"/>
           <path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z" stroke="currentColor" stroke-width="1.5"/>
         </svg>
-        <p>Chưa có truyện nào</p>
-        <p style="font-size: 12px; color: var(--text-subtle);">Hãy dùng AI để crawl truyện từ web.</p>
+        <p>No stories yet</p>
+        <p style="font-size: 12px; color: var(--text-subtle);">Use the AI to crawl stories from the web.</p>
       </div>
     </div>
 
@@ -182,7 +182,7 @@ watch(
         <svg viewBox="0 0 24 24" fill="none" width="40" height="40" style="margin-bottom: 8px;">
           <path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
-        <p>Chọn truyện để xem danh sách chương</p>
+        <p>Select a story to view its chapter list</p>
       </div>
     </div>
   </div>

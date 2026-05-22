@@ -1,13 +1,13 @@
 <script setup>
 /**
- * StoryCard — Card hiển thị truyện trong library grid.
+ * StoryCard — Card displaying a story in the library grid.
  *
  * Props:
  *  - story: { id, title, chapters, last_chapter_file, last_chapter_num, last_played_at }
  *
  * Emits:
- *  - select: khi click chọn truyện
- *  - delete: khi xác nhận xóa
+ *  - select: when the story is clicked
+ *  - delete: when deletion is confirmed
  */
 import { ref, computed } from 'vue'
 import ConfirmModal from '../ConfirmModal.vue'
@@ -34,10 +34,10 @@ const progressPercent = computed(() => {
 const lastPlayedLabel = computed(() => {
   if (!props.story.last_played_at) return null
   const diff = Date.now() / 1000 - props.story.last_played_at
-  if (diff < 60) return 'Vừa xong'
-  if (diff < 3600) return `${Math.floor(diff / 60)} phút trước`
-  if (diff < 86400) return `${Math.floor(diff / 3600)} giờ trước`
-  return `${Math.floor(diff / 86400)} ngày trước`
+  if (diff < 60) return 'Just now'
+  if (diff < 3600) return `${Math.floor(diff / 60)} min ago`
+  if (diff < 86400) return `${Math.floor(diff / 3600)} h ago`
+  return `${Math.floor(diff / 86400)} d ago`
 })
 
 function handleDelete(e) {
@@ -63,7 +63,7 @@ function confirmDelete() {
         <path d="M4 19.5A2.5 2.5 0 016.5 17H20" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
         <path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
-      <span class="story-card__chapter-count">{{ story.chapters }} chương</span>
+      <span class="story-card__chapter-count">{{ story.chapters }} ch.</span>
     </div>
 
     <!-- Info -->
@@ -81,12 +81,12 @@ function confirmDelete() {
       <!-- Continue badge -->
       <div v-if="hasProgress" class="story-card__continue">
         <span class="story-card__continue-dot"></span>
-        <span>Tiếp tục · {{ lastPlayedLabel }}</span>
+        <span>Continue · {{ lastPlayedLabel }}</span>
       </div>
     </div>
 
     <!-- Delete button -->
-    <button class="story-card__delete" @click="handleDelete" title="Xóa truyện">
+    <button class="story-card__delete" @click="handleDelete" title="Delete story">
       <svg viewBox="0 0 24 24" fill="none" width="14" height="14">
         <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z"
           stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -96,10 +96,10 @@ function confirmDelete() {
     <!-- Delete Confirmation -->
     <ConfirmModal
       :visible="showDeleteConfirm"
-      title="Xóa truyện"
-      :message="`Bạn có chắc muốn xóa truyện &quot;${story.title}&quot;?\nAudio cache cũng sẽ bị xóa.`"
-      confirm-text="Xóa"
-      cancel-text="Hủy"
+      title="Delete story"
+      :message="`Are you sure you want to delete the story &quot;${story.title}&quot;?\nThe audio cache will also be removed.`"
+      confirm-text="Delete"
+      cancel-text="Cancel"
       variant="danger"
       @confirm="confirmDelete"
       @cancel="showDeleteConfirm = false"

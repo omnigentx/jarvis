@@ -51,9 +51,9 @@ def test_delete_team_cleans_notifications_for_that_team_name(tmp_path, monkeypat
     try:
         stale = db_mod.NotificationModel(
             type="agent_result",
-            title="✅ Team toolset-self-audit hoàn thành",
+            title="Team toolset-self-audit completed",
             preview="...",
-            content="Không có kết quả chi tiết từ orchestrator.",
+            content="No detailed result from orchestrator.",
             content_type="markdown",
             is_read=0,
             created_at=time.time(),
@@ -66,7 +66,7 @@ def test_delete_team_cleans_notifications_for_that_team_name(tmp_path, monkeypat
         )
         keep = db_mod.NotificationModel(
             type="agent_result",
-            title="✅ Team unrelated-team hoàn thành",
+            title="Team unrelated-team completed",
             preview="...",
             content="ok",
             content_type="markdown",

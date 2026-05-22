@@ -1,8 +1,8 @@
 <script setup>
 /**
- * MiniAudioPlayer — Player bar cố định dưới cùng, persist khi chuyển trang.
+ * MiniAudioPlayer — Fixed bottom player bar, persists across route changes.
  *
- * Mounted trong AppLayout.vue, hiển thị khi audioPlayerStore.isMiniPlayerVisible = true.
+ * Mounted in AppLayout.vue, shown when audioPlayerStore.isMiniPlayerVisible = true.
  * Features: play/pause, next/prev, progress bar, speed, chapter label, expand to full.
  */
 import { useAudioPlayerStore } from '../../stores/audioPlayer'
@@ -46,7 +46,7 @@ function handleSeek(seconds) {
           class="mini-player__btn"
           :disabled="!store.canPlayPrev"
           @click="store.prevChapter()"
-          title="Chương trước"
+          title="Previous chapter"
         >
           <svg viewBox="0 0 24 24" fill="none" width="18" height="18">
             <polygon points="19,20 9,12 19,4" fill="currentColor"/>
@@ -88,7 +88,7 @@ function handleSeek(seconds) {
           class="mini-player__btn"
           :disabled="!store.canPlayNext"
           @click="store.nextChapter()"
-          title="Chương sau"
+          title="Next chapter"
         >
           <svg viewBox="0 0 24 24" fill="none" width="18" height="18">
             <polygon points="5,4 15,12 5,20" fill="currentColor"/>
@@ -97,12 +97,12 @@ function handleSeek(seconds) {
         </button>
 
         <!-- Speed -->
-        <button class="mini-player__btn mini-player__btn--speed" @click="store.cycleSpeed()" title="Tốc độ phát">
+        <button class="mini-player__btn mini-player__btn--speed" @click="store.cycleSpeed()" title="Playback speed">
           {{ store.playbackSpeed }}x
         </button>
 
         <!-- Close -->
-        <button class="mini-player__btn mini-player__btn--close" @click="store.stopAndReset()" title="Đóng">
+        <button class="mini-player__btn mini-player__btn--close" @click="store.stopAndReset()" title="Close">
           <svg viewBox="0 0 24 24" fill="none" width="16" height="16">
             <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
           </svg>

@@ -341,8 +341,8 @@ async def reload_team(
 def _principal(request: Request) -> str:
     """Best-effort actor attribution for audit rows.
 
-    The product is single-user today (per user decision: "không multi
-    tenant, default là system đi"); reserve the column for the future. If
+    The product is single-user today (per user decision: no multi-tenant,
+    default principal is "system"); reserve the column for the future. If
     a request principal becomes available we can read it from request.state
     or from a JWT claim here without touching call sites.
     """

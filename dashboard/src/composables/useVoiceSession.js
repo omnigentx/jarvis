@@ -82,7 +82,7 @@ function _createVoiceSession() {
   // this, chunks that were already ``src.start()``-ed would keep playing
   // after the server cancelled TTS, and the user would hear several
   // more seconds of bot voice after they tried to talk over it (the
-  // "TTS không dừng khi user nói chen" bug).
+  // "TTS doesn't stop when user barges in" bug).
   const playbackSources = new Set()
 
   function _ensureActiveConversation() {
@@ -329,7 +329,7 @@ function _createVoiceSession() {
     // Backend always emits int16 mono PCM at PCM_PLAYBACK_RATE on /ws/voice
     // — RealtimeTTS engines via stream_pcm() and EdgeTTSProvider via the
     // server-side ffmpeg MP3→PCM pipe. Per-chunk decodeAudioData on partial
-    // MP3 frames was the source of the previous "vỡ tiếng / giật lag"
+    // MP3 frames was the source of the previous "broken audio / stutter"
     // glitches, so we removed the format sniff and treat all binary
     // frames as raw PCM. AudioBuffers are scheduled back-to-back via a
     // running playbackTime cursor so chunks play seamlessly.
@@ -420,7 +420,7 @@ function _createVoiceSession() {
       // echoCancellation MUST be on — without it, the bot's TTS playback
       // leaks back into the mic and STT transcribes its own voice as a new
       // user turn (we observed Whisper hallucinating Chinese characters
-      // from "Xin chào" being echoed back). noiseSuppression stays off
+      // from a VN "Xin chào" greeting being echoed back). noiseSuppression stays off
       // because aggressive WebRTC NS strips actual speech as "background"
       // and tanks RMS to the 20–100 range. autoGainControl stays off to
       // let the user's hardware level pass through unscaled.

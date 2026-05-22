@@ -92,6 +92,6 @@ async def test_list_then_read_chains_two_real_tools(seeded_library):
     read_payload = json.loads(first_tool_result_text(tool_result_msgs[1]))
     assert read_payload["source"] == "local"
     assert "Thần Đạo Đan Tôn" in read_payload["response"]
-    assert "chương 1" in read_payload["response"]
+    assert "chapter 1" in read_payload["response"]
 
     assert "Thần Đạo Đan Tôn" in final.last_text()

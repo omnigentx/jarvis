@@ -136,6 +136,7 @@ async function preview(scope) {
   previewError.value = ''
   previewing.value = scope
   try {
+    // TODO(i18n): VN+EN preview string intentionally kept — exercises multilingual TTS output
     const body = { text: 'Xin chào, đây là bản xem trước. Hello, this is a preview.' }
     if (scope === 'chat') {
       body.engine = active.value.tts_chat?.engine

@@ -1,15 +1,15 @@
 /**
  * useAudioPlayer — Composable wrap HTML5 Audio API
  *
- * Chịu trách nhiệm:
- * - Tạo và quản lý HTML5 Audio element
+ * Responsibilities:
+ * - Create and manage HTML5 Audio element
  * - Sync events (timeupdate, ended, error, etc.) → Pinia store
- * - Watch store.seekTarget → apply seek lên audio
+ * - Watch store.seekTarget → apply seek on audio
  * - Watch store.playbackSpeed → apply playbackRate
  * - BroadcastChannel multi-tab sync
  * - MediaSession API (lock screen controls)
- * - Interval lưu progress vào localStorage
- * - Beforeunload lưu progress + sendBeacon API
+ * - Interval to save progress to localStorage
+ * - Beforeunload to save progress + sendBeacon API
  *
  * Usage:
  *   const { play, pause, resume, destroy } = useAudioPlayer()
@@ -18,7 +18,7 @@ import { watch, onUnmounted, nextTick } from 'vue'
 import { useAudioPlayerStore } from '../stores/audioPlayer'
 import { getApiKey } from '../api'
 
-// Singleton audio element — chỉ có 1 lần phát audio
+// Singleton audio element — only one audio playback at a time
 let _audio = null
 let _progressInterval = null
 let _broadcastChannel = null
@@ -36,7 +36,7 @@ export function useAudioPlayer() {
     console.info('[AudioPlayer] Restored progress:', savedProgress.chapterFile, '@', Math.floor(savedProgress.position), 's')
   }
 
-  // ─── Watch: khi store có audioUrl mới → play ───
+  // ─── Watch: when store has a new audioUrl → play ───
   const stopWatchUrl = watch(
     () => store.currentAudioUrl,
     (url) => {
@@ -63,7 +63,7 @@ export function useAudioPlayer() {
     },
   )
 
-  // ─── Watch: toggle play/pause từ store ───
+  // ─── Watch: toggle play/pause from store ───
   const stopWatchPlaying = watch(
     () => store.isPlaying,
     (playing) => {
@@ -258,7 +258,7 @@ export function useAudioPlayer() {
       _broadcastChannel.onmessage = (event) => {
         const { type } = event.data
         if (type === 'play' && _audio && !_audio.paused) {
-          // Một tab khác bắt đầu phát → pause tab này
+          // Another tab started playing → pause this tab
           _audio.pause()
           store.isPlaying = false
           store.isPaused = true
@@ -345,7 +345,7 @@ export function useAudioPlayer() {
     })
   }
 
-  // ─── Progress saving interval (localStorage mỗi 10s) ───
+  // ─── Progress saving interval (localStorage every 10s) ───
   function _startProgressSaver() {
     _stopProgressSaver()
     _progressInterval = setInterval(() => {
@@ -362,10 +362,10 @@ export function useAudioPlayer() {
     }
   }
 
-  // ─── Beforeunload: lưu progress trước khi đóng tab ───
+  // ─── Beforeunload: save progress before tab close ───
   function _onBeforeUnload() {
     store.saveProgress()
-    // sendBeacon cho API progress
+    // sendBeacon for progress API
     if (store.currentRequestId) {
       try {
         const apiKey = getApiKey()

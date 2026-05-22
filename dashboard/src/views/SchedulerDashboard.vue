@@ -82,11 +82,11 @@ function handleSSEEvent(event) {
     if (event.type === 'reminder') {
       toast.success(`🔔 ${name}: ${event.message || ''}`)
     } else if (event.type === 'job_completed') {
-      toast.success(`✅ ${name} hoàn thành (${event.duration_ms || 0}ms)`)
+      toast.success(`✅ ${name} completed (${event.duration_ms || 0}ms)`)
     } else if (event.type === 'job_failed') {
-      toast.error(`❌ ${name} thất bại: ${(event.error || '').slice(0, 80)}`)
+      toast.error(`❌ ${name} failed: ${(event.error || '').slice(0, 80)}`)
     } else if (event.type === 'job_started') {
-      toast.info(`⏳ Đang chạy: ${name}`)
+      toast.info(`⏳ Running: ${name}`)
       // Optimistic local update — mark job as running instantly
       const j = jobs.value.find(j => j.id === event.job_id)
       if (j) j.status = 'running'
@@ -130,7 +130,7 @@ async function doDeleteJob() {
     await apiFetch(`/api/scheduler/jobs/${deleteTargetId.value}`, { method: 'DELETE' })
     showDeleteConfirm.value = false
     deleteTargetId.value = null
-    toast.success(`Đã xóa job '${name}'`)
+    toast.success(`Deleted job '${name}'`)
     await fetchAll()
   } finally {
     isDeleting.value = false
@@ -202,7 +202,7 @@ async function createJob() {
     toast.success('Job created successfully')
     await fetchAll()
   } catch (e) {
-    toast.error('Lỗi tạo job: ' + e.message)
+    toast.error('Failed to create job: ' + e.message)
   }
 }
 
@@ -218,7 +218,7 @@ async function updateJob() {
     toast.success('Job updated successfully')
     await fetchAll()
   } catch (e) {
-    toast.error('Lỗi cập nhật job: ' + e.message)
+    toast.error('Failed to update job: ' + e.message)
   }
 }
 
@@ -511,21 +511,21 @@ onMounted(() => {
 
           <div class="form-group">
             <label>Name</label>
-            <input v-model="newJob.name" placeholder="e.g. Nhắc uống thuốc" class="form-input" />
+            <input v-model="newJob.name" placeholder="e.g. Take medicine reminder" class="form-input" />
           </div>
 
           <div class="form-group">
             <label>Cron Expression</label>
-            <input v-model="newJob.cron_expr" placeholder="0 8 * * *  (8h mỗi ngày)" class="form-input" />
-            <div class="form-hint">minute hour day month weekday — ví dụ: "0 9 * * 1-5" = 9h thứ 2-6</div>
+            <input v-model="newJob.cron_expr" placeholder="0 8 * * *  (8am daily)" class="form-input" />
+            <div class="form-hint">minute hour day month weekday — example: "0 9 * * 1-5" = 9am Mon-Fri</div>
           </div>
 
           <div class="form-row">
             <div class="form-group">
               <label>Calendar Type</label>
               <select v-model="newJob.calendar_type" class="form-input">
-                <option value="solar">☀️ Dương lịch</option>
-                <option value="lunar">🌙 Âm lịch</option>
+                <option value="solar">☀️ Solar calendar</option>
+                <option value="lunar">🌙 Lunar calendar</option>
               </select>
             </div>
             <div class="form-group">
@@ -544,13 +544,13 @@ onMounted(() => {
 
           <div class="form-group">
             <label>{{ newJob.exec_mode === 'reminder' ? 'Reminder Message' : 'Agent Command' }}</label>
-            <textarea v-model="newJob.exec_payload" rows="3" :placeholder="newJob.exec_mode === 'reminder' ? 'Nhớ uống thuốc!' : 'Tổng hợp tin tức hôm nay'" class="form-input form-textarea"></textarea>
+            <textarea v-model="newJob.exec_payload" rows="3" :placeholder="newJob.exec_mode === 'reminder' ? 'Take your medicine!' : 'Summarize today\'s news'" class="form-input form-textarea"></textarea>
           </div>
 
           <div class="form-group">
             <label class="checkbox-label">
               <input type="checkbox" v-model="newJob.one_shot" />
-              Chỉ chạy 1 lần (one-shot)
+              Run only once (one-shot)
             </label>
           </div>
 
@@ -565,9 +565,9 @@ onMounted(() => {
     <!-- Delete Confirm Modal -->
     <ConfirmModal
       :visible="showDeleteConfirm"
-      title="Xóa scheduled job"
-      :message="'Bạn có chắc muốn xóa job \'' + deleteTargetName + '\'? Hành động này không thể hoàn tác.'"
-      confirm-text="Xóa"
+      title="Delete scheduled job"
+      :message="'Are you sure you want to delete job \'' + deleteTargetName + '\'? This action cannot be undone.'"
+      confirm-text="Delete"
       variant="danger"
       :loading="isDeleting"
       @confirm="doDeleteJob"

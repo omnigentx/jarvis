@@ -388,7 +388,7 @@ unless explicitly asked.
 - **Member: Pasting the table into a meeting.** Use email; in the meeting,
   one sentence pointer.
 - **Member: Skipping a whole tool family because of a vague rule.**
-  "Không đọc file" does not mean skipping `list_directory` /
+  "Do not read files" does not mean skipping `list_directory` /
   `get_file_info` / `search_files`. Re-read Step 3.
 - **Member: Test-calling WRITE tools "just to check".** Do not.
   Describe them. The audit-delivery email is the only WRITE call you

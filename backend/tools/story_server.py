@@ -505,6 +505,7 @@ def _get_story_chapters_impl(story_url: str) -> list:
                         if not href or not text: continue
                         
                         # Heuristic: Link text must look like a chapter
+                        # TODO(i18n): VN literals — regex matches Vietnamese chapter link text/URLs
                         if re.search(r'(chương|chapter|hồi)\s+\d+', text, re.I) or re.search(r'chapter|chuong', href, re.I):
                              # [FIX] Filter out pagination links explicitly
                             if re.search(r'(trang-\d+|page/\d+|/page-\d+)', href, re.I):
@@ -528,6 +529,7 @@ def _get_story_chapters_impl(story_url: str) -> list:
                     
                     # Fallback for TruyenFull: check for specific symbols or text if selector fails
                     if not next_link:
+                        # TODO(i18n): VN literals — matches Vietnamese pagination link text
                         next_link = soup.find("a", string=re.compile(r"(Trang tiếp|Tiếp|Next|Sau|»|›)", re.I))
 
                     if next_link and next_link.get("href"):
@@ -651,6 +653,7 @@ def get_chapter_content(chapter_url: str) -> str:
         page_title = soup.title.get_text(strip=True) if soup.title else ""
         if page_title:
              page_title = re.sub(r"\s*\|\s*.*$", "", page_title)
+             # TODO(i18n): VN literal — strips trailing "- Truyện..." (Vietnamese "Story") suffix from page titles
              page_title = re.sub(r"\s*-\s*Truyện.*$", "", page_title, flags=re.I)
         
         final_content = ""
@@ -679,6 +682,7 @@ def get_chapter_content(chapter_url: str) -> str:
             
             # Check for TOC / Auto-Forward
             if len(content) < 300: 
+                # TODO(i18n): VN literals — matches Vietnamese "chapter 1" / "read from start" link text
                 first_chap_link = soup.find("a", string=re.compile(r"(chương 1(:|\s)|đọc từ đầu|bắt đầu đọc)", re.I))
                 
                 if not first_chap_link:
@@ -775,6 +779,7 @@ def _find_best_next_selector(soup: BeautifulSoup) -> list[dict]:
         if not href or len(text) > 50: continue
         
         score = 0
+        # TODO(i18n): VN literals — score Vietnamese "next chapter" link text
         if "tiếp" in text: score += 10
         if "next" in text: score += 10
         if "sau" in text: score += 5
@@ -1183,6 +1188,7 @@ def _crawl_worker(job_id: str, start_url: str, content_selector: str, title_sele
                  
                  if chapters and len(chapters) > 0:
                      # Filter for "Chapter 1"
+                     # TODO(i18n): VN literals — regex matches Vietnamese chapter-1/prologue titles
                      c1 = next((c for c in chapters if re.search(r'(chương|chapter)\s+0*1(\s+:|$|\D)', c['title'], re.I) or re.search(r'(mở đầu|văn án)', c['title'], re.I)), None)
                      
                      if c1:
@@ -1217,6 +1223,7 @@ def _crawl_worker(job_id: str, start_url: str, content_selector: str, title_sele
         
         story_name = full_title.split("-")[0].strip()
         # Cleanup if title captured chapter info
+        # TODO(i18n): VN literal — strips Vietnamese chapter suffix from scraped page titles
         story_name = re.sub(r'\s*(Chương|Chapter)\s+\d+.*$', '', story_name, flags=re.I).strip()
         
         if not story_name: story_name = f"Story_{int(time.time())}"
@@ -1377,6 +1384,7 @@ def _crawl_worker(job_id: str, start_url: str, content_selector: str, title_sele
                         # 2. Look for keywords in text
                         for a in soup.find_all("a"):
                             t = a.get_text(strip=True).lower()
+                            # TODO(i18n): VN literals — matches Vietnamese "next chapter" link text
                             if "chương sau" in t or "tiếp" in t or "next" in t or "chap sau" in t:
                                 next_url = a.get("href")
                                 logger.info(f"[{job_id}] Auto-detected next link: {t} -> {next_url}")
@@ -1585,6 +1593,7 @@ def _find_chapter_in_list(chapters: list, chapter_number: int) -> Optional[str]:
         url = ch.get("url", "")
 
         # Match "Chương 10" or "Chapter 10" in title
+        # TODO(i18n): VN literals — regex matches Vietnamese chapter titles
         if re.search(rf'(chương|chapter|hồi)\s+0*{chapter_number}(\s|$|:|\.|\,)', title, re.I):
             return url
 
@@ -1654,7 +1663,7 @@ def find_story_chapter(story_name: str, chapter_number: int) -> str:
                         safe_fname = re.sub(r'[^\w\-\.]', '_', filename)
                         book_id = f"story_{dir_name}_{safe_fname}"
                         audio_url = _build_audio_url(book_id)
-                        response_text = f"Đang phát {dir_name} chương {chapter_number}."
+                        response_text = f"Now playing {dir_name} chapter {chapter_number}."
                         if audio_url:
                             response_text += f" [[[AUDIO_URL: {audio_url}]]]"
                         return json.dumps({
@@ -1688,7 +1697,7 @@ def find_story_chapter(story_name: str, chapter_number: int) -> str:
                 logger.info(f"find_story_chapter: Found in known stories: {chapter_url}")
                 _save_pending_read({"type": "READ_STORY", "url": chapter_url})
                 return json.dumps({
-                    "response": f"Đang phát {story_name} chương {chapter_number}.",
+                    "response": f"Now playing {story_name} chapter {chapter_number}.",
                     "source": "known_stories"
                 }, ensure_ascii=False)
     except Exception as e:
@@ -1711,7 +1720,7 @@ def find_story_chapter(story_name: str, chapter_number: int) -> str:
                 logger.info(f"find_story_chapter: Found via web search: {chapter_url}")
                 _save_pending_read({"type": "READ_STORY", "url": chapter_url})
                 return json.dumps({
-                    "response": f"Đang phát {found_title} chương {chapter_number}.",
+                    "response": f"Now playing {found_title} chapter {chapter_number}.",
                     "source": "web_search"
                 }, ensure_ascii=False)
     except Exception as e:
@@ -1720,7 +1729,7 @@ def find_story_chapter(story_name: str, chapter_number: int) -> str:
     # --- Not Found ---
     logger.warning(f"find_story_chapter: Not found: '{story_name}' chapter {chapter_number}. Searched: {searched}")
     return json.dumps({
-        "response": f"Không tìm thấy '{story_name}' chương {chapter_number}.",
+        "response": f"Could not find '{story_name}' chapter {chapter_number}.",
         "error": True,
         "searched": searched
     }, ensure_ascii=False)

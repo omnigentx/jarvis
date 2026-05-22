@@ -10,6 +10,7 @@ test('no tag → text unchanged, videoIds empty', () => {
 })
 
 test('single tag at end → tag stripped, id extracted', () => {
+  // TODO(i18n): VN literal intentionally kept — exercises Unicode/diacritic handling in parser
   const out = parseYoutubeTags('Đang phát Bài Ca. [[[PLAY: dQw4w9WgXcQ]]]')
   assert.equal(out.text, 'Đang phát Bài Ca.')
   assert.deepEqual(out.videoIds, ['dQw4w9WgXcQ'])

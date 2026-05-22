@@ -224,6 +224,7 @@ class CrawlPoller:
                 
                 if chapters:
                     # Find Chapter 1
+                    # TODO(i18n): VN literals — regex patterns match Vietnamese chapter titles in scraped HTML
                     c1 = next((c for c in chapters if re.search(
                         r'(chương|chapter)\s+0*1(\s+:|$|\D)', c['title'], re.I
                     ) or re.search(r'(mở đầu|văn án)', c['title'], re.I)), None)
@@ -251,6 +252,7 @@ class CrawlPoller:
             full_title = title_tag.get_text(strip=True) if title_tag else "Unknown Story"
             
             story_name = full_title.split("-")[0].strip()
+            # TODO(i18n): VN literal — strips Vietnamese chapter suffix from scraped page titles
             story_name = re.sub(r'\s*(Chương|Chapter)\s+\d+.*$', '', story_name, flags=re.I).strip()
             if not story_name:
                 story_name = f"Story_{int(time.time())}"
@@ -404,6 +406,7 @@ class CrawlPoller:
                         else:
                             for a in soup.find_all("a"):
                                 t = a.get_text(strip=True).lower()
+                                # TODO(i18n): VN literal — matches Vietnamese "next chapter" link text on scraped pages
                                 if any(kw in t for kw in ["chương sau", "tiếp", "next", "chap sau"]):
                                     next_url = a.get("href")
                                     break

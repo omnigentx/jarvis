@@ -124,7 +124,7 @@ def _process_response_tags(response_text, tts_text, book_id):
             logger.debug(f"Detected Story URL: {story_url}")
             try:
                 story_content = get_chapter_content(story_url)
-                if story_content and not story_content.startswith("Lỗi") and not story_content.startswith("Không tìm thấy"):
+                if story_content and not story_content.startswith("Failed") and not story_content.startswith("Error") and not story_content.startswith("No results"):
                     tts_text = story_content
                     response_text = response_text.replace(match.group(0), "").strip()
                     
@@ -142,7 +142,7 @@ def _process_response_tags(response_text, tts_text, book_id):
                             chapter = parts[1].strip()
                         else:
                             chapter = full_title
-                            title = "Truyện"
+                            title = "Story"
                     else:
                         parts = story_url.strip("/").split("/")
                         title = parts[-2].replace("-", " ").title() if len(parts) >= 2 else "Unknown Story"
@@ -155,8 +155,8 @@ def _process_response_tags(response_text, tts_text, book_id):
                     tts_text = story_content
             except Exception as e:
                 logger.error(f"Failed to fetch story content: {e}")
-                response_text += f"\n(Lỗi hệ thống: {e})"
-                tts_text = f"Gặp lỗi khi tải truyện: {str(e)}"
+                response_text += f"\n(System error: {e})"
+                tts_text = f"Failed to load story: {str(e)}"
 
     # Check READ_LIBRARY tag
     match_lib = re.search(r"\[\[\[READ_LIBRARY: (.*?)\]\]\]", response_text)
@@ -169,7 +169,7 @@ def _process_response_tags(response_text, tts_text, book_id):
             response_text = response_text.replace(match_lib.group(0), "").strip()
         else:
             logger.warning(f"Library tag found but ID not in library: {lib_id}")
-            response_text += "\n(Không tìm thấy ID trong thư viện)"
+            response_text += "\n(ID not found in library)"
 
     # Check READ_LOCAL tag
     match_local = re.search(r"\[\[\[READ_LOCAL:\s*(.*?)\|(.*?)\]\]\]", response_text)
@@ -183,7 +183,7 @@ def _process_response_tags(response_text, tts_text, book_id):
             response_text = response_text.replace(match_local.group(0), "").strip()
         else:
             logger.warning(f"READ_LOCAL failed: {result['error']}")
-            response_text += f"\n(Lỗi đọc local: {result['error']})"
+            response_text += f"\n(Local read error: {result['error']})"
 
     return response_text, tts_text, book_id
 

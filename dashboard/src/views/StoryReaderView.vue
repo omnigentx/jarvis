@@ -1,11 +1,11 @@
 <script setup>
 /**
- * StoryReaderView — Trang đọc text chương + audio sync.
+ * StoryReaderView — Chapter text reader + audio sync page.
  *
  * Features:
- *  - Fetch nội dung text chương
- *  - Font size controls (tăng/giảm/reset)
- *  - Audio play/pause inline
+ *  - Fetch chapter text content
+ *  - Font size controls (increase/decrease/reset)
+ *  - Inline audio play/pause
  *  - Chapter navigation (prev/next)
  */
 import { ref, computed, onMounted, watch } from 'vue'
@@ -76,7 +76,7 @@ async function fetchContent() {
     content.value = data.content || data.error || ''
   } catch (e) {
     content.value = ''
-    toast.error('Không thể tải nội dung', { description: e.message })
+    toast.error('Unable to load content', { description: e.message })
   } finally {
     isLoading.value = false
   }
@@ -104,7 +104,7 @@ async function handlePlayToggle() {
       chapterFiles,
     )
   } catch (e) {
-    toast.error('Không thể phát audio', { description: e.message })
+    toast.error('Unable to play audio', { description: e.message })
   }
 }
 
@@ -151,7 +151,7 @@ onMounted(() => {
   <div class="reader-view">
     <!-- Toolbar -->
     <div class="reader-view__toolbar">
-      <button class="reader-view__btn" @click="handleBack" title="Quay lại">
+      <button class="reader-view__btn" @click="handleBack" title="Back">
         <svg viewBox="0 0 24 24" fill="none" width="18" height="18">
           <path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
@@ -164,11 +164,11 @@ onMounted(() => {
 
       <div class="reader-view__toolbar-actions">
         <!-- Font size controls -->
-        <button class="reader-view__btn" @click="changeFontSize(-1)" title="Giảm cỡ chữ">
+        <button class="reader-view__btn" @click="changeFontSize(-1)" title="Decrease font size">
           <span style="font-size: 12px; font-weight: 700;">A-</span>
         </button>
         <span class="reader-view__font-label">{{ fontSize }}px</span>
-        <button class="reader-view__btn" @click="changeFontSize(1)" title="Tăng cỡ chữ">
+        <button class="reader-view__btn" @click="changeFontSize(1)" title="Increase font size">
           <span style="font-size: 16px; font-weight: 700;">A+</span>
         </button>
 
@@ -176,7 +176,7 @@ onMounted(() => {
         <button
           class="reader-view__btn reader-view__btn--audio"
           @click="handlePlayToggle"
-          :title="isThisChapterPlaying ? 'Tạm dừng' : 'Phát audio'"
+          :title="isThisChapterPlaying ? 'Pause' : 'Play audio'"
         >
           <svg v-if="!isThisChapterPlaying" viewBox="0 0 24 24" fill="none" width="18" height="18">
             <polygon points="6,3 20,12 6,21" fill="currentColor"/>
@@ -192,7 +192,7 @@ onMounted(() => {
     <!-- Loading -->
     <div v-if="isLoading" class="reader-view__loading">
       <div class="reader-view__loading-spinner"></div>
-      <p>Đang tải nội dung...</p>
+      <p>Loading content...</p>
     </div>
 
     <!-- Content -->
@@ -213,7 +213,7 @@ onMounted(() => {
         :disabled="!canPrev"
         @click="goChapter(-1)"
       >
-        ← Chương trước
+        ← Previous chapter
       </button>
       <span class="reader-view__nav-progress">
         {{ currentIndex + 1 }} / {{ chapters.length }}
@@ -223,7 +223,7 @@ onMounted(() => {
         :disabled="!canNext"
         @click="goChapter(1)"
       >
-        Chương sau →
+        Next chapter →
       </button>
     </div>
   </div>

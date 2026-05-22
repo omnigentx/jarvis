@@ -89,11 +89,11 @@ function toggleUnreadOnly() { unreadOnly.value = !unreadOnly.value; fetchNotific
 function relativeTime(ts) {
   if (!ts) return ''
   const seconds = Math.floor(Date.now() / 1000 - ts)
-  if (seconds < 60) return 'vừa xong'
-  if (seconds < 3600) return `${Math.floor(seconds / 60)} phút trước`
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)} giờ trước`
+  if (seconds < 60) return 'just now'
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)} h ago`
   const d = new Date(ts * 1000)
-  return d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })
+  return d.toLocaleDateString('en-US', { day: '2-digit', month: '2-digit' })
 }
 
 function typeIcon(type) {
@@ -177,7 +177,7 @@ onMounted(() => { fetchNotifications(true) })
           <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
           <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
         </svg>
-        <span class="notif-mobile__state-text" style="margin-top: 8px;">Không có thông báo</span>
+        <span class="notif-mobile__state-text" style="margin-top: 8px;">No notifications</span>
       </div>
 
       <!-- Rows -->

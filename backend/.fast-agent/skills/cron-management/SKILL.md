@@ -33,7 +33,7 @@ A cron expression has 5 fields: `minute hour day_of_month month day_of_week`.
 ## Calendar type (REQUIRED)
 
 - **Solar (Gregorian)** — DEFAULT for normal date/month references.
-- **Lunar** — use ONLY when the user explicitly references lunar concepts (1st-of-month, full-moon, Tết, lunar death anniversary, etc.).
+- **Lunar** — use ONLY when the user explicitly references lunar concepts (1st-of-month, full-moon, Lunar New Year, lunar death anniversary, etc.).
   - `0 7 15 * *` + calendar_type="lunar" → 15th of every lunar month
   - `0 6 1 * *` + calendar_type="lunar" → 1st of every lunar month
   - `0 7 10 3 *` + calendar_type="lunar" → 10/3 lunar

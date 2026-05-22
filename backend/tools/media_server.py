@@ -30,14 +30,14 @@ def search_youtube(query: str) -> str:
                 title = video['title']
 
                 return json.dumps({
-                    "response": f"Đang phát {title}. [[[PLAY: {video_id}]]]",
+                    "response": f"Now playing {title}. [[[PLAY: {video_id}]]]",
                     "title": title,
                     "video_id": video_id
                 }, ensure_ascii=False)
 
-            return json.dumps({"response": f"Không tìm thấy kết quả cho '{query}'.", "error": True}, ensure_ascii=False)
+            return json.dumps({"response": f"No results found for '{query}'.", "error": True}, ensure_ascii=False)
     except Exception as e:
-        return json.dumps({"response": f"Lỗi tìm kiếm: {str(e)}", "error": True}, ensure_ascii=False)
+        return json.dumps({"response": f"Search error: {str(e)}", "error": True}, ensure_ascii=False)
 
 if __name__ == "__main__":
     mcp.run()

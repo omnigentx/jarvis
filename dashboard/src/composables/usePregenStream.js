@@ -1,14 +1,14 @@
 /**
- * usePregenStream — SSE composable cho TTS pre-generation status.
+ * usePregenStream — SSE composable for TTS pre-generation status.
  *
- * Connect tới /api/stories/pregen-stream, nhận events:
- *   - queue_update: danh sách chapters trong queue
- *   - chapter_generating: chapter đang generate
- *   - chapter_ready: chapter generate xong
- *   - chapter_error: generate thất bại
+ * Connects to /api/stories/pregen-stream, receives events:
+ *   - queue_update: list of chapters in queue
+ *   - chapter_generating: chapter currently generating
+ *   - chapter_ready: chapter finished generating
+ *   - chapter_error: generation failed
  *
  * Auto-reconnect with exponential backoff.
- * Tự cleanup khi component unmount.
+ * Auto-cleanup on component unmount.
  */
 import { ref, watch, onUnmounted } from 'vue'
 import { buildSSEUrl } from '../api'
@@ -143,20 +143,20 @@ export function usePregenStream(storyIdRef) {
   }
 
   /**
-   * Lấy vị trí queue cho 1 chapter file.
-   * @returns {number} 0-based index, hoặc -1 nếu không có trong queue
+   * Get queue position for a chapter file.
+   * @returns {number} 0-based index, or -1 if not in queue
    */
   function getQueuePosition(chapterFile) {
     return queue.value.findIndex(q => q.chapter_file === chapterFile)
   }
 
   /**
-   * Lấy effective status cho 1 chapter (kết hợp API preload + SSE updates).
-   * 
-   * Khi SSE connected, SSE là source of truth cho "generating":
-   *  - Chỉ 1 chapter có thể generating tại 1 thời điểm
-   *  - API có thể trả "generating" từ stale lock files → SSE override
-   * 
+   * Get effective status for a chapter (combines API preload + SSE updates).
+   *
+   * When SSE is connected, SSE is the source of truth for "generating":
+   *  - Only 1 chapter can be generating at a time
+   *  - API may return "generating" from stale lock files → SSE override
+   *
    * @param {string} chapterFile
    * @param {string} apiPreload - 'ready' | 'generating' | 'none' from API
    * @returns {'ready' | 'generating' | 'queued' | 'none'}

@@ -1,10 +1,10 @@
 <script setup>
 /**
- * ChapterRow — Một hàng chương trong danh sách.
+ * ChapterRow — A single chapter row in the list.
  *
  * Props:
  *  - chapter: { file, preload } (preload: 'ready' | 'generating' | 'none')
- *  - isPlaying: boolean (chương này đang phát)
+ *  - isPlaying: boolean (this chapter is currently playing)
  *  - index: number (0-based)
  *  - effectivePreload: 'ready' | 'generating' | 'queued' | 'none' (from SSE overlay)
  *  - queuePosition: number (-1 = not queued, 1+ = position in queue)
@@ -75,13 +75,13 @@ const statusType = computed(() => {
 
     <!-- Actions -->
     <div class="chapter-row__actions">
-      <button class="chapter-row__btn" @click.stop="emit('read', chapter.file)" title="Đọc text">
+      <button class="chapter-row__btn" @click.stop="emit('read', chapter.file)" title="Read text">
         <svg viewBox="0 0 24 24" fill="none" width="16" height="16">
           <path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2zM22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"
             stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
       </button>
-      <button class="chapter-row__btn chapter-row__btn--play" @click.stop="emit('play', chapter.file)" title="Phát audio" aria-label="Play audio" data-testid="chapter-play">
+      <button class="chapter-row__btn chapter-row__btn--play" @click.stop="emit('play', chapter.file)" title="Play audio" aria-label="Play audio" data-testid="chapter-play">
         <svg v-if="!isPlaying" viewBox="0 0 24 24" fill="none" width="16" height="16">
           <polygon points="5,3 19,12 5,21" fill="currentColor"/>
         </svg>

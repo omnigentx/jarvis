@@ -376,8 +376,8 @@ class CronScheduler:
         try:
             # ``agent_name`` MUST flow through to resume_and_send. Without
             # it the call defaults to Jarvis and the configured target
-            # agent (e.g. ResearchAgent for "Tổng hợp tin tức AI hàng
-            # ngày") never runs — the notification UI still shows the
+            # agent (e.g. ResearchAgent for a "Daily AI news summary"
+            # job) never runs — the notification UI still shows the
             # configured ``exec_agent`` from job metadata, masking the
             # mismatch. This is why a 45-minute success-marked run came
             # back with an empty body: Jarvis was the one running the
