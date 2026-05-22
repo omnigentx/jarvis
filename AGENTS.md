@@ -1,6 +1,6 @@
 # Jarvis AI Assistant — Repository Guidelines
 
-- Repo: Private monorepo (`jarvis_v3`)
+- Repo: Open-source monorepo ([omnigentx/jarvis](https://github.com/omnigentx/jarvis))
 - Core runtime: [fast-agent](https://fast-agent.ai/) (Python, git submodule at `backend/fast-agent`)
 - Always reference files repo-root relative (e.g. `backend/routes/chat.py:187`); never absolute paths.
 
@@ -34,7 +34,7 @@
 ## Project Structure
 
 ```
-jarvis_v3/
+jarvis/
 ├── backend/                    # FastAPI + fast-agent runtime (Python)
 │   ├── server.py               # FastAPI application entry point
 │   ├── agent.py                # fast-agent agent definitions (@fast.agent decorators)

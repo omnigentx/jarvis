@@ -15,6 +15,8 @@ build/
 .idea/
 .vscode/
 .claude
+# Android SDK cache + debug keystore (dev-env artifacts, regenerated locally)
+.config/.android/
 
 # ─── Secrets & Credentials ───────────────────────
 *.env

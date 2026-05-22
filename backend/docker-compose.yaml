@@ -1,7 +1,7 @@
 services:
   jarvis-backend:
     build: .
-    image: felixnguyen95/jarvis-backend:latest
+    image: omnigentx/jarvis-backend:latest
     container_name: jarvis_backend
     ports:
       - "8000:8000"

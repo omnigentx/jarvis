@@ -2,17 +2,21 @@
 
 Thanks for your interest! This project is in active development and contributions are welcome.
 
+All contributors are expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+
 ## Before you start
 
-- Check existing issues and pull requests to avoid duplicate work.
+- Check [existing issues](https://github.com/omnigentx/jarvis/issues) and [pull requests](https://github.com/omnigentx/jarvis/pulls) to avoid duplicate work.
+- For usage questions, ideas, or open-ended discussion, prefer [GitHub Discussions](https://github.com/omnigentx/jarvis/discussions) over filing an issue.
 - For substantial changes (new agents, new MCP tools, architecture shifts), open a discussion or issue first so we can align on direction.
 - Read [`AGENTS.md`](AGENTS.md) and [`backend/ADDING_AGENT_GUIDE.md`](backend/ADDING_AGENT_GUIDE.md) — they explain how the spawn system, agent cards, and MCP tool servers fit together.
 
 ## Dev setup
 
 ```bash
-# Clone with submodules (fast-agent, figma-ui-mcp, mcp-atlassian, realtimestt_src, realtimetts_src)
-git clone --recurse-submodules https://github.com/<your-user-or-org>/jarvis.git
+# Clone with submodules (fast-agent, figma-ui-mcp, mcp-atlassian, realtimestt_src, realtimetts_src).
+# Use the upstream URL for read-only work; clone your own fork if you plan to push.
+git clone --recurse-submodules https://github.com/omnigentx/jarvis.git
 cd jarvis
 
 # Configure secrets (do not commit)
@@ -26,7 +30,7 @@ docker compose up -d --build
 # Run backend tests
 cd backend && uv run pytest
 
-# Run dashboard tests
+# Run dashboard tests (one-time: `npx playwright install chromium` for E2E)
 cd ../dashboard && npm run test:unit && npm run test:e2e
 ```
 

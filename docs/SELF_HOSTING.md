@@ -42,7 +42,7 @@ sudo apt install -y git
 
 ```bash
 cd ~
-git clone --recurse-submodules https://github.com/omnigentx/jarvis-v3.git jarvis
+git clone --recurse-submodules https://github.com/omnigentx/jarvis.git
 cd ~/jarvis
 ```
 
@@ -169,7 +169,7 @@ curl -o actions-runner-linux-x64.tar.gz -L \
 tar xzf actions-runner-linux-x64.tar.gz
 
 # Configure
-./config.sh --url https://github.com/omnigentx/jarvis-v3 --token YOUR_TOKEN_HERE
+./config.sh --url https://github.com/omnigentx/jarvis --token YOUR_TOKEN_HERE
 
 # Cài như system service (tự start khi reboot)
 sudo ./svc.sh install

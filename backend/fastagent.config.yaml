@@ -186,7 +186,7 @@ mcp:
       # Docker path (default). Local dev override in fastagent.secrets.yaml
       args: ["/app/figma-ui-mcp/dist/server.mjs"]
       env:
-        FIGMA_BRIDGE_HOST: "100.114.26.107"  # MacBook Tailscale IP
+        FIGMA_BRIDGE_HOST: "host.docker.internal"  # default: Figma desktop on same host as Jarvis Docker. Override in fastagent.secrets.yaml for split-machine setup (Tailscale/LAN IP)
     cron-server:
       command: "python"
       args: ["tools/cron_server.py"]

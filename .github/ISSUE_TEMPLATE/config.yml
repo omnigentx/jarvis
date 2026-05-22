@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question / how-to / general discussion
+    url: https://github.com/omnigentx/jarvis/discussions
+    about: Use Discussions for usage questions, ideas, show-and-tell. Issues are reserved for actionable bugs and feature requests.
+  - name: Security vulnerability (private report)
+    url: https://github.com/omnigentx/jarvis/security/advisories/new
+    about: Report security vulnerabilities privately via GitHub Security Advisories. Do NOT open a public issue for security issues.
+  - name: Code of Conduct violation
+    url: https://github.com/omnigentx/jarvis/security/advisories/new
+    about: Report conduct concerns privately through the same private advisory channel — prefix the title with "[CoC]". See CODE_OF_CONDUCT.md for details.

@@ -11,15 +11,15 @@ description: >
 
 | Repo | URL | Access |
 |------|-----|--------|
-| **Origin** (user-managed) | https://github.com/omnigentx/jarvis-v3 | User only |
-| **Agent** (agents use this) | https://github.com/phucnv31/jarvis-v3 | Full access — commit, push, create MR |
+| **Upstream** (source of truth) | https://github.com/omnigentx/jarvis | Public read-only |
+| **Your fork** (agents push here) | https://github.com/<your-username>/jarvis | Full access — commit, push, create PR |
 
-> Agents use the `phucnv31/jarvis-v3` repo for all Git operations.
+> 🧪 **Experimental**: Agents push to your personal fork for self-improvement, never to upstream.
 
 ## High-Level Architecture
 
 ```
-jarvis_v3/
+jarvis/
 ├── backend/              ← FastAPI + fast-agent (Python 3.11+)
 │   ├── server.py         ← Entry point
 │   ├── agent.py          ← Agent definitions

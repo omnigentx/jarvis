@@ -11,8 +11,8 @@ description: >
 
 | Repo | URL | Purpose |
 |------|-----|---------|
-| **Origin** | https://github.com/omnigentx/jarvis-v3 | User-managed source of truth |
-| **Agent** | https://github.com/phucnv31/jarvis-v3 | Agent-accessible — CI/CD deploys from here |
+| **Upstream** | https://github.com/omnigentx/jarvis | Public source of truth |
+| **Your fork** | https://github.com/<your-username>/jarvis | 🧪 Experimental: agents commit here for self-improvement; CI/CD deploys from here |
 
 
 ## Docker Architecture

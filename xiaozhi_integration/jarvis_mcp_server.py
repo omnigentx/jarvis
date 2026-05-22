@@ -105,7 +105,11 @@ def call_jarvis_api(message: str) -> tuple[bool, str, str | None]:
     except httpx.TimeoutException:
         return False, "Jarvis API timeout", None
     except Exception as e:
-        return False, f"Lỗi: {str(e)}", None
+        # Log the full exception locally, but return a generic message to the
+        # remote (Xiaozhi cloud → device → user). Raw exception strings can
+        # leak file paths, internal types, and library internals.
+        logger.exception("call_jarvis_api failed")
+        return False, "Jarvis backend error", None
 
 
 def process_task(task_id: str, message: str):
@@ -246,9 +250,10 @@ def ask_jarvis(message: str) -> dict:
                 "response": f"Jarvis đang xử lý yêu cầu của bạn. Vui lòng gọi check_task với task_id='{task_id}' để lấy kết quả."
             }
                 
-    except Exception as e:
-        logger.error(f"Chat error: {e}")
-        return {"success": False, "response": f"Lỗi: {str(e)}"}
+    except Exception:
+        # Generic response to the remote; full traceback stays in local logs.
+        logger.exception("ask_jarvis failed")
+        return {"success": False, "response": "Jarvis encountered an internal error."}
 
 
 @mcp.tool()
