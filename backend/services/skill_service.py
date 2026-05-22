@@ -29,9 +29,13 @@ logger = logging.getLogger("skill_service")
 
 _BACKEND_DIR = Path(__file__).resolve().parent.parent
 SKILLS_DIR = _BACKEND_DIR / ".fast-agent" / "skills"
-AGENT_CARDS_DIR = _BACKEND_DIR / ".fast-agent" / "agent_cards"
 AGENT_CODE_FILE = _BACKEND_DIR / "agent.py"
 BUILTIN_MANIFEST = SKILLS_DIR / "_builtin.yaml"
+
+# Dynamic agent definitions live in SQLite (services.agent_definitions),
+# not files. The helpers below that used to scan AGENT_CARDS_DIR / `.md`
+# files now query the DB. The function names keep the legacy "card"
+# wording so existing callers don't need updating in this phase.
 
 # ----- Limits / regex -----------------------------------------------------
 
@@ -210,27 +214,25 @@ def _validate_frontmatter_for_save(name: str, content: str) -> None:
 
 
 def _used_by_from_agent_cards(skill_name: str) -> list[str]:
-    """Return agent card names whose YAML frontmatter references this skill."""
-    if not AGENT_CARDS_DIR.exists():
-        return []
+    """Return DB-backed agent names whose `skills` array references this skill.
+
+    Historical name kept for caller compatibility — the implementation
+    no longer reads cards from disk; the source of truth is now the
+    SQLite `agent_definitions` table.
+    """
+    from services import agent_definitions as defs_svc
+
     out: list[str] = []
-    for card in sorted(AGENT_CARDS_DIR.glob("*.md")):
-        try:
-            text = card.read_text(encoding="utf-8")
-            fm, _ = parse_frontmatter(text)
-        except Exception:
-            continue
-        skills = fm.get("skills") or []
+    for row in defs_svc.list_definitions():
+        skills = row.get("skills") or []
         if not isinstance(skills, list):
             continue
         for entry in skills:
             if not isinstance(entry, str):
                 continue
-            # Entries look like ".fast-agent/skills/<name>"
             tail = entry.rstrip("/").split("/")[-1]
             if tail == skill_name:
-                agent_name = fm.get("name") or card.stem
-                out.append(str(agent_name))
+                out.append(row["name"])
                 break
     return out
 
@@ -754,14 +756,15 @@ async def delete_skill(name: str) -> dict:
             "You can edit its content but the skill itself is required by the app.",
         )
 
-    # Backup all affected agent cards first so we can roll back on failure.
-    affected_cards = _find_agent_cards_referencing(name)
-    card_backups: dict[Path, bytes] = {}
-    try:
-        for card_path in affected_cards:
-            card_backups[card_path] = card_path.read_bytes()
-    except OSError as exc:
-        raise SkillValidationError(500, f"Could not back up agent cards: {exc}") from exc
+    # Snapshot affected DB-backed agents so we can roll back on partial failure.
+    from services import agent_definitions as defs_svc
+
+    affected_agents = _find_agent_cards_referencing(name)
+    db_skills_backup: dict[str, list] = {}
+    for agent_name in affected_agents:
+        row = defs_svc.get_definition(agent_name)
+        if row is not None:
+            db_skills_backup[agent_name] = list(row.get("skills") or [])
 
     # Remove the skill directory.
     try:
@@ -769,31 +772,32 @@ async def delete_skill(name: str) -> dict:
     except OSError as exc:
         raise SkillValidationError(500, f"Delete failed: {exc}") from exc
 
-    # Now strip the reference from each agent card. If any single card edit
-    # fails, restore everything (skill dir from .bak is harder; we leave a
-    # warning and leave the partial state — operator can rerun).
+    # Strip the reference from each affected DB agent. On failure, restore
+    # the snapshot we took above. Other agents already successfully edited
+    # stay edited — partial cleanup is documented in the logs and surfaced
+    # to the caller.
     removed_from: list[str] = []
     failure: Optional[str] = None
-    for card_path in affected_cards:
+    for agent_name in affected_agents:
         try:
-            _remove_skill_from_card(card_path, name)
-            removed_from.append(card_path.stem)
+            _remove_skill_from_card(agent_name, name)
+            removed_from.append(agent_name)
         except Exception as exc:  # noqa: BLE001
-            failure = f"{card_path.name}: {exc}"
-            # Restore this card's pre-edit content. Other cards already
-            # successfully edited stay edited — partial cleanup is documented
-            # in the logs and surfaced to the caller.
-            try:
-                card_path.write_bytes(card_backups[card_path])
-            except OSError:
-                pass
+            failure = f"{agent_name}: {exc}"
+            if agent_name in db_skills_backup:
+                try:
+                    defs_svc.update_definition(
+                        agent_name, skills=db_skills_backup[agent_name]
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
             break
 
     if failure is not None:
         logger.error("[skills] partial cleanup after deleting %s: %s", name, failure)
 
     await _runtime_remove_skill_from_all(name)
-    logger.info("[skills] deleted %s; cleaned %d agent card reference(s)", name, len(removed_from))
+    logger.info("[skills] deleted %s; cleaned %d agent reference(s)", name, len(removed_from))
     return {
         "deleted": True,
         "name": name,
@@ -805,31 +809,28 @@ async def delete_skill(name: str) -> dict:
 # ----- Agent card cleanup helpers -----------------------------------------
 
 
-def _find_agent_cards_referencing(skill_name: str) -> list[Path]:
-    if not AGENT_CARDS_DIR.exists():
-        return []
-    out: list[Path] = []
-    for card in sorted(AGENT_CARDS_DIR.glob("*.md")):
-        try:
-            text = card.read_text(encoding="utf-8")
-            fm, _ = parse_frontmatter(text)
-        except Exception:
-            continue
-        skills = fm.get("skills") or []
-        if not isinstance(skills, list):
-            continue
-        for entry in skills:
-            if isinstance(entry, str) and entry.rstrip("/").split("/")[-1] == skill_name:
-                out.append(card)
-                break
-    return out
+def _find_agent_cards_referencing(skill_name: str) -> list[str]:
+    """Return DB-backed agent names that reference this skill.
+
+    Returns names (not file Paths) — callers updated in this commit.
+    """
+    return _used_by_from_agent_cards(skill_name)
 
 
-def _remove_skill_from_card(card_path: Path, skill_name: str) -> None:
-    """Remove the skill entry from the card's YAML frontmatter, atomically."""
-    text = card_path.read_text(encoding="utf-8")
-    fm, body = parse_frontmatter(text)
-    skills = fm.get("skills") or []
+def _remove_skill_from_card(agent_name: str, skill_name: str) -> None:
+    """Remove the skill reference from the DB agent's skills array.
+
+    No-op if the agent isn't in the DB or doesn't reference the skill.
+    Atomic at the DB layer — update_definition runs in a single
+    transaction and bumps the rev counter so the parent reload loop
+    picks up the change.
+    """
+    from services import agent_definitions as defs_svc
+
+    row = defs_svc.get_definition(agent_name)
+    if not row:
+        return
+    skills = row.get("skills") or []
     if not isinstance(skills, list):
         return
     new_skills = [
@@ -837,68 +838,28 @@ def _remove_skill_from_card(card_path: Path, skill_name: str) -> None:
         if not (isinstance(s, str) and s.rstrip("/").split("/")[-1] == skill_name)
     ]
     if len(new_skills) == len(skills):
-        return  # Nothing to do.
-    fm["skills"] = new_skills
-    new_fm = yaml.safe_dump(fm, sort_keys=False, allow_unicode=True).rstrip("\n")
-    new_text = f"---\n{new_fm}\n---\n{body}"
-
-    # Backup + atomic write, same pattern as skills.
-    backup = card_path.with_suffix(card_path.suffix + ".bak")
-    try:
-        backup.write_bytes(card_path.read_bytes())
-    except OSError as exc:
-        logger.warning("[skills] card backup failed for %s: %s", card_path, exc)
-    tmp = card_path.with_suffix(card_path.suffix + ".tmp")
-    tmp.write_text(new_text, encoding="utf-8")
-    try:
-        os.replace(tmp, card_path)
-    except OSError as exc:
-        if exc.errno != errno.EBUSY:
-            raise
-        card_path.write_text(new_text, encoding="utf-8")
-        try:
-            tmp.unlink()
-        except OSError:
-            pass
+        return  # already not attached
+    defs_svc.update_definition(agent_name, skills=new_skills)
 
 
-def _add_skill_to_card(card_path: Path, skill_name: str) -> None:
-    """Append the skill entry to the card's YAML frontmatter `skills:` list,
-    atomically. No-op if already present.
+def _add_skill_to_card(agent_name: str, skill_name: str) -> None:
+    """Append the skill reference to the DB agent's skills array.
+
+    No-op if the agent isn't in the DB or already has the skill.
     """
-    text = card_path.read_text(encoding="utf-8")
-    fm, body = parse_frontmatter(text)
-    skills = fm.get("skills") or []
-    if not isinstance(skills, list):
-        skills = []
-    entry = f".fast-agent/skills/{skill_name}"
+    from services import agent_definitions as defs_svc
+
+    row = defs_svc.get_definition(agent_name)
+    if not row:
+        return
+    skills = list(row.get("skills") or [])
     if any(
         isinstance(s, str) and s.rstrip("/").split("/")[-1] == skill_name
         for s in skills
     ):
         return  # already attached
-    skills = list(skills) + [entry]
-    fm["skills"] = skills
-    new_fm = yaml.safe_dump(fm, sort_keys=False, allow_unicode=True).rstrip("\n")
-    new_text = f"---\n{new_fm}\n---\n{body}"
-
-    backup = card_path.with_suffix(card_path.suffix + ".bak")
-    try:
-        backup.write_bytes(card_path.read_bytes())
-    except OSError as exc:
-        logger.warning("[skills] card backup failed for %s: %s", card_path, exc)
-    tmp = card_path.with_suffix(card_path.suffix + ".tmp")
-    tmp.write_text(new_text, encoding="utf-8")
-    try:
-        os.replace(tmp, card_path)
-    except OSError as exc:
-        if exc.errno != errno.EBUSY:
-            raise
-        card_path.write_text(new_text, encoding="utf-8")
-        try:
-            tmp.unlink()
-        except OSError:
-            pass
+    skills.append(f".fast-agent/skills/{skill_name}")
+    defs_svc.update_definition(agent_name, skills=skills)
 
 
 # ----- Attach / detach ----------------------------------------------------
@@ -950,26 +911,30 @@ async def attach_skill_to_agent(agent_name: str, skill_name: str) -> dict:
 
     new_list = current + [fresh_manifest]
 
-    # Persist to YAML iff the agent is card-based.
-    card_path = AGENT_CARDS_DIR / f"{agent_name}.md"
-    is_card_based = card_path.exists()
-    yaml_backup: Optional[bytes] = None
+    # Persist to DB iff the agent is dynamic (in agent_definitions table).
+    is_card_based = is_agent_card_based(agent_name)
+    db_skills_backup: Optional[list] = None
     if is_card_based:
-        try:
-            yaml_backup = card_path.read_bytes()
-            _add_skill_to_card(card_path, skill_name)
-        except Exception as exc:  # noqa: BLE001
-            raise SkillValidationError(500, f"Could not update agent card: {exc}") from exc
+        from services import agent_definitions as defs_svc
 
-    # Push to runtime; rollback YAML on failure to keep disk and memory aligned.
+        try:
+            existing = defs_svc.get_definition(agent_name)
+            db_skills_backup = list(existing.get("skills") or [])
+            _add_skill_to_card(agent_name, skill_name)
+        except Exception as exc:  # noqa: BLE001
+            raise SkillValidationError(500, f"Could not update agent definition: {exc}") from exc
+
+    # Push to runtime; rollback DB skills on failure to keep DB and memory aligned.
     try:
         await _apply_manifests_to_agent(agent_name, new_list, fast_obj=fast_obj)
     except Exception as exc:  # noqa: BLE001
-        if yaml_backup is not None:
+        if db_skills_backup is not None:
             try:
-                card_path.write_bytes(yaml_backup)
-            except OSError:
-                logger.error("[skills] YAML rollback failed for %s after runtime error", card_path)
+                from services import agent_definitions as defs_svc
+
+                defs_svc.update_definition(agent_name, skills=db_skills_backup)
+            except Exception:  # noqa: BLE001
+                logger.error("[skills] DB rollback failed for %s after runtime error", agent_name)
         raise SkillValidationError(500, f"Runtime rebuild failed: {exc}") from exc
 
     logger.info(
@@ -1005,24 +970,28 @@ async def detach_skill_from_agent(agent_name: str, skill_name: str) -> dict:
 
     new_list = [m for m in current if getattr(m, "name", None) != skill_name]
 
-    card_path = AGENT_CARDS_DIR / f"{agent_name}.md"
-    is_card_based = card_path.exists()
-    yaml_backup: Optional[bytes] = None
+    is_card_based = is_agent_card_based(agent_name)
+    db_skills_backup: Optional[list] = None
     if is_card_based:
+        from services import agent_definitions as defs_svc
+
         try:
-            yaml_backup = card_path.read_bytes()
-            _remove_skill_from_card(card_path, skill_name)
+            existing = defs_svc.get_definition(agent_name)
+            db_skills_backup = list(existing.get("skills") or [])
+            _remove_skill_from_card(agent_name, skill_name)
         except Exception as exc:  # noqa: BLE001
-            raise SkillValidationError(500, f"Could not update agent card: {exc}") from exc
+            raise SkillValidationError(500, f"Could not update agent definition: {exc}") from exc
 
     try:
         await _apply_manifests_to_agent(agent_name, new_list, fast_obj=fast_obj)
     except Exception as exc:  # noqa: BLE001
-        if yaml_backup is not None:
+        if db_skills_backup is not None:
             try:
-                card_path.write_bytes(yaml_backup)
-            except OSError:
-                logger.error("[skills] YAML rollback failed for %s after runtime error", card_path)
+                from services import agent_definitions as defs_svc
+
+                defs_svc.update_definition(agent_name, skills=db_skills_backup)
+            except Exception:  # noqa: BLE001
+                logger.error("[skills] DB rollback failed for %s after runtime error", agent_name)
         raise SkillValidationError(500, f"Runtime rebuild failed: {exc}") from exc
 
     logger.info(
@@ -1037,8 +1006,16 @@ async def detach_skill_from_agent(agent_name: str, skill_name: str) -> dict:
 
 
 def is_agent_card_based(agent_name: str) -> bool:
-    """True if the agent has a `.md` card on disk (so attach/detach edits persist)."""
-    return (AGENT_CARDS_DIR / f"{agent_name}.md").exists()
+    """True if the agent has a definition row in the DB (so attach/detach
+    edits persist across restart).
+
+    Legacy name retained for caller compatibility; conceptually the
+    check is now "is this a dynamic / DB-backed agent" rather than "is
+    there a .md card file on disk".
+    """
+    from services import agent_definitions as defs_svc
+
+    return defs_svc.get_definition(agent_name) is not None
 
 
 # ----- Templates ----------------------------------------------------------

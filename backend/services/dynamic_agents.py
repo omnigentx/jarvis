@@ -1,88 +1,158 @@
-"""Dynamic agent reload service.
+"""Dynamic agent loader & reload service (DB-backed).
 
-Provides a background task that monitors the `.reload_needed` signal file
-and triggers agent card loading when changes are detected.
+Replaces the legacy file-based agent_card loader. Definitions now live
+in SQLite (table `agent_definitions`, see ``services.agent_definitions``).
+The parent process polls a monotonic ``rev`` counter on that store and
+calls ``agent_app.load_agent_data(defs, "Jarvis")`` whenever rev advances,
+so subprocess writers (the agent_spawner MCP, REST CRUD endpoints) only
+need to bump rev — no signal files, no filesystem watching.
+
+Why poll the DB instead of pushing? Mutations may originate inside
+subprocesses (the MCP server runs separately) that don't share Python
+state with the parent FastAgent. SQLite is the only state shared across
+processes, so polling a meta column is the simplest correct mechanism.
+The poll interval is small (2s) — well under interactive expectations
+and cheap (one indexed read).
 """
+
+from __future__ import annotations
 
 import asyncio
 import logging
-from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
-AGENT_CARDS_DIR = Path(__file__).parent.parent / ".fast-agent" / "agent_cards"
-RELOAD_SIGNAL = Path(__file__).parent.parent / ".fast-agent" / ".reload_needed"
 POLL_INTERVAL = 2.0  # seconds
 
+# Parent name agents created at runtime get attached to. Jarvis is the
+# master agent; dynamic sub-agents become tools of Jarvis. If/when this
+# project evolves to support multiple masters, this string moves to
+# config — for now hard-coding is simpler and avoids speculative API.
+_PARENT_AGENT = "Jarvis"
 
-async def preload_agent_cards(agent_app) -> list[str]:
-    """Pre-load agent cards from disk and attach to Jarvis.
 
-    Called once during server startup after agent_app is initialized.
+def _definitions_for_load() -> list[dict[str, Any]]:
+    """Read every dynamic agent definition from DB and shape it for
+    ``load_agent_data``. Returns an empty list if the DB isn't configured
+    (test harness without SPAWN_REGISTRY_DB and no data/jarvis.db)."""
+    from services import agent_definitions as svc
 
-    Returns:
-        List of loaded agent names.
+    rows = svc.list_definitions()
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        card: dict[str, Any] = {
+            "name": row["name"],
+            "instruction": row["instruction"],
+            "servers": row["servers"],
+            "tools": row["tools"],
+            "skills": row["skills"],
+            "use_history": row["use_history"],
+        }
+        if row.get("model"):
+            card["model"] = row["model"]
+        if row.get("request_params"):
+            card["request_params"] = row["request_params"]
+        out.append(card)
+    return out
+
+
+async def preload_dynamic_agents(agent_app) -> list[str]:
+    """Load every dynamic agent definition from DB at server startup.
+
+    Returns the sorted list of agent names loaded. Empty list when the
+    DB is empty or unavailable. Never raises — startup must not fail
+    because a single bad definition is on disk.
     """
-    if not AGENT_CARDS_DIR.exists():
-        AGENT_CARDS_DIR.mkdir(parents=True, exist_ok=True)
-        logger.info("[DYNAMIC] Created agent_cards directory: %s", AGENT_CARDS_DIR)
-        return []
-
-    cards = list(AGENT_CARDS_DIR.glob("*.md"))
-    if not cards:
-        logger.info("[DYNAMIC] No agent cards found in %s", AGENT_CARDS_DIR)
+    defs = _definitions_for_load()
+    if not defs:
+        logger.info("[DYNAMIC] No dynamic agent definitions found in DB")
         return []
 
     try:
-        loaded = await agent_app.load_agent_card(str(AGENT_CARDS_DIR), "Jarvis")
-        logger.info("[DYNAMIC] ✓ Pre-loaded dynamic agents: %s", loaded)
+        loaded, _attached = await agent_app.load_agent_data(defs, _PARENT_AGENT)
+        logger.info("[DYNAMIC] ✓ Pre-loaded dynamic agents from DB: %s", loaded)
         return loaded
-    except Exception as e:
-        logger.error("[DYNAMIC] Failed to pre-load agent cards: %s", e, exc_info=True)
+    except Exception as e:  # noqa: BLE001
+        logger.error(
+            "[DYNAMIC] Failed to pre-load dynamic agents from DB: %s",
+            e,
+            exc_info=True,
+        )
         return []
 
 
-async def signal_reload_loop(agent_app):
-    """Background task: poll for .reload_needed signal and reload agents.
+async def db_rev_poll_loop(agent_app) -> None:
+    """Background task: poll agent_definitions_meta.rev; reload on change.
 
-    The signal file is touched by:
-    - agent_spawner MCP's spawn_agent() tool
-    - Manual touch for hot-reloading edited cards
-    - Future: API endpoint for agent management UI
+    The rev counter is bumped by:
+    - The REST CRUD endpoints (services.agent_definitions.create/update/
+      delete) when an operator edits an agent via the dashboard.
+    - The `spawn_agent` MCP tool when Jarvis self-creates an agent.
+
+    Both writer paths run in different processes (subprocess MCP) or in
+    request handlers that don't hold the FastAgent state, so this loop
+    is the converge mechanism. One-shot polling per tick: read rev,
+    compare, reload if changed.
     """
-    logger.info("[DYNAMIC] Reload loop started (polling every %.1fs)", POLL_INTERVAL)
+    from services import agent_definitions as svc
+
+    last_rev = svc.get_rev()
+    logger.info(
+        "[DYNAMIC] DB-rev poll loop started (interval %.1fs, initial rev=%d)",
+        POLL_INTERVAL,
+        last_rev,
+    )
 
     while True:
         try:
             await asyncio.sleep(POLL_INTERVAL)
 
-            if not RELOAD_SIGNAL.exists():
+            current = svc.get_rev()
+            if current == last_rev:
                 continue
 
-            # Consume the signal
-            RELOAD_SIGNAL.unlink(missing_ok=True)
-            logger.info("[DYNAMIC] Reload signal detected, loading agent cards...")
+            logger.info(
+                "[DYNAMIC] rev %d → %d, reloading from DB", last_rev, current
+            )
 
             try:
-                loaded = await agent_app.load_agent_card(
-                    str(AGENT_CARDS_DIR), "Jarvis"
+                defs = _definitions_for_load()
+                loaded, _attached = await agent_app.load_agent_data(
+                    defs, _PARENT_AGENT
                 )
-                logger.info("[DYNAMIC] ✓ Reloaded agents: %s", loaded)
-                # Newly loaded agents need the always-on token-persistence
-                # hook attached too — without this their LLM calls would
-                # silently bypass token_usage tracking. Idempotent per
-                # agent via the sentinel attribute set inside the helper.
+                logger.info("[DYNAMIC] ✓ Reloaded from DB: %s", loaded)
+
+                # Newly registered dynamic agents need the always-on
+                # token-persistence hook attached too; otherwise their
+                # LLM calls would bypass token_usage tracking. The
+                # helper is idempotent per-agent (sentinel attribute),
+                # so re-running on each reload is safe.
                 try:
-                    from services.sse_progress import attach_token_persistence_hooks_to_all
+                    from services.sse_progress import (
+                        attach_token_persistence_hooks_to_all,
+                    )
+
                     attach_token_persistence_hooks_to_all(agent_app)
-                except Exception as _e:
-                    logger.warning("[DYNAMIC] Failed to re-attach token hook after reload: %s", _e)
-            except Exception as e:
-                logger.error("[DYNAMIC] Reload failed: %s", e)
+                except Exception as _e:  # noqa: BLE001
+                    logger.warning(
+                        "[DYNAMIC] Failed to re-attach token hook after reload: %s",
+                        _e,
+                    )
+
+                last_rev = current
+            except Exception as e:  # noqa: BLE001
+                logger.error(
+                    "[DYNAMIC] Reload failed at rev %d: %s",
+                    current,
+                    e,
+                    exc_info=True,
+                )
+                # Don't advance last_rev — retry on next tick.
 
         except asyncio.CancelledError:
-            logger.info("[DYNAMIC] Reload loop stopped")
+            logger.info("[DYNAMIC] DB-rev poll loop stopped")
             break
-        except Exception as e:
-            logger.error("[DYNAMIC] Unexpected error in reload loop: %s", e)
+        except Exception as e:  # noqa: BLE001
+            logger.error("[DYNAMIC] Unexpected error in poll loop: %s", e)
             await asyncio.sleep(5)  # Back off on errors

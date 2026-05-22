@@ -104,8 +104,11 @@ def test_delete_team_cleans_notifications_for_that_team_name(tmp_path, monkeypat
     app.include_router(agents_route.router)
     app.dependency_overrides[agents_route.verify_api_key] = lambda: True
 
-    with patch.object(agents_route, "_trigger_reload", lambda: None), \
-            patch("services.shared_state.registry_db", fake_registry, create=True), \
+    # Note: post-Phase-4 the team-delete endpoint no longer touches the
+    # filesystem; agent definitions live in SQLite and the rev counter
+    # bump replaces the old `_trigger_reload()` signal-file path. The
+    # patch on that helper is no longer needed.
+    with patch("services.shared_state.registry_db", fake_registry, create=True), \
             patch.object(agents_route, "activity_stream_manager", MagicMock()), \
             patch("fast_agent.spawn.team_spawner.list_team_sessions",
                   return_value=[]), \

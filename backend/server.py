@@ -442,9 +442,9 @@ async def lifespan(app: FastAPI):
         if state.cron_scheduler:
             state.cron_scheduler.set_agent_refs(agent, state.session_service)
 
-        # Pre-load dynamic agent cards and attach to Jarvis
-        from services.dynamic_agents import preload_agent_cards, signal_reload_loop
-        loaded = await preload_agent_cards(agent)
+        # Pre-load dynamic agent definitions from DB and attach to Jarvis
+        from services.dynamic_agents import preload_dynamic_agents, db_rev_poll_loop
+        loaded = await preload_dynamic_agents(agent)
         if loaded:
             logger.info("Dynamic agents ready: %s", loaded)
             # Newly preloaded dynamic agents also need the token hook.
@@ -455,9 +455,10 @@ async def lifespan(app: FastAPI):
                 attach_token_persistence_hooks_to_all(agent)
             except Exception as _e:
                 logger.warning("[TOKEN] Failed to re-attach hook after preload: %s", _e)
-        
-        # Start reload loop for hot-loading agent card changes
-        reload_task = asyncio.create_task(signal_reload_loop(agent))
+
+        # Background task: poll agent_definitions_meta.rev and reload on change.
+        # Writers (REST CRUD + agent_spawner MCP) bump rev; this loop converges.
+        reload_task = asyncio.create_task(db_rev_poll_loop(agent))
         
         # Populate MCP server tools DB from static agents' aggregators
         cached_servers = set()

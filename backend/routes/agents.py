@@ -328,10 +328,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
-# Agent cards directory
-AGENT_CARDS_DIR = Path(__file__).parent.parent / ".fast-agent" / "agent_cards"
 SKILLS_DIR = Path(__file__).parent.parent / ".fast-agent" / "skills"
-RELOAD_SIGNAL = Path(__file__).parent.parent / ".fast-agent" / ".reload_needed"
 
 
 def _get_agent_skills(agent_name: str) -> list[dict]:
@@ -537,8 +534,20 @@ AGENT_ICONS = {
 
 
 def _is_static_agent(name: str) -> bool:
-    """Check if an agent is statically defined (in agent.py decorators, not from agent_cards)."""
+    """True if the agent is defined in code (agent.py decorators), not
+    loaded from a card source (file or DB). Code-defined agents cannot
+    be edited or deleted via the API."""
     return name in fast.agents and name not in fast._agent_card_sources
+
+
+def _is_dynamic_agent(name: str) -> bool:
+    """True if the agent was loaded from an in-memory definition (DB).
+    Detection: name is registered and its source path carries the
+    `memory:` marker from fast_agent's in-memory loader."""
+    from fast_agent.core.agent_card_loader import is_memory_card_path
+
+    src = fast._agent_card_sources.get(name)
+    return src is not None and is_memory_card_path(src)
 
 
 def _build_agent_dict(name: str, agent_data: dict) -> dict:
@@ -570,6 +579,9 @@ def _build_agent_dict(name: str, agent_data: dict) -> dict:
         "instruction": resolved or raw_instruction,
         "model": getattr(config, "model", None) or _get_default_model(),
         "servers": list(getattr(config, "servers", []) or []),
+        # The wire label "card" is preserved this phase so the dashboard
+        # keeps rendering correctly. Phase 5 renames this to "dynamic"
+        # everywhere — backend response + frontend checks — in one commit.
         "type": "card" if name in fast._agent_card_sources else "builtin",
         "icon": AGENT_ICONS.get(name, "smart_toy"),
         "child_agents": child_agents,
@@ -651,46 +663,18 @@ class AgentUpdate(BaseModel):
     use_history: bool | None = None
 
 
-def _parse_agent_card(filepath: Path) -> dict:
-    """Parse a .md agent card file with YAML frontmatter."""
-    text = filepath.read_text(encoding="utf-8")
-    match = re.match(r'^---\s*\n(.*?)\n---', text, re.DOTALL)
-    if not match:
-        return {}
-    
-    try:
-        data = yaml.safe_load(match.group(1))
-    except Exception:
-        return {}
-    
-    return {
-        "name": data.get("name", filepath.stem),
-        "instruction": data.get("instruction", "").strip(),
-        "model": data.get("model", "") or _get_default_model(),
-        "servers": data.get("servers", []),
-        "use_history": data.get("use_history", True),
-        "type": "dynamic",
-        "file": filepath.name,
-    }
+def _normalize_create_payload(payload: dict) -> dict:
+    """Translate the wire payload (AgentCreate / AgentUpdate) into the
+    keyword shape the agent_definitions service expects.
 
-
-def _write_agent_card(filepath: Path, data: dict):
-    """Write agent card as .md with YAML frontmatter."""
-    card = {
-        "name": data["name"],
-        "instruction": data["instruction"],
-        "servers": data.get("servers", []),
-        "model": data.get("model", "") or _get_default_model(),
-        "use_history": data.get("use_history", True),
-    }
-    content = "---\n" + yaml.dump(card, allow_unicode=True, default_flow_style=False) + "---\n"
-    filepath.write_text(content, encoding="utf-8")
-
-
-def _trigger_reload():
-    """Create .reload_needed signal file for dynamic_agents reload loop."""
-    RELOAD_SIGNAL.touch()
-    logger.info("[AGENTS API] Triggered reload signal")
+    `model: ""` from the wire means "use default" — store NULL in DB so
+    `list_definitions()` reflects the absence cleanly rather than carrying
+    an empty-string sentinel through the load pipeline.
+    """
+    out = dict(payload)
+    if "model" in out and not (out["model"] or "").strip():
+        out["model"] = None
+    return out
 
 
 @router.get("", dependencies=[Depends(verify_api_key)])
@@ -1163,80 +1147,93 @@ def _merge_spawn_tool_status(
 
 @router.post("", dependencies=[Depends(verify_api_key)])
 async def create_agent(agent: AgentCreate):
-    """Create a new dynamic agent card."""
-    # Validate name
+    """Create a new dynamic agent definition.
+
+    Writes a row into the ``agent_definitions`` table and bumps the
+    rev counter. The parent process's db_rev_poll_loop picks up the
+    change within POLL_INTERVAL seconds and registers the agent with
+    Jarvis as a tool. No filesystem involved.
+    """
     if not re.match(r'^[A-Za-z][A-Za-z0-9_]*$', agent.name):
         raise HTTPException(status_code=400, detail="Name must be alphanumeric (start with letter)")
-    
-    # Check for conflicts with static agents (defined in agent.py decorators)
+
     if _is_static_agent(agent.name):
         raise HTTPException(status_code=409, detail=f"'{agent.name}' is a static agent (cannot be overridden)")
-    
-    # Check if already exists
-    AGENT_CARDS_DIR.mkdir(parents=True, exist_ok=True)
-    card_path = AGENT_CARDS_DIR / f"{agent.name}.md"
-    if card_path.exists():
-        raise HTTPException(status_code=409, detail=f"Agent '{agent.name}' already exists")
-    
-    _write_agent_card(card_path, agent.model_dump())
-    _trigger_reload()
-    
-    # Broadcast to SSE subscribers for live dashboard updates
+
+    from services import agent_definitions as defs_svc
+
+    try:
+        defs_svc.create_definition(
+            **_normalize_create_payload(agent.model_dump())
+        )
+    except ValueError as e:
+        # Duplicate name or validation error from the service layer.
+        msg = str(e)
+        status = 409 if "already exists" in msg else 400
+        raise HTTPException(status_code=status, detail=msg)
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
     activity_stream_manager.broadcast({
         "agent_name": agent.name,
         "event_type": "agent_added",
         "message": f"Agent '{agent.name}' created",
         "timestamp": _time.time(),
     })
-    
+
     logger.info("[AGENTS API] Created agent: %s", agent.name)
     return {"status": "created", "name": agent.name}
 
 
 @router.put("/{name}", dependencies=[Depends(verify_api_key)])
 async def update_agent(name: str, update: AgentUpdate):
-    """Update an existing dynamic agent card."""
-    # Cannot edit static agents
+    """Update an existing dynamic agent definition in the DB."""
     if _is_static_agent(name):
         raise HTTPException(status_code=403, detail=f"'{name}' is a static agent (cannot be edited)")
-    
-    card_path = AGENT_CARDS_DIR / f"{name}.md"
-    if not card_path.exists():
-        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
-    
-    # Read current, merge updates
-    current = _parse_agent_card(card_path)
-    update_data = update.model_dump(exclude_none=True)
-    current.update(update_data)
-    current["name"] = name  # Prevent name change via update
-    
-    _write_agent_card(card_path, current)
-    _trigger_reload()
-    
+
+    from services import agent_definitions as defs_svc
+
+    update_data = _normalize_create_payload(update.model_dump(exclude_none=True))
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    try:
+        defs_svc.update_definition(name, **update_data)
+    except ValueError as e:
+        msg = str(e)
+        status = 404 if "not found" in msg else 400
+        raise HTTPException(status_code=status, detail=msg)
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
     logger.info("[AGENTS API] Updated agent: %s", name)
     return {"status": "updated", "name": name}
 
 
 @router.delete("/{name}", dependencies=[Depends(verify_api_key)])
 async def delete_agent(name: str):
-    """Delete a dynamic agent card or remove a team/spawn agent from registry."""
-    # Cannot delete static agents
+    """Delete a dynamic agent definition or remove a team/spawn agent
+    from the runtime registry.
+
+    Order of resolution:
+    1. If the name is statically defined in code → 403 (cannot delete).
+    2. If the name exists in `agent_definitions` → remove row + bump rev.
+    3. Otherwise fall through to spawn_registry (active team / spawn
+       instances), which is unchanged by this refactor.
+    """
     if _is_static_agent(name):
         raise HTTPException(status_code=403, detail=f"'{name}' is a static agent (cannot be deleted)")
-    
-    # Try dynamic agent card first
-    card_path = AGENT_CARDS_DIR / f"{name}.md"
-    if card_path.exists():
-        card_path.unlink()
-        _trigger_reload()
-        # Broadcast removal to SSE subscribers
+
+    from services import agent_definitions as defs_svc
+
+    if defs_svc.delete_definition(name):
         activity_stream_manager.broadcast({
             "agent_name": name,
             "event_type": "agent_removed",
             "message": f"Agent '{name}' removed",
             "timestamp": _time.time(),
         })
-        logger.info("[AGENTS API] Deleted dynamic agent card: %s", name)
+        logger.info("[AGENTS API] Deleted dynamic agent definition: %s", name)
         return {"status": "deleted", "name": name}
     
     # Try spawn registry (team/spawned agents) — SQLite only
@@ -1485,17 +1482,27 @@ async def delete_team(team_name: str):
 
     # (Context snapshots cleaned by lifecycle hook in spawn_progress_bridge._handle_removal)
     
-    # ── 8. Remove agent card files ──
-    cards_removed = 0
-    if AGENT_CARDS_DIR.exists():
-        for agent_name in team_agent_names:
-            card = AGENT_CARDS_DIR / f"{agent_name}.md"
-            if card.exists():
-                card.unlink()
-                cards_removed += 1
-    if cards_removed:
-        cleanup_log.append(f"{cards_removed} agent cards")
-        _trigger_reload()
+    # ── 8. Remove dynamic agent definitions from DB ──
+    # Team members may have been registered as DB-backed dynamic agents
+    # (e.g. spawn_team_tool can persist members via `spawn_agent`). Each
+    # delete bumps the rev counter so the reload loop drops them from
+    # fast.agents without restart.
+    from services import agent_definitions as defs_svc
+
+    defs_removed = 0
+    for agent_name in team_agent_names:
+        if not agent_name:
+            continue
+        try:
+            if defs_svc.delete_definition(agent_name):
+                defs_removed += 1
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "[AGENTS API] failed deleting definition '%s': %s",
+                agent_name, e,
+            )
+    if defs_removed:
+        cleanup_log.append(f"{defs_removed} agent definitions")
     
     logger.info("[AGENTS API] Team '%s' deleted: %s", team_name, cleanup_log)
     

@@ -11,7 +11,6 @@ from pathlib import Path
 from textwrap import dedent
 
 import pytest
-import yaml
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -48,29 +47,30 @@ def _write_skill(skills_dir: Path, name: str, *, description: str = "Demo skill"
     return md
 
 
-def _write_agent_card(cards_dir: Path, agent: str, skill_names: list[str]) -> Path:
-    cards_dir.mkdir(parents=True, exist_ok=True)
-    card = cards_dir / f"{agent}.md"
-    skills_yaml = "\n".join(f"  - .fast-agent/skills/{s}" for s in skill_names)
-    # Built without dedent to avoid common-indent surprises when the
-    # interpolated `skills_yaml` lines have shallower indent than the
-    # surrounding template.
-    card.write_text(
-        f"---\nname: {agent}\ninstruction: Test agent.\nskills:\n{skills_yaml}\n---\n",
-        encoding="utf-8",
+def _seed_db_agent(agent: str, skill_names: list[str]) -> None:
+    """Create a DB-backed agent definition referencing the given skills.
+
+    Replaces the old _write_agent_card helper that wrote `.md` files —
+    the source of truth for dynamic agents is now the `agent_definitions`
+    SQLite table.
+    """
+    from services import agent_definitions as defs_svc
+
+    defs_svc.create_definition(
+        name=agent,
+        instruction="Test agent.",
+        skills=[f".fast-agent/skills/{s}" for s in skill_names],
     )
-    return card
 
 
 @pytest.fixture()
 def fake_dirs(tmp_path, monkeypatch):
-    """Redirect SKILLS_DIR / AGENT_CARDS_DIR / BUILTIN_MANIFEST / AGENT_CODE_FILE
-    to throwaway temp paths so tests don't touch real repo files.
+    """Redirect SKILLS_DIR / BUILTIN_MANIFEST / AGENT_CODE_FILE to temp
+    paths and point SPAWN_REGISTRY_DB at a fresh SQLite so the DB-backed
+    agent_definitions store stays isolated per test.
     """
     skills_dir = tmp_path / "skills"
-    cards_dir = tmp_path / "agent_cards"
     skills_dir.mkdir()
-    cards_dir.mkdir()
     builtin = skills_dir / "_builtin.yaml"
     builtin.write_text("builtin:\n  - audio-reading\n  - finance\n", encoding="utf-8")
     code_file = tmp_path / "agent.py"
@@ -85,8 +85,9 @@ def fake_dirs(tmp_path, monkeypatch):
         'async def personal(prompt): pass\n',
         encoding="utf-8",
     )
+    db_path = str(tmp_path / "test_skills.db")
+    monkeypatch.setenv("SPAWN_REGISTRY_DB", db_path)
     monkeypatch.setattr(svc, "SKILLS_DIR", skills_dir)
-    monkeypatch.setattr(svc, "AGENT_CARDS_DIR", cards_dir)
     monkeypatch.setattr(svc, "BUILTIN_MANIFEST", builtin)
     monkeypatch.setattr(svc, "AGENT_CODE_FILE", code_file)
     # Reset the internal builtin cache so each test re-reads the manifest.
@@ -97,7 +98,7 @@ def fake_dirs(tmp_path, monkeypatch):
     # fast.agents and silently mixing real-runtime state into assertions.
     # Tests that need a runtime opt in via _wire_attach_runtime / _wire_real_runtime.
     monkeypatch.setattr(svc, "_runtime_handles", lambda: (None, None, None))
-    return {"skills": skills_dir, "cards": cards_dir, "builtin": builtin, "code": code_file}
+    return {"skills": skills_dir, "builtin": builtin, "code": code_file, "db": db_path}
 
 
 @pytest.fixture()
@@ -233,10 +234,10 @@ class TestList:
 
     def test_list_used_by_includes_code_and_card_agents(self, client, fake_dirs):
         _write_skill(fake_dirs["skills"], "audio-reading")
-        _write_agent_card(fake_dirs["cards"], "ResearchAgent", ["audio-reading"])
+        _seed_db_agent("ResearchAgent", ["audio-reading"])
         resp = client.get("/api/skills", headers=AUTH)
         skill = next(s for s in resp.json()["skills"] if s["name"] == "audio-reading")
-        # PersonalAgent comes from the fake agent.py; ResearchAgent from the card.
+        # PersonalAgent comes from the fake agent.py; ResearchAgent from the DB.
         assert set(skill["used_by"]) == {"PersonalAgent", "ResearchAgent"}
 
 
@@ -439,16 +440,14 @@ class TestDelete:
     def test_delete_cleans_agent_card_references(self, client, fake_dirs):
         _write_skill(fake_dirs["skills"], "user-skill")
         _write_skill(fake_dirs["skills"], "other")
-        card = _write_agent_card(
-            fake_dirs["cards"], "MyAgent", ["user-skill", "other"]
-        )
+        _seed_db_agent("MyAgent", ["user-skill", "other"])
         resp = client.delete("/api/skills/user-skill", headers=AUTH)
         assert resp.status_code == 200
         assert resp.json()["removed_from_agents"] == ["MyAgent"]
-        # Card must no longer reference user-skill but must keep 'other'.
-        text = card.read_text(encoding="utf-8")
-        fm = yaml.safe_load(text.split("---")[1])
-        skills = fm["skills"]
+        # DB row must no longer reference user-skill but must keep 'other'.
+        from services import agent_definitions as defs_svc
+        row = defs_svc.get_definition("MyAgent")
+        skills = row["skills"]
         assert all("user-skill" not in s for s in skills)
         assert any("other" in s for s in skills)
 
@@ -705,7 +704,7 @@ def _wire_attach_runtime(monkeypatch, fake_dirs, agents: dict[str, list[str]]):
 class TestAttachDetach:
     def test_attach_to_card_agent_persists_yaml_and_rebuilds(self, client, fake_dirs, monkeypatch):
         _write_skill(fake_dirs["skills"], "new-skill")
-        _write_agent_card(fake_dirs["cards"], "FinanceAgent", ["finance"])
+        _seed_db_agent("FinanceAgent", ["finance"])
         cfgs, instances, rebuild_calls = _wire_attach_runtime(
             monkeypatch, fake_dirs, {"FinanceAgent": ["finance"]}
         )
@@ -718,9 +717,10 @@ class TestAttachDetach:
         # for the LLM and the dashboard refetches separately).
         assert body["skill_count"] == 2
 
-        # YAML must now reference the skill.
-        card_text = (fake_dirs["cards"] / "FinanceAgent.md").read_text(encoding="utf-8")
-        assert "new-skill" in card_text
+        # DB row must now reference the skill.
+        from services import agent_definitions as defs_svc
+        row = defs_svc.get_definition("FinanceAgent")
+        assert any("new-skill" in s for s in row["skills"])
 
         # Runtime: rebuild_agent_instruction was called with both skills.
         assert len(rebuild_calls) == 1
@@ -731,7 +731,7 @@ class TestAttachDetach:
 
     def test_attach_to_code_based_agent_runtime_only(self, client, fake_dirs, monkeypatch):
         _write_skill(fake_dirs["skills"], "new-skill")
-        # No agent card on disk → code-based.
+        # No DB definition → code-based.
         cfgs, instances, rebuild_calls = _wire_attach_runtime(
             monkeypatch, fake_dirs, {"Jarvis": ["user-context"]}
         )
@@ -741,8 +741,9 @@ class TestAttachDetach:
         body = resp.json()
         assert body["persisted"] is False
         assert body["skill_count"] == 2
-        # No card was created.
-        assert not (fake_dirs["cards"] / "Jarvis.md").exists()
+        # No DB row was created.
+        from services import agent_definitions as defs_svc
+        assert defs_svc.get_definition("Jarvis") is None
         # Runtime still got the rebuild call.
         assert len(rebuild_calls) == 1
 
@@ -765,7 +766,7 @@ class TestAttachDetach:
 
     def test_attach_runtime_failure_rolls_back_yaml(self, client, fake_dirs, monkeypatch):
         _write_skill(fake_dirs["skills"], "demo")
-        _write_agent_card(fake_dirs["cards"], "FinanceAgent", ["finance"])
+        _seed_db_agent("FinanceAgent", ["finance"])
         cfgs, instances, _ = _wire_attach_runtime(
             monkeypatch, fake_dirs, {"FinanceAgent": ["finance"]}
         )
@@ -779,16 +780,17 @@ class TestAttachDetach:
             return fast_obj, state, boom
         monkeypatch.setattr(svc, "_runtime_handles", handles_with_boom)
 
-        original_card = (fake_dirs["cards"] / "FinanceAgent.md").read_bytes()
+        from services import agent_definitions as defs_svc
+        original_skills = defs_svc.get_definition("FinanceAgent")["skills"]
         resp = client.put("/api/skills/demo/agents/FinanceAgent", headers=AUTH)
         assert resp.status_code == 500
-        # YAML must be unchanged after rollback.
-        assert (fake_dirs["cards"] / "FinanceAgent.md").read_bytes() == original_card
+        # DB row must be unchanged after rollback.
+        assert defs_svc.get_definition("FinanceAgent")["skills"] == original_skills
 
     def test_detach_from_card_agent_persists_yaml(self, client, fake_dirs, monkeypatch):
         _write_skill(fake_dirs["skills"], "finance")
         _write_skill(fake_dirs["skills"], "research")
-        _write_agent_card(fake_dirs["cards"], "FinanceAgent", ["finance", "research"])
+        _seed_db_agent("FinanceAgent", ["finance", "research"])
         cfgs, instances, rebuild_calls = _wire_attach_runtime(
             monkeypatch, fake_dirs, {"FinanceAgent": ["finance", "research"]}
         )
@@ -799,9 +801,10 @@ class TestAttachDetach:
         assert body["persisted"] is True
         assert body["skill_count"] == 1
 
-        card_text = (fake_dirs["cards"] / "FinanceAgent.md").read_text(encoding="utf-8")
-        assert "research" not in card_text
-        assert "finance" in card_text
+        from services import agent_definitions as defs_svc
+        skills = defs_svc.get_definition("FinanceAgent")["skills"]
+        assert all("research" not in s for s in skills)
+        assert any("finance" in s for s in skills)
 
         assert len(rebuild_calls) == 1
         _owner, manifests = rebuild_calls[0]
