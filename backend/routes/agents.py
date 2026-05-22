@@ -9,6 +9,7 @@ import re
 import logging
 import sqlite3
 from pathlib import Path
+from typing import Any
 
 import json as _json
 import yaml
@@ -334,18 +335,70 @@ RELOAD_SIGNAL = Path(__file__).parent.parent / ".fast-agent" / ".reload_needed"
 
 
 def _get_agent_skills(agent_name: str) -> list[dict]:
-    """Read resolved skills from FastAgent runtime AgentConfig."""
+    """Return per-skill load status for the agent details UI.
+
+    Each entry carries ``status``:
+      * ``"loaded"`` — manifest was resolved + injected into the live agent.
+      * ``"failed"`` — requested by name in config but missing from the live
+        agent's resolved manifests (file missing, parse error, etc).
+
+    The live agent's ``skill_manifests`` is the authoritative source of what
+    the agent actually sees; the raw ``config.skills`` field (preserved by
+    ``_apply_skills_to_agent_configs``) is the request log used to compute
+    the failed delta.
+    """
     try:
         agent_data = fast.agents.get(agent_name)
         if not agent_data:
             return []
         config = agent_data.get("config")
-        if not config or not hasattr(config, "skill_manifests"):
+        if not config:
             return []
-        return [
-            {"name": m.name, "description": m.description, "content": m.body or ""}
-            for m in config.skill_manifests
+
+        # Loaded manifests — prefer the live agent instance (post-init), fall
+        # back to the resolved config list if the runtime isn't ready yet.
+        loaded: list = []
+        if state.agent_app is not None:
+            instance = state.agent_app.get_agent(agent_name)
+            if instance is not None:
+                loaded = list(getattr(instance, "skill_manifests", None) or [])
+        if not loaded:
+            loaded = list(getattr(config, "skill_manifests", None) or [])
+
+        result = [
+            {
+                "name": m.name,
+                "description": m.description or "",
+                "content": m.body or "",
+                "status": "loaded",
+            }
+            for m in loaded
         ]
+        loaded_names = {m.name for m in loaded}
+
+        # Requested-but-not-loaded — string entries in raw config.skills
+        # may be either bare skill names ("user-context") or directory paths
+        # (".fast-agent/skills/user-context"). Fast-agent resolves both via
+        # SkillRegistry to a SkillManifest whose ``name`` is the directory
+        # basename, so we compare by basename to avoid false-positive
+        # "failed" entries for path-style refs. Non-string entries
+        # (Path/SkillRegistry/SkillManifest) reference directories rather
+        # than a specific skill, so we can't diff them.
+        requested = getattr(config, "skills", None)
+        if isinstance(requested, (list, tuple)):
+            for item in requested:
+                if not isinstance(item, str) or not item:
+                    continue
+                basename = item.rstrip("/").split("/")[-1]
+                if basename in loaded_names:
+                    continue
+                result.append({
+                    "name": basename,
+                    "description": "",
+                    "content": "",
+                    "status": "failed",
+                })
+        return result
     except Exception as e:
         logger.debug("[AGENTS API] Failed to get skills for %s: %s", agent_name, e)
         return []
@@ -382,11 +435,23 @@ def _safe_load_activity_data(raw_json: str | None):
         return None
 
 
-def _get_runtime_tools(agent_name: str) -> dict[str, list[dict]]:
-    """Get runtime MCP tool metadata grouped by server.
-    
-    Returns {server_name: [{"name": ..., "description": ...}, ...]}.
-    Falls back to config.tools (names only) if aggregator unavailable.
+def _get_runtime_tools(agent_name: str) -> dict[str, dict]:
+    """Return per-MCP-server runtime attach status + tool list.
+
+    Shape:
+        {
+          server_name: {
+            "tools": [{"name", "description"}, ...],
+            "status": "connected" | "failed",
+            "error": "",  # filled in by _enrich_mcp_errors_async for failed servers
+          }
+        }
+
+    ``connected`` servers come from ``aggregator._server_to_tool_map`` (only
+    populated on successful attach). ``failed`` servers are computed as
+    ``_configured_server_names - _attached_server_names`` so requested-but-
+    unreachable MCPs surface in the UI with a red badge instead of being
+    silently dropped.
     """
     try:
         if state.agent_app is None:
@@ -397,22 +462,65 @@ def _get_runtime_tools(agent_name: str) -> dict[str, list[dict]]:
         aggregator = getattr(agent_instance, "_aggregator", None)
         if aggregator is None:
             return {}
-        server_tool_map = getattr(aggregator, "_server_to_tool_map", None)
-        if not server_tool_map:
-            return {}
-        result = {}
+
+        server_tool_map = getattr(aggregator, "_server_to_tool_map", {}) or {}
+        configured = set(getattr(aggregator, "_configured_server_names", []) or [])
+        attached = set(getattr(aggregator, "_attached_server_names", []) or [])
+
+        result: dict[str, dict] = {}
         for server_name, namespaced_tools in server_tool_map.items():
-            result[server_name] = [
-                {
-                    "name": nt.tool.name,
-                    "description": getattr(nt.tool, "description", "") or "",
-                }
-                for nt in namespaced_tools
-            ]
+            result[server_name] = {
+                "tools": [
+                    {
+                        "name": nt.tool.name,
+                        "description": getattr(nt.tool, "description", "") or "",
+                    }
+                    for nt in namespaced_tools
+                ],
+                "status": "connected",
+                "error": "",
+            }
+        for server_name in configured - attached:
+            if server_name in result:
+                continue
+            result[server_name] = {
+                "tools": [],
+                "status": "failed",
+                "error": "",
+            }
         return result
     except Exception as e:
         logger.debug("[AGENTS API] Failed to get runtime tools for %s: %s", agent_name, e)
         return {}
+
+
+async def _enrich_mcp_errors_async(agent_name: str, tools: dict[str, dict]) -> None:
+    """Fill ``error`` on failed entries of ``tools`` using live ServerStatus.
+
+    Only called from the detail endpoint to avoid awaiting per-server probes
+    on the (high-fanout) list endpoint.
+    """
+    failed_servers = [
+        name for name, info in tools.items() if info.get("status") == "failed"
+    ]
+    if not failed_servers:
+        return
+    try:
+        if state.agent_app is None:
+            return
+        agent_instance = state.agent_app.get_agent(agent_name)
+        if agent_instance is None or not hasattr(agent_instance, "get_server_status"):
+            return
+        status_map = await agent_instance.get_server_status()
+        for server_name in failed_servers:
+            srv = status_map.get(server_name)
+            if srv is None:
+                continue
+            err = getattr(srv, "error_message", None) or ""
+            if err:
+                tools[server_name]["error"] = str(err)
+    except Exception as e:
+        logger.debug("[AGENTS API] Failed to enrich MCP errors for %s: %s", agent_name, e)
 
 
 # Icon mapping — the only hardcoded metadata (not available in runtime)
@@ -468,7 +576,7 @@ def _build_agent_dict(name: str, agent_data: dict) -> dict:
         "parent_agent": parent_agent,
         "is_default": getattr(config, "default", False),
         "skills": _get_agent_skills(name),
-        "tools": _get_runtime_tools(name) or dict(getattr(config, "tools", {}) or {}),
+        "tools": _get_runtime_tools(name),
         "status": "idle",
     }
 
@@ -813,13 +921,18 @@ async def get_agent(name: str):
     # 1. Check fast-agent runtime (static/dynamic agents)
     agent_data = fast.agents.get(name)
     if agent_data:
-        return _build_agent_dict(name, agent_data)
-    
+        detail = _build_agent_dict(name, agent_data)
+        # Probe live ServerStatus only for the detail endpoint so failed MCP
+        # servers expose their error_message in the UI tooltip. The list
+        # endpoint deliberately skips this to keep the fanout cheap.
+        await _enrich_mcp_errors_async(name, detail.get("tools") or {})
+        return detail
+
     # 2. Fall back to spawn registry (team/spawned agents)
     spawn_detail = _build_spawn_agent_detail(name)
     if spawn_detail:
         return spawn_detail
-    
+
     raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
 
 
@@ -903,79 +1016,34 @@ def _build_spawn_agent_detail(name: str) -> dict | None:
     
     # --- Prefer runtime_config (from live agent) over original_config (template) ---
     rt_cfg = record.get("runtime_config") or {}
-    
+    mcp_status = record.get("mcp_status") or {}
+
+    # Requested skill names — preserved from the spawn input so we can compute
+    # the "requested but failed to load" diff without re-reading template YAML.
+    requested_skill_names = _parse_skill_names(orig_cfg.get("skills"))
+
+    runtime_pending = not rt_cfg
+
     if rt_cfg:
-        # Runtime config available — use resolved data from the live agent
         instruction = rt_cfg.get("resolved_instruction", "")
-        spawn_skills = rt_cfg.get("skills", [])
-        tools = rt_cfg.get("tools", {})
+        loaded_skills_raw = rt_cfg.get("skills") or []
+        rt_tools = rt_cfg.get("tools") or {}
+        spawn_skills = _merge_skill_status(loaded_skills_raw, requested_skill_names)
+        tools = _merge_spawn_tool_status(rt_tools, mcp_status.get("servers") or {})
         # Populate servers from runtime tools keys if not already set
         if not servers and tools:
             servers = list(tools.keys())
-
     else:
-        # If original_config has no skills, try to fill from team template YAML
-        # (The spawn registry may have servers/instruction but skills=[] due to 
-        # a bug where spawn_team_members_for_session used wrong skills_dir)
-        if not orig_cfg.get("skills") and role and team_name:
-            tmpl_cfg = _load_role_config_from_template(role)
-            if tmpl_cfg:
-                # Fill skills from template
-                if tmpl_cfg.get("skills"):
-                    orig_cfg["skills"] = tmpl_cfg["skills"]
-                # Also fill empty fields from template
-                if not orig_cfg.get("servers") and tmpl_cfg.get("servers"):
-                    orig_cfg["servers"] = tmpl_cfg["servers"]
-                if not servers and orig_cfg.get("servers"):
-                    servers = orig_cfg["servers"]
-                if not model and tmpl_cfg.get("model"):
-                    model = tmpl_cfg["model"]
-        
-        # --- Resolve skills (names → descriptions from disk) ---
-        skill_names = []
-        if orig_cfg.get("skills"):
-            raw_skills = orig_cfg["skills"]
-            if isinstance(raw_skills, str):
-                skill_names = [s.strip() for s in raw_skills.split(",") if s.strip()]
-            elif isinstance(raw_skills, list):
-                skill_names = [s for s in raw_skills if s]
-        
-        spawn_skills = []
-        skill_manifests = []
-        if skill_names:
-            try:
-                from fast_agent.spawn.config_reader import get_skills as _load_skills
-                skills_dir = Path(__file__).parent.parent / ".fast-agent" / "skills"
-                skill_manifests = _load_skills(skills_dir, *skill_names)
-                for m in skill_manifests:
-                    spawn_skills.append({"name": m.name, "description": m.description or "", "content": m.body or ""})
-            except Exception as e:
-                logger.warning("[AGENTS API] Failed resolving skills for %s: %s", name, e)
-                spawn_skills = [{"name": s, "description": "", "content": ""} for s in skill_names]
-        
-        # --- Resolve instruction (inject skills via {{agentSkills}} placeholder) ---
+        # Runtime introspection not yet delivered — surface a pending state and
+        # let the dashboard refetch on the `runtime_config_ready` push instead
+        # of lying with template data the live agent might not actually see.
         instruction = orig_cfg.get("instruction", "") or record.get("task", "")
-        
-        if skill_manifests:
-            try:
-                from fast_agent.skills.registry import format_skills_for_prompt
-                skills_block = format_skills_for_prompt(skill_manifests)
-                if "{{agentSkills}}" in instruction:
-                    instruction = instruction.replace("{{agentSkills}}", skills_block)
-                elif "{agentSkills}" in instruction:
-                    instruction = instruction.replace("{agentSkills}", skills_block)
-                else:
-                    instruction = f"{instruction}\n\n{skills_block}"
-            except Exception as e:
-                logger.debug("[AGENTS API] Failed formatting skills for %s: %s", name, e)
-        
         context = orig_cfg.get("context", "")
         if context:
             instruction = f"{instruction}\n\n--- Context ---\n{context}"
-        
-        # --- Resolve MCP server tools (from main agent's runtime) ---
-        tools = _get_spawn_server_tools(servers)
-    
+        spawn_skills = []
+        tools = {}
+
     return {
         "name": name,
         "description": f"Team agent ({role})" if role else "Spawned agent",
@@ -989,6 +1057,7 @@ def _build_spawn_agent_detail(name: str) -> dict | None:
         "is_default": False,
         "skills": spawn_skills,
         "tools": tools,
+        "runtime_pending": runtime_pending,
         "status": record.get("status", "idle"),
         "role": role,
         "run_id": record.get("run_id", ""),
@@ -998,89 +1067,98 @@ def _build_spawn_agent_detail(name: str) -> dict | None:
     }
 
 
-def _load_role_config_from_template(role: str) -> dict:
-    """Load role config from team template YAML files.
-    
-    Scans all templates in team_templates/ to find the role key
-    and returns its config (skills, servers, instruction, model).
-    Used as fallback when original_config is not in the DB.
-    """
-    templates_dir = Path(__file__).parent.parent / "team_templates"
-    if not templates_dir.exists():
-        return {}
-    
-    try:
-        import yaml
-        for tmpl_file in templates_dir.glob("*.yaml"):
-            with open(tmpl_file) as f:
-                tmpl = yaml.safe_load(f) or {}
-            roles = tmpl.get("roles", {})
-            if role in roles:
-                role_cfg = roles[role]
-                return {
-                    "skills": role_cfg.get("skills", []),
-                    "servers": role_cfg.get("servers", []),
-                    "instruction": role_cfg.get("instruction", ""),
-                    "model": role_cfg.get("model", ""),
-                }
-    except Exception as e:
-        logger.debug("[AGENTS API] Failed loading template for role %s: %s", role, e)
-    return {}
+def _parse_skill_names(raw: Any) -> list[str]:
+    """Return clean skill name list from the spawn record's ``original_config``."""
+    if not raw:
+        return []
+    if isinstance(raw, str):
+        return [s.strip() for s in raw.split(",") if s.strip()]
+    if isinstance(raw, list):
+        names: list[str] = []
+        for item in raw:
+            if isinstance(item, str) and item:
+                names.append(item)
+            elif isinstance(item, dict) and item.get("name"):
+                names.append(item["name"])
+        return names
+    return []
 
 
-def _get_spawn_server_tools(server_names: list[str]) -> dict[str, list[dict]]:
-    """Get MCP server tools for spawned agents.
-    
-    Strategy:
-    1. Scan static agents' aggregators (covers servers shared with main process)
-    2. Fall back to mcp_server_tools DB table (populated by runtime_config events)
+def _merge_skill_status(loaded_raw: list, requested_names: list[str]) -> list[dict]:
+    """Tag each skill with ``loaded`` / ``failed`` so the UI can render badges.
+
+    ``loaded_raw`` is the runtime_config payload from the child process —
+    each entry already has ``name`` / ``description`` / ``content``.
+    ``requested_names`` came from the spawn input; anything in that list
+    missing from ``loaded_raw`` is treated as a load failure.
     """
-    if not server_names:
-        return {}
-    
-    result = {}
-    remaining = set(server_names)
-    
-    # --- Layer 1: static agent aggregators ---
-    try:
-        if state.agent_app is not None:
-            for agent_name in fast.agents:
-                agent_instance = state.agent_app.get_agent(agent_name)
-                if agent_instance is None:
-                    continue
-                aggregator = getattr(agent_instance, "_aggregator", None)
-                if aggregator is None:
-                    continue
-                server_tool_map = getattr(aggregator, "_server_to_tool_map", None)
-                if not server_tool_map:
-                    continue
-                
-                for svr in list(remaining):
-                    if svr in server_tool_map:
-                        result[svr] = [
-                            {
-                                "name": nt.tool.name,
-                                "description": getattr(nt.tool, "description", "") or "",
-                            }
-                            for nt in server_tool_map[svr]
-                        ]
-                        remaining.discard(svr)
-    except Exception as e:
-        logger.debug("[AGENTS API] Aggregator scan error: %s", e)
-    
-    # --- Layer 2: mcp_server_tools DB table (single source of truth) ---
-    if remaining and state.registry_db:
-        try:
-            cached = state.registry_db.get_server_tools(list(remaining))
-            result.update(cached)
-            remaining -= set(cached.keys())
-        except Exception as e:
-            logger.debug("[AGENTS API] DB tool lookup error: %s", e)
-    
-    if remaining:
-        logger.debug("[AGENTS API] No tools found for servers: %s", remaining)
-    
+    result: list[dict] = []
+    loaded_names: set[str] = set()
+    for entry in loaded_raw:
+        if not isinstance(entry, dict):
+            continue
+        entry_name = entry.get("name") or ""
+        if not entry_name:
+            continue
+        loaded_names.add(entry_name)
+        result.append({
+            "name": entry_name,
+            "description": entry.get("description") or "",
+            "content": entry.get("content") or "",
+            "status": "loaded",
+        })
+    for name in requested_names:
+        if name in loaded_names:
+            continue
+        result.append({
+            "name": name,
+            "description": "",
+            "content": "",
+            "status": "failed",
+        })
     return result
+
+
+def _merge_spawn_tool_status(
+    rt_tools: dict, mcp_servers: dict
+) -> dict[str, dict]:
+    """Combine runtime_config.tools (per-server tool lists, attach-only) with
+    mcp_status.servers (per-server is_connected + error_message) into the
+    unified ``{server: {tools, status, error}}`` shape that the built-in agent
+    path also returns.
+
+    Note: the ``mcp_servers`` payload emitted by isolated_runner._emit_mcp_status
+    carries BOTH ``status`` ("connected"/"failed") and ``is_connected`` (bool).
+    We read ``is_connected``; the spawn_progress_bridge log path reads ``status``.
+    Both fields are load-bearing — dropping either silently regresses one reader.
+    """
+    result: dict[str, dict] = {}
+    for server_name, tools_list in (rt_tools or {}).items():
+        result[server_name] = {
+            "tools": list(tools_list) if isinstance(tools_list, list) else [],
+            "status": "connected",
+            "error": "",
+        }
+    for server_name, info in (mcp_servers or {}).items():
+        if not isinstance(info, dict):
+            continue
+        is_connected = info.get("is_connected")
+        status = "connected" if is_connected else "failed"
+        error = info.get("error") or ""
+        existing = result.get(server_name)
+        if existing is None:
+            result[server_name] = {
+                "tools": [],
+                "status": status,
+                "error": str(error or ""),
+            }
+        else:
+            existing["status"] = status
+            if error:
+                existing["error"] = str(error)
+    return result
+
+
 
 
 @router.post("", dependencies=[Depends(verify_api_key)])

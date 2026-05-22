@@ -793,6 +793,9 @@ class SpawnProgressBridge:
             len(runtime_config["tools"]),
         )
 
+        # Push: tell dashboard the runtime introspection is ready so AgentDetail can refetch.
+        self._broadcast_runtime_ready(agent_name, run_id, raw)
+
     def _handle_mcp_status(self, agent_name: str, data: dict, raw: dict) -> None:
         """Persist MCP health status from spawned agent.
 
@@ -832,6 +835,29 @@ class SpawnProgressBridge:
                 "[MCP_STATUS] ✅ %s: %d/%d all connected",
                 agent_name, total_connected, total_configured,
             )
+
+        # Push: tell dashboard MCP status changed so AgentDetail can refetch.
+        if run_id:
+            self._broadcast_runtime_ready(agent_name, run_id, raw)
+
+    def _broadcast_runtime_ready(self, agent_name: str, run_id: str, raw: dict) -> None:
+        """Notify dashboard subscribers that the agent's runtime introspection
+        (resolved skills / MCP attach status) has been updated, so AgentDetail
+        can refetch without polling."""
+        try:
+            from services.activity_stream import activity_stream_manager
+            import time
+
+            activity_stream_manager.broadcast({
+                "agent_name": agent_name,
+                "event_type": "runtime_config_ready",
+                "message": "",
+                "data": {"agent_name": agent_name, "run_id": run_id},
+                "run_id": run_id,
+                "timestamp": raw.get("timestamp") or time.time(),
+            })
+        except Exception as e:
+            logger.warning("Failed to broadcast runtime_config_ready: %s", e)
 
     # ── Active-meeting awareness for completion notifications ──
 

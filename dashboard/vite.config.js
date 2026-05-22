@@ -10,17 +10,17 @@ export default defineConfig({
   ],
 
   server: {
-    port: 3000,
+    port: Number(process.env.VITE_PORT || 3000),
     proxy: {
       '/api': {
-        target: 'http://localhost:8000',
+        target: process.env.VITE_PROXY_TARGET || 'http://localhost:8000',
         changeOrigin: true,
       },
       // /ws/voice + any future WebSocket route. ws:true is required for the
       // upgrade handshake; without it the dev frontend can't open a socket
       // and the VoiceBar mic toggle just spins on "Connecting…".
       '/ws': {
-        target: 'ws://localhost:8000',
+        target: (process.env.VITE_PROXY_TARGET || 'http://localhost:8000').replace(/^http/, 'ws'),
         ws: true,
         changeOrigin: true,
       },

@@ -69,7 +69,10 @@ class TestBuildAgentDict:
         assert result["instruction"] == "Do testing"
         assert result["model"] == "openai.gpt-4o"
         assert result["servers"] == ["server-a", "server-b"]
-        assert result["tools"] == {"server-a": ["tool1"]}
+        # tools now ALWAYS comes from the live aggregator (not config). With no
+        # state.agent_app in tests we expect an empty dict; see
+        # ``test_runtime_tools_*`` below for the populated paths.
+        assert result["tools"] == {}
 
     def test_builtin_type(self, mock_fast):
         """Agent NOT in _agent_card_sources → type='builtin'."""
@@ -362,3 +365,388 @@ class TestAgentTimelineJsonParsing:
 
     def test_valid_timeline_data_json_still_parses(self):
         assert timeline_safe_load_activity_data('{"tool_name": "send_email"}') == {"tool_name": "send_email"}
+
+
+# ──────────────────────────────────────────────
+# Failed-status surface — built-in agent path
+# ──────────────────────────────────────────────
+
+
+class _StubManifest:
+    """Stand-in for ``SkillManifest`` carrying only the fields the route reads."""
+    def __init__(self, name, description="", body=""):
+        self.name = name
+        self.description = description
+        self.body = body
+
+
+class _StubAggregator:
+    def __init__(self, attached, configured, server_tool_map):
+        self._attached_server_names = attached
+        self._configured_server_names = configured
+        self._server_to_tool_map = server_tool_map
+
+
+class _StubAgent:
+    def __init__(self, *, skill_manifests=None, aggregator=None, server_status=None):
+        self.skill_manifests = skill_manifests or []
+        self._aggregator = aggregator
+        self.instruction = ""
+        self._server_status = server_status or {}
+
+    async def get_server_status(self):
+        return self._server_status
+
+
+class _StubAgentApp:
+    def __init__(self, agents):
+        self._agents = agents
+
+    def get_agent(self, name):
+        return self._agents.get(name)
+
+
+class _StubNamespacedTool:
+    def __init__(self, name, description=""):
+        from types import SimpleNamespace
+        self.tool = SimpleNamespace(name=name, description=description)
+        self.server_name = ""
+        self.namespaced_tool_name = name
+
+
+class TestGetAgentSkills:
+    """``_get_agent_skills`` must tag each entry with loaded/failed status."""
+
+    def test_loaded_only(self, mock_fast):
+        loaded = [_StubManifest("alpha", "alpha desc", "alpha body")]
+        mock_fast.agents = {
+            "A": _make_agent_data(config_kwargs={
+                "skills": ["alpha"],
+                "skill_manifests": loaded,
+            })
+        }
+        stub_app = _StubAgentApp({"A": _StubAgent(skill_manifests=loaded)})
+        with patch("routes.agents.fast", mock_fast), \
+             patch("routes.agents.state") as st:
+            st.agent_app = stub_app
+            from routes.agents import _get_agent_skills
+            result = _get_agent_skills("A")
+        assert [s["name"] for s in result] == ["alpha"]
+        assert result[0]["status"] == "loaded"
+        assert result[0]["content"] == "alpha body"
+
+    def test_requested_but_missing_marked_failed(self, mock_fast):
+        loaded = [_StubManifest("alpha", "alpha desc")]
+        mock_fast.agents = {
+            "A": _make_agent_data(config_kwargs={
+                "skills": ["alpha", "beta-missing"],
+                "skill_manifests": loaded,
+            })
+        }
+        stub_app = _StubAgentApp({"A": _StubAgent(skill_manifests=loaded)})
+        with patch("routes.agents.fast", mock_fast), \
+             patch("routes.agents.state") as st:
+            st.agent_app = stub_app
+            from routes.agents import _get_agent_skills
+            result = _get_agent_skills("A")
+        by_name = {s["name"]: s for s in result}
+        assert by_name["alpha"]["status"] == "loaded"
+        assert by_name["beta-missing"]["status"] == "failed"
+        assert by_name["beta-missing"]["content"] == ""
+
+    def test_path_style_request_compares_by_basename(self, mock_fast):
+        """Card-based agents list skills as paths (".fast-agent/skills/X"),
+        but fast-agent resolves to a manifest whose ``name`` is the basename.
+        The diff must compare by basename so loaded skills don't get
+        false-positive 'failed' entries when both forms refer to the same
+        skill."""
+        loaded = [_StubManifest("user-context"), _StubManifest("finance")]
+        mock_fast.agents = {
+            "FA": _make_agent_data(config_kwargs={
+                # Mix path-style and bare-name; both should be recognised.
+                "skills": [
+                    ".fast-agent/skills/user-context",
+                    ".fast-agent/skills/finance",
+                    ".fast-agent/skills/missing-skill",
+                    "another-missing",
+                ],
+                "skill_manifests": loaded,
+            })
+        }
+        stub_app = _StubAgentApp({"FA": _StubAgent(skill_manifests=loaded)})
+        with patch("routes.agents.fast", mock_fast), \
+             patch("routes.agents.state") as st:
+            st.agent_app = stub_app
+            from routes.agents import _get_agent_skills
+            result = _get_agent_skills("FA")
+        by_name = {s["name"]: s["status"] for s in result}
+        assert by_name == {
+            "user-context": "loaded",
+            "finance": "loaded",
+            "missing-skill": "failed",
+            "another-missing": "failed",
+        }
+
+    def test_falls_back_to_config_manifests_without_live_instance(self, mock_fast):
+        loaded = [_StubManifest("alpha")]
+        mock_fast.agents = {
+            "A": _make_agent_data(config_kwargs={
+                "skills": ["alpha"],
+                "skill_manifests": loaded,
+            })
+        }
+        with patch("routes.agents.fast", mock_fast), \
+             patch("routes.agents.state") as st:
+            st.agent_app = None
+            from routes.agents import _get_agent_skills
+            result = _get_agent_skills("A")
+        assert len(result) == 1
+        assert result[0]["status"] == "loaded"
+
+
+class TestGetRuntimeTools:
+    """``_get_runtime_tools`` must surface failed MCP servers as a 'failed' entry."""
+
+    def test_connected_servers_only(self, mock_fast):
+        agg = _StubAggregator(
+            attached={"alpha"},
+            configured={"alpha"},
+            server_tool_map={"alpha": [_StubNamespacedTool("ping")]},
+        )
+        stub_app = _StubAgentApp({"A": _StubAgent(aggregator=agg)})
+        with patch("routes.agents.fast", mock_fast), \
+             patch("routes.agents.state") as st:
+            st.agent_app = stub_app
+            from routes.agents import _get_runtime_tools
+            tools = _get_runtime_tools("A")
+        assert tools["alpha"]["status"] == "connected"
+        assert tools["alpha"]["tools"] == [{"name": "ping", "description": ""}]
+
+    def test_includes_failed_servers_with_empty_tools(self, mock_fast):
+        agg = _StubAggregator(
+            attached={"alpha"},
+            configured={"alpha", "beta"},
+            server_tool_map={"alpha": [_StubNamespacedTool("ping")]},
+        )
+        stub_app = _StubAgentApp({"A": _StubAgent(aggregator=agg)})
+        with patch("routes.agents.fast", mock_fast), \
+             patch("routes.agents.state") as st:
+            st.agent_app = stub_app
+            from routes.agents import _get_runtime_tools
+            tools = _get_runtime_tools("A")
+        assert tools["alpha"]["status"] == "connected"
+        assert tools["beta"]["status"] == "failed"
+        assert tools["beta"]["tools"] == []
+
+
+class TestEnrichMcpErrorsAsync:
+    """``_enrich_mcp_errors_async`` should fill error messages on failed entries."""
+
+    @pytest.mark.asyncio
+    async def test_fills_error_from_server_status(self, mock_fast):
+        from types import SimpleNamespace
+        status = {"beta": SimpleNamespace(error_message="connect timeout")}
+        stub_app = _StubAgentApp({"A": _StubAgent(server_status=status)})
+        tools = {"beta": {"tools": [], "status": "failed", "error": ""}}
+        with patch("routes.agents.fast", mock_fast), \
+             patch("routes.agents.state") as st:
+            st.agent_app = stub_app
+            from routes.agents import _enrich_mcp_errors_async
+            await _enrich_mcp_errors_async("A", tools)
+        assert tools["beta"]["error"] == "connect timeout"
+
+    @pytest.mark.asyncio
+    async def test_skips_when_no_failed_entries(self, mock_fast):
+        stub_app = _StubAgentApp({"A": _StubAgent(server_status={})})
+        tools = {"alpha": {"tools": [], "status": "connected", "error": ""}}
+        with patch("routes.agents.fast", mock_fast), \
+             patch("routes.agents.state") as st:
+            st.agent_app = stub_app
+            from routes.agents import _enrich_mcp_errors_async
+            await _enrich_mcp_errors_async("A", tools)
+        assert tools["alpha"]["error"] == ""
+
+
+# ──────────────────────────────────────────────
+# Spawn detail — runtime_pending + merge helpers
+# ──────────────────────────────────────────────
+
+
+class TestSpawnAgentDetailRuntimePending:
+    """When runtime_config has not arrived yet, the detail dict must surface
+    a pending state instead of synthesising data from the team template."""
+
+    def _registry_with(self, record):
+        class _DB:
+            def find_by_name(self, name):
+                return [record]
+        return _DB()
+
+    def test_runtime_pending_true_without_runtime_config(self):
+        record = {
+            "agent_name": "Linh - PM",
+            "role": "PM",
+            "team_name": "ScrumTeam",
+            "original_config": {"skills": ["pm-skill"], "servers": ["github"]},
+            "status": "running",
+            "started_at": 1000,
+        }
+        import services.shared_state as _state
+        with patch.object(_state, "registry_db", self._registry_with(record)):
+            from routes.agents import _build_spawn_agent_detail
+            detail = _build_spawn_agent_detail("Linh - PM")
+        assert detail["runtime_pending"] is True
+        assert detail["skills"] == []
+        assert detail["tools"] == {}
+
+    def test_runtime_pending_false_when_runtime_config_present(self):
+        record = {
+            "agent_name": "Linh - PM",
+            "role": "PM",
+            "team_name": "ScrumTeam",
+            "original_config": {"skills": ["pm-skill", "missing-skill"], "servers": []},
+            "runtime_config": {
+                "resolved_instruction": "be PM",
+                "skills": [{"name": "pm-skill", "description": "pm", "content": "..."}],
+                "tools": {"github": [{"name": "search_issues"}]},
+            },
+            "mcp_status": {
+                "servers": {
+                    "github": {"is_connected": True, "error": ""},
+                    "atlassian": {"is_connected": False, "error": "missing token"},
+                },
+            },
+            "status": "idle",
+            "started_at": 1000,
+        }
+        import services.shared_state as _state
+        with patch.object(_state, "registry_db", self._registry_with(record)):
+            from routes.agents import _build_spawn_agent_detail
+            detail = _build_spawn_agent_detail("Linh - PM")
+
+        assert detail["runtime_pending"] is False
+        by_name = {s["name"]: s for s in detail["skills"]}
+        assert by_name["pm-skill"]["status"] == "loaded"
+        assert by_name["missing-skill"]["status"] == "failed"
+        assert detail["tools"]["github"]["status"] == "connected"
+        assert detail["tools"]["atlassian"]["status"] == "failed"
+        assert detail["tools"]["atlassian"]["error"] == "missing token"
+
+
+class TestMergeHelpers:
+    """Pure-function tests for the merge helpers used by the spawn path."""
+
+    def test_parse_skill_names_handles_string_and_list(self):
+        from routes.agents import _parse_skill_names
+        assert _parse_skill_names("a, b ,c") == ["a", "b", "c"]
+        assert _parse_skill_names(["a", "b"]) == ["a", "b"]
+        assert _parse_skill_names([{"name": "x"}, "y"]) == ["x", "y"]
+        assert _parse_skill_names(None) == []
+
+    def test_merge_skill_status_tags_failed(self):
+        from routes.agents import _merge_skill_status
+        loaded = [{"name": "a", "description": "d", "content": "c"}]
+        out = _merge_skill_status(loaded, ["a", "b"])
+        by_name = {s["name"]: s for s in out}
+        assert by_name["a"]["status"] == "loaded"
+        assert by_name["b"]["status"] == "failed"
+
+    def test_merge_spawn_tool_status_marks_disconnected_servers(self):
+        from routes.agents import _merge_spawn_tool_status
+        rt = {"alpha": [{"name": "ping"}]}
+        mcp = {
+            "alpha": {"is_connected": True, "error": ""},
+            "beta": {"is_connected": False, "error": "no route"},
+        }
+        out = _merge_spawn_tool_status(rt, mcp)
+        assert out["alpha"]["status"] == "connected"
+        assert out["beta"]["status"] == "failed"
+        assert out["beta"]["error"] == "no route"
+
+
+# ──────────────────────────────────────────────
+# Runtime-ready broadcast (spawn_progress_bridge)
+# ──────────────────────────────────────────────
+
+
+class TestRuntimeReadyBroadcast:
+    """``_handle_runtime_config`` must broadcast a ``runtime_config_ready``
+    event so the dashboard refetches without polling."""
+
+    def test_handle_runtime_config_broadcasts(self):
+        from services import spawn_progress_bridge as spb
+
+        broadcasted = []
+
+        class _Stream:
+            def broadcast(self, payload):
+                broadcasted.append(payload)
+
+        class _Registry:
+            def upsert_record(self, *_args, **_kwargs):
+                pass
+
+            def bulk_upsert_server_tools(self, *_args, **_kwargs):
+                return 0
+
+        bridge = spb.SpawnProgressBridge.__new__(spb.SpawnProgressBridge)
+        bridge._registry_db = _Registry()
+        bridge._request_id = None
+        bridge._pm = None
+
+        with patch.object(spb, "logger", MagicMock()), \
+             patch("services.activity_stream.activity_stream_manager", _Stream()):
+            bridge._handle_runtime_config(
+                "Linh - PM",
+                {"resolved_instruction": "x", "skills": [], "tools": {}},
+                {"run_id": "run-001"},
+            )
+
+        events = [b["event_type"] for b in broadcasted]
+        assert "runtime_config_ready" in events
+        ev = next(b for b in broadcasted if b["event_type"] == "runtime_config_ready")
+        assert ev["agent_name"] == "Linh - PM"
+        assert ev["run_id"] == "run-001"
+
+    def test_handle_mcp_status_broadcasts(self):
+        """``_handle_mcp_status`` mirrors ``_handle_runtime_config``: after
+        persisting MCP attach state it must publish a refresh event so the
+        dashboard picks up the new connection / error info without polling."""
+        from services import spawn_progress_bridge as spb
+
+        broadcasted = []
+
+        class _Stream:
+            def broadcast(self, payload):
+                broadcasted.append(payload)
+
+        class _Registry:
+            def upsert_record(self, *_args, **_kwargs):
+                pass
+
+        bridge = spb.SpawnProgressBridge.__new__(spb.SpawnProgressBridge)
+        bridge._registry_db = _Registry()
+        bridge._request_id = None
+        bridge._pm = None
+
+        with patch.object(spb, "logger", MagicMock()), \
+             patch("services.activity_stream.activity_stream_manager", _Stream()):
+            bridge._handle_mcp_status(
+                "Linh - PM",
+                {
+                    "total_configured": 2,
+                    "total_connected": 1,
+                    "total_failed": 1,
+                    "servers": {
+                        "alpha": {"is_connected": True},
+                        "beta": {"is_connected": False, "error": "no route"},
+                    },
+                },
+                {"run_id": "run-002"},
+            )
+
+        events = [b["event_type"] for b in broadcasted]
+        assert "runtime_config_ready" in events
+        ev = next(b for b in broadcasted if b["event_type"] == "runtime_config_ready")
+        assert ev["agent_name"] == "Linh - PM"
+        assert ev["run_id"] == "run-002"

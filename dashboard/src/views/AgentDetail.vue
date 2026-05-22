@@ -1,5 +1,5 @@
 <script setup>
-import { ref, reactive, computed, onMounted, watch } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAgentsStore } from '../stores/agents'
 import { apiFetch } from '../api'
@@ -40,7 +40,7 @@ const expandedMessages = ref(new Set())
 const agentName = computed(() => route.params.name)
 const liveAgent = computed(() => store.agents.get(agentName.value))
 
-onMounted(async () => {
+async function fetchAgentDetail() {
   try {
     agentDetail.value = await apiFetch(`/api/agents/${agentName.value}`)
   } catch (e) {
@@ -48,7 +48,43 @@ onMounted(async () => {
   } finally {
     isLoading.value = false
   }
+}
+
+onMounted(() => {
+  fetchAgentDetail()
 })
+
+// Push-based refresh: when SpawnProgressBridge finishes persisting an agent's
+// runtime introspection it broadcasts `runtime_config_ready` over the global
+// activity stream. AppLayout already opens that EventSource at boot and routes
+// events through agentsStore.recentEvents, so we just listen here.
+//
+// We walk newly-prepended events from the head until the last one we already
+// processed instead of just reading events[0]. Vue coalesces same-tick array
+// mutations, so if a runtime_config_ready and an unrelated event land in the
+// same microtask, an events[0] check would miss the one that isn't last.
+let _lastSeenEvent = null
+const _stopRuntimeWatch = watch(
+  () => store.recentEvents,
+  (events) => {
+    if (!events?.length) return
+    let hit = false
+    for (let i = 0; i < events.length; i++) {
+      if (events[i] === _lastSeenEvent) break
+      const ev = events[i]
+      if (
+        ev?.event_type === 'runtime_config_ready'
+        && ev?.agent_name === agentName.value
+      ) {
+        hit = true
+      }
+    }
+    _lastSeenEvent = events[0]
+    if (hit) fetchAgentDetail()
+  },
+  { flush: 'post' },
+)
+onUnmounted(() => _stopRuntimeWatch())
 
 const tabs = [
   { id: 'overview', label: 'Overview' },
@@ -308,6 +344,14 @@ const attachBusy = ref(false)
 const attachToast = ref('')
 
 const isAgentCardBased = computed(() => agent.value?.type === 'card')
+// "Defined in agent.py" warning ONLY applies to truly built-in agents
+// (Jarvis, PersonalAgent, etc). Team/dynamic agents are spawned at runtime
+// and their config lives in the spawn registry, not agent.py.
+const isBuiltinAgent = computed(() => agent.value?.type === 'builtin')
+const isSpawnedAgent = computed(() => {
+  const t = agent.value?.type
+  return t === 'team' || t === 'dynamic'
+})
 
 const attachableSkills = computed(() => {
   // Skills in the global library that aren't already attached to this agent.
@@ -319,7 +363,7 @@ const attachableSkills = computed(() => {
 
 async function attachSkill(skillName) {
   if (attachBusy.value) return
-  if (!isAgentCardBased.value) {
+  if (isBuiltinAgent.value) {
     const proceed = await confirm({
       title: `Attach to ${agentName.value}?`,
       message:
@@ -327,6 +371,17 @@ async function attachSkill(skillName) {
         `'${skillName}' will only apply at runtime and revert when the ` +
         `backend restarts unless you also add it to ${agentName.value}'s ` +
         `get_skills(...) call.`,
+      confirmText: 'Attach (runtime only)',
+      variant: 'warning',
+    })
+    if (!proceed) return
+  } else if (isSpawnedAgent.value) {
+    const proceed = await confirm({
+      title: `Attach to ${agentName.value}?`,
+      message:
+        `${agentName.value} is a spawned agent. Attaching '${skillName}' ` +
+        `only affects the live instance — it will be lost when the agent ` +
+        `stops. Edit the team template to persist this change across spawns.`,
       confirmText: 'Attach (runtime only)',
       variant: 'warning',
     })
@@ -353,9 +408,14 @@ async function attachSkill(skillName) {
 }
 
 async function detachSkill(skillName) {
-  const message = isAgentCardBased.value
-    ? `'${skillName}' will be removed from ${agentName.value}. The skill itself stays in the library.`
-    : `${agentName.value} is code-based. Detaching only applies at runtime; the skill will reattach on next backend restart unless you remove it from agent.py.`
+  let message
+  if (isAgentCardBased.value) {
+    message = `'${skillName}' will be removed from ${agentName.value}. The skill itself stays in the library.`
+  } else if (isSpawnedAgent.value) {
+    message = `${agentName.value} is a spawned agent. Detaching only affects the live instance; '${skillName}' will reattach on the next spawn unless you also edit the team template.`
+  } else {
+    message = `${agentName.value} is code-based. Detaching only applies at runtime; the skill will reattach on next backend restart unless you remove it from agent.py.`
+  }
   const proceed = await confirm({
     title: `Detach from ${agentName.value}?`,
     message,
@@ -387,16 +447,23 @@ onMounted(() => {
   fetchSkillsMeta()
 })
 
-// Per-server tool data for accordion display
+// Per-server tool data for accordion display.
+// Backend now returns ``{server: {tools, status, error}}`` so the UI can
+// surface MCP attach failures alongside the connected servers. We also
+// tolerate the legacy ``{server: [tool, ...]}`` shape so the component
+// keeps rendering during the deploy window.
 const serverTools = computed(() => {
   const tools = agent.value?.tools || {}
-  const servers = agent.value?.servers || []
-  return servers.map(srv => {
-    const srvTools = tools[srv] || []
+  return Object.entries(tools).map(([name, info]) => {
+    const isLegacy = Array.isArray(info)
+    const rawList = isLegacy ? info : (info?.tools || [])
+    const status = isLegacy ? 'connected' : (info?.status || 'connected')
     return {
-      name: srv,
-      connected: true,
-      tools: srvTools.map(t => {
+      name,
+      status,
+      connected: status === 'connected',
+      error: isLegacy ? '' : (info?.error || ''),
+      tools: rawList.map(t => {
         if (typeof t === 'string') return { name: t, description: '' }
         return { name: t.name, description: t.description || '' }
       }),
@@ -408,7 +475,8 @@ const serverTools = computed(() => {
 const allTools = computed(() => {
   const tools = agent.value?.tools || {}
   const result = []
-  for (const [server, toolList] of Object.entries(tools)) {
+  for (const [server, info] of Object.entries(tools)) {
+    const toolList = Array.isArray(info) ? info : (info?.tools || [])
     for (const tool of toolList) {
       const name = typeof tool === 'string' ? tool : tool.name
       result.push({ server, name })
@@ -416,6 +484,15 @@ const allTools = computed(() => {
   }
   return result
 })
+
+const runtimePending = computed(() => !!agent.value?.runtime_pending)
+
+const failedSkillCount = computed(
+  () => (agent.value?.skills || []).filter(s => s.status === 'failed').length,
+)
+const failedServerCount = computed(
+  () => serverTools.value.filter(s => !s.connected).length,
+)
 
 // Total tool count across all servers
 const totalToolCount = computed(() => allTools.value.length)
@@ -553,16 +630,36 @@ function historyBadgeLabel(type) {
           <!-- Left Column -->
           <div class="overview-col">
             <!-- Skills Panel -->
-            <div class="panel" v-if="agent.skills?.length">
+            <div class="panel" v-if="runtimePending || agent.skills?.length">
               <div class="panel-header">
-                <h3>Skills ({{ agent.skills.length }})</h3>
+                <h3>
+                  Skills ({{ agent.skills?.length || 0 }})
+                  <span v-if="failedSkillCount" class="header-failed-pill" :title="`${failedSkillCount} skill(s) failed to load`">
+                    {{ failedSkillCount }} failed
+                  </span>
+                </h3>
                 <button class="view-all-link" @click="activeTab = 'skills'">View All →</button>
               </div>
-              <div class="skill-list">
-                <div v-for="skill in agent.skills" :key="skill.name" class="skill-item">
+              <div v-if="runtimePending" class="runtime-pending-skeleton">
+                <div class="skeleton-row" />
+                <div class="skeleton-row" />
+                <div class="skeleton-row" />
+                <span class="runtime-pending-label">Waiting for agent runtime…</span>
+              </div>
+              <div v-else class="skill-list">
+                <div
+                  v-for="skill in agent.skills"
+                  :key="skill.name"
+                  class="skill-item"
+                  :class="`skill-status-${skill.status || 'loaded'}`"
+                  :title="skill.status === 'failed' ? `${skill.name} was requested but did not load` : ''"
+                >
                   <span class="skill-icon">⚡</span>
                   <div class="skill-info">
-                    <span class="skill-name">{{ skill.name }}</span>
+                    <span class="skill-name">
+                      {{ skill.name }}
+                      <span v-if="skill.status === 'failed'" class="badge badge-failed">● Failed</span>
+                    </span>
                     <span v-if="skill.description" class="skill-desc">{{ skill.description }}</span>
                   </div>
                 </div>
@@ -595,16 +692,34 @@ function historyBadgeLabel(type) {
           <!-- Right Column -->
           <div class="overview-col">
             <!-- MCP Servers Panel -->
-            <div class="panel" v-if="agent.servers?.length">
+            <div class="panel" v-if="runtimePending || serverTools.length">
               <div class="panel-header">
-                <h3>MCP Servers ({{ agent.servers.length }})</h3>
+                <h3>
+                  MCP Servers ({{ serverTools.length }})
+                  <span v-if="failedServerCount" class="header-failed-pill" :title="`${failedServerCount} server(s) failed to attach`">
+                    {{ failedServerCount }} failed
+                  </span>
+                </h3>
                 <button class="view-all-link" @click="activeTab = 'servers'">View All →</button>
               </div>
-              <div class="server-list">
-                <div v-for="srv in agent.servers" :key="srv" class="server-item">
+              <div v-if="runtimePending" class="runtime-pending-skeleton">
+                <div class="skeleton-row" />
+                <div class="skeleton-row" />
+                <div class="skeleton-row" />
+                <span class="runtime-pending-label">Waiting for agent runtime…</span>
+              </div>
+              <div v-else class="server-list">
+                <div
+                  v-for="srv in serverTools"
+                  :key="srv.name"
+                  class="server-item"
+                  :class="`server-status-${srv.status}`"
+                  :title="srv.error || ''"
+                >
                   <div class="server-icon">🔌</div>
-                  <span class="server-name">{{ srv }}</span>
-                  <span class="badge badge-connected">● Connected</span>
+                  <span class="server-name">{{ srv.name }}</span>
+                  <span v-if="srv.connected" class="badge badge-connected">● Connected</span>
+                  <span v-else class="badge badge-failed">● Failed</span>
                 </div>
               </div>
             </div>
@@ -616,7 +731,9 @@ function historyBadgeLabel(type) {
                 <button class="view-all-link" @click="activeTab = 'instruction'">Expand →</button>
               </div>
               <div class="instruction-preview">
-                <MarkdownRenderer :content="instructionPreview" content-type="markdown" />
+                <!-- See INSTRUCTION TAB note: render as text so XML tags
+                     used by fast-agent's skill injection stay visible. -->
+                <MarkdownRenderer :content="instructionPreview" content-type="text" />
               </div>
               <div v-if="hasMoreInstruction" class="instruction-more">
                 … {{ instructionLineCount - 12 }} more lines
@@ -628,11 +745,17 @@ function historyBadgeLabel(type) {
 
       <!-- ===== SKILLS TAB ===== -->
       <div v-else-if="activeTab === 'skills'" class="animate-fade-in">
-        <div v-if="!isAgentCardBased" class="code-agent-banner">
+        <div v-if="isBuiltinAgent" class="code-agent-banner">
           <strong>This agent is defined in code (agent.py).</strong>
           Attach/detach changes apply at runtime — they revert on backend
           restart unless you also edit
           <code>get_skills(...)</code> in agent.py.
+        </div>
+        <div v-else-if="isSpawnedAgent" class="code-agent-banner">
+          <strong>This is a spawned agent.</strong>
+          Skill changes here only affect the live instance — when the agent
+          stops or the team is torn down, all attachments are lost. Edit the
+          team template to make changes persistent across spawns.
         </div>
         <p v-if="attachToast" class="attach-toast">{{ attachToast }}</p>
         <div class="skills-tab-toolbar">
@@ -673,12 +796,21 @@ function historyBadgeLabel(type) {
             </button>
           </div>
         </div>
-        <div v-if="agent.skills?.length" class="accordion-list">
+        <div v-if="runtimePending" class="runtime-pending-skeleton runtime-pending-skeleton-large">
+          <div class="skeleton-row" />
+          <div class="skeleton-row" />
+          <div class="skeleton-row" />
+          <span class="runtime-pending-label">Waiting for agent runtime to report which skills it actually loaded…</span>
+        </div>
+        <div v-else-if="agent.skills?.length" class="accordion-list">
           <div
             v-for="skill in agent.skills"
             :key="skill.name"
             class="accordion-card skill-accordion-card"
-            :class="{ 'accordion-expanded': expandedSkills[skill.name] }"
+            :class="[
+              { 'accordion-expanded': expandedSkills[skill.name] },
+              `skill-status-${skill.status || 'loaded'}`,
+            ]"
           >
             <!-- Skill Header -->
             <div class="accordion-header skill-accordion-header">
@@ -696,6 +828,11 @@ function historyBadgeLabel(type) {
                       class="skill-builtin-badge"
                       title="Ships with Jarvis. Editable, but cannot be deleted."
                     >Built-in</span>
+                    <span
+                      v-if="skill.status === 'failed'"
+                      class="badge badge-failed"
+                      title="The agent requested this skill but it failed to load (missing file, parse error, or wrong skills dir). It is NOT injected into the agent's prompt."
+                    >● Failed</span>
                   </span>
                   <span v-if="skill.description" class="skill-header-preview">
                     {{ skill.description }}
@@ -771,12 +908,21 @@ function historyBadgeLabel(type) {
 
       <!-- ===== MCP SERVERS TAB ===== -->
       <div v-else-if="activeTab === 'servers'" class="animate-fade-in">
-        <div v-if="serverTools.length" class="accordion-list">
+        <div v-if="runtimePending" class="runtime-pending-skeleton runtime-pending-skeleton-large">
+          <div class="skeleton-row" />
+          <div class="skeleton-row" />
+          <div class="skeleton-row" />
+          <span class="runtime-pending-label">Waiting for agent runtime to report which MCP servers actually attached…</span>
+        </div>
+        <div v-else-if="serverTools.length" class="accordion-list">
           <div
             v-for="srv in serverTools"
             :key="srv.name"
             class="accordion-card"
-            :class="{ 'accordion-expanded': expandedServers[srv.name] }"
+            :class="[
+              { 'accordion-expanded': expandedServers[srv.name] },
+              `server-status-${srv.status}`,
+            ]"
           >
             <!-- Accordion Header -->
             <button class="accordion-header" @click="toggleServer(srv.name)">
@@ -784,19 +930,30 @@ function historyBadgeLabel(type) {
                 <span class="accordion-icon">🔌</span>
                 <span class="accordion-title">{{ srv.name }}</span>
                 <span class="badge badge-connected" v-if="srv.connected">● Connected</span>
-                <span class="badge badge-disconnected" v-else>● Disconnected</span>
+                <span
+                  class="badge badge-failed"
+                  v-else
+                  :title="srv.error || 'MCP server failed to attach. The agent does NOT see these tools.'"
+                >● Failed</span>
               </div>
               <div class="accordion-header-right">
                 <span class="accordion-tool-count" v-if="srv.tools.length">
                   {{ srv.tools.length }} tool{{ srv.tools.length !== 1 ? 's' : '' }}
                 </span>
-                <span class="accordion-tool-count muted" v-else>Tools not available</span>
+                <span class="accordion-tool-count muted" v-else-if="srv.connected">Tools not available</span>
+                <span class="accordion-tool-count muted" v-else>0 tools</span>
                 <span class="accordion-chevron" :class="{ 'chevron-open': expandedServers[srv.name] }">›</span>
               </div>
             </button>
 
             <!-- Accordion Body -->
-            <div v-if="expandedServers[srv.name] && srv.tools.length" class="accordion-body">
+            <div v-if="expandedServers[srv.name]" class="accordion-body">
+              <div v-if="!srv.connected && srv.error" class="server-error-banner">
+                <strong>Attach error:</strong> {{ srv.error }}
+              </div>
+              <div v-else-if="!srv.connected" class="server-error-banner muted">
+                MCP server is not attached. No error message reported.
+              </div>
               <div
                 v-for="tool in srv.tools"
                 :key="tool.name"
@@ -817,16 +974,21 @@ function historyBadgeLabel(type) {
             </div>
           </div>
         </div>
-        <div v-else class="empty-state">No MCP servers connected</div>
+        <div v-else class="empty-state">No MCP servers configured</div>
       </div>
 
       <!-- ===== INSTRUCTION TAB ===== -->
       <div v-else-if="activeTab === 'instruction'" class="animate-fade-in">
         <div class="panel">
           <div class="instruction-full">
+            <!-- Render as text: fast-agent injects literal XML-like tags
+                 (<available_skills>, <skill>, <scripts>, <references>, ...)
+                 into the prompt. Markdown sanitization strips unknown HTML
+                 tags so those would silently disappear, misleading the user
+                 about what the LLM actually sees. -->
             <MarkdownRenderer
               :content="agent.instruction || 'No instruction configured'"
-              :content-type="agent.instruction ? 'markdown' : 'text'"
+              content-type="text"
             />
           </div>
         </div>
@@ -1067,6 +1229,84 @@ function historyBadgeLabel(type) {
   font-size: 11px;
   color: #ef4444;
   margin-left: auto;
+}
+.badge-failed {
+  font-size: 11px;
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  margin-left: auto;
+}
+.header-failed-pill {
+  display: inline-block;
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  padding: 1px 8px;
+  border-radius: 10px;
+  vertical-align: middle;
+}
+.skill-status-failed .skill-name,
+.skill-status-failed .accordion-title {
+  color: #f87171;
+}
+.skill-status-failed .skill-icon,
+.skill-status-failed .skill-accordion-icon {
+  opacity: 0.55;
+}
+.server-status-failed .server-name,
+.server-status-failed .accordion-title {
+  color: #f87171;
+}
+.server-status-failed .server-icon,
+.server-status-failed .accordion-icon {
+  opacity: 0.55;
+}
+.server-error-banner {
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  color: #fca5a5;
+  font-size: 12px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin: 8px 0;
+}
+.server-error-banner.muted {
+  background: rgba(239, 68, 68, 0.04);
+  color: #9ca3af;
+}
+.runtime-pending-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 0;
+}
+.runtime-pending-skeleton-large {
+  padding: 24px 0;
+}
+.skeleton-row {
+  height: 14px;
+  border-radius: 6px;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.04) 0%,
+    rgba(255, 255, 255, 0.08) 50%,
+    rgba(255, 255, 255, 0.04) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.runtime-pending-label {
+  font-size: 12px;
+  color: var(--color-text-muted, #8b8fa3);
+  margin-top: 6px;
 }
 
 /* ── Buttons ── */
