@@ -68,8 +68,26 @@ Tool calls are not cancelled — the ``_current_tasks`` ref is cleared on
 ``after_llm_call`` (i.e. before any tool-call phase begins). Pause during
 tool-call falls back to cooperative blocking at the next checkpoint.
 
+Team-wide pause (Phase 4)
+-------------------------
+``pause(scope)`` accepts either an agent name or a team name. Resolution
+goes through ``_resolve_scope``:
+
+  - If ``scope`` is a team name (any spawn_record has that team_name),
+    expand to the full membership set. Orchestrator is included because
+    the template's orchestrator role is itself a member in the registry.
+  - If ``scope`` is an agent name and that agent belongs to a team
+    (spawn_record.team_name set), expand to the full team. Implements
+    user requirement #4: pausing any member pauses the whole team.
+  - Otherwise pause just the single agent (covers in-process Jarvis and
+    solo spawns).
+
+Late-joiner protection: ``spawn_progress_bridge`` consults
+``is_team_paused`` when registering a new spawn record. If the team
+is paused, the controller immediately pauses the joiner so it can't
+slip past the pause window between spawn and first checkpoint.
+
 Later phases extend this module with:
-  - Phase 4: team-wide pause + late-joiner hook
   - Phase 5: ``attach(agent, team_name)`` auto-wiring helper
   - Phase 6: restart recovery for manual pauses
 """
@@ -139,16 +157,56 @@ class PauseController:
         """Return a list of all currently paused agent names."""
         return list(self._paused_agents)
 
-    def pause(self, agent_name: str) -> bool:
-        """Pause an agent.
+    def pause(self, scope: str) -> bool:
+        """Pause an agent or a whole team.
 
-        Transitions ``running → pausing`` immediately. If the agent has
-        an in-flight LLM/tool call, the hook will transition
-        ``pausing → paused`` once it reaches a checkpoint. If the agent
-        is idle (no active turn), this method also emits the terminal
-        ``paused`` event itself.
+        ``scope`` can be either an agent name or a team name. Resolution
+        rules are documented in ``_resolve_scope``. Any agent in the
+        resolved set goes through the same per-agent transition:
+        ``running → pausing → paused`` (or idle-emit shortcut).
 
-        Returns True if the agent was not already paused.
+        Returns True if at least one agent was newly paused.
+        """
+        agents, team_name = self._resolve_scope(scope)
+        if team_name:
+            logger.info("[PAUSE] Team scope: %s → %d agent(s)", team_name, len(agents))
+        any_changed = False
+        for agent in agents:
+            if self._pause_one(agent):
+                any_changed = True
+        return any_changed
+
+    def resume(self, scope: str) -> bool:
+        """Resume an agent or a whole team. Mirror of ``pause``."""
+        agents, team_name = self._resolve_scope(scope)
+        if team_name:
+            logger.info("[RESUME] Team scope: %s → %d agent(s)", team_name, len(agents))
+        any_changed = False
+        for agent in agents:
+            if self._resume_one(agent):
+                any_changed = True
+        return any_changed
+
+    def is_team_paused(self, team_name: str) -> bool:
+        """Return True if any agent in the named team is currently paused.
+
+        Used by the late-joiner hook in ``spawn_progress_bridge`` to
+        auto-pause new members spawned into a team while the team is
+        paused — prevents the gap between spawn registration and first
+        ``before_llm_call`` checkpoint from being a free-running window.
+        """
+        agents, resolved = self._resolve_scope(team_name)
+        # Only valid when ``team_name`` actually expanded to a team.
+        if resolved != team_name:
+            return False
+        return any(a in self._paused_agents for a in agents)
+
+    def _pause_one(self, agent_name: str) -> bool:
+        """Pause a single agent. Returns True if newly paused.
+
+        This is the original Phase 1-3 ``pause()`` body, kept private so
+        Phase 4's scope-expanding ``pause()`` can call it for each agent
+        in a team without re-running scope resolution recursively.
         """
         if agent_name in self._paused_agents:
             logger.info("[PAUSE] Agent %s already paused", agent_name)
@@ -168,10 +226,7 @@ class PauseController:
         # registered task ref. ``_current_tasks`` is populated by the
         # ``before_llm_call`` hook and cleared by ``after_llm_call``, so a
         # ref existing here means we *are* mid-LLM (not mid-tool — strategy B
-        # leaves tool calls running to completion). The cancel surfaces
-        # inside ``_tool_runner_llm_step`` as CancelledError; the runner's
-        # retry loop calls ``on_pause_cancel`` (defined below in
-        # ``create_pause_hooks``) which awaits resume and signals retry.
+        # leaves tool calls running to completion).
         task = self._current_tasks.get(agent_name)
         if task is not None and not task.done():
             task.cancel()
@@ -205,16 +260,8 @@ class PauseController:
                     agent_name, self._active.get(agent_name, False), pid is not None)
         return True
 
-    def resume(self, agent_name: str) -> bool:
-        """Resume a paused agent.
-
-        Transitions ``paused → resuming`` immediately, then the hook
-        completes the transition ``resuming → running`` when ``await
-        event.wait()`` returns. For idle agents (no hook to wake),
-        this method emits the terminal ``running`` event itself.
-
-        Returns True if the agent was actually paused.
-        """
+    def _resume_one(self, agent_name: str) -> bool:
+        """Resume a single agent. Returns True if newly resumed."""
         if agent_name not in self._paused_agents:
             logger.info("[RESUME] Agent %s not paused", agent_name)
             return False
@@ -252,6 +299,59 @@ class PauseController:
         logger.info("[RESUME] Agent %s resuming (active=%s, subprocess=%s)",
                     agent_name, self._active.get(agent_name, False), pid is not None)
         return True
+
+    def _resolve_scope(self, scope: str) -> tuple[set[str], Optional[str]]:
+        """Expand ``scope`` to ``(agent_set, team_name)``.
+
+        Resolution order:
+          1. If ``scope`` matches a team_name (any spawn_record has
+             ``team_name == scope``) → return all members + scope as
+             team_name. Orchestrator is included because the template's
+             orchestrator role is itself a member in the registry.
+          2. If ``scope`` matches an agent_name and that agent belongs
+             to a team (``spawn_record.team_name`` set) → return the
+             full team membership PLUS the original scope (in case the
+             caller refers to an agent not yet in the registry — late
+             joiner) + the team_name.
+          3. Otherwise (solo agent, in-process Jarvis, unknown name) →
+             return ``({scope}, None)``.
+
+        Returned ``team_name`` is ``None`` if scope is solo, allowing
+        callers to distinguish "real team" from "just this agent".
+        """
+        try:
+            import services.shared_state as _state
+            if _state.registry_db is None:
+                return ({scope}, None)
+
+            # (1) scope might be a team_name
+            members = _state.registry_db.find_by_team_name(scope)
+            if members:
+                names = {m.get("agent_name") for m in members if m.get("agent_name")}
+                names.discard(None)
+                return (names, scope)
+
+            # (2) scope might be an agent in a team — look up its team_name
+            records = _state.registry_db.find_by_name(scope)
+            team_name: Optional[str] = None
+            for rec in records:
+                if rec.get("team_name"):
+                    team_name = rec["team_name"]
+                    break
+            if team_name:
+                members = _state.registry_db.find_by_team_name(team_name)
+                names = {m.get("agent_name") for m in members if m.get("agent_name")}
+                names.discard(None)
+                # Defensive: include the original scope in case the
+                # late-joiner hook calls us before the new spawn_record
+                # has fully landed in the team query.
+                names.add(scope)
+                return (names, team_name)
+        except Exception as e:
+            logger.warning("[PAUSE] scope resolve failed for %r: %s", scope, e)
+
+        # (3) Solo agent (Jarvis, ad-hoc spawn) — pause just this one.
+        return ({scope}, None)
 
     def create_pause_hooks(self, agent_name: str) -> ToolRunnerHooks:
         """Create ToolRunnerHooks that drive the state machine.

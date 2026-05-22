@@ -675,6 +675,26 @@ class SpawnProgressBridge:
                 record_data["error"] = str(data.get("message", ""))[:500]
 
             self._registry_db.upsert_record(run_id, record_data)
+
+            # Late-joiner hook: if this is a spawn-registration event AND
+            # the team is currently paused, pause the new member before
+            # it has a chance to run. Closes the window between
+            # spawn-record insert and first ``before_llm_call`` checkpoint
+            # — without this, an agent joining a paused team would happily
+            # run a free turn before any checkpoint blocked it.
+            if event_type_str in ("started", "lifecycle_spawn_registered") and team_name:
+                try:
+                    from services.pause_controller import pause_controller
+                    if pause_controller.is_team_paused(team_name) and \
+                       not pause_controller.is_paused(role):
+                        pause_controller.pause(role)
+                        logger.info(
+                            "[PAUSE] Auto-paused late joiner %s into paused team %s",
+                            role, team_name,
+                        )
+                except Exception as pe:
+                    # Pause hook is best-effort — never break spawn registration.
+                    logger.warning("[PAUSE] late-joiner check failed: %s", pe)
         except Exception as e:
             logger.warning("Failed to upsert spawn record: %s", e)
 

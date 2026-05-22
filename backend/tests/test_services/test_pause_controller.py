@@ -32,12 +32,19 @@ def fresh_manager():
 
 @pytest.fixture
 def fake_registry(monkeypatch):
-    """Stub ``services.shared_state.registry_db`` with a recording mock."""
+    """Stub ``services.shared_state.registry_db`` with a recording mock.
+
+    Defaults make the agent look solo (no team): ``find_by_team_name``
+    returns ``[]`` so the Phase 4 scope resolver picks the "solo agent"
+    branch unless a specific test overrides it for team scenarios.
+    """
     import services.shared_state as state
 
     original = state.registry_db
     fake = MagicMock()
     fake.upsert_record = MagicMock()
+    fake.find_by_team_name = MagicMock(return_value=[])
+    fake.find_by_name = MagicMock(return_value=[])
     state.registry_db = fake
 
     yield fake
@@ -472,3 +479,149 @@ def test_after_llm_call_clears_task_ref_so_pause_during_tool_does_not_cancel():
         asyncio.run(run())
     finally:
         act.activity_stream_manager = original
+
+
+# ─── Phase 4: team-wide pause + scope resolution ────────────────────
+
+
+def test_pause_with_team_name_expands_to_all_members(fresh_manager, fake_registry, captured_sse):
+    """``pause(team_name)`` resolves to every member in the team's
+    registry and pauses each one. Implements requirement #4: pausing
+    any member pauses the whole team.
+    """
+    fake_registry.find_by_team_name.return_value = [
+        {"run_id": "r1", "agent_name": "PM",      "team_name": "AlphaTeam"},
+        {"run_id": "r2", "agent_name": "Dev",     "team_name": "AlphaTeam"},
+        {"run_id": "r3", "agent_name": "QA",      "team_name": "AlphaTeam"},
+    ]
+
+    result = fresh_manager.pause("AlphaTeam")
+
+    assert result is True
+    assert fresh_manager.is_paused("PM")
+    assert fresh_manager.is_paused("Dev")
+    assert fresh_manager.is_paused("QA")
+
+
+def test_pause_on_member_expands_to_team(fresh_manager, fake_registry, captured_sse):
+    """``pause(member_name)`` for an agent that belongs to a team
+    expands to the whole team (members + orchestrator).
+    """
+    def by_team(name):
+        if name == "AlphaTeam":
+            return [
+                {"run_id": "r1", "agent_name": "PM",  "team_name": "AlphaTeam"},
+                {"run_id": "r2", "agent_name": "Dev", "team_name": "AlphaTeam"},
+            ]
+        return []
+
+    def by_name(name):
+        if name == "Dev":
+            return [{"run_id": "r2", "agent_name": "Dev", "team_name": "AlphaTeam"}]
+        return []
+
+    fake_registry.find_by_team_name.side_effect = by_team
+    fake_registry.find_by_name.side_effect = by_name
+
+    fresh_manager.pause("Dev")
+
+    assert fresh_manager.is_paused("Dev")
+    assert fresh_manager.is_paused("PM"), \
+        "pausing one member must propagate to the orchestrator/peers"
+
+
+def test_pause_on_solo_agent_does_not_expand(fresh_manager, fake_registry, captured_sse):
+    """Agents not in any team (in-process Jarvis, ad-hoc spawn) must
+    NOT cause spurious DB lookups to leak into other agents — pausing
+    Jarvis must not pause anything else.
+    """
+    fake_registry.find_by_team_name.return_value = []
+    fake_registry.find_by_name.return_value = []  # not in registry — solo
+
+    fresh_manager.pause("Jarvis")
+
+    assert fresh_manager.is_paused("Jarvis")
+    assert len(fresh_manager.get_all_paused()) == 1, \
+        "solo pause must affect exactly one agent"
+
+
+def test_resume_team_resumes_all_members(fresh_manager, fake_registry, captured_sse):
+    """Mirror of pause — resume(team_name) must resume every member."""
+    fake_registry.find_by_team_name.return_value = [
+        {"run_id": "r1", "agent_name": "PM",  "team_name": "AlphaTeam"},
+        {"run_id": "r2", "agent_name": "Dev", "team_name": "AlphaTeam"},
+    ]
+
+    fresh_manager.pause("AlphaTeam")
+    assert fresh_manager.is_paused("PM")
+    assert fresh_manager.is_paused("Dev")
+
+    fresh_manager.resume("AlphaTeam")
+
+    assert not fresh_manager.is_paused("PM")
+    assert not fresh_manager.is_paused("Dev")
+
+
+def test_is_team_paused_reports_true_when_any_member_paused(
+    fresh_manager, fake_registry,
+):
+    """The late-joiner hook in spawn_progress_bridge calls
+    ``is_team_paused`` to decide whether to auto-pause a new member.
+    Pin the contract: True iff at least one team member is paused.
+    """
+    fake_registry.find_by_team_name.return_value = [
+        {"run_id": "r1", "agent_name": "PM",  "team_name": "Beta"},
+        {"run_id": "r2", "agent_name": "Dev", "team_name": "Beta"},
+    ]
+
+    assert fresh_manager.is_team_paused("Beta") is False
+
+    fresh_manager.pause("Beta")
+    assert fresh_manager.is_team_paused("Beta") is True
+
+    fresh_manager.resume("Beta")
+    assert fresh_manager.is_team_paused("Beta") is False
+
+
+def test_is_team_paused_returns_false_for_non_team_name(fresh_manager, fake_registry):
+    """``is_team_paused("Jarvis")`` (an in-process agent that is no team)
+    must return False — guards against false-positive auto-pauses for
+    solo agents that happen to share a name with an existing team.
+    """
+    fake_registry.find_by_team_name.return_value = []
+    fake_registry.find_by_name.return_value = []
+    assert fresh_manager.is_team_paused("Jarvis") is False
+
+
+def test_late_joiner_starts_paused_when_team_already_paused(
+    fresh_manager, fake_registry, captured_sse,
+):
+    """Scenario: team is paused, a new member spawns. The spawn bridge
+    is expected to call ``pause_controller.pause(new_name)`` for the
+    joiner. Because the joiner's spawn_record is now in the registry,
+    scope resolution treats it as a team member and the pause is
+    effective.
+    """
+    initial = [
+        {"run_id": "r1", "agent_name": "PM",  "team_name": "Gamma"},
+        {"run_id": "r2", "agent_name": "Dev", "team_name": "Gamma"},
+    ]
+    fake_registry.find_by_team_name.return_value = list(initial)
+
+    fresh_manager.pause("Gamma")
+    assert fresh_manager.is_team_paused("Gamma") is True
+
+    # Simulate spawn: new member added to the team registry.
+    fake_registry.find_by_team_name.return_value = list(initial) + [
+        {"run_id": "r3", "agent_name": "QA", "team_name": "Gamma"},
+    ]
+    fake_registry.find_by_name.return_value = [
+        {"run_id": "r3", "agent_name": "QA", "team_name": "Gamma"},
+    ]
+
+    # Spawn bridge would do this:
+    if fresh_manager.is_team_paused("Gamma"):
+        fresh_manager.pause("QA")
+
+    assert fresh_manager.is_paused("QA"), \
+        "late joiner must start paused so it can't slip past the pause window"
