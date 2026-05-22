@@ -7,6 +7,6 @@ requires-python = ">=3.13"
 dependencies = [
     "fastmcp>=2.14.3",
     "httpx>=0.28.1",
-    "python-dotenv>=1.2.1",
+    "python-dotenv>=1.2.2",
     "websockets>=16.0",
 ]
