@@ -1,7 +1,7 @@
 # Agile Team — Edge Cases & Communication Tool Matrix
 
-Tài liệu phân tích các edge case thực tế khi team Agile agents hoạt động,
-và tool nào giải quyết từng case.
+This document analyzes real-world edge cases that arise when the Agile team
+of agents operates, and which tool resolves each case.
 
 ## Communication Channels
 

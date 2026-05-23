@@ -151,19 +151,20 @@ def _make_manifest(name: str, body: str, description: str = "ok") -> SkillManife
 @pytest.fixture()
 def fake_dirs(tmp_path, monkeypatch):
     skills_dir = tmp_path / "skills"
-    cards_dir = tmp_path / "agent_cards"
     skills_dir.mkdir()
-    cards_dir.mkdir()
     builtin = skills_dir / "_builtin.yaml"
     builtin.write_text("builtin: []\n", encoding="utf-8")
+    # Bind a fresh DB for the agent_definitions store; tests that need
+    # a DB-backed agent seed one explicitly via defs_svc.create_definition.
+    db_path = str(tmp_path / "test_skill_integration.db")
+    monkeypatch.setenv("SPAWN_REGISTRY_DB", db_path)
     monkeypatch.setattr(svc, "SKILLS_DIR", skills_dir)
-    monkeypatch.setattr(svc, "AGENT_CARDS_DIR", cards_dir)
     monkeypatch.setattr(svc, "BUILTIN_MANIFEST", builtin)
     monkeypatch.setattr(svc, "_builtin_cache", None)
     monkeypatch.setattr(svc, "_builtin_mtime_ns", 0)
     # Default: no runtime — tests that need one wire it explicitly.
     monkeypatch.setattr(svc, "_runtime_handles", lambda: (None, None, None))
-    return {"skills": skills_dir, "cards": cards_dir}
+    return {"skills": skills_dir, "db": db_path}
 
 
 @pytest.fixture()

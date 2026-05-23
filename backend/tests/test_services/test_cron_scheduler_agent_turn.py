@@ -1,7 +1,7 @@
 """CronScheduler.``_execute_agent_turn`` regression tests.
 
-Production bug found 2026-05-05: a scheduled "Tổng hợp tin tức AI hàng
-ngày" job configured with ``exec_agent="ResearchAgent"`` ran for 45 min
+Production bug found 2026-05-05: a scheduled "Daily AI news digest"
+job configured with ``exec_agent="ResearchAgent"`` ran for 45 min
 and was marked SUCCESS but the notification body was "No response". The
 UI showed ``ResearchAgent`` as the agent because that string is read
 straight from ``job.exec_agent`` metadata — but the cron code never

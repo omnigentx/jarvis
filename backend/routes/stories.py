@@ -377,7 +377,7 @@ async def play_local_chapter(story_id: str, filename: str, _=Depends(verify_api_
         cache_path = get_audio_cache_path(text)
         mp3_exists = os.path.exists(cache_path)
         
-        title = "Truyện" 
+        title = "Story"
         chapter = filename.replace(".txt", "")
         if "_" in filename:
              parts = filename.split("_", 1)

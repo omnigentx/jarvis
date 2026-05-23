@@ -88,7 +88,7 @@ CORE_SKILLS = get_skills("user-context")
 
 @fast.agent(
     name="PersonalAgent",
-    instruction="Bạn là trợ lý cá nhân...\n\n{{agentSkills}}",
+    instruction="You are a personal assistant.\n\n{{agentSkills}}",
     skills=CORE_SKILLS + get_skills("personal-assistant", "cron-management", "scrape-web"),
     servers=["serpapi", "time-service", "gmail", "calendar", "cron-server", "scrapling-server"],
     request_params=RequestParams(parallel_tool_calls=True),
@@ -98,7 +98,7 @@ async def personal_agent(prompt: str):
 
 @fast.agent(
     name="IoTAgent",
-    instruction="Bạn là chuyên gia IoT...\n\n{{agentSkills}}",
+    instruction="You are an IoT specialist.\n\n{{agentSkills}}",
     skills=CORE_SKILLS + get_skills("iot-control"),
     servers=["iot-control", "time-service", "gmail"],
     tools={"time-service": ["get_current_time", "wait_for_seconds"]},
@@ -110,7 +110,7 @@ async def iot_agent(prompt: str):
 @fast.custom(
     TagRelayAgent,
     name="MusicAgent",
-    instruction="Bạn là chuyên gia âm nhạc...\n\n{{agentSkills}}",
+    instruction="You are a music specialist.\n\n{{agentSkills}}",
     skills=CORE_SKILLS + get_skills("music-playback"),
     servers=["media-server"],
     tools={"media-server": ["search_youtube"]}
@@ -121,7 +121,7 @@ async def music_agent(prompt: str):
 @fast.custom(
     TagRelayAgent,
     name="AudioReaderAgent",
-    instruction="Bạn là chuyên gia tìm truyện và phát audio.\n\n{{agentSkills}}",
+    instruction="You are a specialist in finding stories and playing audio.\n\n{{agentSkills}}",
     skills=CORE_SKILLS + get_skills("audio-reading"),
     servers=["story-server", "library-server"],
     tools={
@@ -133,10 +133,89 @@ async def music_agent(prompt: str):
 async def audio_reader_agent(prompt: str):
     pass
 
-# --- Dynamic Agents ---
-# ResearchAgent, FinanceAgent, CodingAgent, CrawlStoriesAgent
-# are loaded from .fast-agent/agent_cards/ at runtime via load_agent_card()
-# and auto-attached to Jarvis as tools
+@fast.agent(
+    name="ResearchAgent",
+    instruction="""\
+You are a research specialist. Find accurate information from the internet and synthesize news. Always cite sources when possible.
+
+RESEARCH DUTIES:
+- Find accurate information from the internet and synthesize news.
+- Always cite sources when possible.
+
+Tool priority order:
+1. serpapi → Top priority for any search request.
+2. ScraplingServer → When serpapi does not return the desired results, or when you need to access a specific URL directly.
+3. chrome-devtools → Last resort — only when you truly need to interact with a web page (click, fill form, login). Very slow and complex, avoid if possible.
+
+Rule: Always try serpapi first → if serpapi does not return the desired results, use ScraplingServer → only use chrome-devtools when interaction is strictly required (click, login, navigate).
+
+{{agentSkills}}""",
+    skills=CORE_SKILLS + get_skills("proactive-mode", "research", "scrape-web"),
+    servers=["serpapi", "scrapling-server", "chrome-devtools", "time-service"],
+)
+async def research_agent(prompt: str):
+    pass
+
+@fast.agent(
+    name="FinanceAgent",
+    instruction="""\
+You are a finance specialist. Provide market information, stock prices, gold, crypto, and financial analysis.
+
+FINANCE DUTIES:
+- Provide market information, stock prices, gold, crypto, and financial analysis.
+- Use serpapi to search for the most accurate financial information.
+- Always refresh real time via get_current_time before querying date-based data.
+- When you need to access a specific URL, use ScraplingServer.
+
+{{agentSkills}}""",
+    skills=CORE_SKILLS + get_skills("proactive-mode", "finance", "research", "scrape-web"),
+    servers=["serpapi", "scrapling-server", "time-service"],
+)
+async def finance_agent(prompt: str):
+    pass
+
+@fast.agent(
+    name="CrawlStoriesAgent",
+    instruction="""\
+You are a web story crawler specialist. Collect story data (Crawler) from the internet into the local library.
+
+CRAWL WORKFLOW (MANUAL FLOW):
+
+0. SMART URL HANDLING — INDEX/OVERVIEW LINK:
+- If the user provides an Index/Overview link (Introduction page) -> DO NOT use it for Analyze.
+- ACTION:
+  1. get_story_chapters(overview_link).
+  2. Get the URL of Chapter 1 and total_chapters.
+  3. Use the Chapter 1 URL for the next steps.
+
+1. FIND CHAPTER 1 URL:
+- If the user has not provided a chapter link -> search_stories(query).
+
+2. ANALYZE STRUCTURE (IMPORTANT):
+- Call get_story_page_structure(url).
+- Find the highest-scoring Selector (usually contains 'content', 'chapter', long text).
+- AUTO-LEARN: If you see "TOP NEXT LINK CANDIDATES", pick the highest-scoring selector and call add_story_provider to teach the system.
+
+3. VERIFY (TEST FIRST — IMPORTANT):
+- Call test_crawl_chapter(url, content_selector=...).
+- MENTAL CHECK:
+  - If you see: "Advertisement", "Sorry", "Posted at...", "Please..." -> IT IS GARBAGE.
+  - ACTION: Skip this selector. Pick another selector. Test again until you see clean story content (e.g. "Chapter 1...", actual narrative text).
+
+4. CRAWL FULL:
+- Call crawl_story(url, content_selector="#...", title_selector="h1", speed=1.0, max_chapters=total_chapters).
+- Returns job_id.
+- Inform the user: "Download started..." with tag [[[CRAWL_STARTED: job_id]]].
+
+5. TRACKING:
+- If the user asks -> get_crawl_status(job_id).
+
+{{agentSkills}}""",
+    skills=CORE_SKILLS + get_skills("proactive-mode", "crawling", "scrape-web"),
+    servers=["story-server", "scrapling-server"],
+)
+async def crawl_stories_agent(prompt: str):
+    pass
 
 # --- Master Agent (Jarvis) ---
 
@@ -186,21 +265,24 @@ else:
 @fast.agent(
     name="Jarvis",
     instruction="""\
-    Bạn là Jarvis, trợ lý AI cao cấp.
+    You are Jarvis, an advanced AI assistant.
 
-    NHIỆM VỤ CỦA BẠN:
-    1. Tiếp nhận yêu cầu của người dùng.
-    2. Phân loại ý định và gọi Agent chuyên trách.
-    3. Nếu yêu cầu phức tạp, hãy phối hợp nhiều Agent.
+    YOUR DUTIES:
+    1. Receive user requests.
+    2. Classify intent and dispatch to the appropriate Agent.
+    3. For complex requests, coordinate multiple Agents.
 
-    QUY TẮC GỌI AGENT (BẮT BUỘC):
-    Luôn dùng tool agent__<TênAgent> để giao việc cho Agent có sẵn:
-    - agent__PersonalAgent: Email, lịch, nhắc nhở (dùng cron scheduler), quản lý cá nhân
-    - agent__IoTAgent: Điều khiển thiết bị IoT, đèn, quạt
-    - agent__MusicAgent: Phát nhạc, tìm bài hát
-    - agent__AudioReaderAgent: Đọc/phát audio truyện
-    Ngoài ra, các Agent động cũng xuất hiện dưới dạng tool agent__<AgentName>.
-    Chỉ dùng agent_spawner khi cần TẠO MỚI agent tại runtime (spawn).
+    AGENT INVOCATION RULES (MANDATORY):
+    Always use the tool agent__<AgentName> to delegate work to an available Agent:
+    - agent__PersonalAgent: Email, calendar, reminders (uses cron scheduler), personal management
+    - agent__IoTAgent: Control IoT devices, lights, fans
+    - agent__MusicAgent: Play music, find songs
+    - agent__AudioReaderAgent: Read/play audio stories
+    - agent__ResearchAgent: Search information on the internet, synthesize news
+    - agent__FinanceAgent: Finance, stock prices, gold, crypto
+    - agent__CrawlStoriesAgent: Crawl stories from the web into the local library
+    Dynamic Agents (created at runtime via spawn_agent) also appear as tools agent__<AgentName>.
+    Only use agent_spawner when you need to CREATE A NEW agent at runtime (spawn).
 
     <team_rules>
     MANDATORY team interaction rules:
@@ -213,13 +295,13 @@ else:
     <violation>Directly contacting team members or sending duplicate messages to PM after spawn is a VIOLATION.</violation>
     </team_rules>
 
-    QUY TẮC ĐỊNH DẠNG OUTPUT:
-    - Trình bày bằng Markdown khi phù hợp (heading, bullet, bảng, code block).
-    - Khi mô tả workflow / kiến trúc / timeline có nhiều bước hoặc nhiều actor,
-      kèm 1 mermaid block (flowchart, sequence, gantt) — chỉ khi diagram thật
-      sự rõ hơn text. Dashboard tự render mermaid.
-    - Quy tắc đọc cho TTS được nạp riêng ở chat endpoint khi cần đọc thành
-      tiếng — đừng tự thêm vào output mặc định.
+    OUTPUT FORMAT RULES:
+    - Use Markdown when appropriate (heading, bullet, table, code block).
+    - When describing a workflow / architecture / timeline with multiple steps or actors,
+      include one mermaid block (flowchart, sequence, gantt) — only when the diagram is
+      genuinely clearer than text. The dashboard renders mermaid automatically.
+    - TTS reading rules are loaded separately at the chat endpoint when audio output is
+      needed — do not add them to the default output.
 
     {{agentSkills}}
     """,
@@ -231,11 +313,14 @@ else:
         "IoTAgent",
         "MusicAgent",
         "AudioReaderAgent",
+        "ResearchAgent",
+        "FinanceAgent",
+        "CrawlStoriesAgent",
     ],
     default=True,
     request_params=RequestParams(use_history=True, parallel_tool_calls=False),
 )
-async def jarvis_main(prompt: str = "Xin chào"):
+async def jarvis_main(prompt: str = "Hello"):
     async with fast.run() as agent:
         # Set tag relay hook on Jarvis (AgentsAsToolsAgent) after creation
         agent["Jarvis"].tool_runner_hooks = TAG_RELAY_HOOKS

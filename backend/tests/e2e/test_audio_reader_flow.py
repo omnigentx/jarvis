@@ -76,7 +76,7 @@ async def test_audio_reader_finds_local_chapter(stubbed_stories_dir):
         f"find_story_chapter contract broken: missing 'response' field ({payload})"
     )
     assert "Tây Du Ký" in payload["response"]
-    assert "chương 3" in payload["response"]
+    assert "chapter 3" in payload["response"]
 
     # Final assistant reply is the fixture's scripted echo
     assert "[[[READ_LOCAL:" in final.last_text()

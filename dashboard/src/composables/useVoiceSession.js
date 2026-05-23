@@ -23,6 +23,7 @@ import { ref, reactive, shallowRef, onScopeDispose } from 'vue'
 import { getApiKey } from '../api.js'
 import { useChatStore } from '../stores/chat.js'
 import { EVENTS, on } from '../auth/bus.js'
+import { expandToolRequest, expandToolDone } from '../utils/toolEvents.js'
 
 const PCM_PLAYBACK_RATE = 24000  // RealtimeTTS engines emit 24 kHz mono
 
@@ -82,7 +83,7 @@ function _createVoiceSession() {
   // this, chunks that were already ``src.start()``-ed would keep playing
   // after the server cancelled TTS, and the user would hear several
   // more seconds of bot voice after they tried to talk over it (the
-  // "TTS không dừng khi user nói chen" bug).
+  // "TTS doesn't stop when user barges in" bug).
   const playbackSources = new Set()
 
   function _ensureActiveConversation() {
@@ -216,32 +217,24 @@ function _createVoiceSession() {
           status.value = 'thinking'
           break
         }
-        case 'tool_request': {
+        case 'tool_request':
           // Mirror ChatView.vue's text-chat handling so the same compact
           // "X tools used" bubble renders identically for voice turns.
           // Falls through quietly if the placeholder hasn't been created
           // yet (pushToolCall does its own existence check).
           if (pendingAgentMsgId && typeof chatStore.pushToolCall === 'function') {
-            chatStore.pushToolCall(pendingAgentMsgId, {
-              tool: msg.tools?.[0]?.name || msg.tool || msg.server || 'tool',
-              command: msg.message || '',
-              args: msg.tools?.[0]?.args || null,
-            })
+            for (const payload of expandToolRequest(msg)) {
+              chatStore.pushToolCall(pendingAgentMsgId, payload)
+            }
           }
           break
-        }
-        case 'tool_done': {
+        case 'tool_done':
           if (pendingAgentMsgId && typeof chatStore.pushToolCall === 'function') {
-            chatStore.pushToolCall(pendingAgentMsgId, {
-              tool: msg.tools?.[0]?.name || msg.tool || 'tool',
-              command: msg.message || 'result',
-              isResult: true,
-              duration: msg.duration_ms ? `${(msg.duration_ms / 1000).toFixed(1)}s` : undefined,
-              resultPreview: msg.result_preview || null,
-            })
+            for (const payload of expandToolDone(msg)) {
+              chatStore.pushToolCall(pendingAgentMsgId, payload)
+            }
           }
           break
-        }
         case 'tool_running':
           // Lifecycle ping ("X is now running tool Y") — already covered
           // by the tool_request bubble; intentionally not re-rendered.
@@ -329,7 +322,7 @@ function _createVoiceSession() {
     // Backend always emits int16 mono PCM at PCM_PLAYBACK_RATE on /ws/voice
     // — RealtimeTTS engines via stream_pcm() and EdgeTTSProvider via the
     // server-side ffmpeg MP3→PCM pipe. Per-chunk decodeAudioData on partial
-    // MP3 frames was the source of the previous "vỡ tiếng / giật lag"
+    // MP3 frames was the source of the previous "broken audio / stutter"
     // glitches, so we removed the format sniff and treat all binary
     // frames as raw PCM. AudioBuffers are scheduled back-to-back via a
     // running playbackTime cursor so chunks play seamlessly.
@@ -420,7 +413,7 @@ function _createVoiceSession() {
       // echoCancellation MUST be on — without it, the bot's TTS playback
       // leaks back into the mic and STT transcribes its own voice as a new
       // user turn (we observed Whisper hallucinating Chinese characters
-      // from "Xin chào" being echoed back). noiseSuppression stays off
+      // from a VN "Xin chào" greeting being echoed back). noiseSuppression stays off
       // because aggressive WebRTC NS strips actual speech as "background"
       // and tanks RMS to the 20–100 range. autoGainControl stays off to
       // let the user's hardware level pass through unscaled.

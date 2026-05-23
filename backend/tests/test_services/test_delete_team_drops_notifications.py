@@ -51,9 +51,9 @@ def test_delete_team_cleans_notifications_for_that_team_name(tmp_path, monkeypat
     try:
         stale = db_mod.NotificationModel(
             type="agent_result",
-            title="✅ Team toolset-self-audit hoàn thành",
+            title="Team toolset-self-audit completed",
             preview="...",
-            content="Không có kết quả chi tiết từ orchestrator.",
+            content="No detailed result from orchestrator.",
             content_type="markdown",
             is_read=0,
             created_at=time.time(),
@@ -66,7 +66,7 @@ def test_delete_team_cleans_notifications_for_that_team_name(tmp_path, monkeypat
         )
         keep = db_mod.NotificationModel(
             type="agent_result",
-            title="✅ Team unrelated-team hoàn thành",
+            title="Team unrelated-team completed",
             preview="...",
             content="ok",
             content_type="markdown",
@@ -104,8 +104,11 @@ def test_delete_team_cleans_notifications_for_that_team_name(tmp_path, monkeypat
     app.include_router(agents_route.router)
     app.dependency_overrides[agents_route.verify_api_key] = lambda: True
 
-    with patch.object(agents_route, "_trigger_reload", lambda: None), \
-            patch("services.shared_state.registry_db", fake_registry, create=True), \
+    # Note: post-Phase-4 the team-delete endpoint no longer touches the
+    # filesystem; agent definitions live in SQLite and the rev counter
+    # bump replaces the old `_trigger_reload()` signal-file path. The
+    # patch on that helper is no longer needed.
+    with patch("services.shared_state.registry_db", fake_registry, create=True), \
             patch.object(agents_route, "activity_stream_manager", MagicMock()), \
             patch("fast_agent.spawn.team_spawner.list_team_sessions",
                   return_value=[]), \

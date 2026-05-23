@@ -224,7 +224,7 @@ def test_rapid_cancel_does_not_wipe_new_turn_hooks(ws_client, monkeypatch):
     them — so tools that turn 2 ran emitted progress events into a
     queue nobody was reading, and the dashboard's tool-bubble bar
     stayed empty for that turn. User-visible symptom: "tool bubble
-    chỉ mất khi user nói chen, flow bình thường thì hiện".
+    only disappears when the user barges in; it appears in the normal flow".
     """
     from unittest.mock import MagicMock
     from services import shared_state
@@ -317,7 +317,7 @@ def test_cancelled_turn_does_not_emit_empty_assistant_message(ws_client, monkeyp
     turn's placeholder, so the empty signal yanks the new bubble
     out and the user sees status flip to "Listening" with no dots
     and no agent reply. This was the umbrella root cause for the
-    "placeholder mất / tool bubble mất / TTS im" trio after a
+    "placeholder lost / tool bubble lost / TTS silent" trio after a
     user-correction barge-in.
 
     Test design: the resume_and_send mock simulates exactly the
@@ -404,7 +404,7 @@ def test_cancelled_turn_does_not_emit_empty_assistant_message(ws_client, monkeyp
 def test_voice_turn_persists_agent_context(ws_client, monkeypatch):
     """Voice turns must call ``save_agent_context`` so the Agents tab's
     Context Window panel actually shows the conversation. Regression
-    for "context window không thấy save vào db sau khi agent idle" —
+    for "context window not saved to db after agent idle" —
     voice was missing the context save that text /chat-stream had,
     leaving voice conversations invisible to the history view.
     """

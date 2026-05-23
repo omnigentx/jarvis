@@ -1,67 +1,67 @@
-# Hướng Dẫn Thêm Agent Mới Vào Jarvis (Standard Process)
+# Guide to Adding a New Agent to Jarvis (Standard Process)
 
-Tài liệu này quy chuẩn hóa các bước để thêm một Agent mới vào hệ thống Jarvis (`fast-agent` v0.4.40). Hãy làm theo **đúng thứ tự** này để đảm bảo Agent hoạt động trơn tru trong kiến trúc Master Agent + MAKER.
+This document standardizes the steps for adding a new Agent to the Jarvis system (`fast-agent` v0.4.40). Follow this **exact order** to ensure the Agent works smoothly within the Master Agent + MAKER architecture.
 
-## Checklist Tóm Tắt
-- [ ] **Bước 1**: Tạo file Skill mới (`.fast-agent/skills/...`).
-- [ ] **Bước 2**: Định nghĩa hàm Agent mới trong `agent.py`.
-- [ ] **Bước 3**: Cập nhật Prompt phân loại cho `IntentClassifier`.
-- [ ] **Bước 4**: Đăng ký Agent mới vào danh sách `agents` của `Jarvis`.
-- [ ] **Bước 5**: Restart server & Verify.
+## Summary Checklist
+- [ ] **Step 1**: Create a new Skill file (`.fast-agent/skills/...`).
+- [ ] **Step 2**: Define the new Agent function in `agent.py`.
+- [ ] **Step 3**: Update the classification Prompt for `IntentClassifier`.
+- [ ] **Step 4**: Register the new Agent in the `agents` list of `Jarvis`.
+- [ ] **Step 5**: Restart server & Verify.
 
 ---
 
-## Chi Tiết Các Bước
+## Step Details
 
-### Bước 1: Tạo Skill (Kỹ Năng)
-Mọi Agent mới đều cần có File Skill riêng để chứa context và hướng dẫn chuyên biệt. Không viết cứng hướng dẫn vào code.
+### Step 1: Create a Skill
+Every new Agent needs its own Skill file to hold specialized context and instructions. Do not hard-code instructions into the code.
 
-1.  **Tạo thư mục**: `backend/.fast-agent/skills/<tên-folder-skill>/`
-    *   *Quy tắc*: Tên folder viết thường, dùng gạch nối (kebab-case). Ví dụ: `football-news`, `image-generation`.
-2.  **Tạo file**: `SKILL.md` bên trong thư mục đó.
-3.  **Nội dung mẫu**:
+1.  **Create the directory**: `backend/.fast-agent/skills/<skill-folder-name>/`
+    *   *Rule*: Folder name in lowercase, using hyphens (kebab-case). Examples: `football-news`, `image-generation`.
+2.  **Create the file**: `SKILL.md` inside that directory.
+3.  **Template content**:
 
 ```markdown
 ---
-name: <tên-skill-ngắn-gọn>
-description: Mô tả kỹ năng này làm gì
+name: <short-skill-name>
+description: Describe what this skill does
 ---
-# <Tên Skill> Instructions
+# <Skill Name> Instructions
 
-## Vai trò
-Bạn là chuyên gia về...
+## Role
+You are an expert in...
 
-## Khả năng (Capabilities)
-- [Liệt kê các khả năng]
+## Capabilities
+- [List capabilities]
 
-## Quy tắc phản hồi
-- [Quy tắc 1]
-- [Quy tắc 2]
+## Response Rules
+- [Rule 1]
+- [Rule 2]
 ```
 
-### Bước 2: Định Nghĩa Agent Trong `agent.py`
-Mở file `backend/agent.py` và thêm block code định nghĩa Agent.
+### Step 2: Define the Agent in `agent.py`
+Open `backend/agent.py` and add the Agent definition block.
 
-**Vị trí:** Đặt cùng nhóm với các "Specialized Agents".
+**Location:** Place it together with the other "Specialized Agents".
 
 ```python
-# Tìm dòng: @fast.agent
+# Find the line: @fast.agent
 @fast.agent(
-    name="<TenAgent>",          # Ví dụ: SportsAgent (PascalCase)
-    instruction="Bạn là... \n\n{{agentSkills}}", # BẮT BUỘC giữ placeholder này
-    skills=CORE_SKILLS + get_skills("<tên-folder-skill-ở-bước-1>"),
+    name="<AgentName>",          # Example: SportsAgent (PascalCase)
+    instruction="You are... \n\n{{agentSkills}}", # REQUIRED: keep this placeholder
+    skills=CORE_SKILLS + get_skills("<skill-folder-name-from-step-1>"),
     model="openai.gpt-4o-mini",
-    servers=["<server-1>", "<server-2>"], # Ví dụ: "serpapi", "fpl-server"
-    # tools={...} # (Optional) Chỉ định rõ tools nếu cần hạn chế
+    servers=["<server-1>", "<server-2>"], # Example: "serpapi", "fpl-server"
+    # tools={...} # (Optional) Specify tools explicitly if you need to restrict them
 )
-async def <tên_hàm_agent>(prompt: str):
+async def <agent_function_name>(prompt: str):
     pass
 ```
 
-### Bước 3: Cập Nhật Intent Classifer (MAKER)
-Để Jarvis biết **khi nào** thì gọi Agent này, bạn cần dạy `IntentClassifier` nhận diện ý định mới.
+### Step 3: Update the Intent Classifier (MAKER)
+For Jarvis to know **when** to call this Agent, you need to teach `IntentClassifier` to recognize the new intent.
 
-**Vị trí:** Tìm Agent `IntentClassifier` trong `agent.py`.
+**Location:** Find the `IntentClassifier` Agent in `agent.py`.
 
 ```python
 @fast.agent(
@@ -69,51 +69,51 @@ async def <tên_hàm_agent>(prompt: str):
     # ...
     instruction="""
     Classify the user's request...
-    # ... (Các intent cũ)
+    # ... (Existing intents)
     - IOT_CONTROL: ...
-    # THÊM DÒNG DƯỚI ĐÂY:
-    - <NEW_INTENT_NAME>: <Mô tả ngắn gọn khi nào user chọn cái này>.
+    # ADD THE LINE BELOW:
+    - <NEW_INTENT_NAME>: <Short description of when the user picks this>.
     
     Respond with ONLY the category name.
     """
 )
 ```
-*Ví dụ:* `- SPORTS_NEWS: Asking for football scores, team news, fixtures.`
+*Example:* `- SPORTS_NEWS: Asking for football scores, team news, fixtures.`
 
-### Bước 4: Đăng Ký Với Master Agent (Jarvis)
-Cuối cùng, báo cho "Sếp" Jarvis biết về nhân viên mới và nhiệm vụ của họ.
+### Step 4: Register With the Master Agent (Jarvis)
+Finally, tell "Boss" Jarvis about the new employee and their responsibilities.
 
-**Vị trí:** Tìm Agent `Jarvis` (Master Agent) ở cuối file `agent.py`.
+**Location:** Find the `Jarvis` Agent (Master Agent) at the end of `agent.py`.
 
-1.  **Cập nhật Instruction Ranking/Mapping**:
+1.  **Update the Instruction Ranking/Mapping**:
     ```python
     instruction="""
     # ...
     MAPPING INTENT -> AGENT:
     # ...
     - IOT_CONTROL -> IoTAgent
-    # THÊM DÒNG DƯỚI ĐÂY:
-    - <NEW_INTENT_NAME> -> <TenAgent>
+    # ADD THE LINE BELOW:
+    - <NEW_INTENT_NAME> -> <AgentName>
     # ...
     """
     ```
 
-2.  **Thêm vào danh sách `agents`**:
+2.  **Add to the `agents` list**:
     ```python
     agents=[
         "ReliableRouter",
         # ...
-        "<TenAgent>",  # <--- THÊM TÊN AGENT VÀO ĐÂY (trùng với name ở Bước 2)
+        "<AgentName>",  # <--- ADD THE AGENT NAME HERE (must match the name in Step 2)
     ],
     ```
 
-### Bước 5: Restart & Verify
-Agent mới sẽ **không** hoạt động cho đến khi bạn khởi động lại server.
+### Step 5: Restart & Verify
+The new Agent will **not** be active until you restart the server.
 
 1.  **Restart Backend**:
     ```bash
     uv run uvicorn server:app --host 0.0.0.0 --reload
     ```
 2.  **Test**:
-    *   Chat câu lệnh kích hoạt Intent mới.
-    *   Xem logs để đảm bảo `ReliableRouter` trả về đúng Intent và `Jarvis` gọi đúng Agent mới.
+    *   Chat a command that triggers the new Intent.
+    *   Check the logs to ensure `ReliableRouter` returns the correct Intent and `Jarvis` calls the correct new Agent.

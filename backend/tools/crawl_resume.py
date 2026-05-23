@@ -201,6 +201,7 @@ def resume_crawl(job_id: str, params_json: str):
                 if not next_url:
                     for a in soup.find_all("a"):
                         t = a.get_text(strip=True).lower()
+                        # TODO(i18n): VN literal — matches Vietnamese story-site "next chapter" link text
                         if any(kw in t for kw in ["chương sau", "tiếp", "next", "chap sau"]):
                             next_url = a.get("href")
                             break

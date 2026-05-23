@@ -102,8 +102,8 @@ def check_pending_read(library_manager, tts_cache, get_chapter_content_fn) -> di
             elif action_type == "READ_STORY":
                 story_url = action["url"]
                 story_content = get_chapter_content_fn(story_url)
-                if story_content and not story_content.startswith("Lỗi"):
-                    title = "Truyện"
+                if story_content and not story_content.startswith("Failed"):
+                    title = "Story"
                     chapter = "Unknown"
                     meta_match = re.search(r"\[\[METADATA:\s*(.*?)\]\]", story_content, re.DOTALL)
                     if meta_match:

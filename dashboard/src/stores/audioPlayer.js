@@ -1,12 +1,12 @@
 /**
  * Audio Player Pinia Store
  *
- * Quản lý toàn bộ state phát audio truyện:
+ * Manages all story audio playback state:
  * - Playback state (play/pause/buffering)
- * - Playlist (danh sách chương, vị trí hiện tại)
- * - Progress saving (localStorage + API mỗi 15s)
+ * - Playlist (chapter list, current position)
+ * - Progress saving (localStorage + API every 15s)
  * - TTS generation status tracking
- * - Speed control (persist qua chapters)
+ * - Speed control (persists across chapters)
  */
 import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
@@ -51,7 +51,7 @@ export const useAudioPlayerStore = defineStore('audioPlayer', () => {
   const isMiniPlayerVisible = ref(false)
 
   // ─── Resume support ───
-  const pendingSeekPosition = ref(null) // Set khi cần seek sau khi audio load
+  const pendingSeekPosition = ref(null) // Set when a seek is needed after audio loads
 
   // ─── API progress timer ───
   let _apiSaveTimer = null
@@ -83,11 +83,11 @@ export const useAudioPlayerStore = defineStore('audioPlayer', () => {
   // ─── Actions ───
 
   /**
-   * Play một chương truyện.
-   * @param {string} storyId - ID thư mục truyện
-   * @param {string} storyTitle - Tên truyện hiển thị
-   * @param {string} filename - Tên file chương (.txt)
-   * @param {string[]} allChapterFiles - Danh sách tất cả chapter files
+   * Play a story chapter.
+   * @param {string} storyId - Story folder ID
+   * @param {string} storyTitle - Display title of the story
+   * @param {string} filename - Chapter filename (.txt)
+   * @param {string[]} allChapterFiles - Full list of chapter files
    * @returns {Promise<{audioUrl: string}>}
    */
   async function playChapter(storyId, storyTitle, filename, allChapterFiles = []) {
@@ -141,11 +141,11 @@ export const useAudioPlayerStore = defineStore('audioPlayer', () => {
   }
 
   /**
-   * Phát từ playlist — chương tiếp theo.
+   * Play from playlist — next chapter.
    */
   async function nextChapter() {
     if (!canPlayNext.value) {
-      // Hết playlist
+      // End of playlist
       stopAndReset()
       return null
     }
@@ -154,7 +154,7 @@ export const useAudioPlayerStore = defineStore('audioPlayer', () => {
   }
 
   /**
-   * Phát chương trước.
+   * Play previous chapter.
    */
   async function prevChapter() {
     if (!canPlayPrev.value) return null
@@ -163,9 +163,9 @@ export const useAudioPlayerStore = defineStore('audioPlayer', () => {
   }
 
   /**
-   * Toggle play/pause. Composable useAudioPlayer sẽ listen state này.
-   * Nếu đang ở trạng thái restored (có storyId nhưng chưa có audioUrl),
-   * gọi playChapter() thay vì chỉ toggle.
+   * Toggle play/pause. The useAudioPlayer composable listens to this state.
+   * If in a restored state (has storyId but no audioUrl yet),
+   * call playChapter() instead of merely toggling.
    */
   function togglePlayPause() {
     if (isPlaying.value) {
@@ -185,14 +185,14 @@ export const useAudioPlayerStore = defineStore('audioPlayer', () => {
   }
 
   /**
-   * Seek đến vị trí cụ thể (giây).
-   * Composable sẽ watch và apply lên audio element.
+   * Seek to a specific position (seconds).
+   * The composable will watch and apply this to the audio element.
    */
   const seekTarget = ref(null)
   function seekTo(seconds) {
     const clamped = Math.max(0, Math.min(seconds, duration.value || Infinity))
     seekTarget.value = clamped
-    // Lưu ngay để reload không mất vị trí
+    // Save immediately so reload doesn't lose position
     currentTime.value = clamped
     saveProgress()
   }
@@ -206,7 +206,7 @@ export const useAudioPlayerStore = defineStore('audioPlayer', () => {
   }
 
   /**
-   * Thay đổi tốc độ phát. Persist vào localStorage.
+   * Change playback speed. Persists to localStorage.
    */
   const SPEED_OPTIONS = [0.75, 1.0, 1.25, 1.5, 2.0]
   function setSpeed(rate) {
@@ -221,11 +221,11 @@ export const useAudioPlayerStore = defineStore('audioPlayer', () => {
   }
 
   /**
-   * Dừng phát, reset state, ẩn player.
+   * Stop playback, reset state, hide player.
    */
   function stopAndReset() {
     _stopApiSaveTimer()
-    saveProgress() // Lưu trước khi reset
+    saveProgress() // Save before reset
 
     // Also stop notifTts if active
     if (playbackType.value === 'notifTts') {
@@ -253,8 +253,8 @@ export const useAudioPlayerStore = defineStore('audioPlayer', () => {
   }
 
   /**
-   * Update time từ audio element events.
-   * Được gọi bởi composable useAudioPlayer.
+   * Update time from audio element events.
+   * Called by the useAudioPlayer composable.
    */
   function updateTime(time) {
     currentTime.value = time
@@ -277,7 +277,7 @@ export const useAudioPlayerStore = defineStore('audioPlayer', () => {
   }
 
   /**
-   * Update generation status cho chapter list display.
+   * Update generation status for chapter list display.
    */
   function updateChapterStatus(filename, status) {
     generationStatus.value = { ...generationStatus.value, [filename]: status }
@@ -386,7 +386,7 @@ export const useAudioPlayerStore = defineStore('audioPlayer', () => {
   // ─── Progress saving ───
 
   /**
-   * Lưu progress vào localStorage + gọi API (mỗi 15s).
+   * Save progress to localStorage + call API (every 15s).
    */
   function saveProgress() {
     if (!currentStoryId.value || !currentChapterFile.value) return
@@ -409,7 +409,7 @@ export const useAudioPlayerStore = defineStore('audioPlayer', () => {
   }
 
   /**
-   * Gọi API lưu progress (cho cross-device resume).
+   * Call API to save progress (for cross-device resume).
    */
   async function _saveProgressToApi() {
     if (!currentRequestId.value) return
@@ -442,15 +442,15 @@ export const useAudioPlayerStore = defineStore('audioPlayer', () => {
   }
 
   /**
-   * Khôi phục progress từ localStorage khi khởi tạo.
-   * Trả về thông tin để composable resume.
+   * Restore progress from localStorage at initialization.
+   * Returns the data so composable can resume.
    */
   function restoreProgress() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY)
       if (!raw) return null
       const data = JSON.parse(raw)
-      // Chỉ restore nếu dữ liệu < 24h tuổi
+      // Only restore if data is < 24h old
       if (Date.now() - data.timestamp > 24 * 60 * 60 * 1000) return null
       return data
     } catch (_) {
@@ -459,9 +459,9 @@ export const useAudioPlayerStore = defineStore('audioPlayer', () => {
   }
 
   /**
-   * Khôi phục UI state từ localStorage khi page load.
-   * Hiện mini player ở trạng thái paused, sẵn sàng resume.
-   * Gọi 1 lần bởi useAudioPlayer composable.
+   * Restore UI state from localStorage on page load.
+   * Shows the mini player in paused state, ready to resume.
+   * Called once by the useAudioPlayer composable.
    */
   function initFromSavedProgress() {
     const saved = restoreProgress()
@@ -479,12 +479,12 @@ export const useAudioPlayerStore = defineStore('audioPlayer', () => {
     isPlaying.value = false
     isMiniPlayerVisible.value = true
 
-    // Set pending seek — composable sẽ apply khi audio load
+    // Set pending seek — composable will apply when audio loads
     if (saved.position > 0) {
       pendingSeekPosition.value = saved.position
     }
 
-    // Restore speed nếu có
+    // Restore speed if present
     if (saved.speed) {
       playbackSpeed.value = saved.speed
     }
@@ -507,7 +507,7 @@ export const useAudioPlayerStore = defineStore('audioPlayer', () => {
   }
 
   function _chapterLabel(filename) {
-    // "0454_huyet_chien_vo_song.txt" → "Ch.454: Huyết Chiến Vô Song"
+    // Example: "0454_huyet_chien_vo_song.txt" → "Ch.454: Huyet Chien Vo Song"
     const name = filename.replace('.txt', '')
     const parts = name.split('_')
     const numStr = parts[0]

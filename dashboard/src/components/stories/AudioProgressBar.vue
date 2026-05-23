@@ -1,6 +1,6 @@
 <script setup>
 /**
- * AudioProgressBar — Thanh tiến trình có seek, dùng chung cho Mini + Full player.
+ * AudioProgressBar — Seekable progress bar, shared between Mini + Full player.
  *
  * Props:
  *  - current: number (seconds)

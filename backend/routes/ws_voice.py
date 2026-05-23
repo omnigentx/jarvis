@@ -447,7 +447,7 @@ async def voice_ws(ws: WebSocket) -> None:
             # in its own hook chain — restoring blindly in that case would
             # wipe the new turn's progress hooks and tool events from
             # the new turn would never reach the WS (the "tool bubble
-            # mất khi user nói chen" regression). The race is real
+            # disappears when user barges in" regression). The race is real
             # because ``task.cancel()`` only schedules CancelledError;
             # the next dispatched turn can attach its hooks before our
             # ``finally`` actually runs.
@@ -502,7 +502,7 @@ async def voice_ws(ws: WebSocket) -> None:
             # reason we cancelled was a fresh user_message starting a
             # new turn), so the cleanup code rips out the new turn's
             # bubble + tool bar. This was the umbrella cause for the
-            # "placeholder mất / tool bubble mất / TTS im" trio.
+            # "placeholder gone / tool bubble gone / TTS silent" trio.
             #
             # ``Task.cancelling()`` returns >0 if cancel() was ever
             # called on this task, even when the inner await absorbed
@@ -527,8 +527,8 @@ async def voice_ws(ws: WebSocket) -> None:
             # message_history snapshot to SQLite so the Agents tab's
             # Context Window panel actually shows voice turns. Without
             # this, voice conversations were invisible to the
-            # context-history view ("context window cũng không thấy
-            # save vào db sau khi agent idle"). Best-effort — never
+            # context-history view ("context window was not being saved
+            # to db after agent idle" bug). Best-effort — never
             # break the speak() path on a save failure.
             try:
                 from services.context_persistence import save_agent_context
@@ -581,7 +581,7 @@ async def voice_ws(ws: WebSocket) -> None:
             # second one races against the *new* turn's ``agent_thinking``
             # event: if it lands after the new placeholder is created, the
             # frontend's ``_dropPending`` yanks the fresh placeholder out
-            # (the "khi nói chen sửa câu, placeholder ... bị mất" bug).
+            # (the "when user barges in to correct, the placeholder disappears" bug).
             raise
         except Exception as exc:
             logger.exception("[ws_voice] agent turn failed")

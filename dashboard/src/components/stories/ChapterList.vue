@@ -1,16 +1,16 @@
 <script setup>
 /**
- * ChapterList — Danh sách chương + preload status.
+ * ChapterList — Chapter list + preload status.
  *
  * Props:
  *  - storyId: string
  *  - storyTitle: string
  *
  * Features:
- *  - Fetch chapters từ API
- *  - SSE stream cho pregen status (realtime, no polling)
- *  - Hiển thị preload status (ready/generating/queued/none)
- *  - Highlight chương đang phát
+ *  - Fetch chapters from API
+ *  - SSE stream for pregen status (realtime, no polling)
+ *  - Display preload status (ready/generating/queued/none)
+ *  - Highlight currently playing chapter
  *  - Scroll to playing chapter
  */
 import { ref, computed, watch, onMounted, nextTick, toRef } from 'vue'
@@ -30,7 +30,7 @@ const router = useRouter()
 const audioStore = useAudioPlayerStore()
 const toast = useToast()
 
-// SSE stream cho pregen status
+// SSE stream for pregen status
 const storyIdRef = toRef(props, 'storyId')
 const { queue, getQueuePosition, getEffectiveStatus } = usePregenStream(storyIdRef)
 
@@ -64,7 +64,7 @@ async function handlePlay(filename) {
       chapterFiles.value,
     )
   } catch (e) {
-    toast.error('Không thể phát audio', { description: e.message })
+    toast.error('Unable to play audio', { description: e.message })
   }
 }
 
@@ -82,14 +82,14 @@ function isChapterPlaying(filename) {
 }
 
 /**
- * Tính effective preload status: SSE data ưu tiên hơn API data.
+ * Compute effective preload status: SSE data takes precedence over API data.
  */
 function chapterPreload(ch) {
   return getEffectiveStatus(ch.file, ch.preload)
 }
 
 /**
- * Lấy queue position (1-based) cho hiển thị, -1 nếu không có.
+ * Get queue position (1-based) for display, -1 if not present.
  */
 function chapterQueuePos(file) {
   const pos = getQueuePosition(file)
@@ -117,8 +117,8 @@ watch(
   <div class="chapter-list">
     <!-- Header -->
     <div class="chapter-list__header">
-      <h3 class="chapter-list__title">Danh sách chương</h3>
-      <span class="chapter-list__count" v-if="chapters.length">{{ chapters.length }} chương</span>
+      <h3 class="chapter-list__title">Chapter list</h3>
+      <span class="chapter-list__count" v-if="chapters.length">{{ chapters.length }} chapters</span>
     </div>
 
     <!-- Loading skeleton -->
@@ -129,12 +129,12 @@ watch(
     <!-- Error state -->
     <div v-else-if="error" class="chapter-list__error">
       <p>{{ error }}</p>
-      <button @click="fetchChapters" class="chapter-list__retry">Thử lại</button>
+      <button @click="fetchChapters" class="chapter-list__retry">Retry</button>
     </div>
 
     <!-- Empty state -->
     <div v-else-if="chapters.length === 0" class="chapter-list__empty">
-      <p>Chưa có chương nào</p>
+      <p>No chapters yet</p>
     </div>
 
     <!-- Chapter rows -->

@@ -105,7 +105,7 @@ class CrawlJob(Base):
 
 
 class StoryProvider(Base):
-    """Config website truyện — thay thế story_providers.json."""
+    """Story-website config — replaces story_providers.json."""
     __tablename__ = "story_providers"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -122,11 +122,11 @@ class StoryProvider(Base):
 
 
 class StoryMeta(Base):
-    """Metadata truyện — thay thế per-folder metadata.json.
-    Registry chính thức của tất cả truyện trong hệ thống."""
+    """Story metadata — replaces per-folder metadata.json.
+    Authoritative registry of every story in the system."""
     __tablename__ = "story_meta"
 
-    story_id = Column(String(255), primary_key=True)  # = tên folder trong data/stories/
+    story_id = Column(String(255), primary_key=True)  # = folder name under data/stories/
     title = Column(String(255), nullable=False)
     source_url = Column(String(500), nullable=True)
     chapter_count = Column(Integer, default=0)
@@ -137,8 +137,8 @@ class StoryMeta(Base):
 
 
 class AudioCacheEntry(Base):
-    """Registry audio cache — theo dõi file MP3 trong data/audio_cache/.
-    File MP3 giữ trên disk (binary, streamed). DB chỉ track metadata."""
+    """Audio-cache registry — tracks MP3 files under data/audio_cache/.
+    MP3 files stay on disk (binary, streamed); the DB only tracks metadata."""
     __tablename__ = "audio_cache"
 
     content_hash = Column(String(64), primary_key=True)  # MD5 hash of text content
@@ -153,8 +153,8 @@ class AudioCacheEntry(Base):
 
 
 class PendingAction(Base):
-    """Cross-process action queue — thay thế pending_read.json.
-    MCP subprocess ghi, FastAPI routes đọc và xóa."""
+    """Cross-process action queue — replaces pending_read.json.
+    MCP subprocess writes; FastAPI routes read and delete."""
     __tablename__ = "pending_actions"
 
     id = Column(Integer, primary_key=True, autoincrement=True)

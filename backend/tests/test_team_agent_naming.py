@@ -74,7 +74,7 @@ def test_generated_name_format():
 def test_names_are_ascii_no_diacritics(name_pool):
     """All names must be ASCII (no Vietnamese diacritics).
 
-    User requirement: 'tên không dấu thôi'
+    User requirement: 'names without diacritics only'
     """
     for name in name_pool:
         assert name.isascii(), f"Name '{name}' contains non-ASCII characters"

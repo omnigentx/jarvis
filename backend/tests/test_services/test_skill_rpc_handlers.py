@@ -44,12 +44,13 @@ def isolated_db(tmp_path, monkeypatch):
 def fake_skills_dir(tmp_path, monkeypatch):
     skills_dir = tmp_path / "skills"
     skills_dir.mkdir()
-    cards_dir = tmp_path / "agent_cards"
-    cards_dir.mkdir()
     builtin = skills_dir / "_builtin.yaml"
     builtin.write_text("builtin:\n  - audio-reading\n", encoding="utf-8")
+    # Bind a fresh DB for the agent_definitions store so used-by lookups
+    # during skill_delete don't see stray state from another test.
+    db_path = str(tmp_path / "test_skill_rpc.db")
+    monkeypatch.setenv("SPAWN_REGISTRY_DB", db_path)
     monkeypatch.setattr(svc, "SKILLS_DIR", skills_dir)
-    monkeypatch.setattr(svc, "AGENT_CARDS_DIR", cards_dir)
     monkeypatch.setattr(svc, "BUILTIN_MANIFEST", builtin)
     monkeypatch.setattr(svc, "_builtin_cache", None)
     monkeypatch.setattr(svc, "_builtin_mtime_ns", 0)

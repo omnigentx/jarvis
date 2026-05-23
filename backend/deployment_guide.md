@@ -1,78 +1,78 @@
-# Hướng Dẫn Deploy Backend lên Windows & Remote Access (Free)
+# Guide to Deploying the Backend on Windows & Remote Access (Free)
 
-Hướng dẫn này giúp bạn chạy Jarvis Backend trên laptop Windows của mình bằng Docker và truy cập từ xa qua điện thoại bằng Cloudflare Tunnel (miễn phí, có HTTPS và địa chỉ cố định).
+This guide helps you run the Jarvis Backend on your Windows laptop using Docker and access it remotely from your phone via Cloudflare Tunnel (free, with HTTPS and a fixed address).
 
-## 1. Cài Đặt Docker trên Windows
-Nếu bạn chưa có Docker:
-1.  Tải và cài đặt **Docker Desktop for Windows**: [https://www.docker.com/products/docker-desktop/](https://www.docker.com/products/docker-desktop/)
-2.  Sau khi cài đặt, mở Docker Desktop và đợi nó khởi động (icon cá voi màu xanh ở taskbar).
+## 1. Install Docker on Windows
+If you don't have Docker yet:
+1.  Download and install **Docker Desktop for Windows**: [https://www.docker.com/products/docker-desktop/](https://www.docker.com/products/docker-desktop/)
+2.  After installing, open Docker Desktop and wait for it to start (the blue whale icon in the taskbar).
 
-## 2. Chuẩn Bị Code
-1.  Tại thư mục `backend/` của dự án, mở Terminal (PowerShell hoặc CMD).
-2.  Đảm bảo bạn đã có file `.env` với đầy đủ key (như `GOOGLE_API_KEY`, `JARVIS_API_KEY`...). Nếu chưa, copy từ `.env.example`:
+## 2. Prepare the Code
+1.  In the project's `backend/` directory, open a Terminal (PowerShell or CMD).
+2.  Make sure you have a `.env` file with all required keys (such as `GOOGLE_API_KEY`, `JARVIS_API_KEY`...). If not, copy from `.env.example`:
     ```powershell
     copy .env.example .env
-    # Sau đó mở file .env và điền key vào
+    # Then open the .env file and fill in your keys
     ```
 
-## 3. Chạy Server Bằng Docker
-Tại thư mục `backend/`, chạy lệnh sau để build và khởi động server:
+## 3. Run the Server with Docker
+From the `backend/` directory, run the following command to build and start the server:
 
 ```powershell
 docker compose up --build -d
 ```
-*   `--build`: Build lại image mới nhất.
-*   `-d`: Chạy ngầm (detach) để không bị tắt khi đóng cửa sổ terminal.
+*   `--build`: Build the latest image.
+*   `-d`: Run in the background (detached) so it doesn't stop when you close the terminal window.
 
-Kiểm tra xem server đã chạy chưa bằng cách vào trình duyệt:
+Check that the server is running by visiting in your browser:
 *   [http://localhost:8000/docs](http://localhost:8000/docs)
-*   Nếu thấy trang Swagger UI là thành công.
+*   If you see the Swagger UI page, it's working.
 
-## 4. Tạo Public URL (Cloudflare Tunnel) - Miễn Phí
-Cloudflare Tunnel cho phép bạn "public" server local ra internet một cách an toàn mà không cần mở port modem. Gói **Zero Trust Free** hoàn toàn miễn phí cho cá nhân (lên đến 50 users).
+## 4. Create a Public URL (Cloudflare Tunnel) - Free
+Cloudflare Tunnel lets you safely expose your local server to the internet without opening any modem ports. The **Zero Trust Free** plan is completely free for personal use (up to 50 users).
 
-### Cách 1: Dùng "Quick Tunnel" (Nhanh nhất, URL ngẫu nhiên)
-Nếu bạn chỉ cần test nhanh và không quan trọng tên miền đẹp.
+### Option 1: Use "Quick Tunnel" (Fastest, random URL)
+Use this if you just need to test quickly and don't care about a nice-looking domain.
 
-1.  Tải `cloudflared` cho Windows: [Link tải từ Cloudflare](https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe)
-2.  Đổi tên file tải về thành `cloudflared.exe` và để vào một thư mục (ví dụ `C:\tools\`).
-3.  Mở PowerShell, cd vào thư mục đó và chạy:
+1.  Download `cloudflared` for Windows: [Download link from Cloudflare](https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe)
+2.  Rename the downloaded file to `cloudflared.exe` and place it in a folder (e.g., `C:\tools\`).
+3.  Open PowerShell, cd to that folder and run:
     ```powershell
     .\cloudflared.exe tunnel --url http://localhost:8000
     ```
-4.  Nó sẽ hiện ra một đường link như `https://random-name.trycloudflare.com`. Copy link này dán vào app điện thoại.
-    *   **Lưu ý:** Link này sẽ đổi mỗi khi bạn tắt/bật lại `cloudflared`.
+4.  It will display a link like `https://random-name.trycloudflare.com`. Copy this link and paste it into your phone app.
+    *   **Note:** This link will change every time you stop/restart `cloudflared`.
 
-### Cách 2: Dùng Cloudflare Tunnel Chính Thức (Ổn định, URL cố định)
-Đây là cách tốt nhất để dùng lâu dài. Bạn cần một tên miền (có thể mua tên miền rẻ 1$ hoặc dùng tên miền free nếu kiếm được). Nếu không có tên miền, hãy dùng **Cách 1** hoặc **Tailscale**.
+### Option 2: Use the Official Cloudflare Tunnel (Stable, fixed URL)
+This is the best option for long-term use. You need a domain name (you can buy a cheap $1 domain or use a free domain if you can find one). If you don't have a domain, use **Option 1** or **Tailscale**.
 
-**Giả sử bạn đã có tài khoản Cloudflare và một tên miền (ví dụ: `myjarvis.com`):**
+**Assuming you already have a Cloudflare account and a domain (e.g., `myjarvis.com`):**
 
-1.  Vào [Cloudflare Zero Trust Dashboard](https://one.dash.cloudflare.com/).
-2.  Chọn **Networks** > **Tunnels** > **Create a Tunnel**.
-3.  Chọn **Cloudflared**. Đặt tên (ví dụ: `jarvis-laptop`).
-4.  Nó sẽ hiện hướng dẫn cài đặt ("Install and run a connector"). Chọn **Windows**.
-    *   Copy đoạn lệnh nó đưa ra và chạy trong PowerShell (Run as Administrator) trên laptop.
-    *   Lệnh này sẽ cài `cloudflared` như một Service, tự chạy khi bật máy.
-5.  Sau khi connector hiện "Connected", bấm **Next**.
-6.  Tab **Public Hostnames**:
-    *   **Subdomain**: ví dụ `api` (để thành `api.myjarvis.com`).
-    *   **Domain**: chọn domain của bạn.
+1.  Go to the [Cloudflare Zero Trust Dashboard](https://one.dash.cloudflare.com/).
+2.  Select **Networks** > **Tunnels** > **Create a Tunnel**.
+3.  Select **Cloudflared**. Give it a name (e.g., `jarvis-laptop`).
+4.  It will show installation instructions ("Install and run a connector"). Select **Windows**.
+    *   Copy the command it provides and run it in PowerShell (Run as Administrator) on your laptop.
+    *   This command installs `cloudflared` as a Service that auto-starts on boot.
+5.  Once the connector shows "Connected", click **Next**.
+6.  **Public Hostnames** tab:
+    *   **Subdomain**: e.g., `api` (resulting in `api.myjarvis.com`).
+    *   **Domain**: select your domain.
     *   **Service**:
         *   Type: `HTTP`
         *   URL: `localhost:8000`
-7.  Bấm **Save Tunnel**.
+7.  Click **Save Tunnel**.
 
-Bây giờ bạn có thể dùng `https://api.myjarvis.com` để nhập vào app điện thoại. Địa chỉ này cố định mãi mãi miễn là laptop bạn đang chạy Docker và có internet.
+Now you can use `https://api.myjarvis.com` to enter into your phone app. This address stays fixed as long as your laptop is running Docker and is online.
 
-## 5. Truy Cập Web Dashboard
+## 5. Access the Web Dashboard
 
-Mở trình duyệt và vào địa chỉ Cloudflare bạn vừa cấu hình (ví dụ
-`https://jarvis.omnigentx.com`). Web dashboard (Vue) đã được build sẵn vào
-container `jarvis_web` và serve qua nginx ở port 80, có proxy `/api/*`
-sang backend ở port 8000.
+Open your browser and go to the Cloudflare address you just configured (e.g.,
+`https://jarvis.omnigentx.com`). The web dashboard (Vue) is pre-built into the
+`jarvis_web` container and served via nginx on port 80, with `/api/*` proxied
+to the backend on port 8000.
 
-## Các Lệnh Docker Hữu Ích
-*   **Xem logs:** `docker compose logs -f`
-*   **Khởi động lại:** `docker compose restart`
-*   **Tắt server:** `docker compose down`
+## Useful Docker Commands
+*   **View logs:** `docker compose logs -f`
+*   **Restart:** `docker compose restart`
+*   **Stop the server:** `docker compose down`

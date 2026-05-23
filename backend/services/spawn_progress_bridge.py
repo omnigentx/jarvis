@@ -110,8 +110,8 @@ _EVENT_MAP = {
     "lifecycle_pre_cleanup": ("spawn_lifecycle", "🧹 {agent_name} cleaning up..."),
     "lifecycle_after_cleanup": ("agent_removed", "🗑️ {agent_name} removed"),
     # Pause/Resume events (from PauseSignalHandler in subprocess)
-    "agent_paused": ("agent_paused", "⏸️ {agent_name} đã tạm dừng"),
-    "agent_resumed": ("agent_resumed", "▶️ {agent_name} đã tiếp tục"),
+    "agent_paused": ("agent_paused", "⏸️ {agent_name} paused"),
+    "agent_resumed": ("agent_resumed", "▶️ {agent_name} resumed"),
     "token_usage": ("spawn_token_usage", "📊 {agent_name} token usage"),
     "runtime_config": ("spawn_runtime_config", "⚙️ {agent_name} runtime config loaded"),
     "mcp_status": ("spawn_mcp_status", "🔌 {agent_name} MCP: {status}"),
@@ -1137,12 +1137,12 @@ class SpawnProgressBridge:
                     + self._format_active_meetings_warning(active_meetings)
                 )
             elif errors:
-                title = f"⚠️ Team {team_name} hoàn thành ({errors}/{total} lỗi)"
+                title = f"⚠️ Team {team_name} completed ({errors}/{total} errors)"
                 preview, content = self._compose_team_result_body(
                     team_name=team_name, agent_name=agent_name, result=result,
                 )
             else:
-                title = f"✅ Team {team_name} hoàn thành ({total} agents)"
+                title = f"✅ Team {team_name} completed ({total} agents)"
                 preview, content = self._compose_team_result_body(
                     team_name=team_name, agent_name=agent_name, result=result,
                 )

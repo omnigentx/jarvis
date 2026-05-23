@@ -86,9 +86,18 @@ class TestBuildAgentDict:
         assert result["type"] == "builtin"
 
     def test_card_type(self, mock_fast):
-        """Agent IN _agent_card_sources → type='card'."""
+        """Agent IN _agent_card_sources → type='card'.
+
+        The DB-backed template type stays labelled "card" on the wire
+        even after the underlying storage moved from .md files to
+        SQLite (services.agent_definitions). The "dynamic" wire label
+        is reserved for live spawn-registry instances — see
+        _build_spawn_agent_detail and AgentDetail.vue:isSpawnedAgent
+        for the contract. Reusing "dynamic" for templates would make
+        the dashboard misclassify them as spawn instances.
+        """
         mock_fast.agents = {"CardAgent": _make_agent_data(config_kwargs={"instruction": "x"})}
-        mock_fast._agent_card_sources = {"CardAgent": Path("/cards/CardAgent.md")}
+        mock_fast._agent_card_sources = {"CardAgent": Path("memory://CardAgent")}
 
         with patch("routes.agents.fast", mock_fast):
             from routes.agents import _build_agent_dict

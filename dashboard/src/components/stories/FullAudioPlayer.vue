@@ -2,7 +2,7 @@
 /**
  * FullAudioPlayer — Full-screen audio player (mobile + desktop expand).
  *
- * Hiển thị khi audioPlayerStore.isFullPlayerOpen = true.
+ * Shown when audioPlayerStore.isFullPlayerOpen = true.
  * Features: large controls, waveform-style progress, chapter info, speed.
  */
 import { useAudioPlayerStore } from '../../stores/audioPlayer'
@@ -111,7 +111,7 @@ function close() {
 
           <!-- Speed control -->
           <div class="full-player__speed">
-            <span class="full-player__speed-label">Tốc độ</span>
+            <span class="full-player__speed-label">Speed</span>
             <div class="full-player__speed-options">
               <button
                 v-for="speed in store.SPEED_OPTIONS"

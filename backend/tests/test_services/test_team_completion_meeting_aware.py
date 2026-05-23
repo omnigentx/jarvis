@@ -5,8 +5,8 @@ the orchestrator received two misleading "team finished" messages:
 
 * MessageBus inbox: "📋 Team Status Update — All members have finished. |
   Reese [Dev] | ✅ idle | No output |..."
-* DB notification: "✅ Team tools-audit-team hoàn thành (4 agents) — Không
-  có kết quả chi tiết từ orchestrator."
+* DB notification: "✅ Team tools-audit-team completed (4 agents) — No
+  detailed result from orchestrator."
 
 Both fired purely off spawn_registry status (idle ⇒ "finished"). They
 ignored the open meeting in jarvis.db where the team was actually stuck
@@ -192,7 +192,7 @@ def test_create_team_notification_reframes_when_active_meeting(env_db, monkeypat
     """``_create_team_notification`` flips title/preview/content when the
     team is idled mid-meeting. The DB notif is what the user sees in
     /notifications — it's the user-facing version of the misleading
-    "Không có kết quả chi tiết" message.
+    "No detailed result" message.
     """
     from unittest.mock import MagicMock, patch
 
@@ -246,7 +246,7 @@ def test_create_team_notification_reframes_when_active_meeting(env_db, monkeypat
 
 
 def test_create_team_notification_uses_default_when_no_active(env_db, monkeypatch):
-    """No active meetings → original ✅ "hoàn thành" framing preserved."""
+    """No active meetings → original ✅ "completed" framing preserved."""
     from unittest.mock import MagicMock, patch
 
     from services.spawn_progress_bridge import SpawnProgressBridge
@@ -279,7 +279,7 @@ def test_create_team_notification_uses_default_when_no_active(env_db, monkeypatc
     assert captured_notif["title"].startswith("✅"), (
         f"No active meetings → ✅ framing kept, got: {captured_notif['title']}"
     )
-    assert "hoàn thành" in captured_notif["title"]
+    assert "completed" in captured_notif["title"]
 
 
 # ─── Fail-loud when orchestrator result is missing ──────────────────
@@ -289,11 +289,11 @@ def test_create_team_notification_fails_loud_when_result_empty(env_db, caplog):
     """Per project policy (fail loud, no silent fallbacks): when the
     orchestrator's spawn_registry.result is empty AND there is no
     active meeting to reframe against, the notification body MUST
-    surface the bug — not a generic "Team đã hoàn thành công việc."
+    surface the bug — not a generic "Team has completed the work."
 
     This is the exact incident captured in the 2026-05-13 self-audit
     run: PM Morgan produced a roll-up but spawn_registry.result was
-    never mirrored, and the user saw "Không có kết quả chi tiết từ
+    never mirrored, and the user saw "No detailed result from
     orchestrator." in /notifications. The new contract surfaces
     *which* agent / team is missing data so the user knows to dig.
     """
@@ -335,7 +335,7 @@ def test_create_team_notification_fails_loud_when_result_empty(env_db, caplog):
     ), "fail-loud ERROR log not emitted"
 
     # No generic placeholder body — it must name the team + agent.
-    assert "Không có kết quả chi tiết" not in captured_notif["content"], (
+    assert "No detailed result" not in captured_notif["content"], (
         "Old silent fallback string leaked back into the notification body"
     )
     assert "BUG" in captured_notif["preview"]
@@ -842,7 +842,7 @@ def test_cycle_multiround_worker_closes_each_round(env_db, monkeypatch):
 # ── Regression: dedupe by agent_name across stale run_ids ────────────
 #
 # Tracks the 2026-05-17 notif #28 incident: PM with 10 historical resume
-# rows + 6 stale worker rows produced "16 agents hoàn thành" and fired
+# rows + 6 stale worker rows produced "16 agents completed" and fired
 # while PM's latest run was still mid-turn. The bridge MUST collapse all
 # run_ids of the same agent_name down to the latest row.
 
@@ -901,7 +901,7 @@ def test_cycle_dedupe_keeps_latest_run_per_agent(env_db, monkeypatch):
 def test_cycle_dedupe_count_collapses_stale_rows(env_db, monkeypatch):
     """``_emit_full_cycle_closed`` MUST receive a member list with N unique
     agents, not N*resume_count rows. Otherwise notif title shows
-    "16 agents hoàn thành" instead of the real team size.
+    "16 agents completed" instead of the real team size.
     """
     captured: dict = {}
     members = [

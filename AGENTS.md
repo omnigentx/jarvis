@@ -21,7 +21,7 @@
 5. **fast-agent best practices** — This project is built on [fast-agent](https://fast-agent.ai/). Always:
    - Reference official docs before implementing agent features: [Tool Runner](https://fast-agent.ai/agents/tool_runner/), [Prompting](https://fast-agent.ai/agents/prompting/), [Instructions](https://fast-agent.ai/agents/instructions/)
    - Use `ToolRunnerHooks` for monitoring and progress tracking (see `services/spawn_progress_bridge.py` for the pattern).
-   - Leverage agent cards (`.fast-agent/agent_cards/`) for dynamic agent configuration.
+   - Persist runtime-created agents through `services/agent_definitions.py` (SQLite). Replaces the legacy file-based agent cards.
    - Understand the session/history model via `services/session_service.py`.
    - Never bypass fast-agent's built-in capabilities; extend through hooks, not monkey-patching.
 
@@ -67,7 +67,8 @@ jarvis/
 │   │   ├── background_jobs.py  # Background task management
 │   │   ├── meeting_events.py   # Meeting event stream manager
 │   │   ├── meeting_hooks_bridge.py   # Meeting hooks → SSE bridge
-│   │   ├── dynamic_agents.py   # Dynamic agent loading from agent_cards/
+│   │   ├── dynamic_agents.py   # Dynamic agent loading from SQLite (services/agent_definitions.py)
+│   │   ├── agent_definitions.py # SQLite store for dynamic agent definitions (replaces .md cards)
 │   │   ├── crawl_poller.py     # Story crawl polling/monitoring
 │   │   ├── tts.py              # Edge TTS provider (legacy, still the chat default)
 │   │   ├── tts_realtime.py     # RealtimeTTS adapter — registry-driven engines + factories
@@ -97,7 +98,6 @@ jarvis/
 │   │   ├── crawl_resume.py     # Resume crawl jobs
 │   │   └── time_server.py      # Date/time with timezone
 │   ├── .fast-agent/            # fast-agent runtime data
-│   │   ├── agent_cards/        # Dynamic agent card YAML files
 │   │   ├── skills/             # Agent skills (markdown + resources)
 │   │   └── sessions/           # Session history files
 │   ├── data/                   # Runtime data (gitignored)
@@ -378,9 +378,11 @@ Key module: `services/context_persistence.py` — uses `SPAWN_REGISTRY_DB` env v
 ## fast-agent Integration Patterns
 
 ### Adding a New Agent
-1. Create agent card YAML in `backend/.fast-agent/agent_cards/`
-2. Define skills in `backend/.fast-agent/skills/`
-3. Register MCP servers in `backend/fastagent.config.yaml` if needed
+1. Choose where the agent lives:
+   - **Built-in** (versioned, ships with the project): add an `@fast.agent` (or `@fast.custom`) decorator in `backend/agent.py`. Restart the backend.
+   - **Dynamic** (runtime, no restart): create the row via `POST /api/agents` (dashboard or curl) or call the `spawn_agent` MCP tool from within Jarvis. The definition lands in the SQLite `agent_definitions` table; `services/dynamic_agents.py:db_rev_poll_loop` picks it up within ~2s.
+2. Define any new skills in `backend/.fast-agent/skills/`.
+3. Register MCP servers in `backend/fastagent.config.yaml` if needed.
 4. See `backend/ADDING_AGENT_GUIDE.md` for full walkthrough.
 
 ### Hooking into Agent Lifecycle
@@ -412,7 +414,7 @@ Reference: [fast-agent Tool Runner docs](https://fast-agent.ai/agents/tool_runne
 - After modifying backend code: restart the backend process so changes take effect.
 - After modifying dashboard code: Vite HMR handles most changes automatically.
 - After modifying `fastagent.config.yaml`: full backend restart required.
-- After modifying agent cards or skills: agents reload dynamically (no restart needed).
+- After mutating dynamic agents (via `/api/agents` or `spawn_agent` MCP tool) or editing skills: agents reload dynamically (no restart needed). The reload poll loop runs every ~2s on the `agent_definitions_meta.rev` counter.
 
 ## Git & Deployment
 
@@ -459,7 +461,7 @@ trial and error.
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **jarvis** (36228 symbols, 101681 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **jarvis** (36383 symbols, 102213 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

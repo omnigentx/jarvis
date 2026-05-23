@@ -65,7 +65,7 @@ const selected = computed(() => servers.value.find((s) => s.name === selectedNam
 const agentChoices = computed(() =>
   [...agentsStore.agents.values()].map((a) => ({
     name: a.name,
-    type: a.type,                       // 'card' | 'builtin'
+    type: a.type,                       // 'card' (DB-backed) | 'builtin' (code-defined) | 'team' | 'dynamic' (spawn instances)
     is_card_based: a.type === 'card',
   })),
 )

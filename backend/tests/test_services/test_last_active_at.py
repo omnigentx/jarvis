@@ -3,7 +3,7 @@
 Background (b61af7db incident, 2026-05-09): PM polled
 ``list_active_spawns`` / ``get_team_status`` twice and saw identical
 ``status: running`` snapshots. Without any signal of *progress*, PM
-concluded "trạng thái CHƯA THAY ĐỔI" and idled out — burying the team
+concluded "status UNCHANGED" and idled out — burying the team
 mid-meeting. The spawn_registry only carried ``started_at`` /
 ``completed_at``; there was nothing to distinguish "agent is grinding
 through an LLM call right now" from "agent has been silent for 60s".

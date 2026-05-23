@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useChatStore } from '../stores/chat'
 import { useAgentsStore } from '../stores/agents'
 import { useChatStream } from '../composables/useChatStream'
+import { expandToolRequest, expandToolDone } from '../utils/toolEvents'
 import { useBreakpoint } from '../composables/useBreakpoint'
 import ConversationsPanel from '../components/chat/ConversationsPanel.vue'
 import ChatHeader from '../components/chat/ChatHeader.vue'
@@ -91,21 +92,15 @@ async function handleSend(payload) {
       switch (event.type) {
         case 'tool_call':
         case 'tool_request':
-          chatStore.pushToolCall(msgId, {
-            tool: event.tools?.[0]?.name || event.tool || event.server || 'tool',
-            command: event.message || '',
-            args: event.tools?.[0]?.args || null,
-          })
+          for (const payload of expandToolRequest(event)) {
+            chatStore.pushToolCall(msgId, payload)
+          }
           break
         case 'tool_result':
         case 'tool_done':
-          chatStore.pushToolCall(msgId, {
-            tool: event.tools?.[0]?.name || event.tool || 'tool',
-            command: event.message || 'result',
-            isResult: true,
-            duration: event.duration_ms ? `${(event.duration_ms / 1000).toFixed(1)}s` : undefined,
-            resultPreview: event.result_preview || null,
-          })
+          for (const payload of expandToolDone(event)) {
+            chatStore.pushToolCall(msgId, payload)
+          }
           break
         case 'done':
           chatStore.finalizeAgentMessage(msgId, event.response || '', {
