@@ -791,6 +791,118 @@ def test_restore_is_idempotent(
     assert new_ctrl.is_paused("PM")
 
 
+def test_restore_drops_dead_subprocess_rows(
+    isolated_pause_state_db, fake_registry, captured_sse,
+):
+    """jarvis#48 F3: restore_on_startup must GC ``agent_pause_state``
+    rows whose subprocess PID is dead — otherwise stale rows accumulate
+    across restart cycles and a future spawn under the same agent_name
+    would inherit a "paused" state it can't escape (no live subprocess
+    to receive SIGUSR2).
+
+    Setup: write a row directly to the DB (simulating a previous
+    backend session) for an agent whose ``spawn_records`` row has a
+    PID that has since died. After restore, the row should be gone.
+    """
+    # Pre-seed: subprocess agent's pause row from the "previous" run.
+    db = isolated_pause_state_db.SessionLocal()
+    try:
+        db.add(isolated_pause_state_db.AgentPauseStateModel(
+            agent_name="DeadDev",
+            paused_at=1000.0,
+            team_name="ZombieTeam",
+            reason="manual",
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    # Fake registry: DeadDev has a spawn_record with PID 999999 (never
+    # going to be alive on this host — os.kill(0) will raise).
+    fake_registry.find_by_name.return_value = [
+        {"run_id": "r-dead", "agent_name": "DeadDev", "pid": 999999},
+    ]
+
+    from services.pause_controller import PauseController
+    ctrl = PauseController()
+    restored = ctrl.restore_on_startup()
+
+    assert restored == 0, "dead-PID rows must not count as restored"
+    assert not ctrl.is_paused("DeadDev"), \
+        "dead subprocess must not be in _paused_agents (can't be resumed)"
+
+    db = isolated_pause_state_db.SessionLocal()
+    try:
+        rows = db.query(isolated_pause_state_db.AgentPauseStateModel).all()
+        assert len(rows) == 0, "dead-PID row must be GC'd during restore"
+    finally:
+        db.close()
+
+
+def test_restore_keeps_in_process_agent_rows(
+    isolated_pause_state_db, fake_registry, captured_sse,
+):
+    """In-process agents (Jarvis) have no ``spawn_records`` row. The
+    GC logic must NOT mistake "no spawn_record" for "dead subprocess"
+    and drop their pause row — backend restart IS their restart, so
+    restoring the pause is correct.
+    """
+    # Pre-seed Jarvis pause row.
+    db = isolated_pause_state_db.SessionLocal()
+    try:
+        db.add(isolated_pause_state_db.AgentPauseStateModel(
+            agent_name="Jarvis",
+            paused_at=1000.0,
+            reason="manual",
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    fake_registry.find_by_name.return_value = []  # no spawn_record — in-process
+
+    from services.pause_controller import PauseController
+    ctrl = PauseController()
+    restored = ctrl.restore_on_startup()
+
+    assert restored == 1
+    assert ctrl.is_paused("Jarvis")
+
+
+def test_e2e_sse_event_order_pause_resume_cycle(
+    fresh_manager, fake_registry, captured_sse,
+):
+    """jarvis#48 F6: SSE event ordering across a full pause→resume
+    cycle. The unit tests already cover individual transitions; this
+    one pins the END-TO-END sequence that the dashboard relies on for
+    the 4-state badge animation.
+
+    For an idle agent (no in-flight turn), the controller emits the
+    terminal event itself, so the full sequence is:
+
+        agent_pausing → agent_paused → agent_resuming → agent_resumed
+    """
+    fresh_manager.pause("Jarvis")
+    fresh_manager.resume("Jarvis")
+
+    types = [e["event_type"] for e in captured_sse]
+
+    assert types == [
+        "agent_pausing", "agent_paused",
+        "agent_resuming", "agent_resumed",
+    ], f"event sequence regression: {types}"
+
+    # Belt-and-suspenders: each event's ``data.status`` matches its phase.
+    expected_status = {
+        "agent_pausing": "pausing",
+        "agent_paused": "paused",
+        "agent_resuming": "resuming",
+        "agent_resumed": "running",
+    }
+    for evt in captured_sse:
+        assert evt["data"]["status"] == expected_status[evt["event_type"]], evt
+
+
 def test_late_joiner_starts_paused_when_team_already_paused(
     fresh_manager, fake_registry, captured_sse,
 ):

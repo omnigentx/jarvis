@@ -619,6 +619,15 @@ class PauseController:
         pause (or approval-driven pause that's still pending) survives
         a backend restart. Returns the count of agents restored.
 
+        Garbage collection: subprocess agents whose PID died with the
+        previous backend leave a dangling ``agent_pause_state`` row
+        that can never be resumed by SIGUSR2 (no process to signal).
+        Drop those rows here so they don't accumulate across restart
+        cycles and so a future spawn under the same agent_name doesn't
+        inherit a stale "paused" state. In-process agents (no
+        spawn_record) are always considered live — backend restart =
+        Jarvis restart, so restoring its pause is correct.
+
         Idempotent — safe to call multiple times. Skips agents already
         in ``_paused_agents`` (e.g. if approval_service.restore ran
         first and the user paused that team's orchestrator manually
@@ -636,19 +645,59 @@ class PauseController:
             return 0
 
         count = 0
+        dropped: list[str] = []
         for row in rows:
             agent_name = row.agent_name
             if agent_name in self._paused_agents:
                 continue
+
+            # GC: if the agent has a spawn_record but its PID is dead,
+            # the previous subprocess is gone — drop the row instead of
+            # restoring a pause we can't enforce.
+            if self._is_dead_subprocess(agent_name):
+                self._persist_resume(agent_name)
+                dropped.append(agent_name)
+                continue
+
             # ``_pause_one`` re-runs the full pause flow (SSE + DB upsert
-            # + signal). On startup the subprocess may or may not still
-            # be alive — signal send is wrapped in try/except so a stale
-            # PID is harmless.
+            # + signal). For live subprocesses the signal goes through;
+            # for in-process Jarvis the asyncio.Event is recreated and
+            # cleared, blocking the next checkpoint as intended.
             if self._pause_one(agent_name):
                 count += 1
         if count:
             logger.info("[PAUSE] restored %d agent(s) from agent_pause_state", count)
+        if dropped:
+            logger.info("[PAUSE] GC'd %d dead-PID pause row(s): %s", len(dropped), dropped)
         return count
+
+    def _is_dead_subprocess(self, agent_name: str) -> bool:
+        """Return True iff ``agent_name`` has a spawn_record but no live
+        PID. False for in-process agents (no spawn_record) and for
+        subprocesses still alive after the backend restart.
+
+        Used by ``restore_on_startup`` to garbage-collect stale rows.
+        """
+        try:
+            import services.shared_state as _state
+            if not _state.registry_db:
+                return False  # can't check — be conservative, keep the row
+            records = _state.registry_db.find_by_name(agent_name)
+            if not records:
+                return False  # in-process agent — always live across restart
+            for rec in records:
+                pid = rec.get("pid")
+                if pid is None:
+                    continue
+                try:
+                    os.kill(int(pid), 0)  # probe
+                    return False  # any live PID means subprocess survived
+                except (ProcessLookupError, PermissionError):
+                    continue
+            return True  # has spawn_record(s) but all PIDs are dead
+        except Exception as e:
+            logger.warning("[PAUSE] _is_dead_subprocess(%s) failed: %s", agent_name, e)
+            return False  # err on the side of preserving the row
 
     def _update_db_status(self, agent_name: str, db_status: str) -> None:
         """Upsert spawn_records.status. DB sees only ``paused`` / ``running`` —
