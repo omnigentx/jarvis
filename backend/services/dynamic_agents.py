@@ -94,6 +94,17 @@ async def db_rev_poll_loop(agent_app) -> None:
     request handlers that don't hold the FastAgent state, so this loop
     is the converge mechanism. One-shot polling per tick: read rev,
     compare, reload if changed.
+
+    TODO scalability: full-replace reload on every rev bump.
+    ``load_agent_data(defs, parent)`` re-sends the entire definitions
+    list each tick where rev changed, and fast_agent's replace
+    semantics rebuilds every dynamic agent — including ones that
+    didn't change. For N=small (today: 0–3 dynamic agents) this is
+    cheap. If N grows to dozens with frequent CRUD churn, swap to a
+    diff-and-patch path: track a per-name ``rev`` (or
+    ``updated_at``), fetch only changed rows, and emit a smaller
+    in-memory update. Keep the rev counter as the wake signal so
+    cross-process semantics don't change.
     """
     from services import agent_definitions as svc
 
