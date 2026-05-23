@@ -869,6 +869,79 @@ def test_restore_keeps_in_process_agent_rows(
     assert ctrl.is_paused("Jarvis")
 
 
+def test_team_pause_does_not_run_n_plus_1_team_lookup(
+    isolated_pause_state_db, fresh_manager, fake_registry, captured_sse,
+):
+    """jarvis#48 F4: when pausing a team scope, the team_name is already
+    known from ``_resolve_scope`` — ``_persist_pause`` must not re-run
+    ``find_by_name`` per member just to re-discover the same team
+    affiliation. With N members, the old code did N extra DB queries
+    on top of the 1 ``find_by_team_name`` call.
+
+    Asserts: after ``pause(team_name)`` for 3 members, the registry's
+    ``find_by_name`` is called at most once per member from path
+    *other than* ``_persist_pause`` (i.e. from ``_find_pid`` and
+    ``_update_db_status``). Specifically ``_team_of`` must not fire
+    because the hint flows through from ``pause()`` → ``_pause_one``
+    → ``_persist_pause``.
+    """
+    members = [
+        {"run_id": "r1", "agent_name": "PM",  "team_name": "AlphaTeam"},
+        {"run_id": "r2", "agent_name": "Dev", "team_name": "AlphaTeam"},
+        {"run_id": "r3", "agent_name": "QA",  "team_name": "AlphaTeam"},
+    ]
+    fake_registry.find_by_team_name.return_value = members
+
+    # Side-effect lookup by name returns the per-agent row (used by
+    # _find_pid and _update_db_status — both are unavoidable per-member).
+    def by_name(name):
+        return [m for m in members if m["agent_name"] == name]
+    fake_registry.find_by_name.side_effect = by_name
+
+    fresh_manager.pause("AlphaTeam")
+
+    # 1 from _resolve_scope (find_by_team_name, not find_by_name) +
+    # 2 per member (_find_pid for SIGUSR1, _update_db_status for DB).
+    # If the N+1 regressed, _persist_pause adds a 3rd per-member call.
+    by_name_calls = fake_registry.find_by_name.call_count
+    assert by_name_calls == 2 * len(members), (
+        f"expected 2 find_by_name per member ({2*len(members)} total), "
+        f"got {by_name_calls} — _team_of fired = N+1 regression"
+    )
+
+
+def test_team_pause_persists_team_name_on_agent_pause_state_row(
+    isolated_pause_state_db, fresh_manager, fake_registry, captured_sse,
+):
+    """Counterpoint to the F4 test: even with the hint flowing through,
+    the persisted row's ``team_name`` column must still get populated
+    correctly — otherwise restart recovery loses the team affiliation
+    and ``is_team_paused`` queries break.
+    """
+    members = [
+        {"run_id": "r1", "agent_name": "PM",  "team_name": "BetaTeam"},
+        {"run_id": "r2", "agent_name": "Dev", "team_name": "BetaTeam"},
+    ]
+    fake_registry.find_by_team_name.return_value = members
+
+    def by_name(name):
+        return [m for m in members if m["agent_name"] == name]
+    fake_registry.find_by_name.side_effect = by_name
+
+    fresh_manager.pause("BetaTeam")
+
+    db = isolated_pause_state_db.SessionLocal()
+    try:
+        rows = db.query(isolated_pause_state_db.AgentPauseStateModel).all()
+        by_agent = {r.agent_name: r for r in rows}
+        assert set(by_agent) == {"PM", "Dev"}
+        for row in rows:
+            assert row.team_name == "BetaTeam", \
+                f"team_name not persisted for {row.agent_name}"
+    finally:
+        db.close()
+
+
 def test_e2e_sse_event_order_pause_resume_cycle(
     fresh_manager, fake_registry, captured_sse,
 ):

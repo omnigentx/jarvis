@@ -166,13 +166,21 @@ class PauseController:
         ``running → pausing → paused`` (or idle-emit shortcut).
 
         Returns True if at least one agent was newly paused.
+
+        N+1 avoidance: ``_resolve_scope`` already computed the team_name
+        for the whole scope. Pass it down to ``_pause_one`` so
+        ``_persist_pause`` doesn't re-run a per-member ``find_by_name``
+        DB query just to discover the same team affiliation (F4 in the
+        PR #48 review). For solo scopes (team_name=None) the per-agent
+        helper falls back to its own lookup, since the agent might
+        belong to a team even though the scope was specified by name.
         """
         agents, team_name = self._resolve_scope(scope)
         if team_name:
             logger.info("[PAUSE] Team scope: %s → %d agent(s)", team_name, len(agents))
         any_changed = False
         for agent in agents:
-            if self._pause_one(agent):
+            if self._pause_one(agent, team_name=team_name):
                 any_changed = True
         return any_changed
 
@@ -201,12 +209,19 @@ class PauseController:
             return False
         return any(a in self._paused_agents for a in agents)
 
-    def _pause_one(self, agent_name: str) -> bool:
+    def _pause_one(self, agent_name: str, team_name: Optional[str] = None) -> bool:
         """Pause a single agent. Returns True if newly paused.
 
         This is the original Phase 1-3 ``pause()`` body, kept private so
         Phase 4's scope-expanding ``pause()`` can call it for each agent
         in a team without re-running scope resolution recursively.
+
+        ``team_name``: caller-supplied team affiliation. When non-None,
+        ``_persist_pause`` uses it directly instead of running another
+        ``find_by_name`` DB query — eliminates the N+1 noted in
+        the PR #48 review (F4). For solo callers (or when the caller
+        doesn't know the team), pass ``None`` and the persister falls
+        back to its own lookup.
         """
         if agent_name in self._paused_agents:
             logger.info("[PAUSE] Agent %s already paused", agent_name)
@@ -249,8 +264,9 @@ class PauseController:
         self._update_db_status(agent_name, "paused")
 
         # 4b. Cross-restart persistence — upsert into agent_pause_state
-        # so this pause survives a backend restart.
-        self._persist_pause(agent_name)
+        # so this pause survives a backend restart. ``team_name`` is the
+        # caller-resolved value (or None if solo / unknown).
+        self._persist_pause(agent_name, team_name=team_name)
 
         # 5. Idle-agent terminal transition. Only applies to in-process
         # agents; subprocess agents emit their own paused event from
@@ -546,10 +562,10 @@ class PauseController:
 
             # User-facing messages for each transition.
             messages = {
-                "agent_pausing": f"⏸️ {agent_name} đang tạm dừng…",
-                "agent_paused": f"⏸️ {agent_name} đã tạm dừng",
-                "agent_resuming": f"▶️ {agent_name} đang tiếp tục…",
-                "agent_resumed": f"▶️ {agent_name} đã tiếp tục",
+                "agent_pausing": f"⏸️ {agent_name} pausing…",
+                "agent_paused": f"⏸️ {agent_name} paused",
+                "agent_resuming": f"▶️ {agent_name} resuming…",
+                "agent_resumed": f"▶️ {agent_name} resumed",
             }
 
             activity_stream_manager.broadcast({
@@ -562,27 +578,34 @@ class PauseController:
         except Exception as e:
             logger.warning("[PAUSE] Failed to broadcast SSE: %s", e)
 
-    def _persist_pause(self, agent_name: str) -> None:
+    def _persist_pause(self, agent_name: str, team_name: Optional[str] = None) -> None:
         """Upsert ``agent_pause_state`` row so the pause survives a
         backend restart. Best-effort — never raise (don't break a
         live pause click because of a DB hiccup).
+
+        ``team_name``: pre-resolved hint from the scope-aware ``pause()``
+        caller. When provided, skips the ``_team_of`` DB lookup — this
+        avoids N+1 ``find_by_name`` queries when persisting a whole
+        team. None falls back to the per-agent lookup (covers
+        ``approval_service.restore_pending_on_startup`` and other
+        callers that don't pre-resolve scope).
         """
         try:
             from core.database import SessionLocal, AgentPauseStateModel
             db = SessionLocal()
             try:
                 row = db.query(AgentPauseStateModel).filter_by(agent_name=agent_name).first()
-                team_name = self._team_of(agent_name)
+                resolved_team = team_name if team_name is not None else self._team_of(agent_name)
                 if row is None:
                     db.add(AgentPauseStateModel(
                         agent_name=agent_name,
                         paused_at=time.time(),
-                        team_name=team_name,
+                        team_name=resolved_team,
                         reason="manual",
                     ))
                 else:
                     row.paused_at = time.time()
-                    row.team_name = team_name
+                    row.team_name = resolved_team
                 db.commit()
             finally:
                 db.close()
