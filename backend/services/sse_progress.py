@@ -544,14 +544,29 @@ def create_progress_hooks(request_id: str, session_id: str | None = None) -> Too
 
 
 def merge_hooks(a: ToolRunnerHooks, b: ToolRunnerHooks) -> ToolRunnerHooks:
-    """Merge two ToolRunnerHooks — both hooks fire for each event."""
-    
+    """Merge two ToolRunnerHooks — both hooks fire for each event.
+
+    ``on_pause_cancel`` is OR'd: if either hook returns True the runner
+    retries the LLM call. Lets multiple subsystems (e.g. PauseController
+    and a future cancellation-aware progress tracker) coexist without
+    one silently shadowing the other's retry decision.
+    """
+
     async def _chain(fn1, fn2, *args):
         if fn1: await fn1(*args)
         if fn2: await fn2(*args)
-    
+
+    async def _any_true(fn1, fn2, *args):
+        # Short-circuit on first True so the second hook doesn't block
+        # awaiting resume if the first already decided to retry.
+        if fn1 is not None and await fn1(*args):
+            return True
+        if fn2 is not None and await fn2(*args):
+            return True
+        return False
+
     return ToolRunnerHooks(
-        before_llm_call=(lambda r, m: _chain(a.before_llm_call, b.before_llm_call, r, m)) 
+        before_llm_call=(lambda r, m: _chain(a.before_llm_call, b.before_llm_call, r, m))
             if a.before_llm_call or b.before_llm_call else None,
         after_llm_call=(lambda r, m: _chain(a.after_llm_call, b.after_llm_call, r, m))
             if a.after_llm_call or b.after_llm_call else None,
@@ -561,4 +576,6 @@ def merge_hooks(a: ToolRunnerHooks, b: ToolRunnerHooks) -> ToolRunnerHooks:
             if a.after_tool_call or b.after_tool_call else None,
         after_turn_complete=(lambda r, m: _chain(a.after_turn_complete, b.after_turn_complete, r, m))
             if a.after_turn_complete or b.after_turn_complete else None,
+        on_pause_cancel=(lambda r: _any_true(a.on_pause_cancel, b.on_pause_cancel, r))
+            if a.on_pause_cancel or b.on_pause_cancel else None,
     )

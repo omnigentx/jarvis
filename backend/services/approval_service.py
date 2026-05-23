@@ -19,7 +19,7 @@ from datetime import datetime
 from typing import Optional
 
 from core.database import SessionLocal, ApprovalRequestModel, ApprovalCommentModel
-from services.pause_manager import pause_manager
+from services.pause_controller import pause_controller
 from services.activity_stream import activity_stream_manager
 
 logger = logging.getLogger(__name__)
@@ -138,12 +138,17 @@ class ApprovalService:
         finally:
             db.close()
 
-        # Pause all agents in the list (team-wide pause)
-        paused_count = 0
-        for agent_name in pause_agents:
-            if pause_manager.pause(agent_name):
-                paused_count += 1
-                logger.info("[APPROVAL] Paused agent %s for approval %s", agent_name, approval_id)
+        # Pause via PauseController. When ``team_name`` is set we pass it
+        # as the scope so the controller's ``_resolve_scope`` expands to
+        # the live team membership at this moment (handles new joiners
+        # between the pre-compute above and now). When there's no team,
+        # the requesting agent is a solo pause.
+        scope = team_name or data["agent_name"]
+        scope_changed = pause_controller.pause(scope)
+        paused_count = sum(1 for a in pause_agents if pause_controller.is_paused(a))
+        if scope_changed:
+            logger.info("[APPROVAL] Paused scope %r for approval %s (%d agents now paused)",
+                        scope, approval_id, paused_count)
 
         logger.info(
             "[APPROVAL] Created %s — type=%s agent=%s urgency=%s paused=%d agents",
@@ -201,12 +206,14 @@ class ApprovalService:
         finally:
             db.close()
 
-        # Resume all paused agents (team-wide resume)
-        resumed_count = 0
-        for agent_name in paused_agents:
-            if pause_manager.resume(agent_name):
-                resumed_count += 1
-                logger.info("[APPROVAL] Resumed agent %s after %s", agent_name, decision)
+        # Resume via PauseController scope. Mirror of create path.
+        scope = result.get("team_name") or result["agent_name"]
+        before_paused = {a for a in paused_agents if pause_controller.is_paused(a)}
+        pause_controller.resume(scope)
+        resumed_count = sum(1 for a in before_paused if not pause_controller.is_paused(a))
+        if resumed_count:
+            logger.info("[APPROVAL] Resumed scope %r after %s (%d agents resumed)",
+                        scope, decision, resumed_count)
 
         logger.info(
             "[APPROVAL] Resolved %s — decision=%s resumed=%d agents",
@@ -456,7 +463,13 @@ class ApprovalService:
             for record in pending:
                 agents = json.loads(record.paused_agents or "[]")
                 for agent_name in agents:
-                    pause_manager.pause(agent_name)
+                    # Restore per-agent (not scope) because the stored list
+                    # is the authoritative record of who was paused at
+                    # approval-create time. ``pause(agent_name)`` will
+                    # still expand to the team via _resolve_scope if the
+                    # agent is in one — handled idempotently by the
+                    # controller for agents already in the per-agent list.
+                    pause_controller.pause(agent_name)
                     count += 1
                     logger.info("[APPROVAL] Restored pause for %s (approval=%s)", agent_name, record.id)
             

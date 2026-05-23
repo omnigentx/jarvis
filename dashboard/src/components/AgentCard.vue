@@ -44,6 +44,10 @@ function handleViewLogs(e) {
 async function handlePauseToggle(e) {
   e.preventDefault()
   if (pauseLoading.value) return
+  // Disable during the transitional pausing/resuming states — the agent is
+  // mid-transition, an extra click would either no-op or fire a contradictory
+  // request before the first one's hook completes.
+  if (props.agent.status === 'pausing' || props.agent.status === 'resuming') return
   pauseLoading.value = true
   try {
     if (props.agent.status === 'paused') {
@@ -58,7 +62,16 @@ async function handlePauseToggle(e) {
   }
 }
 
-const statusAccent = { running: '#10b981', error: '#ef4444', blocked: '#f59e0b', paused: '#f59e0b' }
+const statusAccent = {
+  running: '#10b981',
+  error: '#ef4444',
+  blocked: '#f59e0b',
+  // Same amber as paused so the accent doesn't flicker between
+  // pausing→paused or paused→resuming (low-contrast UX).
+  pausing: '#f59e0b',
+  paused: '#f59e0b',
+  resuming: '#10b981',
+}
 </script>
 
 <template>
@@ -117,12 +130,17 @@ const statusAccent = { running: '#10b981', error: '#ef4444', blocked: '#f59e0b',
       <!-- Row 3: Action buttons (desktop) -->
       <div class="card-actions desktop-only">
         <button
-          v-if="agent.status === 'running' || agent.status === 'paused'"
+          v-if="['running', 'paused', 'pausing', 'resuming'].includes(agent.status)"
           @click="handlePauseToggle"
-          :disabled="pauseLoading"
+          :disabled="pauseLoading || agent.status === 'pausing' || agent.status === 'resuming'"
           class="btn-pause"
-          :class="{ 'is-paused': agent.status === 'paused' }"
-          :title="agent.status === 'paused' ? 'Resume agent' : 'Pause agent'"
+          :class="{ 'is-paused': agent.status === 'paused', 'is-transition': ['pausing','resuming'].includes(agent.status) }"
+          :title="
+            agent.status === 'pausing' ? 'Pausing… (waiting for current step to finish)'
+            : agent.status === 'resuming' ? 'Resuming…'
+            : agent.status === 'paused' ? 'Resume agent'
+            : 'Pause agent'
+          "
         >
           {{ agent.status === 'paused' ? '▶' : '⏸' }}
         </button>

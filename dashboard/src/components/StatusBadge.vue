@@ -15,7 +15,12 @@ defineProps({
 // text: 11px SemiBold #22c55e
 const statusConfig = {
   running:   { label: 'Running',   dotColor: '#22c55e', textColor: '#22c55e', bgColor: 'rgba(34,197,94,0.15)', pulse: true },
+  // Pausing/resuming are the transitional states emitted by PauseController.
+  // Show a pulsing dot + amber color so the user sees the action is
+  // in flight (the agent is still finishing its current LLM/tool call).
+  pausing:   { label: 'Pausing…',  dotColor: '#f59e0b', textColor: '#f59e0b', bgColor: 'rgba(245,158,11,0.15)', pulse: true },
   paused:    { label: 'Paused',    dotColor: '#f59e0b', textColor: '#f59e0b', bgColor: 'rgba(245,158,11,0.15)', pulse: false },
+  resuming:  { label: 'Resuming…', dotColor: '#22c55e', textColor: '#22c55e', bgColor: 'rgba(34,197,94,0.15)', pulse: true },
   idle:      { label: 'Idle',      dotColor: '#64748b', textColor: '#64748b', bgColor: 'rgba(100,116,139,0.12)', pulse: false },
   blocked:   { label: 'Blocked',   dotColor: '#ef4444', textColor: '#ef4444', bgColor: 'rgba(239,68,68,0.15)', pulse: false },
   error:     { label: 'Error',     dotColor: '#ff4560', textColor: '#ff4560', bgColor: 'rgba(255,69,96,0.15)', pulse: false },

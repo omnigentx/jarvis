@@ -369,23 +369,24 @@ async def _inject_via_generate(
         original_hooks = {}
         progress_hooks = create_progress_hooks(request_id)
 
-        from services.pause_manager import pause_manager
+        from services.pause_controller import pause_controller
         # Tag every LLM call inside this inject with ``request_id`` so the
         # always-on token-persistence hook can correlate token_usage rows.
         from services.sse_progress import current_run_id
         _run_token = current_run_id.set(request_id)
 
+        # Wire progress + pause hooks via the centralized attach helper —
+        # see PauseController.attach docstring for the why.
         for name, ag in agent_app._agents.items():
             original_hooks[name] = getattr(ag, 'tool_runner_hooks', None)
             existing = original_hooks[name]
 
-            pause_hooks = pause_manager.create_pause_hooks(name)
-            combined = merge_hooks(progress_hooks, pause_hooks)
-
             if existing:
-                ag.tool_runner_hooks = merge_hooks(existing, combined)
+                ag.tool_runner_hooks = merge_hooks(existing, progress_hooks)
             else:
-                ag.tool_runner_hooks = combined
+                ag.tool_runner_hooks = progress_hooks
+
+            pause_controller.attach(ag)
 
         try:
             result = await agent.generate(inject_msg)
@@ -394,6 +395,7 @@ async def _inject_via_generate(
             for name, ag in agent_app._agents.items():
                 original = original_hooks.get(name)
                 ag.tool_runner_hooks = original if original else None
+                pause_controller.detach(ag)
             current_run_id.reset(_run_token)
 
         file_count = len(files_data) if files_data else 0

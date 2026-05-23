@@ -226,6 +226,30 @@ class SpawnRecordModel(Base):
     metadata_json = Column(Text, nullable=True)  # JSON object
 
 
+class AgentPauseStateModel(Base):
+    """Persisted pause state for cross-restart recovery.
+
+    PauseController upserts here on every ``_pause_one`` and deletes on
+    ``_resume_one``. Covers both in-process agents (Jarvis) and
+    subprocess agents — the latter also have ``spawn_records.status =
+    'paused'`` for UI/registry queries, but this table is the
+    controller's authoritative source for "who was paused when the
+    server last ran". On startup, ``PauseController.restore_on_startup``
+    re-applies the pauses so a manual pause survives a backend restart.
+
+    No FK to spawn_records — Jarvis has no spawn_record but can still
+    be paused. ``agent_name`` is the PK; secondary index on
+    ``team_name`` so the orchestrator can ask "which teams have any
+    paused member?" cheaply.
+    """
+    __tablename__ = "agent_pause_state"
+
+    agent_name = Column(String(100), primary_key=True)
+    paused_at = Column(Float, nullable=False)
+    team_name = Column(String(100), nullable=True, index=True)
+    reason = Column(String(50), default="manual")  # 'manual' | 'approval' | 'team'
+
+
 class McpServerToolModel(Base):
     """Cached MCP server tool metadata — single source of truth.
 

@@ -318,6 +318,18 @@ async def lifespan(app: FastAPI):
             logger.info("Restored %d approval-paused agents from pending approvals", restored)
     except Exception as e:
         logger.warning("Approval restore skipped: %s", e)
+
+    # Restore manual pause state — survives a backend restart so a user
+    # who paused an agent before the restart finds it still paused after.
+    # Approval restore above only covers approval-driven pauses; this
+    # covers everything else (manual pause clicks, team pauses).
+    try:
+        from services.pause_controller import pause_controller
+        restored = pause_controller.restore_on_startup()
+        if restored:
+            logger.info("Restored %d paused agent(s) from agent_pause_state", restored)
+    except Exception as e:
+        logger.warning("PauseController restore skipped: %s", e)
     
     # No more JSON → SQLite migration needed.
     # SpawnRegistry now uses SqliteBackend directly (via SPAWN_REGISTRY_DB env var).
