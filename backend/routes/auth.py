@@ -47,6 +47,16 @@ from core.auth import (
     record_login_attempt,
     verify_api_key,
 )
+from sqlalchemy.orm import Session as DbSession
+
+from core import webauthn as wa
+from core.database import (
+    DEFAULT_USERNAME,
+    DEFAULT_USER_ID,
+    PasskeyCredential,
+    User,
+    get_db,
+)
 from core.session import (
     CSRF_COOKIE_NAME,
     SESSION_COOKIE_NAME,
@@ -280,3 +290,415 @@ async def check_auth(_=Depends(verify_api_key)) -> dict:
     """Legacy alias for ``/whoami``.  Some scripts hit this for a 200/401
     pulse.  Kept for compatibility; new clients use ``/whoami``."""
     return {"status": "ok", "authenticated": True}
+
+
+# ---- Passkey (WebAuthn) -----------------------------------------------------
+#
+# Browser-side login UX. Coexists with the legacy API key (which remains
+# the script/Xiaozhi credential and the recovery path). See
+# ``backend/core/webauthn.py`` for the wrapper and the recovery doc in
+# the README.
+
+
+class PasskeyRegisterBeginResponse(BaseModel):
+    ceremony_id: str
+    options: dict  # PublicKeyCredentialCreationOptions, JSON-shaped
+
+
+class PasskeyRegisterFinishRequest(BaseModel):
+    ceremony_id: str
+    credential: dict  # navigator.credentials.create() result, JSON-shaped
+    label: Optional[str] = Field(default=None, max_length=100)
+
+
+class PasskeyCredentialOut(BaseModel):
+    id: str
+    label: Optional[str] = None
+    rp_id: str
+    created_at: float
+    last_used_at: Optional[float] = None
+    transports: list[str] = Field(default_factory=list)
+
+
+class PasskeyAuthenticateBeginResponse(BaseModel):
+    ceremony_id: str
+    options: dict
+
+
+class PasskeyAuthenticateFinishRequest(BaseModel):
+    ceremony_id: str
+    credential: dict  # navigator.credentials.get() result, JSON-shaped
+
+
+class PasskeyHasAnyResponse(BaseModel):
+    has_passkey: bool
+
+
+def _user_credentials_for_rp(
+    db: DbSession, user_id: str, rp_id: str,
+) -> list[PasskeyCredential]:
+    return (
+        db.query(PasskeyCredential)
+        .filter(PasskeyCredential.user_id == user_id)
+        .filter(PasskeyCredential.rp_id == rp_id)
+        .order_by(PasskeyCredential.created_at.desc())
+        .all()
+    )
+
+
+def _decode_transports(raw: Optional[str]) -> list[str]:
+    if not raw:
+        return []
+    import json as _json
+    try:
+        value = _json.loads(raw)
+        return [str(t) for t in value] if isinstance(value, list) else []
+    except Exception:
+        return []
+
+
+def _serialize_credential(cred: PasskeyCredential) -> PasskeyCredentialOut:
+    return PasskeyCredentialOut(
+        id=cred.id,
+        label=cred.label,
+        rp_id=cred.rp_id,
+        created_at=cred.created_at,
+        last_used_at=cred.last_used_at,
+        transports=_decode_transports(cred.transports),
+    )
+
+
+@router.post(
+    "/passkey/register/begin",
+    response_model=PasskeyRegisterBeginResponse,
+)
+async def passkey_register_begin(
+    request: Request,
+    _=Depends(verify_api_key),
+    db: DbSession = Depends(get_db),
+) -> PasskeyRegisterBeginResponse:
+    """Start a register ceremony for the currently-authenticated user.
+
+    Requires existing auth (Bearer key OR session cookie) because the
+    server has to know *who* the credential will be bound to. New users
+    bootstrap by logging in with ``JARVIS_API_KEY`` from ``.env`` once,
+    then register a passkey from this endpoint.
+    """
+    user = db.query(User).filter(User.id == DEFAULT_USER_ID).first()
+    if user is None:
+        # init_db() should have seeded this row; if missing the deploy
+        # is corrupted and we fail loud rather than silently fall back.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": "default_user_missing"},
+        )
+
+    rp_id = wa.rp_id_from_request(request)
+    existing = [c.id for c in _user_credentials_for_rp(db, user.id, rp_id)]
+    ceremony_id, options = wa.build_registration_options(
+        request=request,
+        user_id=user.id,
+        username=user.username,
+        existing_credential_ids=existing,
+    )
+    return PasskeyRegisterBeginResponse(
+        ceremony_id=ceremony_id, options=options,
+    )
+
+
+@router.post("/passkey/register/finish")
+async def passkey_register_finish(
+    payload: PasskeyRegisterFinishRequest,
+    request: Request,
+    _=Depends(verify_api_key),
+    db: DbSession = Depends(get_db),
+) -> dict:
+    """Verify the attestation response and persist the new credential."""
+    user = db.query(User).filter(User.id == DEFAULT_USER_ID).first()
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": "default_user_missing"},
+        )
+
+    try:
+        verified = wa.verify_registration(
+            request=request,
+            ceremony_id=payload.ceremony_id,
+            credential=payload.credential,
+            expected_user_id=user.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": "passkey_register_failed", "reason": str(exc)},
+        ) from exc
+    except Exception as exc:
+        # The library raises subclasses of InvalidRegistrationResponse
+        # for malformed attestations; surface as 400 with the message
+        # for client-side error rendering. Log at warning since this
+        # often indicates browser-side bugs, not infra.
+        logger.warning("[AUTH] passkey register verify failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "passkey_register_failed",
+                "reason": "verification_error",
+            },
+        ) from exc
+
+    credential_id_b64 = wa.b64url_encode(verified.credential_id)
+    rp_id = wa.rp_id_from_request(request)
+
+    # transports may arrive as part of the navigator response; the
+    # client (passkey.js) is responsible for hoisting it into the
+    # payload. We accept it nested either at the top level or under
+    # ``response.transports``.
+    transports = (
+        payload.credential.get("response", {}).get("transports")
+        or payload.credential.get("transports")
+        or []
+    )
+    import json as _json
+    transports_json = (
+        _json.dumps([str(t) for t in transports]) if transports else None
+    )
+
+    # Idempotent insert: if the same credential id somehow appears
+    # twice (replay of the same finish call), refresh fields instead
+    # of duplicating.
+    existing = db.query(PasskeyCredential).filter(
+        PasskeyCredential.id == credential_id_b64,
+    ).first()
+    if existing is not None:
+        existing.user_id = user.id
+        existing.public_key = bytes(verified.credential_public_key)
+        existing.sign_count = verified.sign_count
+        existing.transports = transports_json
+        existing.rp_id = rp_id
+        existing.label = payload.label or existing.label
+        db.commit()
+        return {"status": "ok", "credential_id": credential_id_b64, "replaced": True}
+
+    db.add(PasskeyCredential(
+        id=credential_id_b64,
+        user_id=user.id,
+        public_key=bytes(verified.credential_public_key),
+        sign_count=verified.sign_count,
+        transports=transports_json,
+        rp_id=rp_id,
+        label=payload.label,
+    ))
+    db.commit()
+    logger.info(
+        "[AUTH] Passkey registered id=%s rp=%s label=%s",
+        credential_id_b64[:12], rp_id, payload.label,
+    )
+    return {"status": "ok", "credential_id": credential_id_b64, "replaced": False}
+
+
+@router.get("/passkey/list", response_model=list[PasskeyCredentialOut])
+async def passkey_list(
+    request: Request,
+    _=Depends(verify_api_key),
+    db: DbSession = Depends(get_db),
+) -> list[PasskeyCredentialOut]:
+    """List all passkeys for the current user, scoped to the current RP.
+
+    We deliberately filter by RP ID so the settings page only shows
+    credentials usable on the current origin. A passkey registered on
+    ``localhost`` doesn't appear when accessed via
+    ``jarvis.alice.com`` — that's correct: it physically cannot
+    authenticate this session.
+    """
+    rp_id = wa.rp_id_from_request(request)
+    creds = _user_credentials_for_rp(db, DEFAULT_USER_ID, rp_id)
+    return [_serialize_credential(c) for c in creds]
+
+
+@router.get("/passkey/has-any", response_model=PasskeyHasAnyResponse)
+async def passkey_has_any(
+    request: Request,
+    db: DbSession = Depends(get_db),
+) -> PasskeyHasAnyResponse:
+    """UX probe for AuthGate. Returns ``true`` when the current RP has
+    at least one registered passkey, so the SPA can show the "Sign in
+    with passkey" button before the user clicks anything.
+
+    Public (no auth) on purpose: pre-login UI can't carry a session
+    cookie. The information it leaks is just "this deployment has been
+    set up with passkey" — not the credential id, not the user, not
+    the key fingerprint. Same shape as ``/whoami`` revealing
+    ``authenticated:false``."""
+    rp_id = wa.rp_id_from_request(request)
+    count = (
+        db.query(PasskeyCredential)
+        .filter(PasskeyCredential.user_id == DEFAULT_USER_ID)
+        .filter(PasskeyCredential.rp_id == rp_id)
+        .count()
+    )
+    return PasskeyHasAnyResponse(has_passkey=count > 0)
+
+
+@router.post(
+    "/passkey/authenticate/begin",
+    response_model=PasskeyAuthenticateBeginResponse,
+)
+async def passkey_authenticate_begin(
+    request: Request,
+    db: DbSession = Depends(get_db),
+) -> PasskeyAuthenticateBeginResponse:
+    """Start a sign-in ceremony. Public (no auth) — this is the
+    pre-login step.
+
+    We pass an empty ``allow_credentials`` so the browser uses
+    discoverable-credential UX (Touch ID picker). The registered
+    credentials for the current RP are loaded anyway so we can verify
+    the assertion at finish time."""
+    rp_id = wa.rp_id_from_request(request)
+    creds = (
+        db.query(PasskeyCredential)
+        .filter(PasskeyCredential.user_id == DEFAULT_USER_ID)
+        .filter(PasskeyCredential.rp_id == rp_id)
+        .all()
+    )
+    allow_ids = [c.id for c in creds]
+    ceremony_id, options = wa.build_authentication_options(
+        request=request,
+        allow_credential_ids=allow_ids,
+    )
+    return PasskeyAuthenticateBeginResponse(
+        ceremony_id=ceremony_id, options=options,
+    )
+
+
+@router.post(
+    "/passkey/authenticate/finish",
+    response_model=LoginResponse,
+)
+async def passkey_authenticate_finish(
+    payload: PasskeyAuthenticateFinishRequest,
+    request: Request,
+    response: Response,
+    db: DbSession = Depends(get_db),
+) -> LoginResponse:
+    """Verify the assertion, bump sign_count + last_used_at, mint a
+    session cookie (same shape as ``/login`` so the SPA's existing
+    auth-store path needs no branch). Public (no auth) on purpose —
+    successful assertion *is* the auth."""
+    client_ip = request.client.host if request.client else "unknown"
+
+    # Rate-limit on the IP shared with /login. WebAuthn is much harder
+    # to brute-force than an API key, but the limit is cheap and stops
+    # noisy clients.
+    if not _check_rate_limit(client_ip):
+        logger.warning(
+            "[AUTH] Rate-limited passkey auth attempt from %s", client_ip,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={"error": "rate_limited", "reason": "too_many_login_attempts"},
+        )
+    record_login_attempt(client_ip)
+
+    # Resolve the credential the browser claims to be using. The
+    # WebAuthn ceremony embeds the credential id (base64url) at the
+    # top level of the assertion JSON.
+    credential_id = payload.credential.get("id") or payload.credential.get("rawId")
+    if not credential_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "passkey_auth_failed",
+                "reason": "credential_id_missing",
+            },
+        )
+
+    cred = (
+        db.query(PasskeyCredential)
+        .filter(PasskeyCredential.id == credential_id)
+        .first()
+    )
+    if cred is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "error": "passkey_auth_failed",
+                "reason": "credential_unknown",
+            },
+        )
+
+    try:
+        verified = wa.verify_authentication(
+            request=request,
+            ceremony_id=payload.ceremony_id,
+            credential=payload.credential,
+            credential_public_key=bytes(cred.public_key),
+            credential_current_sign_count=cred.sign_count,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "passkey_auth_failed", "reason": str(exc)},
+        ) from exc
+    except Exception as exc:
+        logger.warning("[AUTH] passkey auth verify failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "error": "passkey_auth_failed",
+                "reason": "verification_error",
+            },
+        ) from exc
+
+    # Bump sign_count and last_used_at AFTER successful verify. If we
+    # bumped before and verify failed, a clone would silently consume
+    # our counter monotonicity.
+    cred.sign_count = verified.new_sign_count
+    from datetime import datetime as _dt
+    cred.last_used_at = _dt.now().timestamp()
+    db.commit()
+
+    # Mint the session cookie — same shape as /login so the SPA reuses
+    # the existing post-login codepath without branching.
+    try:
+        session_token, parsed = create_session_token()
+    except RuntimeError as exc:
+        logger.error("[AUTH] Cannot mint session after passkey auth: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": "not_configured", "reason": "jwt_secret_unset"},
+        ) from exc
+
+    csrf_token = make_csrf_token()
+    _set_auth_cookies(response, request, session_token, csrf_token)
+    logger.info(
+        "[AUTH] Passkey login success from %s sid=%s cred=%s",
+        client_ip, parsed["sid"], credential_id[:12],
+    )
+    return LoginResponse(csrf_token=csrf_token, expires_in=SESSION_TTL_SECONDS)
+
+
+@router.delete("/passkey/{credential_id:path}")
+async def passkey_delete(
+    credential_id: str,
+    _=Depends(verify_api_key),
+    db: DbSession = Depends(get_db),
+) -> dict:
+    """Delete a credential. 404 if it doesn't belong to the default
+    user — prevents a curious browser from probing arbitrary ids."""
+    cred = (
+        db.query(PasskeyCredential)
+        .filter(PasskeyCredential.id == credential_id)
+        .filter(PasskeyCredential.user_id == DEFAULT_USER_ID)
+        .first()
+    )
+    if cred is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "passkey_not_found"},
+        )
+    db.delete(cred)
+    db.commit()
+    logger.info("[AUTH] Passkey deleted id=%s", credential_id[:12])
+    return {"status": "ok"}
