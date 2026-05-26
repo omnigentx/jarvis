@@ -1,31 +1,26 @@
 <script setup>
-import { ref, watch } from 'vue'
-import { getApiKey, setApiKey } from '../api'
+/**
+ * ConnectionBanner — thin status bar at the top of the app showing the
+ * SSE/WS realtime connection state and a one-click Reconnect.
+ *
+ * "Authentication" is no longer this component's concern: AuthGate
+ * covers the entire app when the user is not signed in, and there is
+ * nothing useful this banner could do that AuthGate isn't already
+ * doing better. The previous "Set API Key" inline input + localStorage
+ * write was removed alongside the cookie-only auth migration.
+ */
+import { useAuthStore } from '../stores/auth'
 
 const props = defineProps({
   status: { type: String, default: 'disconnected' },
 })
 
 const emit = defineEmits(['reconnect'])
-const apiKeyInput = ref('')
-const showKeyInput = ref(false)
 
-const hasKey = ref(!!getApiKey())
-
-watch(() => props.status, (newStatus) => {
-  // Auto-hide key input when connected
-  if (newStatus === 'connected') showKeyInput.value = false
-})
-
-function connectWithKey() {
-  const key = apiKeyInput.value.trim()
-  if (!key) return
-  setApiKey(key)
-  hasKey.value = true
-  showKeyInput.value = false
-  apiKeyInput.value = ''
-  emit('reconnect')
-}
+// Read authenticated state from the auth store; the Reconnect button
+// only makes sense when the user IS signed in (otherwise AuthGate is
+// covering them and clicking through here would just 401 again).
+const auth = useAuthStore()
 
 const bannerConfig = {
   connected: { text: '● Live', color: '#22c55e', bg: 'rgba(34,197,94,0.06)', show: true },
@@ -50,7 +45,6 @@ const bannerConfig = {
       flexShrink: 0,
     }"
   >
-    <!-- Status text -->
     <span
       :class="status === 'connecting' ? 'animate-pulse-dot' : ''"
       :style="{ color: bannerConfig[status]?.color }"
@@ -58,45 +52,12 @@ const bannerConfig = {
       {{ bannerConfig[status]?.text || status }}
     </span>
 
-    <!-- Connect button when no key or disconnected -->
-    <template v-if="status === 'disconnected' || status === 'error'">
-      <button
-        v-if="!showKeyInput && !hasKey"
-        @click="showKeyInput = true"
-        style="margin-left: 8px; padding: 2px 10px; background: #3b82f6; border: none; border-radius: 4px; color: #fff; font-size: 11px; font-weight: 600; cursor: pointer;"
-      >
-        Set API Key
-      </button>
-      <button
-        v-if="hasKey"
-        @click="emit('reconnect')"
-        style="margin-left: 8px; padding: 2px 10px; background: #3b82f6; border: none; border-radius: 4px; color: #fff; font-size: 11px; font-weight: 600; cursor: pointer;"
-      >
-        Reconnect
-      </button>
-
-      <!-- Inline key input -->
-      <div v-if="showKeyInput" style="display: flex; gap: 4px; margin-left: 8px;">
-        <input
-          v-model="apiKeyInput"
-          type="password"
-          placeholder="Paste API key..."
-          @keyup.enter="connectWithKey"
-          style="width: 220px; height: 22px; padding: 0 8px; background: #111318; border: 1px solid #1e2030; border-radius: 4px; font-size: 11px; color: #f3f6fc; outline: none;"
-        />
-        <button
-          @click="connectWithKey"
-          style="padding: 2px 10px; background: #22c55e; border: none; border-radius: 4px; color: #fff; font-size: 11px; font-weight: 600; cursor: pointer;"
-        >
-          Connect
-        </button>
-        <button
-          @click="showKeyInput = false"
-          style="padding: 2px 6px; background: transparent; border: 1px solid #1e2030; border-radius: 4px; color: #64748b; font-size: 11px; cursor: pointer;"
-        >
-          ✕
-        </button>
-      </div>
-    </template>
+    <button
+      v-if="(status === 'disconnected' || status === 'error') && auth.isAuthenticated"
+      @click="emit('reconnect')"
+      style="margin-left: 8px; padding: 2px 10px; background: #3b82f6; border: none; border-radius: 4px; color: #fff; font-size: 11px; font-weight: 600; cursor: pointer;"
+    >
+      Reconnect
+    </button>
   </div>
 </template>

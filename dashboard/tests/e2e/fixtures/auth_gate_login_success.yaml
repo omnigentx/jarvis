@@ -19,6 +19,10 @@ responses:
     status: 200
     json: { authenticated: false }
 
+  "GET /api/auth/passkey/has-any":
+    status: 200
+    json: { has_passkey: false }
+
   "POST /api/auth/login":
     status: 200
     headers:

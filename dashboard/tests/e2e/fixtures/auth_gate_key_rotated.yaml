@@ -15,6 +15,10 @@ responses:
     status: 200
     json: { authenticated: false }
 
+  "GET /api/auth/passkey/has-any":
+    status: 200
+    json: { has_passkey: false }
+
   # Any authenticated endpoint returns 401 with the structured reason
   # so the dashboard's apiFetch routes it through onUnauthorized →
   # auth.on401('key_rotated') and surfaces the targeted hint.

@@ -30,6 +30,28 @@ responses:
       sid: "noise-fixture-sid"
       expires_in: 3600
       abs_expires_in: 36000
+  # AuthGate probes on every gate-open to decide whether to render
+  # the "Sign in with passkey" button. With whoami=true above the
+  # gate is closed, so the probe doesn't normally fire — but a flow
+  # that triggers a 401 (logout, key-rotated) re-opens the gate and
+  # the probe must have a fixture to land on.
+  "GET /api/auth/passkey/has-any":
+    status: 200
+    json: { has_passkey: false }
+  # TeamMonitor.vue onMounted seeds the approvals store via
+  # ``approvalsStore.fetchApprovals('pending')``. Any spec that
+  # navigates to /monitor (agent-monitor, team-monitor-v2) fires
+  # this — default empty so flows that don't assert on approvals
+  # see no noise.
+  "GET /api/approvals":
+    status: 200
+    json: []
+  "GET /api/approvals/stats":
+    status: 200
+    json:
+      pending: 0
+      resolved: 0
+      total: 0
 
 sse_streams:
   "/api/agents/activity-stream":

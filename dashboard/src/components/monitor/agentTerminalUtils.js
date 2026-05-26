@@ -88,3 +88,46 @@ export function summarizeArgs(args) {
   if (rest > 0) parts.push(`+${rest} more`)
   return parts.join(', ')
 }
+
+
+/**
+ * Map agent status → CSS color used by the terminal monitor's status dot.
+ * Whitelist mirrors ``services.pause_controller`` STATE_* + the
+ * lifecycle statuses ``spawn_progress_bridge`` stamps. Anything not
+ * recognized falls through to a neutral gray.
+ */
+export function statusColor(s) {
+  const m = {
+    running: '#f59e0b',
+    pausing: '#f59e0b',
+    paused: '#8b5cf6',
+    resuming: '#10b981',
+    idle: '#10b981',
+    error: '#ef4444',
+    spawning: '#3b82f6',
+    starting: '#3b82f6',
+  }
+  return m[s] || '#555872'
+}
+
+/**
+ * Map agent status → human-readable label for the terminal monitor.
+ * Whitelist must include every transitional state — without
+ * ``pausing``/``resuming`` here, clicking Pause/Resume rendered
+ * "Unknown" during the transitional window (2026-05-24 bug: the
+ * StatusBadge component had been updated for the 4-event model but
+ * the terminal-style monitor was missed).
+ */
+export function statusLabel(s) {
+  const m = {
+    running: 'Running',
+    pausing: 'Pausing…',
+    paused: 'Paused',
+    resuming: 'Resuming…',
+    idle: 'Idle',
+    error: 'Error',
+    spawning: 'Spawning',
+    starting: 'Starting',
+  }
+  return m[s] || 'Unknown'
+}

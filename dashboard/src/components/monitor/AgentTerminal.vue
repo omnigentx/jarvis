@@ -27,6 +27,8 @@ import {
   toolCallList,
   toolResultList,
   summarizeArgs,
+  statusColor,
+  statusLabel,
 } from './agentTerminalUtils.js'
 
 const props = defineProps({
@@ -79,15 +81,8 @@ watch(
 
 onMounted(() => nextTick(() => scrollToBottom()))
 
-// ── Status helpers ──
-function statusColor(s) {
-  const m = { running: '#f59e0b', paused: '#8b5cf6', idle: '#10b981', error: '#ef4444' }
-  return m[s] || '#555872'
-}
-function statusLabel(s) {
-  const m = { running: 'Running', paused: 'Paused', idle: 'Idle', error: 'Error' }
-  return m[s] || 'Unknown'
-}
+// statusColor / statusLabel live in agentTerminalUtils.js so they're
+// covered by node:test (see agentTerminalUtils.test.js).
 
 // ── Run separators: insert a marker whenever run_id changes ──
 const renderRows = computed(() => buildRenderRows(props.turns))
@@ -171,8 +166,19 @@ async function submitInject() {
 }
 
 // ── Status badges for header ──
+// Pause-cycle aware. Button shows ONLY when there's something to
+// pause/resume — idle agents have nothing in flight so the button
+// would be a no-op + visual noise. Transitional states (pausing /
+// resuming) keep the button visible-but-disabled so the user sees
+// their click was acknowledged.
 const isRunning = computed(() => props.agent.status === 'running')
 const isPaused = computed(() => props.agent.status === 'paused')
+const isPauseTransitioning = computed(() =>
+  props.agent.status === 'pausing' || props.agent.status === 'resuming'
+)
+const canTogglePause = computed(() =>
+  ['running', 'paused', 'pausing', 'resuming'].includes(props.agent.status)
+)
 </script>
 
 <template>
@@ -196,10 +202,16 @@ const isPaused = computed(() => props.agent.status === 'paused')
       <div class="term-controls">
         <span class="status-label">{{ statusLabel(agent.status) }}</span>
         <button
-          v-if="onPauseToggle && (isRunning || isPaused)"
+          v-if="onPauseToggle && canTogglePause"
           class="ctrl-btn"
-          :class="{ 'is-paused': isPaused }"
-          :title="isPaused ? 'Resume' : 'Pause'"
+          :class="{ 'is-paused': isPaused, 'is-transition': isPauseTransitioning }"
+          :disabled="isPauseTransitioning"
+          :title="
+            agent.status === 'pausing'  ? 'Pausing… (waiting for current step to finish)' :
+            agent.status === 'resuming' ? 'Resuming…' :
+            isPaused                    ? 'Resume' :
+            'Pause'
+          "
           @click="onPauseToggle"
         >{{ isPaused ? '▶' : '⏸' }}</button>
         <button

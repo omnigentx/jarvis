@@ -1,6 +1,9 @@
 import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
-import { apiFetch } from '../api'
+// Explicit .js so node:test (used by src/stores/agents.test.js) can
+// resolve the bare specifier without a custom loader. Vite ignores
+// the extension either way.
+import { apiFetch } from '../api.js'
 
 export const useAgentsStore = defineStore('agents', () => {
   // --- State ---
@@ -117,6 +120,31 @@ export const useAgentsStore = defineStore('agents', () => {
     recentEvents.value = [event, ...recentEvents.value].slice(0, 50)
   }
 
+  // Pause-cycle states OWN the agent's status; non-pause events
+  // (idle / response / result / message_turn / etc.) must not clobber
+  // them. The pause_controller is the single authority that
+  // transitions OUT of this set via ``agent_resumed`` /
+  // ``agent_paused`` events. Every handler that would otherwise set
+  // ``status: 'idle' | 'running'`` consults this set first.
+  const PAUSE_CYCLE = new Set(['pausing', 'paused', 'resuming'])
+
+  /**
+   * Mutate agent fields but skip the ``status`` field when the agent
+   * is currently in a pause-cycle state. Use this in any SSE handler
+   * that would set status='idle'/'running'/etc. — only the pause
+   * handlers (``agent_pausing``/``paused``/``resuming``/``resumed``)
+   * should write status while pause owns it.
+   */
+  function upsertAgentPreservingPauseCycle(name, fields) {
+    const current = agents.value.get(name)
+    if (PAUSE_CYCLE.has(current?.status) && 'status' in fields) {
+      const { status: _drop, ...rest } = fields
+      if (Object.keys(rest).length) upsertAgent(name, rest)
+      return
+    }
+    upsertAgent(name, fields)
+  }
+
   /**
    * Central event processor — ALL SSE events route through here.
    * @param {Object} event - SSE event payload
@@ -130,7 +158,11 @@ export const useAgentsStore = defineStore('agents', () => {
     switch (event_type) {
       case 'started':
       case 'resumed':
-        upsertAgent(agent_name, {
+        // Pause-aware: subprocess can emit `resumed` (its own MCP
+        // lifecycle, unrelated to PauseController) after a manual
+        // pause — preserve the pause state instead of bouncing back
+        // to running.
+        upsertAgentPreservingPauseCycle(agent_name, {
           status: 'running',
           lastAction: { message: event.message, timestamp: event.timestamp },
         })
@@ -139,12 +171,15 @@ export const useAgentsStore = defineStore('agents', () => {
       case 'thinking':
       case 'tool_call':
       case 'tool_result': {
-        // Don't override 'paused' status — these are in-flight operations
-        // that were queued before the pause checkpoint was hit
-        const current = agents.value.get(agent_name)
-        const newStatus = current?.status === 'paused' ? 'paused' : 'running'
-        upsertAgent(agent_name, {
-          status: newStatus,
+        // In-flight progress events. After the user pauses, subprocess
+        // hooks may still emit a tail of queued events (LLM stream
+        // tokens, tool result echo) that arrive AFTER ``agent_paused``.
+        // Without the pause-cycle guard, these flip status back to
+        // 'running' a few seconds after pause → UI fights itself.
+        // The previous version only checked 'paused' and missed both
+        // transitional states.
+        upsertAgentPreservingPauseCycle(agent_name, {
+          status: 'running',
           lastAction: { message: event.message, timestamp: event.timestamp },
         })
         break
@@ -154,7 +189,8 @@ export const useAgentsStore = defineStore('agents', () => {
         // Post-2026-05-20: all agents settle into 'idle' after task done.
         // Oneshot agents are removed seconds later by the cleanup hook;
         // resumable agents stay idle until the next resume.
-        upsertAgent(agent_name, {
+        // Pause-aware: skip status override when pause-cycle owns it.
+        upsertAgentPreservingPauseCycle(agent_name, {
           status: 'idle',
           lastAction: { message: event.message || 'Done', timestamp: event.timestamp },
         })
@@ -169,14 +205,14 @@ export const useAgentsStore = defineStore('agents', () => {
         break
 
       case 'idle':
-        upsertAgent(agent_name, {
+        upsertAgentPreservingPauseCycle(agent_name, {
           status: 'idle',
           lastAction: { message: 'Idle', timestamp: event.timestamp },
         })
         break
 
       case 'response':
-        upsertAgent(agent_name, {
+        upsertAgentPreservingPauseCycle(agent_name, {
           status: 'idle',
           lastAction: { message: event.message, timestamp: event.timestamp },
         })
@@ -264,16 +300,15 @@ export const useAgentsStore = defineStore('agents', () => {
         // Source-of-truth event derived from agent.message_history.
         // Subscribers (useAgentTurns composable) read it from
         // recentEvents — the store only needs to keep status in sync.
+        // Uses the same pause-cycle guard as ``result`` / ``idle`` /
+        // ``response`` — status mutations are skipped when the agent
+        // is in pausing/paused/resuming.
         const msg = event.data?.message
         const stop = msg?.stop_reason
         if (msg?.role === 'assistant' && msg?.tool_calls) {
-          // assistant turn that triggered a tool — agent is still working
-          const current = agents.value.get(agent_name)
-          const newStatus = current?.status === 'paused' ? 'paused' : 'running'
-          upsertAgent(agent_name, { status: newStatus })
+          upsertAgentPreservingPauseCycle(agent_name, { status: 'running' })
         } else if (msg?.role === 'assistant' && stop && stop !== 'toolUse') {
-          // Final assistant turn — agent is now idle
-          upsertAgent(agent_name, { status: 'idle' })
+          upsertAgentPreservingPauseCycle(agent_name, { status: 'idle' })
         }
         break
       }
@@ -338,6 +373,7 @@ export const useAgentsStore = defineStore('agents', () => {
   }
 
   async function resumeAgent(name) {
+    // Optimistic transition. Roll back below if backend rejects.
     upsertAgent(name, {
       status: 'resuming',
       lastAction: { message: 'Resuming…', timestamp: Date.now() / 1000 },
@@ -345,6 +381,24 @@ export const useAgentsStore = defineStore('agents', () => {
     try {
       return await apiFetch(`/api/agents/${encodeURIComponent(name)}/resume`, { method: 'POST' })
     } catch (e) {
+      // 409 Conflict = agent is locked by a pending approval. Roll
+      // the optimistic 'resuming' back to 'paused' so the badge is
+      // truthful, and surface a clear error to the caller (AgentCard
+      // can show a toast that points at the approval).
+      const detail = e?.detail || e?.body?.detail || e?.body || {}
+      if (e?.status === 409 || detail?.error === 'approval_pause_lock') {
+        upsertAgent(name, {
+          status: 'paused',
+          lastAction: {
+            message: `Cannot resume — approval ${detail.approval_id || ''} pending`,
+            timestamp: Date.now() / 1000,
+          },
+        })
+        const err = new Error(detail.message || 'Agent locked by pending approval')
+        err.code = 'approval_pause_lock'
+        err.approvalId = detail.approval_id
+        throw err
+      }
       console.error('[Store] Failed to resume agent:', e)
       throw e
     }

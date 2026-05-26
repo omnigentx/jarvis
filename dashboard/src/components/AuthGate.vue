@@ -12,10 +12,15 @@
  * * Last-failure reason is surfaced verbatim from the backend so we
  *   never have to translate magic strings to user-readable text twice.
  */
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { useAuthStore } from '../stores/auth'
+import {
+  authenticateWithPasskey,
+  hasAnyPasskey,
+  isSupported as isPasskeySupported,
+} from '../services/passkey.js'
 
 const auth = useAuthStore()
 const router = useRouter()
@@ -26,6 +31,15 @@ const submitting = ref(false)
 const errorMessage = ref('')
 const inputEl = ref(null)
 const modalEl = ref(null)
+
+// Passkey availability is probed once per gate-open. Default to false
+// (hide button) so a backend hiccup or unsupported browser never
+// blocks the API-key fallback.
+const passkeyOffered = ref(false)
+const passkeyBusy = ref(false)
+// "Use API key instead" reveal — closed by default when passkey is
+// offered, open by default when it isn't.
+const showApiKey = ref(false)
 
 // AuthGate stays hidden on the bare setup layout: that flow has its
 // own auth bootstrap (Step 1 of the wizard mints / confirms the key)
@@ -61,21 +75,95 @@ const reasonHint = computed(() => {
   }
 })
 
-watch(visible, async (open) => {
-  if (open) {
-    errorMessage.value = ''
-    apiKey.value = ''
-    await nextTick()
-    inputEl.value?.focus()
+async function probePasskey() {
+  // Probe is intentionally cheap + non-blocking — caller awaits but
+  // we never throw. Result drives both passkeyOffered (button
+  // visibility) and showApiKey (whether the textbox is collapsed
+  // behind a "Use API key instead" link).
+  if (!isPasskeySupported()) {
+    passkeyOffered.value = false
+    showApiKey.value = true
+    return
   }
-})
+  const has = await hasAnyPasskey()
+  passkeyOffered.value = has
+  showApiKey.value = !has
+}
 
-onMounted(async () => {
-  if (visible.value) {
-    await nextTick()
+async function _onGateOpen() {
+  errorMessage.value = ''
+  apiKey.value = ''
+  await probePasskey()
+  await nextTick()
+  // Focus depends on which path we're offering. If passkey is the
+  // primary, focus that button so Enter triggers it; otherwise focus
+  // the key textbox.
+  if (passkeyOffered.value) {
+    modalEl.value?.querySelector('.auth-gate-passkey-btn')?.focus()
+  } else {
     inputEl.value?.focus()
   }
-})
+}
+
+// ``immediate: true`` covers the case where ``visible`` is already
+// true at watch-setup time (boot probe finished before AuthGate
+// mounted). Without it, the probe would never fire and the passkey
+// button would stay hidden even when one is registered.
+watch(visible, async (open) => {
+  if (open) await _onGateOpen()
+}, { immediate: true })
+
+async function handlePasskey() {
+  if (passkeyBusy.value) return
+  passkeyBusy.value = true
+  errorMessage.value = ''
+  try {
+    const result = await authenticateWithPasskey()
+    if (result.ok) {
+      // Mirror the cookie/CSRF state the API-key login path lands in.
+      // ``setAuthenticated`` collapses the modal via reactive state.
+      auth.setAuthenticated(result.csrfToken, result.expiresIn)
+      return
+    }
+    switch (result.code) {
+      case 'cancelled':
+        // User dismissed the platform dialog — no error, just give
+        // them the buttons back.
+        errorMessage.value = ''
+        break
+      case 'credential_unknown':
+        errorMessage.value =
+          'This passkey is not recognised on this deployment. ' +
+          'Sign in with your API key, then re-register the passkey.'
+        showApiKey.value = true
+        break
+      case 'rate_limited':
+        errorMessage.value =
+          'Too many attempts. Wait a minute and try again.'
+        break
+      case 'unsupported':
+        errorMessage.value = 'Your browser does not support passkeys.'
+        passkeyOffered.value = false
+        showApiKey.value = true
+        break
+      case 'network':
+        errorMessage.value =
+          'Network error. Check the backend is reachable.'
+        break
+      default:
+        errorMessage.value =
+          result.detail || 'Passkey sign-in failed.'
+    }
+  } finally {
+    passkeyBusy.value = false
+  }
+}
+
+async function revealApiKey() {
+  showApiKey.value = true
+  await nextTick()
+  inputEl.value?.focus()
+}
 
 async function handleSubmit() {
   const key = apiKey.value.trim()
@@ -85,9 +173,9 @@ async function handleSubmit() {
   try {
     const result = await auth.login(key)
     if (result.ok) {
-      // Persist for legacy paths during the transition (Settings UI,
-      // Setup Wizard still read this). Once those migrate this can go.
-      try { localStorage.setItem('jarvis_api_key', key) } catch (_) { /* ignore */ }
+      // Cookie-only auth — nothing to stash in localStorage. The
+      // ``jarvis_session`` cookie set by ``/api/auth/login`` is the
+      // sole credential from here on.
       apiKey.value = ''
     } else if (result.status === 401) {
       errorMessage.value = 'Wrong API key.'
@@ -149,7 +237,43 @@ function onKeydown(event) {
         </h2>
         <p v-if="reasonHint" class="auth-gate-reason">{{ reasonHint }}</p>
 
-        <form @submit.prevent="handleSubmit">
+        <button
+          v-if="passkeyOffered"
+          type="button"
+          class="auth-gate-passkey-btn"
+          :disabled="passkeyBusy || submitting"
+          @click="handlePasskey"
+        >
+          <svg
+            class="auth-gate-passkey-icon"
+            width="18" height="18" viewBox="0 0 24 24"
+            fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
+          </svg>
+          {{ passkeyBusy ? 'Waiting for passkey…' : 'Sign in with passkey' }}
+        </button>
+
+        <p
+          v-if="passkeyOffered && errorMessage"
+          class="auth-gate-error"
+        >
+          {{ errorMessage }}
+        </p>
+
+        <button
+          v-if="passkeyOffered && !showApiKey"
+          type="button"
+          class="auth-gate-link auth-gate-link--secondary"
+          :disabled="passkeyBusy"
+          @click="revealApiKey"
+        >
+          Use API key instead
+        </button>
+
+        <form v-if="showApiKey" @submit.prevent="handleSubmit">
           <label for="auth-gate-key" class="auth-gate-label">API key</label>
           <input
             id="auth-gate-key"
@@ -157,11 +281,16 @@ function onKeydown(event) {
             v-model="apiKey"
             type="password"
             autocomplete="current-password"
-            placeholder="Paste JARVIS_API_KEY"
+            placeholder="Paste JARVIS_API_KEY (from your .env)"
             class="auth-gate-input"
             :disabled="submitting"
           />
-          <p v-if="errorMessage" class="auth-gate-error">{{ errorMessage }}</p>
+          <p
+            v-if="!passkeyOffered && errorMessage"
+            class="auth-gate-error"
+          >
+            {{ errorMessage }}
+          </p>
           <div class="auth-gate-actions">
             <button
               type="submit"
@@ -176,7 +305,7 @@ function onKeydown(event) {
         <button
           type="button"
           class="auth-gate-link"
-          :disabled="submitting"
+          :disabled="submitting || passkeyBusy"
           @click="goToSetup"
         >
           Forgot your key? Re-run Setup Wizard
@@ -279,5 +408,37 @@ function onKeydown(event) {
 }
 .auth-gate-link:hover {
   color: #94a3b8;
+}
+.auth-gate-link--secondary {
+  margin-top: 12px;
+  margin-bottom: 4px;
+  color: #94a3b8;
+}
+.auth-gate-passkey-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  height: 40px;
+  margin-top: 4px;
+  background: linear-gradient(180deg, #2563eb 0%, #1d4ed8 100%);
+  border: none;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter 0.12s ease;
+}
+.auth-gate-passkey-btn:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+.auth-gate-passkey-btn:disabled {
+  background: #1e293b;
+  cursor: not-allowed;
+}
+.auth-gate-passkey-icon {
+  flex-shrink: 0;
 }
 </style>

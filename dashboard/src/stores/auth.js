@@ -142,7 +142,7 @@ export const useAuthStore = defineStore('auth', {
           }
           const body = await resp.json()
           if (body.authenticated) {
-            this._setAuthenticated(getCsrfToken(), body.expires_in)
+            this.setAuthenticated(getCsrfToken(), body.expires_in)
           } else {
             // Whoami returned authenticated:false — cookie missing or
             // invalid (rotated key, expired, tampered). Lock UI.
@@ -186,7 +186,7 @@ export const useAuthStore = defineStore('auth', {
           return { ok: false, status: resp.status, reason }
         }
         const body = await resp.json()
-        this._setAuthenticated(body.csrf_token, body.expires_in)
+        this.setAuthenticated(body.csrf_token, body.expires_in)
         return { ok: true }
       } catch (err) {
         return { ok: false, status: 0, reason: 'network_error' }
@@ -197,7 +197,7 @@ export const useAuthStore = defineStore('auth', {
      * Silently extend the session via /api/auth/refresh.
      *
      * Outcomes:
-     *   - 200 ok           → ``_setAuthenticated`` reschedules the next refresh
+     *   - 200 ok           → ``setAuthenticated`` reschedules the next refresh
      *   - 401              → user must re-login (abs_exp hit, key rotated,
      *                        signature invalid). Locks the UI.
      *   - 5xx / network    → keep current state; reschedule a short retry.
@@ -243,9 +243,9 @@ export const useAuthStore = defineStore('auth', {
           await this.probe()
           return
         }
-        // _setAuthenticated reschedules the next silent refresh based on
+        // setAuthenticated reschedules the next silent refresh based on
         // the new expires_in window.
-        this._setAuthenticated(body.csrf_token, body.expires_in)
+        this.setAuthenticated(body.csrf_token, body.expires_in)
       } catch (err) {
         console.warn('[auth/store] refresh network error:', err)
         _scheduleRefresh(this, REFRESH_RETRY_SECONDS + REFRESH_LEAD_SECONDS)
@@ -290,7 +290,7 @@ export const useAuthStore = defineStore('auth', {
      * Internal helper used by login() and probe() to converge on the
      * "authenticated" state and notify subscribers. Idempotent.
      */
-    _setAuthenticated(csrfToken, expiresIn) {
+    setAuthenticated(csrfToken, expiresIn) {
       const wasUnauth = this.status !== STATUS.AUTHENTICATED
       this.status = STATUS.AUTHENTICATED
       this.csrfToken = csrfToken || getCsrfToken()

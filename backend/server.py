@@ -84,9 +84,26 @@ _bootstrap_env_from_db()
 # inherit the literal string and fail to connect. The actual server starts
 # later in the lifespan; the path itself is deterministic so the early seed
 # matches what the lifespan will create.
+def _short_unix_socket(filename: str) -> str:
+    """Return a writable AF_UNIX path. Falls back to /tmp/jarvis_<cwd-hash>/
+    when the project-local path exceeds the 104-byte macOS limit. Mirror
+    of the spawn_events.sock logic in the lifespan — kept module-level
+    here because ``JARVIS_RUNTIME_RPC_SOCKET`` must be in env BEFORE
+    ``agent.py`` import so config YAML's ``${VAR}`` placeholders resolve.
+    """
+    project_local = str(Path(f".runtime/state/{filename}").resolve())
+    if len(project_local.encode()) <= 100:
+        return project_local
+    import hashlib
+    cwd_hash = hashlib.sha1(str(Path.cwd()).encode()).hexdigest()[:8]
+    tmp_dir = Path(f"/tmp/jarvis_{cwd_hash}")
+    tmp_dir.mkdir(exist_ok=True)
+    return str(tmp_dir / filename)
+
+
 os.environ.setdefault(
     "JARVIS_RUNTIME_RPC_SOCKET",
-    str(Path(".runtime/state/runtime_rpc.sock").resolve()),
+    _short_unix_socket("runtime_rpc.sock"),
 )
 
 from helpers.audio_cache import clean_audio_cache, cleanup_stale_generating
@@ -126,8 +143,15 @@ async def lifespan(app: FastAPI):
         # Create bridge (event processor — no longer watches files)
         state.spawn_bridge = SpawnProgressBridge(progress_manager, registry_db=state.registry_db)
 
-        # Start Unix domain socket server for receiving events from MCP subprocesses
-        socket_path = str(Path(".runtime/state/spawn_events.sock").resolve())
+        # Start Unix domain socket server for receiving events from MCP
+        # subprocesses. macOS limits AF_UNIX paths to 104 bytes; when
+        # the project is checked out under a long path the default
+        # project-local path silently fails to bind and every spawned
+        # subprocess emits events into the void → UI shows "Running"
+        # with no conversation. ``_short_unix_socket`` falls back to a
+        # short /tmp path keyed by a hash of cwd so each workspace
+        # gets a stable but short socket name.
+        socket_path = _short_unix_socket("spawn_events.sock")
         event_socket_server = SpawnEventSocketServer(socket_path, state.spawn_bridge)
         try:
             await event_socket_server.start()

@@ -19,7 +19,7 @@ import secrets as py_secrets
 from datetime import datetime
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from core import auth as core_auth
@@ -198,7 +198,7 @@ async def auth_probe():
 
 
 @router.post("/auth", response_model=SetupStatus)
-async def setup_auth(payload: AuthStep):
+async def setup_auth(payload: AuthStep, request: Request, response: Response):
     """Step 1 — choose, adopt, or generate the master key.
 
     Intentionally *not* guarded by :func:`verify_api_key` because the user
@@ -212,6 +212,12 @@ async def setup_auth(payload: AuthStep):
     3. **Key already configured** and the supplied key *differs* — refuse.
        Rotating the master key belongs in the authenticated
        ``/api/settings`` surface, not the open wizard.
+
+    On success we ALSO mint a ``jarvis_session`` cookie and return the
+    CSRF token — same shape as ``POST /api/auth/login``. Without this,
+    the wizard would have to stash the API key in localStorage to
+    authenticate steps 2–5 (``/llm``, ``/services``, ``/verify``), which
+    is exactly the legacy path we're moving off of.
     """
     supplied = (payload.api_key or "").strip()
     current = core_auth.JARVIS_API_KEY or ""
@@ -238,6 +244,7 @@ async def setup_auth(payload: AuthStep):
             source="wizard",
         )
         _mark_step_done("auth", data={"adopted": True})
+        _mint_wizard_session(request, response)
         return _build_status()
 
     # Case 1: fresh install — generate or accept.
@@ -262,7 +269,42 @@ async def setup_auth(payload: AuthStep):
         source="wizard",
     )
     _mark_step_done("auth", data={"generated": not supplied})
+    _mint_wizard_session(request, response)
     return _build_status()
+
+
+def _mint_wizard_session(request: "Request", response: "Response") -> None:
+    """Mint a session cookie so the wizard's remaining steps can call
+    cookie-authenticated endpoints (``/llm``, ``/services``, etc.).
+
+    Raises 503 if ``JWT_SECRET`` is missing. Previously this swallowed
+    the failure on the assumption the SPA could fall back to the
+    Bearer header — but that fallback was removed in the cookie-only
+    migration, so a silent miss here leaves the wizard wedged at step
+    2 with a confusing "Authentication required" modal. Fail loud so
+    the operator sees the actionable error.
+    """
+    from core.auth_cookies import set_auth_cookies
+    from core.session import create_session_token, make_csrf_token
+
+    try:
+        session_token, _payload = create_session_token()
+    except RuntimeError as exc:
+        logger.error("[SETUP] JWT_SECRET missing — wizard cannot mint cookie: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "not_configured",
+                "reason": "jwt_secret_unset",
+                "message": (
+                    "JWT_SECRET is not set. Add it to backend/.env "
+                    "(any 32+ char random string) and restart the backend, "
+                    "then re-run setup."
+                ),
+            },
+        ) from exc
+    csrf_token = make_csrf_token()
+    set_auth_cookies(response, request, session_token, csrf_token)
 
 
 @router.post("/llm", response_model=SetupStatus)

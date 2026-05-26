@@ -6,7 +6,7 @@
 import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useBreakpoint } from '../composables/useBreakpoint'
-import { apiFetch, getApiKey } from '../api'
+import { apiFetch } from '../api'
 import { useAudioPlayerStore } from '../stores/audioPlayer'
 import MarkdownRenderer from '../components/MarkdownRenderer.vue'
 

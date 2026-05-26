@@ -8,6 +8,9 @@ export type { MockBackend, RequestRecord } from './mock-backend'
 
 export { seedApiKey, clearApiKey, seedCsrfCookie, clearAllAuth } from './auth'
 
+export { installVirtualAuthenticator } from './passkey'
+export type { VirtualAuthenticatorHandle } from './passkey'
+
 export { NetworkRecorder } from './network-recorder'
 export type { RecordedRequest } from './network-recorder'
 

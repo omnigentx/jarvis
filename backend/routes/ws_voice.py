@@ -52,6 +52,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from core.session import SESSION_COOKIE_NAME, SessionVerifyError, verify_session_token
 from services import shared_state as state
 from services.sse_progress import (
     create_progress_hooks,
@@ -73,6 +74,116 @@ def _chunk_rms_peak(pcm_chunk: bytes) -> tuple[int, int]:
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["voice-ws"])
+
+
+# ─── Auth helpers (cookie / Bearer / query — with CSWSH defence) ────────────
+
+
+def _expected_ws_origin(ws: WebSocket) -> str:
+    """Derive the origin a browser-initiated WS upgrade should declare.
+
+    Mirrors ``core.webauthn.origin_from_request`` so the WS auth path
+    and the WebAuthn RP-ID derivation agree on what "this deployment"
+    means. Honors ``X-Forwarded-Host`` / ``X-Forwarded-Proto`` so
+    reverse-proxy setups (Caddy, nginx, Tailscale Funnel) don't have
+    to set anything extra.
+    """
+    forwarded_host = ws.headers.get("x-forwarded-host", "")
+    host = (
+        forwarded_host.split(",")[0].strip() if forwarded_host else ""
+    ) or ws.headers.get("host", "")
+
+    forwarded_proto = ws.headers.get("x-forwarded-proto", "")
+    if "https" in forwarded_proto.lower() or ws.url.scheme in ("wss", "https"):
+        scheme = "https"
+    else:
+        scheme = "http"
+    return f"{scheme}://{host}"
+
+
+def _ws_origin_allowed(ws: WebSocket) -> bool:
+    """Origin check used on the cookie auth path (CSWSH defence).
+
+    Modern browsers honor ``SameSite=Lax`` on WebSocket upgrades, but
+    SameSite enforcement is browser-version-dependent and silently
+    bypassed by proxies that strip cookie attributes. So when the
+    cookie alone authorizes a WS, we additionally require the request
+    declares an Origin matching the deployment.
+
+    Allow-list:
+      * The deployment's own origin (derived from request headers).
+      * Any origin listed in ``TRUSTED_WS_ORIGINS`` (comma-separated)
+        — for setups that proxy multiple front-ends to one backend.
+
+    Missing-Origin rejection is intentional: browsers attach Origin
+    on WS upgrade since at least 2014. A missing Origin on a cookie
+    auth path is either a non-browser client (which should use Bearer
+    or query instead) or an attacker stripping headers.
+    """
+    origin = ws.headers.get("origin", "")
+    if not origin:
+        return False
+    if origin == _expected_ws_origin(ws):
+        return True
+    extra = os.environ.get("TRUSTED_WS_ORIGINS", "")
+    if extra:
+        allowed = {o.strip() for o in extra.split(",") if o.strip()}
+        if origin in allowed:
+            return True
+    return False
+
+
+def _ws_authenticated(ws: WebSocket, expected_api_key: str) -> bool:
+    """Three-way auth for the voice WebSocket.
+
+    Cookie path is the SPA's primary credential. Bearer + ``?api_key=``
+    paths stay so the Xiaozhi voice device and any CLI scripts that
+    drive this endpoint don't break.
+
+    Cookie path additionally requires Origin to match (CSWSH defence
+    — see ``_ws_origin_allowed``). Bearer + query bypass the Origin
+    check because they're credential-of-possession that the browser
+    cannot present cross-origin in the first place.
+
+    Returns True on first credential that verifies. Logs which path
+    won so cookie/Bearer/query divergence is diagnosable from server
+    logs instead of tcpdump.
+    """
+    # 1) Session cookie (the SPA's primary path).
+    raw_session = ws.cookies.get(SESSION_COOKIE_NAME)
+    if raw_session:
+        try:
+            verify_session_token(raw_session)
+            if not _ws_origin_allowed(ws):
+                logger.warning(
+                    "[WS-AUTH] cookie valid but Origin rejected: %s",
+                    ws.headers.get("origin", "<missing>"),
+                )
+                # Don't short-circuit; the caller may still authenticate
+                # via Bearer or query, which are CSWSH-safe.
+            else:
+                logger.debug("[WS-AUTH] accepted via session cookie")
+                return True
+        except SessionVerifyError as exc:
+            # Cookie present but invalid (expired, key rotated, tampered).
+            # Don't short-circuit — caller may have a legacy Bearer too.
+            logger.debug("[WS-AUTH] session cookie rejected: %s", exc.reason)
+
+    # 2) Authorization: Bearer header (programmatic clients).
+    auth_header = ws.headers.get("authorization", "")
+    if auth_header.lower().startswith("bearer "):
+        token = auth_header.split(" ", 1)[1].strip()
+        if token == expected_api_key:
+            logger.debug("[WS-AUTH] accepted via Bearer header")
+            return True
+
+    # 3) ?api_key= query param (legacy — Xiaozhi device).
+    token = ws.query_params.get("api_key", "")
+    if token and token == expected_api_key:
+        logger.debug("[WS-AUTH] accepted via ?api_key= query")
+        return True
+
+    return False
 
 
 # Sample rate the dashboard's playback worklet expects on the PCM path.
@@ -147,11 +258,17 @@ async def voice_ws(ws: WebSocket) -> None:
     await ws.accept()
 
     # Soft auth: skip in dev (no JARVIS_API_KEY), enforce when set.
+    # WebSockets cannot set custom headers from the browser, so we accept
+    # three credentials in order — same precedence as ``verify_api_key``:
+    #   1. ``jarvis_session`` cookie (preferred — browser auto-attaches it
+    #      during the upgrade handshake; works for cookie-only SPA login).
+    #   2. ``Authorization: Bearer ...`` header (programmatic clients).
+    #   3. ``?api_key=...`` query param (legacy — Xiaozhi device + scripts
+    #      that can't set headers).
     import os
     expected = os.environ.get("JARVIS_API_KEY")
     if expected:
-        token = ws.query_params.get("api_key")
-        if token != expected:
+        if not _ws_authenticated(ws, expected):
             await ws.close(code=4401)
             return
 

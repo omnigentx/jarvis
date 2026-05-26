@@ -60,16 +60,50 @@ For multi-step tasks, state a brief plan:
 
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
 
+## 5. Don't Code from Imagination
+
+Read the actual code + logs before proposing a fix. No guessing what
+a provider/hook/handler "probably does" — open the file, grep the
+source, tail the log. Every fix should cite the file:line that
+proves the bug.
+
+## 6. Happy Path FIRST
+
+**Rule:** every user-facing change ships with ≥1 e2e test that
+exercises the real click-flow through production code. No mocking the
+subsystem being changed. If a user could hit a basic failure on their
+first manual try, the happy-path test was missing.
+
+Trap to refuse: `@pytest.fixture(autouse=True)` that stubs the very
+subsystem under test. That's a regression test dressed up as e2e —
+opt-out (or convert the fixture to opt-in).
+
+### Anti-patterns (auto-reject in review)
+
+- **Silent fallback** when LLM/UI input disagrees with DB ground truth → `raise`, don't guess.
+- **Frontend store with no seed on mount** → cross-store gates render stale on fresh tab.
+- **AF_UNIX path > 104 bytes on macOS** → use `server._short_unix_socket()`.
+- **UI status whitelist not following the backend state machine** → when backend adds states (e.g. pausing/resuming), grep `statusLabel`/`statusColor`/`statusAccent`/`PAUSE_CYCLE` and update them all; "Unknown" / wrong-colored dot is a silent UX bug.
+
+### Pre-PR checklist (pause/approval/spawn changes)
+
+- [ ] Real e2e test (no mock of the changed subsystem) added to the inventory above.
+- [ ] LLM-supplied input: authoritative DB lookup + `raise` on mismatch.
+- [ ] New SSE event: frontend store consumer test asserts reactive UI update.
+- [ ] New persisted state: restart-recovery covered.
+- [ ] New AgentCard gate: parent view's `onMounted` seeds the dependency store.
+- [ ] Click-flow spelled out in PR body.
+
 ---
 
-**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, clarifying questions come before implementation rather than after mistakes, and manual testing turns up no "basic case" failures.
 
 ---
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **jarvis** (36383 symbols, 102213 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **jarvis-2-workspace** (36513 symbols, 102696 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -85,7 +119,7 @@ This project is indexed by GitNexus as **jarvis** (36383 symbols, 102213 relatio
 
 1. `gitnexus_query({query: "<error or symptom>"})` — find execution flows related to the issue
 2. `gitnexus_context({name: "<suspect function>"})` — see all callers, callees, and process participation
-3. `READ gitnexus://repo/jarvis/process/{processName}` — trace the full execution flow step by step
+3. `READ gitnexus://repo/jarvis-2-workspace/process/{processName}` — trace the full execution flow step by step
 4. For regressions: `gitnexus_detect_changes({scope: "compare", base_ref: "main"})` — see what your branch changed
 
 ## When Refactoring
@@ -124,10 +158,10 @@ This project is indexed by GitNexus as **jarvis** (36383 symbols, 102213 relatio
 
 | Resource | Use for |
 |----------|---------|
-| `gitnexus://repo/jarvis/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/jarvis/clusters` | All functional areas |
-| `gitnexus://repo/jarvis/processes` | All execution flows |
-| `gitnexus://repo/jarvis/process/{name}` | Step-by-step execution trace |
+| `gitnexus://repo/jarvis-2-workspace/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/jarvis-2-workspace/clusters` | All functional areas |
+| `gitnexus://repo/jarvis-2-workspace/processes` | All execution flows |
+| `gitnexus://repo/jarvis-2-workspace/process/{name}` | Step-by-step execution trace |
 
 ## Self-Check Before Finishing
 

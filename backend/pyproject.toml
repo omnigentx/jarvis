@@ -24,6 +24,8 @@ dependencies = [
   "mutagen>=1.47.0",
   # Database
   "sqlalchemy>=2.0.0",
+  # WebAuthn (passkey login)
+  "webauthn>=2.5.0",
   # Web scraping & MCP server
   "scrapling[ai]>=0.4.2",
   "croniter>=6.2.2",

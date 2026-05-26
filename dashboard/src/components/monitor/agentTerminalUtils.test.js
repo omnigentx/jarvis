@@ -12,6 +12,8 @@ import {
   toolCallList,
   toolResultList,
   summarizeArgs,
+  statusColor,
+  statusLabel,
 } from './agentTerminalUtils.js'
 
 
@@ -225,4 +227,39 @@ test('summarizeArgs handles empty / non-object', () => {
   assert.equal(summarizeArgs({}), '')
   assert.equal(summarizeArgs(null), '')
   assert.equal(summarizeArgs(undefined), '')
+})
+
+
+// HP-regression: terminal-monitor status labels must cover every state
+// the pause_controller can emit. Bug observed 2026-05-24: clicking
+// Resume on a paused Jarvis rendered "Unknown" because the whitelist
+// missed the transitional ``resuming`` state added during the pause
+// refactor. Same gap applied to ``pausing``.
+test('statusLabel covers every pause-cycle state', () => {
+  assert.equal(statusLabel('running'),  'Running')
+  assert.equal(statusLabel('pausing'),  'Pausing…')
+  assert.equal(statusLabel('paused'),   'Paused')
+  assert.equal(statusLabel('resuming'), 'Resuming…')
+  assert.equal(statusLabel('idle'),     'Idle')
+})
+
+test('statusLabel covers spawn lifecycle statuses', () => {
+  assert.equal(statusLabel('spawning'), 'Spawning')
+  assert.equal(statusLabel('starting'), 'Starting')
+  assert.equal(statusLabel('error'),    'Error')
+})
+
+test('statusLabel falls back to Unknown only for genuinely unknown states', () => {
+  assert.equal(statusLabel('mystery'),  'Unknown')
+  assert.equal(statusLabel(undefined),  'Unknown')
+})
+
+test('statusColor covers every pause-cycle state', () => {
+  // Just assert each state maps to a non-default color (any defined
+  // hex). Exact palette is design — pin only the regression
+  // invariant: no transitional state falls through to the gray default.
+  const GRAY = '#555872'
+  for (const s of ['running', 'pausing', 'paused', 'resuming', 'idle', 'error']) {
+    assert.notEqual(statusColor(s), GRAY, `${s} must have an explicit color`)
+  }
 })

@@ -1,7 +1,14 @@
 """
 Database module using SQLAlchemy with SQLite.
 Provides database connection and ORM models.
-Single-user mode — no User model or user_id foreign keys.
+
+Single-deployment-single-user model: each Jarvis instance has exactly one
+``User`` row (``username='owner'``) seeded at init. The ``users`` table
+exists to give ``passkey_credentials`` a proper FK target and to make a
+later multi-user migration mechanical rather than a schema rewrite. Most
+domain tables (books, agents, meetings, …) intentionally still do NOT
+carry a ``user_id`` column — adding one would be a separate migration
+when (if) Jarvis becomes multi-user.
 """
 import os
 from datetime import datetime
@@ -10,8 +17,10 @@ from sqlalchemy import (
     Boolean,
     Column,
     Float,
+    ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -642,6 +651,66 @@ class ConfigHistory(Base):
     )
 
 
+# --- Auth: User + Passkey credentials ---
+
+
+# Stable id of the seeded single-user row. Hardcoded so all session tokens,
+# passkey credentials, and any future user-scoped rows can reference it
+# deterministically across restarts and deployments. If/when Jarvis adopts
+# real multi-user, this constant becomes the "system owner" id.
+DEFAULT_USER_ID = "00000000-0000-0000-0000-000000000001"
+DEFAULT_USERNAME = "owner"
+
+
+class User(Base):
+    """One row per deployment for now (``username='owner'``). Schema
+    supports many rows so a future multi-user feature is a route change
+    rather than a migration."""
+    __tablename__ = "users"
+
+    id = Column(String(36), primary_key=True)
+    username = Column(String(100), nullable=False, unique=True)
+    created_at = Column(Float, default=lambda: datetime.now().timestamp())
+
+
+class PasskeyCredential(Base):
+    """A WebAuthn credential bound to a (user, RP-domain) pair.
+
+    One user can have many credentials (laptop + phone + YubiKey, or
+    one per RP domain if they access the deployment from multiple
+    origins). Recovery is via the ``JARVIS_API_KEY`` in ``.env`` — no
+    backup codes table.
+    """
+    __tablename__ = "passkey_credentials"
+
+    # Base64url-encoded credential id returned by the authenticator.
+    # WebAuthn spec allows up to 1023 bytes; base64url expansion ~1.37x.
+    id = Column(String(1400), primary_key=True)
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False)
+    # CBOR-encoded COSE public key (raw bytes from the attestation).
+    public_key = Column(LargeBinary, nullable=False)
+    # Authenticator-reported counter; must be strictly increasing across
+    # successful assertions or we treat the credential as cloned.
+    sign_count = Column(Integer, default=0, nullable=False)
+    # JSON-encoded transports hint (e.g. ``["internal","hybrid"]``) —
+    # passed back to the client in allowCredentials so the browser picks
+    # the right authenticator UX (Touch ID vs QR vs USB).
+    transports = Column(Text, nullable=True)
+    # RP ID at registration time. Stored so we can later filter
+    # credentials by the request's RP ID (a passkey registered on
+    # ``localhost`` must NOT be offered on ``jarvis.alice.com``).
+    rp_id = Column(String(255), nullable=False)
+    # Human label set by the user ("MacBook Touch ID", "iPhone").
+    label = Column(String(100), nullable=True)
+    created_at = Column(Float, default=lambda: datetime.now().timestamp())
+    last_used_at = Column(Float, nullable=True)
+
+    __table_args__ = (
+        Index("ix_passkey_user", "user_id"),
+        Index("ix_passkey_rp", "user_id", "rp_id"),
+    )
+
+
 def get_db():
     """Dependency for getting database session."""
     db = SessionLocal()
@@ -690,7 +759,25 @@ def init_db():
     _migrate_story_metadata(logger)
     _cleanup_legacy_files(logger)
     _seed_setup_wizard(logger)
+    _seed_default_user(logger)
     _backfill_mcp_cwd(logger)
+
+
+def _seed_default_user(logger):
+    """Ensure the single-deployment owner row exists; idempotent."""
+    db = SessionLocal()
+    try:
+        existing = db.query(User).filter(User.id == DEFAULT_USER_ID).first()
+        if existing:
+            return
+        db.add(User(id=DEFAULT_USER_ID, username=DEFAULT_USERNAME))
+        db.commit()
+        logger.info("[INIT] Seeded default user: %s", DEFAULT_USERNAME)
+    except Exception as exc:
+        logger.error("[INIT] Failed to seed default user: %s", exc)
+        db.rollback()
+    finally:
+        db.close()
 
 
 def _seed_setup_wizard(logger):

@@ -16,7 +16,6 @@
  */
 import { watch, onUnmounted, nextTick } from 'vue'
 import { useAudioPlayerStore } from '../stores/audioPlayer'
-import { getApiKey } from '../api'
 
 // Singleton audio element — only one audio playback at a time
 let _audio = null
@@ -112,9 +111,11 @@ export function useAudioPlayer() {
 
   // ─── Core: Play a URL (story / chatTts) ───
   function _playUrl(url) {
-    // Build full URL with auth
-    const apiKey = getApiKey()
-    const fullUrl = `${url}${url.includes('?') ? '&' : '?'}api_key=${encodeURIComponent(apiKey)}&t=${Date.now()}`
+    // ``<audio src>`` cannot set headers; auth rides on the cookie that
+    // ``credentials: 'include'`` would attach to a fetch. For same-origin
+    // GETs the browser attaches the cookie automatically, so we just
+    // need a cache-busting timestamp.
+    const fullUrl = `${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`
 
     if (!_audio) {
       _audio = new Audio()
@@ -143,9 +144,8 @@ export function useAudioPlayer() {
 
   // ─── Core: Play notifTts URL (shares _audio singleton, doesn't touch story store state) ───
   function _playNotifTts(audioUrl) {
-    const apiKey = getApiKey()
-    // Use identical pattern to _playUrl — just append auth + cache-bust
-    const fullUrl = `${audioUrl}${audioUrl.includes('?') ? '&' : '?'}api_key=${encodeURIComponent(apiKey)}&t=${Date.now()}`
+    // Same cookie-only auth as _playUrl above.
+    const fullUrl = `${audioUrl}${audioUrl.includes('?') ? '&' : '?'}t=${Date.now()}`
 
     if (!_audio) {
       _audio = new Audio()
@@ -365,16 +365,16 @@ export function useAudioPlayer() {
   // ─── Beforeunload: save progress before tab close ───
   function _onBeforeUnload() {
     store.saveProgress()
-    // sendBeacon for progress API
+    // sendBeacon for progress API. Same-origin POST → browser attaches
+    // the session cookie automatically; no API key in the URL.
     if (store.currentRequestId) {
       try {
-        const apiKey = getApiKey()
         const body = JSON.stringify({
           id: store.currentRequestId,
           current_time: Math.floor(store.currentTime),
         })
         navigator.sendBeacon(
-          `/api/library/progress?api_key=${encodeURIComponent(apiKey)}`,
+          '/api/library/progress',
           new Blob([body], { type: 'application/json' }),
         )
       } catch (_) {}

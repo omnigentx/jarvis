@@ -20,7 +20,6 @@
  * bytes since the protocol is the same socket either way.
  */
 import { ref, reactive, shallowRef, onScopeDispose } from 'vue'
-import { getApiKey } from '../api.js'
 import { useChatStore } from '../stores/chat.js'
 import { EVENTS, on } from '../auth/bus.js'
 import { expandToolRequest, expandToolDone } from '../utils/toolEvents.js'
@@ -362,10 +361,12 @@ function _createVoiceSession() {
   }
 
   function _wsUrl() {
+    // Auth rides on the ``jarvis_session`` cookie; browsers attach it to
+    // the WebSocket upgrade handshake automatically when the URL is
+    // same-origin. The backend's _ws_authenticated() reads the cookie
+    // header first (see backend/routes/ws_voice.py). No api_key in URL.
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const apiKey = getApiKey()
-    const params = apiKey ? `?api_key=${encodeURIComponent(apiKey)}` : ''
-    return `${proto}//${location.host}/ws/voice${params}`
+    return `${proto}//${location.host}/ws/voice`
   }
 
   async function start() {

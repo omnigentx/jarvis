@@ -1,8 +1,9 @@
 <script setup>
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useChatStore } from '../stores/chat'
 import { useAgentsStore } from '../stores/agents'
+import { useApprovalsStore } from '../stores/approvals'
 import StatusBadge from './StatusBadge.vue'
 
 const props = defineProps({
@@ -12,7 +13,24 @@ const props = defineProps({
 const router = useRouter()
 const chatStore = useChatStore()
 const agentsStore = useAgentsStore()
+const approvalsStore = useApprovalsStore()
 const pauseLoading = ref(false)
+
+// Surface "this agent is locked by a pending approval" so the Resume
+// button hides and an explicit indicator + deep-link replaces it.
+// Source of truth = approvals store's pendingApprovalByAgent reverse
+// index, which mirrors the backend's ``_pending_approval_for`` query —
+// so the UI's affordance matches what the API would 409 on.
+const pendingApprovalId = computed(
+  () => approvalsStore.pendingApprovalByAgent.get(props.agent?.name) || null,
+)
+
+function openLockingApproval(e) {
+  e?.preventDefault?.()
+  if (pendingApprovalId.value) {
+    router.push(`/approvals?id=${pendingApprovalId.value}`)
+  }
+}
 
 function formatTimestamp(ts) {
   if (!ts) return ''
@@ -129,8 +147,20 @@ const statusAccent = {
 
       <!-- Row 3: Action buttons (desktop) -->
       <div class="card-actions desktop-only">
+        <!-- Approval lock: replaces Pause/Resume button when an
+             approval pending references this agent. Resume would 409
+             on the backend anyway; this surfaces the cause + lets the
+             user jump to the approval. -->
         <button
-          v-if="['running', 'paused', 'pausing', 'resuming'].includes(agent.status)"
+          v-if="pendingApprovalId"
+          @click="openLockingApproval"
+          class="btn-approval-lock"
+          title="This agent is paused by a pending approval. Click to open it."
+        >
+          ⏸ Awaiting approval ↗
+        </button>
+        <button
+          v-else-if="['running', 'paused', 'pausing', 'resuming'].includes(agent.status)"
           @click="handlePauseToggle"
           :disabled="pauseLoading || agent.status === 'pausing' || agent.status === 'resuming'"
           class="btn-pause"
@@ -287,6 +317,29 @@ const statusAccent = {
 }
 
 .btn-pause:disabled { opacity: 0.5; cursor: wait; }
+
+/* Approval-lock indicator replaces Pause/Resume when a pending approval
+   holds this agent. Visual cue (dashed border + amber text) tells the
+   user "this isn't a normal pause — there's a gated action upstream". */
+.btn-approval-lock {
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(245, 158, 11, 0.10);
+  border: 1px dashed rgba(245, 158, 11, 0.6);
+  color: #f59e0b;
+  transition: all 0.2s;
+}
+.btn-approval-lock:hover {
+  background: rgba(245, 158, 11, 0.20);
+  border-style: solid;
+}
 
 .btn-intervene {
   width: 110px; height: 30px;

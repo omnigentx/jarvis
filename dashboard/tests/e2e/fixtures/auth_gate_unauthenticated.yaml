@@ -12,6 +12,10 @@ responses:
     status: 200
     json: { authenticated: false }
 
+  "GET /api/auth/passkey/has-any":
+    status: 200
+    json: { has_passkey: false }
+
   # Boot-time noise — the SPA fires these on / regardless of auth state.
   # All return 401 (no session) so a stray request without auth handling
   # would still make AuthGate appear; we want to prove it appears from

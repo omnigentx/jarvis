@@ -16,6 +16,7 @@ already in ``_find_pid``.
 from __future__ import annotations
 
 import asyncio
+import os
 from unittest.mock import MagicMock
 
 import pytest
@@ -211,13 +212,19 @@ def test_active_pause_emits_only_pausing(
     assert fresh_manager.state_of("Jarvis") == "pausing"
 
 
-def test_subprocess_pause_does_not_double_emit_paused(
+def test_subprocess_pause_emits_terminal_paused_immediately(
     fresh_manager, fake_registry, captured_sse, monkeypatch,
 ):
-    """Subprocess agent (has PID) → main process emits ``agent_pausing``
-    only. The terminal ``agent_paused`` is emitted by the subprocess
-    itself from its own hook chain. If main process also emitted
-    ``agent_paused``, UI would see duplicate events.
+    """Backend emits BOTH ``agent_pausing`` and ``agent_paused`` for
+    subprocess agents after SIGUSR1 is sent.
+
+    Earlier design waited for the subprocess's own hook to emit
+    ``agent_paused`` from spawn_events.sock — but the subprocess hook
+    can fail to fire (subprocess dies before reaching checkpoint,
+    socket drops, hook exception). Backend has all the info it needs
+    (DB row written, signal sent) → emit ``agent_paused`` directly so
+    UI doesn't get stuck on "Pausing…" forever. The subprocess hook
+    may emit again later; FE handles that as an idempotent no-op.
     """
     fake_registry.find_by_name.return_value = [{
         "run_id": "run-sub",
@@ -225,8 +232,6 @@ def test_subprocess_pause_does_not_double_emit_paused(
         "status": "running",
         "pid": 99999,  # nonexistent — but os.kill(pid, 0) check matters
     }]
-    # Make os.kill(pid, 0) succeed so _find_pid returns the pid, and
-    # neutralize the SIGUSR1 send so the test doesn't actually signal.
     import services.pause_controller as pc
 
     monkeypatch.setattr(pc.os, "kill", lambda *a, **kw: None)
@@ -234,8 +239,8 @@ def test_subprocess_pause_does_not_double_emit_paused(
     fresh_manager.pause("Dev")
 
     types = [e["event_type"] for e in captured_sse]
-    assert types == ["agent_pausing"], types
-    assert fresh_manager.state_of("Dev") == "pausing"
+    assert types == ["agent_pausing", "agent_paused"], types
+    assert fresh_manager.state_of("Dev") == "paused"
 
 
 def test_hook_emits_paused_when_blocked_then_resumed_when_woken():
@@ -661,6 +666,64 @@ def test_attach_is_idempotent(fresh_manager):
         "second attach must be no-op (same hooks object)"
 
 
+def test_detach_resets_activity_so_subsequent_pause_emits_terminal_event(
+    fresh_manager, fake_registry, captured_sse,
+):
+    """Regression for 2026-05-24 stuck-Pausing bug.
+
+    If ``before_llm_call`` fires (setting ``_active=True``) but the
+    corresponding ``after_turn_complete`` doesn't (request cancelled
+    mid-turn, exception before the final hook), ``_active['name']``
+    leaks to True. A later manual ``pause()`` sees ``_active=True`` →
+    skips the idle-emit branch → UI is stuck on "Pausing…" forever
+    because no hook will ever fire to emit the terminal ``agent_paused``.
+
+    ``detach()`` must reset ``_active`` so the next request's hook
+    chain starts clean and a manual pause-while-no-chat correctly
+    treats the agent as idle.
+    """
+    agent = _FakeAgent("Jarvis")
+
+    # Simulate a chat request whose before_llm_call set _active.
+    fresh_manager._active["Jarvis"] = True
+    fresh_manager._current_tasks["Jarvis"] = object()  # any non-None
+    fresh_manager.attach(agent)
+
+    # Request ends — chat.py restores hooks + detaches.
+    fresh_manager.detach(agent)
+
+    assert "Jarvis" not in fresh_manager._active, \
+        "detach must reset _active so a subsequent pause sees idle"
+    assert "Jarvis" not in fresh_manager._current_tasks
+
+    # Now user clicks pause. With _active leaked-but-cleared by detach,
+    # pause emits the terminal agent_paused (idle branch).
+    fresh_manager.pause("Jarvis")
+    types = [e["event_type"] for e in captured_sse]
+    assert "agent_pausing" in types
+    assert "agent_paused" in types, (
+        "post-detach pause on idle agent must emit terminal agent_paused, "
+        "not stop at agent_pausing"
+    )
+
+
+def test_detach_preserves_pause_state(fresh_manager, fake_registry, captured_sse):
+    """Counterpoint: detach is per-request lifecycle, NOT a state wipe.
+    A user who paused an agent BEFORE the chat request closes must
+    stay paused after detach — otherwise pause/resume would race with
+    chat request lifecycle.
+    """
+    agent = _FakeAgent("Jarvis")
+    fresh_manager.attach(agent)
+    fresh_manager.pause("Jarvis")
+    assert fresh_manager.is_paused("Jarvis")
+
+    fresh_manager.detach(agent)
+
+    assert fresh_manager.is_paused("Jarvis"), \
+        "manual pause must survive request-scoped detach"
+
+
 def test_detach_clears_sentinel_so_attach_re_wires(fresh_manager):
     """After detach, a subsequent attach must take effect — this is the
     chat.py per-request lifecycle: snapshot original → attach → restore
@@ -729,33 +792,50 @@ def isolated_pause_state_db():
 
 def test_pause_persists_then_restore_re_pauses(
     isolated_pause_state_db, fresh_manager, fake_registry, captured_sse,
+    monkeypatch,
 ):
-    """End-to-end: pause an agent, simulate restart by creating a fresh
-    PauseController, call restore_on_startup → the new controller knows
-    the agent is paused (matches what was persisted).
-    """
-    fresh_manager.pause("Jarvis")
-    assert fresh_manager.is_paused("Jarvis")
+    """End-to-end: pause a subprocess agent whose process survives
+    the backend restart, simulate restart by creating a fresh
+    PauseController, call restore_on_startup → the new controller
+    knows the agent is paused.
 
-    # Verify the row exists in the table.
+    Only subprocess agents with live PIDs are eligible for restore —
+    in-process agents are orphan (their chat task died with the
+    backend). The previous version of this test used Jarvis (no
+    spawn_record), which is now correctly dropped on restore; this
+    test moved to a subprocess agent to keep the happy path covered.
+    """
+    # Pretend "Dev" is a subprocess whose PID survives. ``os.kill(pid, 0)``
+    # against ourselves always succeeds — gives us a "live" PID without
+    # spawning anything.
+    own_pid = os.getpid()
+    fake_registry.find_by_name.return_value = [
+        {"run_id": "r1", "agent_name": "Dev", "pid": own_pid, "status": "running"}
+    ]
+    # Suppress the actual signal send so we don't SIGUSR1 our own pytest.
+    import services.pause_controller as pc
+    monkeypatch.setattr(pc.os, "kill", lambda *a, **kw: None)
+
+    fresh_manager.pause("Dev")
+    assert fresh_manager.is_paused("Dev")
+
     db = isolated_pause_state_db.SessionLocal()
     try:
         rows = db.query(isolated_pause_state_db.AgentPauseStateModel).all()
         assert len(rows) == 1
-        assert rows[0].agent_name == "Jarvis"
+        assert rows[0].agent_name == "Dev"
     finally:
         db.close()
 
     # Simulate restart: fresh controller, no in-memory state.
-    from services.pause_controller import PauseController
-    new_ctrl = PauseController()
-    assert not new_ctrl.is_paused("Jarvis")
+    new_ctrl = pc.PauseController()
+    assert not new_ctrl.is_paused("Dev")
 
     restored = new_ctrl.restore_on_startup()
 
     assert restored == 1
-    assert new_ctrl.is_paused("Jarvis"), \
-        "restore must re-apply the pause from agent_pause_state"
+    assert new_ctrl.is_paused("Dev"), \
+        "subprocess pause with live PID must be restored across restart"
 
 
 def test_resume_deletes_pause_state_row(
@@ -777,12 +857,22 @@ def test_resume_deletes_pause_state_row(
 
 def test_restore_is_idempotent(
     isolated_pause_state_db, fresh_manager, fake_registry, captured_sse,
+    monkeypatch,
 ):
-    """Calling restore twice doesn't double-pause (or thrash SSE)."""
+    """Calling restore twice doesn't double-pause (or thrash SSE).
+    Uses a subprocess-style agent (live PID) because in-process
+    rows are dropped on restore.
+    """
+    own_pid = os.getpid()
+    fake_registry.find_by_name.return_value = [
+        {"run_id": "r1", "agent_name": "PM", "pid": own_pid, "status": "running"}
+    ]
+    import services.pause_controller as pc
+    monkeypatch.setattr(pc.os, "kill", lambda *a, **kw: None)
+
     fresh_manager.pause("PM")
 
-    from services.pause_controller import PauseController
-    new_ctrl = PauseController()
+    new_ctrl = pc.PauseController()
     first = new_ctrl.restore_on_startup()
     second = new_ctrl.restore_on_startup()
 
@@ -839,15 +929,19 @@ def test_restore_drops_dead_subprocess_rows(
         db.close()
 
 
-def test_restore_keeps_in_process_agent_rows(
+def test_restore_drops_in_process_agent_rows(
     isolated_pause_state_db, fake_registry, captured_sse,
 ):
-    """In-process agents (Jarvis) have no ``spawn_records`` row. The
-    GC logic must NOT mistake "no spawn_record" for "dead subprocess"
-    and drop their pause row — backend restart IS their restart, so
-    restoring the pause is correct.
+    """In-process agents (Jarvis, no ``spawn_records`` row) — their
+    pause is tied to an HTTP chat request. Backend restart kills the
+    request → no work to resume → pause is orphan.
+
+    User's mental model (2026-05-24 feedback): "pause then resume
+    must continue the work; if it goes idle, what's the point of
+    pause?". Restoring an in-process agent's pause across restart
+    would resume to nothing — the user's exact complaint. So drop
+    the row instead.
     """
-    # Pre-seed Jarvis pause row.
     db = isolated_pause_state_db.SessionLocal()
     try:
         db.add(isolated_pause_state_db.AgentPauseStateModel(
@@ -859,14 +953,23 @@ def test_restore_keeps_in_process_agent_rows(
     finally:
         db.close()
 
-    fake_registry.find_by_name.return_value = []  # no spawn_record — in-process
+    fake_registry.find_by_name.return_value = []  # in-process
 
     from services.pause_controller import PauseController
     ctrl = PauseController()
     restored = ctrl.restore_on_startup()
 
-    assert restored == 1
-    assert ctrl.is_paused("Jarvis")
+    assert restored == 0, "in-process pause must NOT be restored"
+    assert not ctrl.is_paused("Jarvis")
+
+    # Row must be GC'd from agent_pause_state.
+    db = isolated_pause_state_db.SessionLocal()
+    try:
+        rows = db.query(isolated_pause_state_db.AgentPauseStateModel).all()
+        assert len(rows) == 0, \
+            "orphan in-process pause row must be cleaned up on restore"
+    finally:
+        db.close()
 
 
 def test_team_pause_does_not_run_n_plus_1_team_lookup(
@@ -1008,3 +1111,236 @@ def test_late_joiner_starts_paused_when_team_already_paused(
 
     assert fresh_manager.is_paused("QA"), \
         "late joiner must start paused so it can't slip past the pause window"
+
+
+# ─── Regression: uv-launcher PID problem (2026-05-24 Jordan-dies bug) ──
+
+
+def test_find_pid_returns_python_child_not_uv_launcher(
+    fresh_manager, fake_registry, monkeypatch,
+):
+    """spawn_registry stores the ``uv run python ...`` launcher PID,
+    but SIGUSR1/SIGUSR2 handlers live in the python interpreter (one
+    process deeper). Signaling uv directly kills it (default SIGUSR1
+    action = TERMINATE) and orphans/kills the python child — the
+    "Jordan dies on pause" bug.
+
+    ``_find_pid`` must walk children and return the python interpreter
+    PID. Falls back to uv PID only when no child is discoverable.
+    """
+    UV_PID = 99001
+    PY_PID = 99002
+
+    fake_registry.find_by_name.return_value = [{
+        "run_id": "r-uv-test", "agent_name": "Subproc", "pid": UV_PID,
+    }]
+    import services.pause_controller as pc
+    monkeypatch.setattr(pc.os, "kill", lambda *a, **kw: None)
+
+    import subprocess as _subprocess
+
+    def fake_run(cmd, **kwargs):
+        # pgrep -P UV_PID → returns PY_PID
+        if cmd[:2] == ["pgrep", "-P"] and cmd[2] == str(UV_PID):
+            return _subprocess.CompletedProcess(cmd, 0, stdout=f"{PY_PID}\n", stderr="")
+        # ps -p PY_PID -o comm= → python3
+        if cmd[:2] == ["ps", "-p"]:
+            return _subprocess.CompletedProcess(cmd, 0, stdout="python3.13\n", stderr="")
+        return _subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(pc.PauseController._find_python_child.__wrapped__ if hasattr(
+        pc.PauseController._find_python_child, '__wrapped__') else _subprocess, "run", fake_run)
+    # The above monkeypatch indirection is ugly; do it directly on subprocess.run
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    pid = fresh_manager._find_pid("Subproc")
+    assert pid == PY_PID, (
+        f"_find_pid must return python child PID ({PY_PID}), "
+        f"not uv launcher ({UV_PID}). Got {pid}."
+    )
+
+
+def test_find_pid_refuses_when_no_python_child_discoverable(
+    fresh_manager, fake_registry, monkeypatch,
+):
+    """M5 fix (PR #49 review): if pgrep retries exhaust and no child
+    is found (spawn race window before uv has fork'd python), refuse
+    by returning None instead of falling back to the uv launcher PID.
+
+    Falling back to uv_pid re-introduced the original bug this whole
+    walk exists to prevent: SIGUSR1's default action is TERMINATE,
+    uv has no SIGUSR1 handler, so signaling uv kills it and orphans
+    the python child → entire agent dies on what was supposed to be
+    a cooperative pause.
+
+    Caller surfaces this as an actionable "agent still spawning,
+    retry in a moment" — preferable to a silent crash.
+    """
+    UV_PID = 99003
+    fake_registry.find_by_name.return_value = [{
+        "run_id": "r-fallback", "agent_name": "Subproc", "pid": UV_PID,
+    }]
+    import services.pause_controller as pc
+    monkeypatch.setattr(pc.os, "kill", lambda *a, **kw: None)
+
+    # pgrep returns no children — simulates the post-uv-launch /
+    # pre-python-fork race window. _find_python_child retries 5x with
+    # 50ms backoff then gives up; we patch time.sleep to make the
+    # test instant.
+    import subprocess as _subprocess
+    monkeypatch.setattr("subprocess.run", lambda *a, **kw:
+        _subprocess.CompletedProcess(a[0], 0, stdout="", stderr=""))
+    monkeypatch.setattr("time.sleep", lambda _s: None)
+
+    pid = fresh_manager._find_pid("Subproc")
+    assert pid is None, (
+        "no python child after retries → must refuse rather than "
+        "signal the uv launcher (default-action=TERMINATE would "
+        "kill the agent)"
+    )
+
+
+# ─── E2E: real uv subprocess + signal delivery ────────────────────
+
+
+@pytest.mark.skipif(
+    __import__("shutil").which("uv") is None or __import__("shutil").which("pgrep") is None,
+    reason="requires uv + pgrep on PATH (macOS / Linux)",
+)
+def test_find_pid_walks_uv_to_python_child_with_real_subprocess(tmp_path):
+    """Real-process integration test for the 2026-05-24 "spawn dies on
+    pause" bug. Spawns ``uv run python -c '...'`` (matches how
+    isolated_spawner.py creates agent subprocesses), installs a real
+    SIGUSR1 handler in the python child that writes a marker file,
+    then verifies:
+
+    1. ``_find_python_child(uv_pid)`` returns the python child's PID,
+       NOT the uv launcher's PID.
+    2. Sending SIGUSR1 to that PID delivers to the python handler
+       (marker file appears).
+    3. The uv launcher is STILL alive after the signal — i.e. the
+       handler ran instead of killing the process tree.
+
+    Without ``_find_python_child``, signalling uv directly hits its
+    default SIGUSR1 handler = TERMINATE → entire process tree dies →
+    agent is gone instead of paused.
+    """
+    import os
+    import signal
+    import subprocess
+    import time
+    from services.pause_controller import PauseController
+
+    marker = tmp_path / "sigusr1_received.txt"
+    pause_marker = tmp_path / "paused.txt"
+    script = f"""
+import signal, time, sys
+def on_sigusr1(signum, frame):
+    open({str(marker)!r}, "w").write("got_sigusr1")
+    open({str(pause_marker)!r}, "w").write("blocked")
+signal.signal(signal.SIGUSR1, on_sigusr1)
+print("READY", flush=True)
+# Block on a sleep — handler runs, then continue sleeping. The test
+# only cares that we didn't die from SIGUSR1.
+for _ in range(50):
+    time.sleep(0.1)
+"""
+    proc = subprocess.Popen(
+        ["uv", "run", "python", "-c", script],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        # Wait until python child has started + installed handler.
+        proc.stdout.readline()  # consume "READY\n"
+        # Give pgrep a moment to see the child appear.
+        time.sleep(0.5)
+
+        uv_pid = proc.pid
+        python_pid = PauseController._find_python_child(uv_pid)
+
+        assert python_pid is not None, (
+            "pgrep returned no children of uv launcher — spawn structure "
+            "may have changed; reread isolated_spawner.py:189-194"
+        )
+        assert python_pid != uv_pid, (
+            f"_find_python_child must return the python child PID, "
+            f"not the uv launcher PID ({uv_pid})"
+        )
+
+        # Send SIGUSR1 to python child — handler should fire.
+        os.kill(python_pid, signal.SIGUSR1)
+
+        # Wait for marker file (handler ran).
+        deadline = time.time() + 3.0
+        while time.time() < deadline and not marker.exists():
+            time.sleep(0.05)
+        assert marker.exists(), (
+            "SIGUSR1 to python child must reach the handler (marker file)"
+        )
+
+        # Critical: process tree must still be alive — the bug killed it.
+        try:
+            os.kill(uv_pid, 0)
+        except ProcessLookupError:
+            pytest.fail(
+                "uv launcher died after SIGUSR1 to its python child — "
+                "process tree should be intact"
+            )
+        try:
+            os.kill(python_pid, 0)
+        except ProcessLookupError:
+            pytest.fail(
+                "python child died after handling SIGUSR1 — handler "
+                "must not terminate the process"
+            )
+    finally:
+        proc.terminate()
+        proc.wait(timeout=5)
+
+
+@pytest.mark.skipif(
+    __import__("shutil").which("uv") is None,
+    reason="requires uv on PATH",
+)
+def test_uv_run_creates_two_level_process_tree(tmp_path):
+    """Documents the structural invariant the bug fix depends on:
+    ``uv run python ...`` creates a TWO-process tree (uv parent +
+    python child), not a single-process exec. ``_find_python_child``
+    is only meaningful if this shape holds.
+
+    If a future uv version switches to exec semantics (replaces uv
+    with python in-place), this test regresses loudly → prompts a
+    re-read of isolated_spawner.py:189-194 to decide whether
+    _find_python_child is still needed.
+    """
+    import subprocess
+    import time
+
+    proc = subprocess.Popen(
+        ["uv", "run", "python", "-c", "import time; time.sleep(20)"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        time.sleep(1.0)  # uv resolves deps + execs python
+        out = subprocess.run(
+            ["pgrep", "-P", str(proc.pid)],
+            capture_output=True, text=True, timeout=2.0,
+        )
+        children = [int(p) for p in out.stdout.split() if p.strip().isdigit()]
+        assert len(children) >= 1, (
+            "uv run no longer forks a python child — _find_python_child "
+            "needs to be revisited. Check uv version + spawn semantics."
+        )
+        ps = subprocess.run(
+            ["ps", "-p", str(children[0]), "-o", "comm="],
+            capture_output=True, text=True, timeout=2.0,
+        )
+        assert "python" in ps.stdout.lower(), (
+            f"uv's first child is not python: {ps.stdout!r}"
+        )
+    finally:
+        proc.terminate()
+        proc.wait(timeout=5)

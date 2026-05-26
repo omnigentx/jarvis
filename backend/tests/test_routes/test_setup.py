@@ -17,9 +17,16 @@ from core.database import Base, SetupWizardStep, SystemConfig
 
 @pytest.fixture(autouse=True)
 def _clean_module_state(monkeypatch):
-    """Every test starts with no master key + fresh crypto + a clean DB."""
+    """Every test starts with no master key + fresh crypto + a clean DB.
+
+    JWT_SECRET is set so the wizard's session-cookie mint succeeds
+    (step 1 now raises 503 if it's missing — see M1 fix). The
+    ``TestWizardMintCookieFailureLoud`` class explicitly unsets it
+    again to exercise that 503 path.
+    """
     monkeypatch.setattr(core_auth, "JARVIS_API_KEY", "")
     monkeypatch.delenv("JARVIS_API_KEY", raising=False)
+    monkeypatch.setenv("JWT_SECRET", "test-jwt-secret-xxxxxxxxxxxxxxxxxxxx")
     secrets_crypto._fernet = None
     secrets_crypto._fingerprint = None
     yield
@@ -194,11 +201,21 @@ class TestAuthStep:
 
 class TestLLMStep:
     def test_llm_step_requires_auth(self, client):
-        # No master key → verify_api_key returns True (dev mode). Set one first.
-        resp = client.post("/api/setup/auth", json={})
+        """``POST /setup/llm`` is guarded by ``verify_api_key``. After
+        wizard step 1 (``/setup/auth``) sets the key AND mints a
+        session cookie, a fresh client without cookies must still be
+        rejected — this is the assertion."""
+        # Trigger step 1 to set JARVIS_API_KEY on a side client.
+        from fastapi.testclient import TestClient
+        setup_client = TestClient(client.app)
+        resp = setup_client.post("/api/setup/auth", json={})
         assert resp.status_code == 200
 
-        resp = client.post(
+        # Use a brand-new client (no cookies from the setup_client
+        # call). Now /setup/llm must 401 because the key is configured
+        # but this client has no credentials.
+        fresh = TestClient(client.app)
+        resp = fresh.post(
             "/api/setup/llm",
             json={
                 "provider": "openai",
@@ -206,8 +223,29 @@ class TestLLMStep:
                 "api_key": "sk-xxx",
             },
         )
-        # Without header — should be 401 now that a key is set.
         assert resp.status_code == 401
+
+    def test_setup_auth_mints_session_cookie_so_step2_works_without_bearer(self, client):
+        """After step 1, the SAME client (which now holds the
+        wizard-issued cookie) can call step 2 with NO Authorization
+        header. This is the path the cookie-only SPA relies on."""
+        from core.session import CSRF_COOKIE_NAME, SESSION_COOKIE_NAME
+        resp = client.post("/api/setup/auth", json={})
+        assert resp.status_code == 200
+        # Both cookies set.
+        assert SESSION_COOKIE_NAME in client.cookies
+        assert CSRF_COOKIE_NAME in client.cookies
+        # Step 2 succeeds without Bearer header — cookie alone authenticates.
+        resp = client.post(
+            "/api/setup/llm",
+            json={
+                "provider": "openai",
+                "model": "gpt-4o-mini",
+                "api_key": "sk-live-xyz",
+            },
+            headers={"X-CSRF-Token": client.cookies[CSRF_COOKIE_NAME]},
+        )
+        assert resp.status_code == 200
 
     def test_llm_step_happy_path(self, client, db_factory):
         client.post("/api/setup/auth", json={})
@@ -459,3 +497,21 @@ class TestReset:
         for s in resp.json()["steps"]:
             assert s["completed"] is False
             assert s["skipped"] is False
+
+
+class TestWizardMintCookieFailureLoud:
+    """M1 (PR #49 review): if JWT_SECRET is missing the wizard MUST
+    fail loud with 503 + actionable detail instead of silently
+    proceeding without a cookie. Without the cookie, the SPA's
+    cookie-only auth would 401 on step 2 with no recovery path."""
+
+    def test_missing_jwt_secret_raises_503(self, client, monkeypatch):
+        monkeypatch.delenv("JWT_SECRET", raising=False)
+        resp = client.post("/api/setup/auth", json={})
+        assert resp.status_code == 503
+        body = resp.json()
+        assert body["detail"]["error"] == "not_configured"
+        assert body["detail"]["reason"] == "jwt_secret_unset"
+        # Actionable message names the env + what to do.
+        assert "JWT_SECRET" in body["detail"]["message"]
+        assert "restart" in body["detail"]["message"].lower()

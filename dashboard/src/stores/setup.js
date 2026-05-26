@@ -8,7 +8,7 @@
  * perfectly consistent even when the user navigates away and back.
  */
 import { defineStore } from 'pinia'
-import { apiFetch, setApiKey, ApiError } from '../api'
+import { apiFetch, ApiError } from '../api'
 
 const STEP_ORDER = ['auth', 'llm', 'services', 'yaml_config', 'verify']
 const CRITICAL_STEPS = new Set(['auth', 'llm', 'verify'])
@@ -89,7 +89,12 @@ export const useSetupStore = defineStore('setup', {
           skipSetupRedirect: true,
           body: JSON.stringify({ api_key: apiKey }),
         })
-        setApiKey(apiKey)
+        // Backend's /setup/auth now mints the ``jarvis_session`` cookie
+        // inline (see ``_mint_wizard_session`` in routes/setup.py), so
+        // we no longer need to stash the key in localStorage. The
+        // explicit ``auth.login(apiKey)`` below additionally syncs the
+        // auth store state to AUTHENTICATED for any consumer reading
+        // it before the next ``/whoami`` probe.
         this._applyStatus(res)
 
         // Mint a session cookie now so the dashboard's auth.probe() at

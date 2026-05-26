@@ -27,6 +27,25 @@ export const useApprovalsStore = defineStore('approvals', () => {
 
   const pendingCount = computed(() => stats.value.pending_count || 0)
 
+  /**
+   * Reverse-index pending approvals by paused agent — for the
+   * AgentCard "Awaiting approval" gate. Keys are agent names, values
+   * are the first matching pending approval's id (sufficient for the
+   * UI deep-link). Reactive — rebuilds whenever ``approvals`` mutates.
+   * Mirrors the backend's ``_pending_approval_for`` so the manual
+   * Resume button hides for exactly the agents the backend would 409.
+   */
+  const pendingApprovalByAgent = computed(() => {
+    const map = new Map()
+    for (const a of approvals.value.values()) {
+      if (a.status !== 'pending') continue
+      for (const agent of (a.paused_agents || [])) {
+        if (!map.has(agent)) map.set(agent, a.id)
+      }
+    }
+    return map
+  })
+
   // --- Actions ---
   async function fetchApprovals(status = null) {
     isLoading.value = true
@@ -206,6 +225,7 @@ export const useApprovalsStore = defineStore('approvals', () => {
     selectedApproval,
     stats,
     pendingCount,
+    pendingApprovalByAgent,
     isLoading,
     isLoadingDetail,
     fetchApprovals,

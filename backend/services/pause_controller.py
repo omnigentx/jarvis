@@ -112,6 +112,27 @@ STATE_PAUSED = "paused"
 STATE_RESUMING = "resuming"
 
 
+class PauseProtected(Exception):
+    """Raised by ``resume()`` when a caller-without-force tries to resume
+    an agent that's pause-locked by a pending approval. The route handler
+    surfaces this as HTTP 409 so the dashboard can guide the user toward
+    resolving the approval (approve / reject) instead of manually resuming
+    and creating a state mismatch (controller says running, approval still
+    pending, subprocess blocked on approval.wait RPC).
+
+    Carries ``agent_name`` and ``approval_id`` so the UI can deep-link to
+    the offending approval without another round-trip.
+    """
+
+    def __init__(self, agent_name: str, approval_id: str) -> None:
+        super().__init__(
+            f"Agent {agent_name!r} is paused by pending approval "
+            f"{approval_id}. Resolve the approval before resuming."
+        )
+        self.agent_name = agent_name
+        self.approval_id = approval_id
+
+
 class PauseController:
     """Singleton managing pause state for all agents.
 
@@ -185,15 +206,68 @@ class PauseController:
         return any_changed
 
     def resume(self, scope: str) -> bool:
-        """Resume an agent or a whole team. Mirror of ``pause``."""
+        """Resume an agent or a whole team. Mirror of ``pause``.
+
+        Pause-protection: each expanded agent is checked against pending
+        approval rows. If ANY agent in scope is currently held by a
+        pending approval, the whole call raises ``PauseProtected`` and
+        nothing is resumed — the user must resolve the approval first.
+
+        The check uses ``approval_requests.status='pending'`` as the
+        single source of truth — no separate flag to keep in sync.
+        Multi-approval correctness: when ``approval_service.resolve_approval``
+        cascades resume across its ``paused_agents`` list, it catches
+        ``PauseProtected`` per-agent so an agent held by a SECOND still-
+        pending approval stays paused until that one is also resolved.
+        """
         agents, team_name = self._resolve_scope(scope)
         if team_name:
             logger.info("[RESUME] Team scope: %s → %d agent(s)", team_name, len(agents))
+
+        # Fail loud: refuse the entire call if ANY agent in scope is
+        # currently pause-locked by an approval. Per-agent partial
+        # resume would leave the user wondering "I clicked resume on
+        # PM but only Dev/QE resumed" — clearer to refuse and point
+        # them at the approval.
+        for agent in agents:
+            approval_id = self._pending_approval_for(agent)
+            if approval_id:
+                raise PauseProtected(agent, approval_id)
+
         any_changed = False
         for agent in agents:
             if self._resume_one(agent):
                 any_changed = True
         return any_changed
+
+    def _pending_approval_for(self, agent_name: str) -> Optional[str]:
+        """Return the id of a pending approval whose ``paused_agents``
+        list contains this agent, or None. Used by the resume guard.
+
+        Source of truth is ``approval_requests`` — the same DB row the
+        approvals API and dashboard read. No separate flag to keep in
+        sync.
+        """
+        try:
+            from core.database import SessionLocal, ApprovalRequestModel
+            import json as _json
+            db = SessionLocal()
+            try:
+                rows = db.query(ApprovalRequestModel.id, ApprovalRequestModel.paused_agents).filter(
+                    ApprovalRequestModel.status == "pending",
+                ).all()
+            finally:
+                db.close()
+            for row in rows:
+                paused = _json.loads(row[1] or "[]")
+                if agent_name in paused:
+                    return row[0]
+        except Exception as e:
+            # Be conservative: if DB lookup fails, ALLOW the resume rather
+            # than block. The alternative (silently blocking on DB error)
+            # would leave the user unable to recover without DB inspection.
+            logger.warning("[RESUME] approval check failed for %s: %s", agent_name, e)
+        return None
 
     def is_team_paused(self, team_name: str) -> bool:
         """Return True if any agent in the named team is currently paused.
@@ -268,11 +342,30 @@ class PauseController:
         # caller-resolved value (or None if solo / unknown).
         self._persist_pause(agent_name, team_name=team_name)
 
-        # 5. Idle-agent terminal transition. Only applies to in-process
-        # agents; subprocess agents emit their own paused event from
-        # the subprocess hook chain. We gate on ``pid is None`` so we
-        # don't double-emit for subprocess.
-        if pid is None and not self._active.get(agent_name, False):
+        # 5. Terminal ``agent_paused`` emit.
+        #
+        # In-process idle: emit when there's no active turn — no hook
+        # will fire to do it (Phase 2 logic).
+        #
+        # Subprocess: emit IMMEDIATELY after SIGUSR1 was sent (don't
+        # wait for subprocess hook). Rationale: the subprocess hook's
+        # agent_paused is the "actually blocked at checkpoint"
+        # confirmation, but it can fail to arrive — subprocess dies
+        # before reaching checkpoint, spawn_events.sock drops, hook
+        # exception, etc. The UI then sticks at "Pausing…" forever
+        # even though backend + DB say paused (verified by reload
+        # reading the DB). The subprocess emit becomes a duplicate
+        # ``agent_paused`` which the FE handler idempotently no-ops.
+        # Strategy B's cooperative-tool-completion is NOT affected:
+        # subprocess still blocks at its next checkpoint; "Paused" in
+        # UI just means "user has decided to pause" matching DB state.
+        #
+        # In-process active (mid-LLM): don't emit here — the
+        # on_pause_cancel retry hook is responsible (after cancelling
+        # the LLM task it emits agent_paused before awaiting resume).
+        is_subprocess = pid is not None
+        is_idle_inproc = pid is None and not self._active.get(agent_name, False)
+        if is_subprocess or is_idle_inproc:
             self._agent_state[agent_name] = STATE_PAUSED
             self._emit_sse(agent_name, "agent_paused", STATE_PAUSED)
 
@@ -314,8 +407,15 @@ class PauseController:
         # 4b. Drop the agent_pause_state row — pause is no longer active.
         self._persist_resume(agent_name)
 
-        # 5. Idle-agent terminal transition (mirror of pause path).
-        if pid is None and not self._active.get(agent_name, False):
+        # 5. Terminal ``agent_resumed`` emit — same shape as pause path
+        # (subprocess + in-process idle emit immediately; in-process
+        # active waits for on_pause_cancel hook to fire on retry path).
+        # Reason: subprocess's own resumed emit can fail to arrive
+        # (sock drop, subprocess crash mid-resume) — leaving the UI
+        # stuck at "Resuming…" forever even though DB says running.
+        is_subprocess = pid is not None
+        is_idle_inproc = pid is None and not self._active.get(agent_name, False)
+        if is_subprocess or is_idle_inproc:
             self._agent_state[agent_name] = STATE_RUNNING
             self._emit_sse(agent_name, "agent_resumed", STATE_RUNNING)
 
@@ -508,18 +608,36 @@ class PauseController:
         logger.debug("[PAUSE] attached hooks for agent %s", name)
 
     def detach(self, agent: Any) -> None:
-        """Mark agent as no longer pause-attached.
+        """Mark agent as no longer pause-attached and reset its activity
+        tracking.
 
         Does NOT undo the hook merge — that's the caller's concern
         (typically a snapshot+restore around a per-request hook
         modification). Just clears the sentinel so a subsequent
         ``attach()`` re-wires onto the restored hooks.
+
+        Also resets ``_active`` and ``_current_tasks`` for this agent.
+        Reason: those flags are flipped True by ``before_llm_call`` /
+        cleared by ``after_turn_complete``. If a request ends
+        abnormally (cancelled, exception before the final hook), the
+        flags leak past the request. A later manual ``pause()`` then
+        sees stale ``_active=True`` and skips the idle-emit branch
+        waiting for a hook that will never fire → UI stuck on
+        "Pausing…" forever (bug observed 2026-05-24). Resetting on
+        detach ties the lifecycle to the request, not the hook chain.
+        Pause state (``_paused_agents``, ``_agent_state``,
+        ``_events``) is intentionally NOT reset — manual pause must
+        survive request-scoped hook teardown.
         """
         if hasattr(agent, "_pause_attached"):
             try:
                 delattr(agent, "_pause_attached")
             except AttributeError:
                 pass
+        name = getattr(agent, "name", None)
+        if name:
+            self._active.pop(name, None)
+            self._current_tasks.pop(name, None)
 
     def cleanup(self, agent_name: str) -> None:
         """Remove pause state for an agent (e.g., when agent is destroyed)."""
@@ -534,24 +652,121 @@ class PauseController:
     # ── Private helpers ──
 
     def _find_pid(self, agent_name: str) -> Optional[int]:
-        """Find subprocess PID for an agent from spawn_records DB."""
+        """Find the PID to signal for an agent.
+
+        ``spawn_registry`` stores the PID returned by
+        ``asyncio.create_subprocess_exec(["uv", "run", "python", ...])``
+        — that's the **uv launcher's** PID, not the python interpreter
+        running ``isolated_runner.main()`` where SIGUSR1 / SIGUSR2
+        handlers are installed.
+
+        SIGUSR1 default action is TERMINATE. uv has no handler →
+        receiving SIGUSR1 kills uv → orphans the python child → entire
+        subprocess agent dies. This is the 2026-05-24 "Jordan dies on
+        pause" bug. Reproducer: pause any spawned subprocess, then
+        check PID — it's gone.
+
+        Fix: walk children of the registered (uv) PID to find the
+        python interpreter. SIGUSR1/SIGUSR2 must go there. If we
+        can't find a child (uv hasn't forked yet, race), fall back
+        to the recorded PID — at least pause will fail loud (kill the
+        uv launcher) instead of silently sending to the wrong target.
+        """
         try:
             import services.shared_state as _state
             if _state.registry_db:
-                # Use find_by_name (searches ALL records, including paused).
-                # list_running() filters out paused agents, which breaks
-                # resume() — see ``_update_db_status`` for incident notes.
                 records = _state.registry_db.find_by_name(agent_name)
                 for rec in records:
-                    if rec.get("pid"):
-                        pid = int(rec["pid"])
-                        try:
-                            os.kill(pid, 0)
-                            return pid
-                        except (ProcessLookupError, PermissionError):
-                            continue
+                    if not rec.get("pid"):
+                        continue
+                    uv_pid = int(rec["pid"])
+                    try:
+                        os.kill(uv_pid, 0)
+                    except (ProcessLookupError, PermissionError):
+                        continue
+                    python_pid = self._find_python_child(uv_pid)
+                    if python_pid is not None:
+                        return python_pid
+                    # No python child found — covers two cases:
+                    #   1) uv spawned a non-python binary (unlikely for
+                    #      our spawner, but possible if cmd changes).
+                    #   2) Pause called in the ~50ms race window between
+                    #      uv launching and python forking — the agent
+                    #      just spawned and the user hit pause.
+                    # Returning uv_pid here re-introduces the bug this
+                    # whole walk exists to prevent (SIGUSR1 → uv →
+                    # TERMINATE → agent dies). Refuse instead and let
+                    # the caller surface "agent still spawning, retry".
+                    logger.warning(
+                        "[PAUSE] uv pid=%d has no python child yet; "
+                        "refusing to signal uv directly to avoid killing it",
+                        uv_pid,
+                    )
+                    return None
         except Exception as e:
             logger.warning("[PAUSE] DB PID lookup failed: %s", e)
+
+        return None
+
+    @staticmethod
+    def _find_python_child(uv_pid: int) -> Optional[int]:
+        """Return the PID of the python interpreter forked by ``uv run``.
+
+        ``uv run`` execs the requested binary as a child while uv stays
+        the parent. We want to signal the python interpreter where the
+        SIGUSR1/SIGUSR2 handlers live, not uv.
+
+        Retries with a short backoff to cover the "agent just spawned"
+        race — uv has launched but hasn't yet forked python at the
+        moment the user clicks pause. Five attempts × 50ms is enough
+        in practice; longer waits would feel like UI lag.
+
+        Falls back to a non-python child only when one exists AND
+        ``ps`` couldn't confirm its identity — logs a warning so the
+        operator can see "signaled non-python child, may not handle
+        SIGUSR1" if something downstream goes wrong.
+        """
+        import subprocess
+        import time as _time
+
+        for attempt in range(5):
+            try:
+                out = subprocess.run(
+                    ["pgrep", "-P", str(uv_pid)],
+                    capture_output=True, text=True, timeout=2.0,
+                )
+                children = [
+                    int(p) for p in out.stdout.split() if p.strip().isdigit()
+                ]
+            except Exception as e:
+                logger.warning(
+                    "[PAUSE] child walk failed for uv pid=%d: %s", uv_pid, e,
+                )
+                return None
+
+            for cpid in children:
+                try:
+                    ps = subprocess.run(
+                        ["ps", "-p", str(cpid), "-o", "comm="],
+                        capture_output=True, text=True, timeout=2.0,
+                    )
+                    comm = ps.stdout.strip().lower()
+                    if "python" in comm:
+                        return cpid
+                except Exception:
+                    continue
+
+            if children:
+                logger.warning(
+                    "[PAUSE] uv pid=%d has %d non-python child(ren); "
+                    "signaling first one — may not handle SIGUSR1",
+                    uv_pid, len(children),
+                )
+                return children[0]
+
+            # No children yet — retry after a short delay.
+            if attempt < 4:
+                _time.sleep(0.05)
 
         return None
 
@@ -674,10 +889,14 @@ class PauseController:
             if agent_name in self._paused_agents:
                 continue
 
-            # GC: if the agent has a spawn_record but its PID is dead,
-            # the previous subprocess is gone — drop the row instead of
-            # restoring a pause we can't enforce.
-            if self._is_dead_subprocess(agent_name):
+            # GC: if the persisted pause is orphan (in-process agent
+            # whose chat task died with the backend, OR subprocess
+            # whose PID is dead), drop the row instead of restoring
+            # a pause we can't enforce. The user's mental model is
+            # "resume = continue the work" — restoring an orphan
+            # pause would resume to nothing, which they correctly
+            # called out as defeating pause/resume's purpose.
+            if self._is_orphan_pause(agent_name):
                 self._persist_resume(agent_name)
                 dropped.append(agent_name)
                 continue
@@ -694,33 +913,45 @@ class PauseController:
             logger.info("[PAUSE] GC'd %d dead-PID pause row(s): %s", len(dropped), dropped)
         return count
 
-    def _is_dead_subprocess(self, agent_name: str) -> bool:
-        """Return True iff ``agent_name`` has a spawn_record but no live
-        PID. False for in-process agents (no spawn_record) and for
-        subprocesses still alive after the backend restart.
+    def _is_orphan_pause(self, agent_name: str) -> bool:
+        """Return True if a persisted pause for ``agent_name`` is now
+        meaningless — i.e. the work it was waiting to resume no longer
+        exists. Used by ``restore_on_startup`` to GC stale rows.
 
-        Used by ``restore_on_startup`` to garbage-collect stale rows.
+        Cases:
+        - **In-process agent** (no spawn_record): orphan. The chat
+          HTTP request that was paused is gone (backend restart killed
+          it). Resume would have nothing to retry. User would see
+          paused → resume → idle with no work happening — defeats the
+          purpose. Drop the row.
+        - **Subprocess with no live PID**: orphan. Process is gone.
+          Nobody to SIGUSR2; pause state can't be enforced anyway.
+        - **Subprocess with at least one live PID**: NOT orphan. The
+          subprocess survived the restart with its event.wait() still
+          active. Resume sends SIGUSR2 → real work continues.
         """
         try:
             import services.shared_state as _state
             if not _state.registry_db:
-                return False  # can't check — be conservative, keep the row
+                return False  # can't check — be conservative
             records = _state.registry_db.find_by_name(agent_name)
             if not records:
-                return False  # in-process agent — always live across restart
+                # In-process agent (Jarvis & friends) — chat-tied
+                # pause is dead after restart.
+                return True
             for rec in records:
                 pid = rec.get("pid")
                 if pid is None:
                     continue
                 try:
-                    os.kill(int(pid), 0)  # probe
-                    return False  # any live PID means subprocess survived
+                    os.kill(int(pid), 0)
+                    return False  # subprocess survived
                 except (ProcessLookupError, PermissionError):
                     continue
-            return True  # has spawn_record(s) but all PIDs are dead
+            return True
         except Exception as e:
-            logger.warning("[PAUSE] _is_dead_subprocess(%s) failed: %s", agent_name, e)
-            return False  # err on the side of preserving the row
+            logger.warning("[PAUSE] _is_orphan_pause(%s) failed: %s", agent_name, e)
+            return False  # conservative — keep the row
 
     def _update_db_status(self, agent_name: str, db_status: str) -> None:
         """Upsert spawn_records.status. DB sees only ``paused`` / ``running`` —

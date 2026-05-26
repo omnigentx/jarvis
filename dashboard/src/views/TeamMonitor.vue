@@ -4,6 +4,7 @@ import { useActivityStream } from '../composables/useActivityStream'
 import { useAgentTurns } from '../composables/useAgentTurns'
 import { apiFetch } from '../api'
 import { useAgentsStore } from '../stores/agents'
+import { useApprovalsStore } from '../stores/approvals'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import MeetingsTab from '../components/meetings/MeetingsTab.vue'
 import AgentTerminal from '../components/monitor/AgentTerminal.vue'
@@ -19,6 +20,7 @@ const toast = useToast()
 const subTab = ref('activity')
 
 const store = useAgentsStore()
+const approvalsStore = useApprovalsStore()
 const { filteredAgents, filter, selectedAgents, sortLocked, toggleAgent, selectAll, toggleSortLock } = useActivityStream()
 
 // Terminal-style monitor grid (the only UI now — v1 card grid was
@@ -98,16 +100,30 @@ const pauseLoading = ref(new Set())
 
 async function handlePauseToggle(agentName, currentStatus) {
   if (pauseLoading.value.has(agentName)) return
+  // Ignore clicks during transitional states — the previous request
+  // hasn't completed yet. Double-firing causes pause/resume churn
+  // (controller will no-op but UI flickers).
+  if (currentStatus === 'pausing' || currentStatus === 'resuming') return
   pauseLoading.value.add(agentName)
   pauseLoading.value = new Set(pauseLoading.value)
   try {
     if (currentStatus === 'paused') {
       await store.resumeAgent(agentName)
     } else {
+      // Pause only running agents — idle agents have nothing in
+      // flight to interrupt and never show the toggle (the v-if
+      // guard above keeps them out).
       await store.pauseAgent(agentName)
     }
   } catch (e) {
-    console.error('[TeamMonitor] Pause/resume failed:', e)
+    if (e?.code === 'approval_pause_lock') {
+      toast?.show?.(
+        `Agent is paused by pending approval ${e.approvalId}. Resolve the approval first.`,
+        { kind: 'warn' },
+      )
+    } else {
+      console.error('[TeamMonitor] Pause/resume failed:', e)
+    }
   } finally {
     pauseLoading.value.delete(agentName)
     pauseLoading.value = new Set(pauseLoading.value)
@@ -397,6 +413,12 @@ function isDeletableAgent(agent) {
 // fetchAgents() unconditionally is idempotent and a single GET.
 onMounted(() => {
   store.fetchAgents()
+  // Seed the approvals store with pending rows so the per-agent
+  // pause-by-approval gate (AgentCard "Awaiting approval" pill) shows
+  // immediately on first paint — without this, a tab opened fresh
+  // would render a Resume button on an approval-locked agent until
+  // the next SSE event lands.
+  approvalsStore.fetchApprovals('pending')
 })
 </script>
 
@@ -577,7 +599,7 @@ onMounted(() => {
         :turns="agentTurns.getTurns(agent.name)"
         :loading="!agentTurns.fetched.value.has(agent.name)"
         :on-fetch-full="(turnIdx) => agentTurns.fetchTurnFull(agent.name, turnIdx)"
-        :on-pause-toggle="(agent.status === 'running' || agent.status === 'paused')
+        :on-pause-toggle="['running', 'paused', 'pausing', 'resuming'].includes(agent.status)
           ? () => handlePauseToggle(agent.name, agent.status)
           : null"
         :on-delete="isDeletableAgent(agent) ? () => requestDelete(agent.name) : null"
