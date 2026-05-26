@@ -30,6 +30,14 @@ os.environ.setdefault("JARVIS_DB_PATH", str(_TEST_DB_PATH))
 # tests) gets a deterministic Fernet bring-up. Tests that need to exercise
 # rotation override this via monkeypatch.
 os.environ.setdefault("JARVIS_MASTER_KEY", "pytest-session-master-key-xxxxx")
+# Session-level default for the cookie-mint path. Wizard step 1 and the
+# auth/refresh routes raise 503 when ``JWT_SECRET`` is unset (the
+# fail-loud landed in PR #49 review fix M1) — without this, e2e tests
+# that drive the wizard through ``_complete_auth`` helpers see 503 on
+# CI runners that don't carry the env. Individual tests that exercise
+# the "missing secret" path (e.g. ``test_missing_jwt_secret_raises_503``)
+# explicitly ``monkeypatch.delenv`` to override.
+os.environ.setdefault("JWT_SECRET", "pytest-session-jwt-secret-xxxxxxxxxxxxxxxx")
 # Start each pytest session from a clean test DB so leftover rows from a
 # previous run can never leak into assertions.
 for _suffix in ("", "-wal", "-shm"):
