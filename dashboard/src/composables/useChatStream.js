@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import { getApiKey, getCsrfToken } from '../api'
+import { getCsrfToken } from '../api'
 import { useAuthStore } from '../stores/auth.js'
 
 /**
@@ -29,7 +29,6 @@ export function useChatStream() {
     let aborted = false
 
     try {
-      const apiKey = getApiKey()
       const headers = {}
       let body
 
@@ -58,11 +57,9 @@ export function useChatStream() {
         })
       }
 
-      if (apiKey) {
-        headers['Authorization'] = `Bearer ${apiKey}`
-      }
-      // CSRF — chat-stream is a POST, so the double-submit header is required
-      // when the user is logged in via cookie auth (PR2).
+      // CSRF — chat-stream is a POST, so the double-submit header is
+      // required by the session-cookie auth path. Bearer is no longer
+      // sent: removing the localStorage API key was the whole point.
       const csrf = getCsrfToken()
       if (csrf) headers['X-CSRF-Token'] = csrf
 

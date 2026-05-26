@@ -17,7 +17,7 @@
  * (or full snapshot on bulk) after a write to keep the store in sync.
  */
 import { defineStore } from 'pinia'
-import { apiFetch, setApiKey, ApiError } from '../api'
+import { apiFetch, ApiError } from '../api'
 
 export const useSettingsStore = defineStore('settings', {
   state: () => ({
@@ -95,11 +95,11 @@ export const useSettingsStore = defineStore('settings', {
             body: JSON.stringify({ value, is_secret: isSecret }),
           },
         )
-        // Master-key rotation: persist new bearer locally so the *next* request
-        // authenticates.  Do this BEFORE refreshEntry so the GET succeeds.
-        if (category === 'auth' && key === 'JARVIS_API_KEY' && typeof value === 'string') {
-          setApiKey(value)
-        }
+        // Master-key rotation invalidates existing session cookies via
+        // the ``kfp`` fingerprint in the token. The caller (Settings →
+        // General) re-establishes the session by calling
+        // ``auth.login(newKey)`` immediately after this returns, so we
+        // don't have to thread a new credential through here.
         await this.refreshEntry(category, key).catch(() => {
           // Entry may have been deleted via DELETE endpoint elsewhere.
           this._remove(category, key)
@@ -116,11 +116,8 @@ export const useSettingsStore = defineStore('settings', {
           method: 'PUT',
           body: JSON.stringify({ items }),
         })
-        const rotated = items.find(
-          (i) => i.category === 'auth' && i.key === 'JARVIS_API_KEY',
-        )
-        if (rotated && typeof rotated.value === 'string') setApiKey(rotated.value)
         // Re-fetch the whole snapshot; bulk writes rarely happen so this is fine.
+        // Master-key rotation here is rare; caller handles cookie refresh.
         await this.fetchAll()
       } catch (err) {
         this.lastMutationError = _formatApiError(err)

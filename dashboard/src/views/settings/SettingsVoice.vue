@@ -15,7 +15,7 @@
  * surfaced via "stored · hidden" / "not set" pills.
  */
 import { onMounted, ref, computed } from 'vue'
-import { apiFetch, getApiKey } from '../../api.js'
+import { apiFetch } from '../../api.js'
 
 const loading = ref(true)
 const saving = ref(false)
@@ -145,12 +145,17 @@ async function preview(scope) {
       body.engine = 'edge'
       body.params = active.value.tts_stories || {}
     }
-    const apiKey = getApiKey()
+    // Session cookie + CSRF header — same auth shape as apiFetch (the
+    // preview endpoint streams audio bytes so we hand-roll fetch
+    // instead of using apiFetch, but the auth still rides on cookie).
+    const csrf = (document.cookie.split('; ')
+      .find((c) => c.startsWith('jarvis_csrf='))?.split('=', 2)[1]) || ''
     const res = await fetch('/api/voice/test/tts', {
       method: 'POST',
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
-        ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+        ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
       },
       body: JSON.stringify(body),
     })

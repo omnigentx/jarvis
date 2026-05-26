@@ -18,7 +18,6 @@ import { useSettingsStore } from '../../stores/settings'
 import { generateApiKey } from '../../stores/setup'
 import { useConfirm } from '../../composables/useConfirm'
 import { useAuthStore } from '../../stores/auth'
-import { setApiKey } from '../../api'
 
 const store = useSettingsStore()
 const auth = useAuthStore()
@@ -104,8 +103,8 @@ async function onRotate() {
         'Key rotated but session refresh failed — reload the page and log in with the new key.',
       )
     }
-    setApiKey(requestedKey)  // legacy localStorage path used by Setup Wizard
-
+    // Session cookie was just minted by ``auth.login(requestedKey)``
+    // above; no localStorage mirror needed.
     rotationSuccess.value = true
     newKey.value = ''
     confirmKey.value = ''

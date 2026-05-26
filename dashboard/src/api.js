@@ -5,7 +5,8 @@
  * ----------
  *
  * The backend authenticates the dashboard via the ``jarvis_session``
- * httpOnly cookie set by ``POST /api/auth/login``. JS never sees that
+ * httpOnly cookie set by ``POST /api/auth/login`` (or by
+ * ``POST /api/setup/auth`` during first-run). JS never sees that
  * value (httpOnly), which means an XSS that exfiltrates ``document.cookie``
  * cannot lift the session token.
  *
@@ -17,49 +18,26 @@
  * POSTs in some flows) but cannot read it to populate the header,
  * so the backend's CsrfMiddleware rejects the request with 403.
  *
- * SSE behavior is unchanged from the caller's perspective — they still
- * call ``buildSSEUrl(path, params)`` — but the URL no longer carries
- * ``?api_key=`` because the browser auto-attaches the session cookie.
+ * SSE / WebSocket / ``<audio>`` callers do not call this module: the
+ * session cookie is auto-attached by the browser for same-origin
+ * requests (EventSource, WebSocket upgrade, ``audio.src``), so they
+ * only need to drop ``?api_key=`` from their URLs.
  *
- * Backwards-compat with localStorage (transition only)
- * ----------------------------------------------------
+ * What this module deliberately does NOT do
+ * -----------------------------------------
  *
- * ``getApiKey()`` / ``setApiKey()`` / ``clearApiKey()`` remain exported
- * so the Setup Wizard and SettingsGeneral can read/write the legacy
- * key (still needed: it's the value the user types in the AuthGate
- * modal — we POST it to ``/api/auth/login`` and the backend hands us a
- * session cookie back). Once Phase-2 lands across the codebase those
- * helpers can become DB-only (no localStorage).
+ * No ``getApiKey()`` / ``setApiKey()`` / ``localStorage`` mirror. The
+ * SPA used to keep ``JARVIS_API_KEY`` in localStorage and send it as a
+ * Bearer header on every request — that path was removed because an
+ * XSS could exfiltrate ``localStorage`` and lift the credential,
+ * defeating the whole point of the httpOnly cookie. Machine-to-machine
+ * callers (Xiaozhi voice device, scripts) still use Bearer against the
+ * same endpoints; only the SPA is cookie-only.
  */
 
 const API_BASE = '' // Vite proxy handles /api → backend
 
-// ─── Auto-initialize API key from Vite env (dev convenience) ───
-// Guarded against test runs (node:test has no import.meta.env) and any
-// future SSR context where ``localStorage`` is unavailable.
-const ENV_KEY =
-  (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_JARVIS_API_KEY) || ''
-if (
-  ENV_KEY &&
-  typeof localStorage !== 'undefined' &&
-  !localStorage.getItem('jarvis_api_key')
-) {
-  localStorage.setItem('jarvis_api_key', ENV_KEY)
-}
-
 const CSRF_COOKIE_NAME = 'jarvis_csrf'
-
-export function getApiKey() {
-  return localStorage.getItem('jarvis_api_key') || ''
-}
-
-export function setApiKey(key) {
-  localStorage.setItem('jarvis_api_key', key)
-}
-
-export function clearApiKey() {
-  localStorage.removeItem('jarvis_api_key')
-}
 
 /** Read the CSRF cookie set by ``POST /api/auth/login``. Empty string
  *  if the cookie is absent (i.e. user not logged in yet). */
@@ -119,37 +97,29 @@ const _MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
  *
  * @param {string} path
  * @param {RequestInit & {
- *   skipAuth?: boolean,        // suppress the legacy Bearer fallback
+ *   skipAuth?: boolean,        // accepted for backwards compat with
+ *                              //   callers that used to suppress the
+ *                              //   legacy Bearer fallback. The Bearer
+ *                              //   path is gone now; this flag is a
+ *                              //   no-op kept to avoid churning every
+ *                              //   call site in the same PR.
  *   skipSetupRedirect?: boolean,
  *   skipUnauthorizedHandler?: boolean,  // probe / login should not loop
  * }} options
  */
 export async function apiFetch(path, options = {}) {
   const {
-    skipAuth,
+    skipAuth: _skipAuthUnused,
     skipSetupRedirect,
     skipUnauthorizedHandler,
     ...fetchOptions
   } = options
 
   const method = (fetchOptions.method || 'GET').toUpperCase()
-  const apiKey = getApiKey()
   const isFormData = fetchOptions.body instanceof FormData
 
   const headers = {
     ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
-    // Legacy Bearer fallback: programmatic clients (Xiaozhi, scripts)
-    // still rely on it; the dashboard sends both header and cookie
-    // during the transition so a half-deployed mix-and-match works.
-    //
-    // FOLLOW-UP (tracking issue: drop the localStorage key entirely):
-    // sending Bearer here means the API key remains exfiltrate-able
-    // via XSS — partially defeating the cookie-auth XSS mitigation.
-    // Once we've verified no first-party caller depends on the
-    // legacy path (Setup Wizard reads it from localStorage; needs to
-    // be re-plumbed to receive the key through a one-shot route),
-    // delete this branch and the localStorage helpers.
-    ...(!skipAuth && apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
     ...fetchOptions.headers,
   }
   if (isFormData) delete headers['Content-Type']
