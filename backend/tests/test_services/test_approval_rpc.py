@@ -41,11 +41,34 @@ def _isolate_db(mcp_db_isolation):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_pause_state():
+    """PauseController is a module-level singleton — clear its in-memory
+    state between tests so a pause from test A doesn't leak into test B.
+    The DB-side ``agent_pause_state`` is handled by mcp_db_isolation's
+    SAVEPOINT, but the controller's dicts/sets are not transactional.
+    """
+    from services.pause_controller import pause_controller
+    # Snapshot what was there before (defensive — should be empty).
+    snap_paused = set(pause_controller._paused_agents)
+    snap_state = dict(pause_controller._agent_state)
+    snap_active = dict(pause_controller._active)
+    yield
+    # Reset to pre-test state.
+    pause_controller._paused_agents = snap_paused
+    pause_controller._agent_state = snap_state
+    pause_controller._active = snap_active
+    pause_controller._current_tasks.clear()
+    pause_controller._events.clear()
+
+
+@pytest.fixture
 def _stub_pause_manager(monkeypatch):
-    """``create_approval`` calls ``pause_manager.pause(agent)`` which
-    looks up the live FastAgent app to send a control event. In unit
-    tests there's no app — stub the pause/resume methods to no-ops so
-    we can exercise the approval lifecycle in isolation.
+    """OPT-IN no-op for pause/resume. Used by tests that only exercise
+    the wait/resolve pub-sub path and don't care whether the agent is
+    actually marked paused. Happy-path tests deliberately DO NOT use
+    this fixture — they need to verify pause_controller actually
+    updates ``_paused_agents`` so a regression like the LLM team_name
+    mismatch bug surfaces at test time, not user time.
     """
     from services import pause_manager as pm
     monkeypatch.setattr(pm.pause_manager, "pause", lambda *a, **k: True)
@@ -287,3 +310,362 @@ async def test_uds_wait_unknown_id_returns_error_envelope(
     result = wait_r["v"]
     assert result.get("status") == 404
     assert "not found" in result.get("error", "")
+
+
+# ─── Fail-loud team_name validation ────────────────────────────────
+
+
+@pytest.fixture
+def _seed_spawn_records():
+    """Insert real spawn_records rows into the test DB. Rolled back by
+    the surrounding mcp_db_isolation SAVEPOINT so rows don't leak.
+    Uses the same SessionLocal as approval_service so team-resolution
+    queries hit these inserts directly — no SQLAlchemy mocking gymnastics.
+    """
+    from core.database import SessionLocal, SpawnRecordModel
+    import time as _time
+    import uuid as _uuid
+
+    inserted_run_ids: list[str] = []
+
+    def _add(agent_name: str, team_name: str | None = None, status: str = "running"):
+        run_id = _uuid.uuid4().hex[:8]
+        db = SessionLocal()
+        try:
+            db.add(SpawnRecordModel(
+                run_id=run_id,
+                agent_name=agent_name,
+                team_name=team_name,
+                status=status,
+                started_at=_time.time(),
+            ))
+            db.commit()
+            inserted_run_ids.append(run_id)
+        finally:
+            db.close()
+
+    yield _add
+
+    # Defensive cleanup (savepoint should handle, but pin it anyway).
+    db = SessionLocal()
+    try:
+        if inserted_run_ids:
+            db.query(SpawnRecordModel).filter(
+                SpawnRecordModel.run_id.in_(inserted_run_ids)
+            ).delete(synchronize_session=False)
+            db.commit()
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_create_rejects_when_supplied_team_name_disagrees_with_spawn_record(
+    _seed_spawn_records,
+):
+    """Fail loud when LLM passes a team_name that doesn't match the
+    agent's actual team in spawn_records. Prevents the bug where
+    LLM-supplied workspace basename was paused as a fake agent and
+    the real PM kept running.
+    """
+    _seed_spawn_records("Wren [PM]", team_name="tool-audit-approval-team")
+
+    with pytest.raises(ValueError, match="does not match agent.*actual team"):
+        approval_service.create_approval({
+            "agent_name": "Wren [PM]",
+            "team_name": "agile-team_9b4ec26b",   # workspace basename, NOT real team
+            "title": "x",
+            "content": "y",
+        })
+
+
+@pytest.mark.asyncio
+async def test_create_accepts_when_team_name_matches(
+    _seed_spawn_records,
+):
+    """Happy path — LLM supplies the correct team_name, request goes
+    through and the authoritative pause list includes both members.
+    """
+    _seed_spawn_records("Wren [PM]", team_name="tool-audit-approval-team")
+    _seed_spawn_records("Rowan [Dev]", team_name="tool-audit-approval-team")
+
+    result = approval_service.create_approval({
+        "agent_name": "Wren [PM]",
+        "team_name": "tool-audit-approval-team",
+        "title": "x",
+        "content": "y",
+    })
+
+    assert result["team_name"] == "tool-audit-approval-team"
+    assert set(result["paused_agents"]) == {"Wren [PM]", "Rowan [Dev]"}
+
+
+@pytest.mark.asyncio
+async def test_create_ignores_omitted_team_name_for_team_agent(
+    _seed_spawn_records,
+):
+    """When LLM omits team_name entirely, the service still resolves
+    the team from spawn_records — no fallback to solo. Otherwise an
+    LLM that forgets the parameter would silently demote a team
+    approval to a single-agent pause.
+    """
+    _seed_spawn_records("Wren [PM]", team_name="tool-audit-approval-team")
+    _seed_spawn_records("Rowan [Dev]", team_name="tool-audit-approval-team")
+
+    result = approval_service.create_approval({
+        "agent_name": "Wren [PM]",
+        "title": "x",
+        "content": "y",
+    })
+
+    assert result["team_name"] == "tool-audit-approval-team"
+    assert set(result["paused_agents"]) == {"Wren [PM]", "Rowan [Dev]"}
+
+
+@pytest.mark.asyncio
+async def test_create_solo_agent_no_spawn_record(
+    _seed_spawn_records,
+):
+    """In-process Jarvis (no spawn_record) — solo pause is correct,
+    not a fallback. Verified separately to pin the legitimate solo
+    branch against the fail-loud branch above.
+    """
+    # No rows added — agent has no spawn_record.
+
+    result = approval_service.create_approval({
+        "agent_name": "Jarvis",
+        "title": "x",
+        "content": "y",
+    })
+
+    assert result["team_name"] is None
+    assert result["paused_agents"] == ["Jarvis"]
+
+
+# ─── HAPPY PATH e2e: approval → team pause → resolve → team resume ──
+
+
+@pytest.mark.asyncio
+async def test_approval_lifecycle_team_pauses_then_resumes_all_members(
+    _seed_spawn_records,
+):
+    """HP-2a + HP-2b end-to-end: PM requests approval → ALL team members
+    paused (verified via real pause_controller state). Resolve approval
+    → ALL members resumed.
+
+    This is the exact flow that shipped broken: approval_service was
+    forwarding LLM-supplied team_name as scope to pause_controller, so
+    when the LLM passed the workspace basename (≠ real team_name), the
+    expansion failed and pause was a no-op. Without an end-to-end test
+    on this path the regression was invisible.
+    """
+    from services.pause_controller import pause_controller
+
+    _seed_spawn_records("Wren [PM]",   team_name="tool-audit-approval-team")
+    _seed_spawn_records("Rowan [Dev]", team_name="tool-audit-approval-team")
+    _seed_spawn_records("Sky [QE]",    team_name="tool-audit-approval-team")
+
+    result = approval_service.create_approval({
+        "agent_name": "Wren [PM]",
+        "team_name": "tool-audit-approval-team",
+        "title": "Deploy plan",
+        "content": "Review please",
+    })
+
+    # ALL team members must actually be paused (not just stored as
+    # paused_agents in the DB row).
+    for member in ("Wren [PM]", "Rowan [Dev]", "Sky [QE]"):
+        assert pause_controller.is_paused(member), \
+            f"{member} should be paused after approval creation"
+
+    # Resolve → ALL members must unpause.
+    approval_service.resolve_approval(result["id"], "approve", "looks good")
+
+    for member in ("Wren [PM]", "Rowan [Dev]", "Sky [QE]"):
+        assert not pause_controller.is_paused(member), \
+            f"{member} should be resumed after approval approve"
+
+
+@pytest.mark.asyncio
+async def test_approval_lifecycle_solo_agent_pauses_then_resumes(
+    _seed_spawn_records,
+):
+    """HP for solo agent: in-process Jarvis (no spawn_record) requests
+    approval → only Jarvis paused → resolve → Jarvis resumed.
+    """
+    from services.pause_controller import pause_controller
+
+    # No spawn_record for Jarvis (in-process).
+
+    result = approval_service.create_approval({
+        "agent_name": "Jarvis",
+        "title": "Solo plan",
+        "content": "OK?",
+    })
+
+    assert pause_controller.is_paused("Jarvis")
+    assert result["paused_agents"] == ["Jarvis"]
+
+    approval_service.resolve_approval(result["id"], "reject")
+    assert not pause_controller.is_paused("Jarvis")
+
+
+@pytest.mark.asyncio
+async def test_approval_lifecycle_omitted_team_name_still_pauses_team(
+    _seed_spawn_records,
+):
+    """HP-2b: LLM forgets to pass team_name. The service must still
+    resolve the team from the requester's spawn_record and pause the
+    whole team — not silently demote to solo pause.
+
+    Regression-pin for the failure mode where an LLM omitting a
+    parameter would cause a team approval to behave like a solo one.
+    """
+    from services.pause_controller import pause_controller
+
+    _seed_spawn_records("Wren [PM]",   team_name="tool-audit-approval-team")
+    _seed_spawn_records("Rowan [Dev]", team_name="tool-audit-approval-team")
+
+    result = approval_service.create_approval({
+        "agent_name": "Wren [PM]",
+        # team_name OMITTED — but spawn_records knows the truth
+        "title": "Plan",
+        "content": "OK?",
+    })
+
+    assert pause_controller.is_paused("Wren [PM]")
+    assert pause_controller.is_paused("Rowan [Dev]"), \
+        "omitting team_name must NOT demote a team approval to solo"
+    assert result["team_name"] == "tool-audit-approval-team"
+
+
+@pytest.mark.asyncio
+async def test_approval_lifecycle_rejects_bogus_team_name(
+    _seed_spawn_records,
+):
+    """HP-2 fail-loud: LLM passes a team_name that doesn't match the
+    requester's spawn_record. Must raise ValueError so the MCP tool
+    surfaces the error to the LLM. No silent fallback that pauses
+    something arbitrary.
+    """
+    from services.pause_controller import pause_controller
+
+    _seed_spawn_records("Wren [PM]", team_name="tool-audit-approval-team")
+
+    with pytest.raises(ValueError, match="does not match"):
+        approval_service.create_approval({
+            "agent_name": "Wren [PM]",
+            "team_name": "agile-team_garbage_session_id",  # LLM made this up
+            "title": "x",
+            "content": "y",
+        })
+
+    # CRITICAL: nothing should be paused on a rejected call. Pre-bug
+    # behavior left a phantom pause row for the bogus team_name.
+    assert not pause_controller.is_paused("Wren [PM]")
+    assert not pause_controller.is_paused("agile-team_garbage_session_id")
+
+
+# ─── HP: Manual resume guard while approval pending ───────────────
+
+
+@pytest.mark.asyncio
+async def test_manual_resume_blocked_while_approval_pending(
+    _seed_spawn_records,
+):
+    """User clicks Resume on a team member while approval is pending →
+    ``pause_controller.resume`` must raise ``PauseProtected``. Without
+    this guard the controller would unpause the team while the
+    approval is still pending and the subprocess is still blocked on
+    ``approval.wait`` → state mismatch (controller=running, approval=
+    pending, subprocess=blocked).
+    """
+    from services.pause_controller import pause_controller, PauseProtected
+
+    _seed_spawn_records("Wren [PM]",   team_name="tool-audit-approval-team")
+    _seed_spawn_records("Rowan [Dev]", team_name="tool-audit-approval-team")
+
+    approval_service.create_approval({
+        "agent_name": "Wren [PM]",
+        "team_name": "tool-audit-approval-team",
+        "title": "Plan",
+        "content": "Review",
+    })
+
+    # Both members are paused. User tries to resume Wren manually.
+    with pytest.raises(PauseProtected) as exc_info:
+        pause_controller.resume("Wren [PM]")
+
+    assert exc_info.value.agent_name == "Wren [PM]"
+    assert exc_info.value.approval_id  # populated for UI deep-link
+
+    # Nothing got resumed (whole-call atomicity — not "Rowan resumed
+    # but Wren refused").
+    assert pause_controller.is_paused("Wren [PM]")
+    assert pause_controller.is_paused("Rowan [Dev]")
+
+
+@pytest.mark.asyncio
+async def test_resume_unblocks_after_approval_resolves(
+    _seed_spawn_records,
+):
+    """Happy path: approval is rejected/approved → resume cascade runs
+    → user can then resume manually (no-op since cascade did it, but
+    must not raise PauseProtected).
+    """
+    from services.pause_controller import pause_controller
+
+    _seed_spawn_records("Wren [PM]", team_name="tool-audit-approval-team")
+
+    result = approval_service.create_approval({
+        "agent_name": "Wren [PM]",
+        "team_name": "tool-audit-approval-team",
+        "title": "Plan",
+        "content": "Review",
+    })
+
+    approval_service.resolve_approval(result["id"], "reject")
+
+    # No pending approval now → guard must not fire.
+    pause_controller.resume("Wren [PM]")  # idempotent no-op, must not raise
+    assert not pause_controller.is_paused("Wren [PM]")
+
+
+@pytest.mark.asyncio
+async def test_multi_approval_one_resolved_still_blocks_resume(
+    _seed_spawn_records,
+):
+    """Edge case: TWO concurrent pending approvals reference Wren.
+    Resolving the first must NOT unpause Wren (the second still holds
+    the lock). And user attempting manual resume must still see
+    PauseProtected pointing at the second approval.
+    """
+    from services.pause_controller import pause_controller, PauseProtected
+
+    _seed_spawn_records("Wren [PM]", team_name="team-x")
+
+    a1 = approval_service.create_approval({
+        "agent_name": "Wren [PM]",
+        "team_name": "team-x",
+        "title": "First",
+        "content": "...",
+    })
+    a2 = approval_service.create_approval({
+        "agent_name": "Wren [PM]",
+        "team_name": "team-x",
+        "title": "Second",
+        "content": "...",
+    })
+
+    # Approving the first must NOT unpause Wren — second still holds it.
+    approval_service.resolve_approval(a1["id"], "approve")
+    assert pause_controller.is_paused("Wren [PM]"), \
+        "agent held by another pending approval must stay paused"
+
+    with pytest.raises(PauseProtected) as exc_info:
+        pause_controller.resume("Wren [PM]")
+    assert exc_info.value.approval_id == a2["id"], \
+        "guard must point at the SECOND approval that's still pending"
+
+    # Resolving the second finally releases.
+    approval_service.resolve_approval(a2["id"], "approve")
+    assert not pause_controller.is_paused("Wren [PM]")

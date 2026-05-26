@@ -377,3 +377,134 @@ class TestSpawnProgressBridge:
         assert record["agent_name"] == "Dev"
 
 
+
+
+# ─── HP-4 e2e: late-joiner auto-paused into a paused team ──────────
+
+
+class TestLateJoinerHook:
+    """End-to-end happy-path: when a team is paused and a new member's
+    ``lifecycle_spawn_registered`` event arrives at SpawnProgressBridge,
+    the new member must be auto-paused before its first checkpoint.
+
+    These tests exercise the REAL pause_controller (not mocked) so a
+    regression like "late-joiner check uses wrong API and silently
+    swallows" would surface here.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _isolate_pause_state(self):
+        from services.pause_controller import pause_controller
+        snap_paused = set(pause_controller._paused_agents)
+        snap_state = dict(pause_controller._agent_state)
+        yield
+        pause_controller._paused_agents = snap_paused
+        pause_controller._agent_state = snap_state
+        pause_controller._active.clear()
+        pause_controller._current_tasks.clear()
+        pause_controller._events.clear()
+
+    @pytest.fixture(autouse=True)
+    def _silence_sse(self, monkeypatch):
+        import services.activity_stream as act
+        monkeypatch.setattr(act, "activity_stream_manager",
+                            MagicMock(broadcast=MagicMock()))
+
+    def _make_bridge_with_fake_registry(self, team_members):
+        """Wire SpawnProgressBridge to a fake registry whose
+        find_by_team_name + find_by_name return the seeded members.
+
+        ``team_members``: list of dicts with agent_name/team_name/pid/status.
+        """
+        registry = MagicMock()
+        registry.find_by_team_name.side_effect = lambda tn: [
+            m for m in team_members if m["team_name"] == tn
+        ]
+        registry.find_by_name.side_effect = lambda an: [
+            m for m in team_members if m["agent_name"] == an
+        ]
+        registry.get_record.return_value = {}
+        registry.upsert_record = MagicMock()
+        # _resolve_scope in pause_controller calls
+        # services.shared_state.registry_db — point that at our fake.
+        import services.shared_state as st
+        original = st.registry_db
+        st.registry_db = registry
+        bridge = SpawnProgressBridge(MagicMock(), registry_db=registry)
+        return bridge, registry, original
+
+    def test_late_joiner_paused_when_team_already_paused(self, monkeypatch):
+        """The happy-path: existing team is paused (e.g. via an
+        approval). A new member spawns into that team. Bridge auto-pauses
+        them on the spawn-registration event.
+        """
+        from services.pause_controller import pause_controller
+
+        members = [
+            {"agent_name": "Wren [PM]",  "team_name": "tool-audit", "status": "paused", "pid": None},
+            {"agent_name": "Rowan [Dev]", "team_name": "tool-audit", "status": "paused", "pid": None},
+            # New joiner appears in registry only after the event handler runs;
+            # but the bridge's call to is_team_paused goes through the live set.
+        ]
+        bridge, _registry, original_st = self._make_bridge_with_fake_registry(members)
+        try:
+            # Establish the "paused team" precondition by pausing one
+            # member through the real controller.
+            pause_controller.pause("Wren [PM]")
+            assert pause_controller.is_team_paused("tool-audit")
+
+            # Simulate spawn event for the new joiner. lifecycle_spawn_registered
+            # is one of the trigger events for late-joiner check.
+            event = {
+                "agent_name": "Sky [QE]",
+                "event_type": "lifecycle_spawn_registered",
+                "run_id": "run-late",
+                "data": {
+                    "team_name": "tool-audit",
+                    "lifecycle": "resumable",
+                    "status": "starting",
+                },
+                "timestamp": time.time(),
+            }
+            bridge.process_event(json.dumps(event))
+
+            assert pause_controller.is_paused("Sky [QE]"), (
+                "late joiner must be auto-paused when joining a paused team — "
+                "otherwise it runs free for one full turn before the next checkpoint"
+            )
+        finally:
+            import services.shared_state as st
+            st.registry_db = original_st
+
+    def test_late_joiner_NOT_paused_when_team_running(self, monkeypatch):
+        """Counterpoint: if the team is NOT paused, the late-joiner
+        hook must be a no-op. Otherwise every spawn would erroneously
+        register a pause.
+        """
+        from services.pause_controller import pause_controller
+
+        members = [
+            {"agent_name": "Wren [PM]",  "team_name": "tool-audit", "status": "running", "pid": None},
+        ]
+        bridge, _registry, original_st = self._make_bridge_with_fake_registry(members)
+        try:
+            assert not pause_controller.is_team_paused("tool-audit")
+
+            event = {
+                "agent_name": "Sky [QE]",
+                "event_type": "lifecycle_spawn_registered",
+                "run_id": "run-fresh",
+                "data": {
+                    "team_name": "tool-audit",
+                    "lifecycle": "resumable",
+                    "status": "starting",
+                },
+                "timestamp": time.time(),
+            }
+            bridge.process_event(json.dumps(event))
+
+            assert not pause_controller.is_paused("Sky [QE]"), \
+                "running team must not auto-pause new joiners"
+        finally:
+            import services.shared_state as st
+            st.registry_db = original_st

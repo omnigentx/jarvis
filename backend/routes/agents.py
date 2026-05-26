@@ -1294,13 +1294,32 @@ async def pause_agent(agent_name: str):
 @router.post("/{agent_name}/resume", dependencies=[Depends(verify_api_key)])
 async def resume_agent(agent_name: str):
     """Resume a paused agent.
-    
+
     For in-process agents: sets asyncio.Event.
     For subprocess agents: sends SIGUSR2 to the process.
-    """
-    from services.pause_manager import pause_manager
 
-    changed = pause_manager.resume(agent_name)
+    Returns 409 Conflict when the agent (or any team member, if scope
+    expands to a team) is paused by a pending approval. The user must
+    resolve the approval before manual resume — silently bypassing it
+    would create a state mismatch (controller says running, approval
+    pending, subprocess still blocked on approval.wait RPC). The
+    response body carries ``approval_id`` so the dashboard can
+    deep-link to the offending approval.
+    """
+    from services.pause_controller import pause_controller, PauseProtected
+
+    try:
+        changed = pause_controller.resume(agent_name)
+    except PauseProtected as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "approval_pause_lock",
+                "agent": exc.agent_name,
+                "approval_id": exc.approval_id,
+                "message": str(exc),
+            },
+        )
     if not changed:
         return {"status": "not_paused", "agent": agent_name}
     return {"status": "resumed", "agent": agent_name}

@@ -84,36 +84,72 @@ class ApprovalService:
         approval_id = str(uuid.uuid4())
         now = time.time()
 
-        # Build pause list — auto-detect from team if possible
-        pause_agents = []
-        team_name = data.get("team_name")
+        # Resolve team membership AUTHORITATIVELY from ``spawn_records``.
+        # ``team_name`` arrives from the MCP tool as a free-text LLM
+        # parameter — the LLM frequently picks the workspace basename
+        # (``agile-team_<session>``) instead of the logical team_name
+        # (``tool-audit-approval-team``). We do not trust it. Instead
+        # we look up the requesting agent's real ``team_name`` from its
+        # spawn_records row (single source of truth), then list every
+        # team member from that. The LLM-supplied value is ignored
+        # — and if it disagrees with the truth, we fail loud so the
+        # operator can fix the prompt that's confusing the model.
+        agent_name = data["agent_name"]
+        llm_team_name = data.get("team_name")
+
+        from core.database import SpawnRecordModel
+        team_name: str | None = None
+        _db = SessionLocal()
+        try:
+            requester_row = _db.query(SpawnRecordModel.team_name).filter(
+                SpawnRecordModel.agent_name == agent_name,
+            ).first()
+            if requester_row:
+                team_name = requester_row[0]  # may be None for solo spawns
+        finally:
+            _db.close()
+
+        if llm_team_name and llm_team_name != team_name:
+            # Fail loud: refuse rather than silently substituting. The
+            # LLM is passing wrong context — the symptom is the wrong
+            # team gets paused (or none at all). Surface to the LLM via
+            # the MCP tool's error path so the prompt designer notices.
+            raise ValueError(
+                f"approval.create rejected: supplied team_name={llm_team_name!r} "
+                f"does not match agent {agent_name!r}'s actual team={team_name!r}. "
+                f"Pass team_name from your spawn config or omit it."
+            )
+
         if team_name:
-            # Query spawn_records for all running agents in this team
+            # Real team — list every running/idle member.
+            _db = SessionLocal()
             try:
-                from core.database import SpawnRecordModel
-                _db = SessionLocal()
-                try:
-                    team_members = _db.query(SpawnRecordModel.agent_name).filter(
-                        SpawnRecordModel.team_name == team_name,
-                        SpawnRecordModel.status.in_(["running", "idle"]),
-                    ).all()
-                    pause_agents = list(set(m[0] for m in team_members))
-                    logger.info("[APPROVAL] Auto-detected %d team members to pause for team '%s': %s",
-                                len(pause_agents), team_name, pause_agents)
-                finally:
-                    _db.close()
-            except Exception as e:
-                logger.warning("[APPROVAL] Failed to auto-detect team members: %s", e)
-        if not pause_agents:
-            # Fallback: pause just the requesting agent
-            pause_agents = [data["agent_name"]]
+                team_members = _db.query(SpawnRecordModel.agent_name).filter(
+                    SpawnRecordModel.team_name == team_name,
+                    SpawnRecordModel.status.in_(["running", "idle"]),
+                ).all()
+                pause_agents = list(set(m[0] for m in team_members))
+                # Defensive: requester must be in the list. If their row
+                # status isn't running/idle (race with completion) the
+                # query misses them — add explicitly so we don't ship an
+                # approval whose owner isn't paused.
+                if agent_name not in pause_agents:
+                    pause_agents.append(agent_name)
+                logger.info("[APPROVAL] Team %r → pausing %d members: %s",
+                            team_name, len(pause_agents), pause_agents)
+            finally:
+                _db.close()
+        else:
+            # Solo agent (in-process Jarvis or ad-hoc spawn with no team).
+            pause_agents = [agent_name]
+            logger.info("[APPROVAL] Solo agent %r → pausing self only", agent_name)
 
         db = SessionLocal()
         try:
             record = ApprovalRequestModel(
                 id=approval_id,
                 agent_name=data["agent_name"],
-                team_name=data.get("team_name"),
+                team_name=team_name,  # authoritative (from spawn_records), not LLM-supplied
                 run_id=data.get("run_id", ""),
                 conversation_id=data.get("conversation_id"),
                 approval_type=data.get("approval_type", "custom"),
@@ -138,17 +174,27 @@ class ApprovalService:
         finally:
             db.close()
 
-        # Pause via PauseController. When ``team_name`` is set we pass it
-        # as the scope so the controller's ``_resolve_scope`` expands to
-        # the live team membership at this moment (handles new joiners
-        # between the pre-compute above and now). When there's no team,
-        # the requesting agent is a solo pause.
-        scope = team_name or data["agent_name"]
-        scope_changed = pause_controller.pause(scope)
-        paused_count = sum(1 for a in pause_agents if pause_controller.is_paused(a))
-        if scope_changed:
-            logger.info("[APPROVAL] Paused scope %r for approval %s (%d agents now paused)",
-                        scope, approval_id, paused_count)
+        # Pause via PauseController. We iterate the AUTHORITATIVE
+        # ``pause_agents`` list (pre-computed above from spawn_records)
+        # rather than passing the LLM-supplied ``team_name`` as scope.
+        #
+        # Why: the MCP tool accepts ``team_name`` as a free-text param
+        # filled by the LLM. The LLM frequently picks the workspace
+        # basename (``agile-team_<session>``) instead of the real logical
+        # team_name (e.g. ``tool-audit-approval-team``). Passing that
+        # bogus value as scope to ``pause_controller.pause`` triggers
+        # the "solo agent" fallback in ``_resolve_scope`` — it would
+        # pause a non-existent agent named ``agile-team_<session>`` and
+        # leave the actual PM/members untouched. ``pause_agents`` was
+        # computed by querying ``spawn_records.team_name`` directly, so
+        # it reflects ground truth regardless of what the LLM thought.
+        paused_count = 0
+        for agent_name in pause_agents:
+            if pause_controller.pause(agent_name):
+                paused_count += 1
+        if paused_count:
+            logger.info("[APPROVAL] Paused %d agent(s) for approval %s: %s",
+                        paused_count, approval_id, pause_agents)
 
         logger.info(
             "[APPROVAL] Created %s — type=%s agent=%s urgency=%s paused=%d agents",
@@ -206,14 +252,31 @@ class ApprovalService:
         finally:
             db.close()
 
-        # Resume via PauseController scope. Mirror of create path.
-        scope = result.get("team_name") or result["agent_name"]
-        before_paused = {a for a in paused_agents if pause_controller.is_paused(a)}
-        pause_controller.resume(scope)
-        resumed_count = sum(1 for a in before_paused if not pause_controller.is_paused(a))
+        # Resume via PauseController — iterate the authoritative
+        # ``paused_agents`` list stored on the approval row. This
+        # approval was already flipped to ``approved/rejected`` above
+        # so its row no longer counts toward ``_pending_approval_for``.
+        #
+        # Multi-approval correctness: an agent may also be held by a
+        # DIFFERENT still-pending approval (e.g. two parallel team
+        # workflows). In that case ``pause_controller.resume`` raises
+        # ``PauseProtected`` — we catch and skip silently so this
+        # cascade doesn't undo the other approval's hold. The agent
+        # will resume when the LAST holding approval resolves.
+        from services.pause_controller import PauseProtected
+        resumed_count = 0
+        for agent_name in paused_agents:
+            try:
+                if pause_controller.resume(agent_name):
+                    resumed_count += 1
+            except PauseProtected as exc:
+                logger.info(
+                    "[APPROVAL] %s still held by approval %s — keeping paused",
+                    agent_name, exc.approval_id,
+                )
         if resumed_count:
-            logger.info("[APPROVAL] Resumed scope %r after %s (%d agents resumed)",
-                        scope, decision, resumed_count)
+            logger.info("[APPROVAL] Resumed %d agent(s) after %s: %s",
+                        resumed_count, decision, paused_agents)
 
         logger.info(
             "[APPROVAL] Resolved %s — decision=%s resumed=%d agents",
