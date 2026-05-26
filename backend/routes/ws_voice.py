@@ -52,7 +52,48 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from core.session import SESSION_COOKIE_NAME, SessionVerifyError, verify_session_token
 from services import shared_state as state
+
+
+def _ws_authenticated(ws: WebSocket, expected_api_key: str) -> bool:
+    """Three-way auth for the voice WebSocket.
+
+    Cookie path is new (added with the cookie-only SPA migration). The
+    Bearer + ``?api_key=`` paths stay so the Xiaozhi voice device and
+    any CLI scripts that drive this endpoint don't break.
+
+    Returns True on first credential that verifies. Logs the path that
+    won for debugging; logging "auth ok" without the path made the
+    cookie/Bearer/query divergence diagnosable only via tcpdump.
+    """
+    # 1) Session cookie (the SPA's primary path).
+    raw_session = ws.cookies.get(SESSION_COOKIE_NAME)
+    if raw_session:
+        try:
+            verify_session_token(raw_session)
+            logger.debug("[WS-AUTH] accepted via session cookie")
+            return True
+        except SessionVerifyError as exc:
+            # Cookie present but invalid (expired, key rotated, tampered).
+            # Don't short-circuit — caller may have a legacy Bearer too.
+            logger.debug("[WS-AUTH] session cookie rejected: %s", exc.reason)
+
+    # 2) Authorization: Bearer header (programmatic clients).
+    auth_header = ws.headers.get("authorization", "")
+    if auth_header.lower().startswith("bearer "):
+        token = auth_header.split(" ", 1)[1].strip()
+        if token == expected_api_key:
+            logger.debug("[WS-AUTH] accepted via Bearer header")
+            return True
+
+    # 3) ?api_key= query param (legacy — Xiaozhi device).
+    token = ws.query_params.get("api_key", "")
+    if token and token == expected_api_key:
+        logger.debug("[WS-AUTH] accepted via ?api_key= query")
+        return True
+
+    return False
 from services.sse_progress import (
     create_progress_hooks,
     merge_hooks,
@@ -147,11 +188,17 @@ async def voice_ws(ws: WebSocket) -> None:
     await ws.accept()
 
     # Soft auth: skip in dev (no JARVIS_API_KEY), enforce when set.
+    # WebSockets cannot set custom headers from the browser, so we accept
+    # three credentials in order — same precedence as ``verify_api_key``:
+    #   1. ``jarvis_session`` cookie (preferred — browser auto-attaches it
+    #      during the upgrade handshake; works for cookie-only SPA login).
+    #   2. ``Authorization: Bearer ...`` header (programmatic clients).
+    #   3. ``?api_key=...`` query param (legacy — Xiaozhi device + scripts
+    #      that can't set headers).
     import os
     expected = os.environ.get("JARVIS_API_KEY")
     if expected:
-        token = ws.query_params.get("api_key")
-        if token != expected:
+        if not _ws_authenticated(ws, expected):
             await ws.close(code=4401)
             return
 
