@@ -1,0 +1,73 @@
+# Passkey sign-in flow.
+#
+# Sequence we exercise:
+#   1. Boot probe /whoami → false (locked out).
+#   2. AuthGate mounts, probes /passkey/has-any → true.
+#   3. User clicks "Sign in with passkey" → frontend POSTs /authenticate/begin.
+#   4. Frontend feeds optionsJSON to navigator.credentials.get() which the
+#      Playwright virtual authenticator signs automatically.
+#   5. Frontend POSTs /authenticate/finish, mocked here to succeed.
+#   6. Auth store sets AUTHENTICATED via _setAuthenticated(csrf, expires),
+#      modal disappears.
+#
+# We deliberately keep /whoami=false throughout — the auth store flips to
+# authenticated off the finish response body, NOT off a subsequent whoami
+# round-trip. (Same shape as the API-key login fixture.)
+
+backend_source:
+  - "backend/routes/auth.py::passkey_has_any"
+  - "backend/routes/auth.py::passkey_authenticate_begin"
+  - "backend/routes/auth.py::passkey_authenticate_finish"
+  - "dashboard/src/services/passkey.js::authenticateWithPasskey"
+  - "dashboard/src/components/AuthGate.vue::handlePasskey"
+
+responses:
+  "GET /api/auth/whoami":
+    status: 200
+    json: { authenticated: false }
+
+  "GET /api/auth/passkey/has-any":
+    status: 200
+    json: { has_passkey: true }
+
+  # Minimum valid PublicKeyCredentialRequestOptions per WebAuthn spec.
+  # challenge is base64url-encoded 32 bytes (any well-formed value works
+  # because the virtual authenticator signs it without verification).
+  "POST /api/auth/passkey/authenticate/begin":
+    status: 200
+    json:
+      ceremony_id: "e2e-auth-ceremony-1"
+      options:
+        challenge: "Y2hhbGxlbmdlLWZvci1lMmUtcGFzc2tleS1hdXRo"
+        rpId: "localhost"
+        timeout: 60000
+        userVerification: "preferred"
+
+  "POST /api/auth/passkey/authenticate/finish":
+    status: 200
+    headers:
+      set-cookie: "jarvis_csrf=passkey-csrf-xyz; Path=/; SameSite=Lax"
+    json:
+      status: "ok"
+      csrf_token: "passkey-csrf-xyz"
+      expires_in: 3600
+
+  "GET /api/setup/status":
+    status: 200
+    json:
+      steps:
+        - { name: "auth",        completed: true, skipped: false }
+        - { name: "llm",         completed: true, skipped: false }
+        - { name: "services",    completed: true, skipped: false }
+        - { name: "yaml_config", completed: true, skipped: false }
+        - { name: "verify",      completed: true, skipped: false }
+      overall_complete: true
+      current_step: "verify"
+
+sse_streams:
+  "/api/agents/activity-stream":
+    - { event: "ping", data: {} }
+  "/api/scheduler/stream":
+    - { event: "ping", data: {} }
+  "/api/mcp/events/stream":
+    - { event: "ping", data: {} }

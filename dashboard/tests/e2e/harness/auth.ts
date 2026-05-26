@@ -1,38 +1,31 @@
 /**
- * Seed the X-API-Key into localStorage before the app loads.
+ * Auth helpers for E2E.
  *
- * The dashboard reads `localStorage.jarvis_api_key` synchronously in api.js,
- * so we must inject it via addInitScript (runs before any page script).
+ * Post-cookie-only-migration there is no localStorage credential to
+ * seed. ``seedApiKey`` is kept as a NO-OP shim so existing specs that
+ * call it for historical reasons still compile; do NOT rely on it for
+ * authentication in new specs. The authoritative way to authenticate
+ * in fixture-mocked tests is to make the fixture return
+ * ``GET /api/auth/whoami -> {authenticated: true}``, which the auth
+ * store treats as a successful boot probe.
  */
 
 import type { Page } from '@playwright/test'
 
 const DEFAULT_TEST_KEY = 'test-api-key-e2e'
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export async function seedApiKey(
-  page: Page,
-  key: string = DEFAULT_TEST_KEY
+  _page: Page,
+  _key: string = DEFAULT_TEST_KEY,
 ): Promise<void> {
-  await page.addInitScript((k: string) => {
-    try {
-      window.localStorage.setItem('jarvis_api_key', k)
-    } catch {
-      // Some contexts (first navigation) may not have localStorage ready yet;
-      // swallowing is safe — the next navigation re-runs the init script.
-    }
-  }, key)
+  // No-op. The dashboard no longer reads ``localStorage.jarvis_api_key``.
+  // Kept for backwards compat with specs that haven't migrated yet.
 }
 
-/**
- * Clear the key — used to test the unauthenticated state (login redirect,
- * 401 handling, setup wizard first-run).
- */
-export async function clearApiKey(page: Page): Promise<void> {
-  await page.addInitScript(() => {
-    try {
-      window.localStorage.removeItem('jarvis_api_key')
-    } catch {}
-  })
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export async function clearApiKey(_page: Page): Promise<void> {
+  // No-op. See seedApiKey.
 }
 
 /**

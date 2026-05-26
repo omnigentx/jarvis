@@ -45,6 +45,9 @@ responses:
   "GET /api/auth/whoami":
     status: 200
     json: { authenticated: false }
+  "GET /api/auth/passkey/has-any":
+    status: 200
+    json: { has_passkey: false }
   "GET /api/setup/status":
     status: 200
     json:
