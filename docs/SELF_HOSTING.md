@@ -272,6 +272,71 @@ docker compose up -d --force-recreate jarvis-backend
 
 ---
 
+## Đăng nhập bằng Passkey (Touch ID / Face ID / Windows Hello)
+
+Sau khi vào dashboard bằng `JARVIS_API_KEY`, bạn có thể đăng ký passkey để
+lần sau không phải dán key — chỉ cần chạm Touch ID là vào.
+
+### Đăng ký lần đầu
+
+1. Mở dashboard, nhập `JARVIS_API_KEY` từ `backend/.env` để đăng nhập như
+   bình thường.
+2. Vào **Settings → Authentication**.
+3. Đặt label (ví dụ "MacBook Touch ID") rồi bấm **Register passkey**. Hệ
+   điều hành sẽ bật prompt — chạm vân tay / camera để hoàn tất.
+4. Đăng xuất, mở lại trang. Nút **"Sign in with passkey"** sẽ xuất hiện.
+
+### Yêu cầu HTTPS
+
+WebAuthn (passkey) chỉ hoạt động với:
+- `http://localhost:*` (browser cho phép ngoại lệ cho dev)
+- `https://your-domain.com` (production)
+
+LAN IP như `http://192.168.1.50:3001` **KHÔNG** dùng được passkey — browser
+sẽ từ chối ceremony. Setup HTTPS qua Caddy / nginx + Let's Encrypt /
+Tailscale Funnel trước khi đăng ký.
+
+### Passkey scope theo domain
+
+Passkey gắn cứng vào **RP ID = hostname của lúc đăng ký**. Tức là:
+- Passkey đăng ký trên `localhost` → CHỈ dùng được khi truy cập qua
+  `localhost`.
+- Đổi sang `jarvis.alice.com` → phải đăng ký passkey mới cho domain đó.
+
+Đây là ràng buộc của WebAuthn spec, không phải bug. Khi chuyển sang
+production domain, vào Settings → Authentication trên domain mới và bấm
+"Register passkey" lần nữa.
+
+### Cross-device (laptop + phone)
+
+Đăng ký passkey trên từng device riêng. iCloud Keychain / Google Password
+Manager / 1Password sẽ tự sync passkey nếu bạn dùng các hệ này; còn không
+thì mỗi device đăng ký một lần.
+
+### Recovery — mất passkey
+
+Passkey không export được. Nếu mất tất cả device → cách duy nhất là
+đọc lại `JARVIS_API_KEY` từ `backend/.env`, đăng nhập bằng API key, rồi
+đăng ký passkey mới:
+
+```bash
+# Trên server
+grep JARVIS_API_KEY backend/.env
+```
+
+API key cũng là credential cho các script (Xiaozhi voice, CLI tools) — đừng
+xóa.
+
+### Coexist với API key
+
+Passkey không thay thế API key. Hai thứ song song:
+- **Passkey**: chỉ dùng cho login browser.
+- **API key trong `.env`**: dùng cho Xiaozhi, scripts, recovery.
+
+Settings → General có nút rotate API key nếu cần.
+
+---
+
 ## Troubleshooting
 
 | Vấn đề | Cách fix |
@@ -284,3 +349,6 @@ docker compose up -d --force-recreate jarvis-backend
 | Disk đầy | `docker system prune -a` để xóa images cũ |
 | Submodule rỗng | `git submodule update --init --recursive` |
 | Backend crash loop | `docker compose logs -f jarvis-backend` → check .env và secrets |
+| Passkey không show "Sign in with passkey" button | Đăng ký lần đầu từ Settings → Authentication; cần HTTPS trừ localhost |
+| Passkey trên LAN IP không work | Setup HTTPS (Caddy / Tailscale Funnel / mkcert) — WebAuthn chỉ cho phép HTTPS + localhost |
+| Mất hết passkey | Lấy `JARVIS_API_KEY` từ `.env`, login bằng API key, đăng ký passkey mới |
