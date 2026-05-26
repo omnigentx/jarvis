@@ -1160,13 +1160,21 @@ def test_find_pid_returns_python_child_not_uv_launcher(
     )
 
 
-def test_find_pid_falls_back_to_recorded_pid_when_no_children(
+def test_find_pid_refuses_when_no_python_child_discoverable(
     fresh_manager, fake_registry, monkeypatch,
 ):
-    """If pgrep returns no children (race window before uv has fork'd
-    python, or single-binary spawn), fall back to the recorded PID
-    rather than returning None. Lets pause still attempt (fails loud
-    if it kills uv) instead of silently doing nothing.
+    """M5 fix (PR #49 review): if pgrep retries exhaust and no child
+    is found (spawn race window before uv has fork'd python), refuse
+    by returning None instead of falling back to the uv launcher PID.
+
+    Falling back to uv_pid re-introduced the original bug this whole
+    walk exists to prevent: SIGUSR1's default action is TERMINATE,
+    uv has no SIGUSR1 handler, so signaling uv kills it and orphans
+    the python child → entire agent dies on what was supposed to be
+    a cooperative pause.
+
+    Caller surfaces this as an actionable "agent still spawning,
+    retry in a moment" — preferable to a silent crash.
     """
     UV_PID = 99003
     fake_registry.find_by_name.return_value = [{
@@ -1175,12 +1183,21 @@ def test_find_pid_falls_back_to_recorded_pid_when_no_children(
     import services.pause_controller as pc
     monkeypatch.setattr(pc.os, "kill", lambda *a, **kw: None)
 
+    # pgrep returns no children — simulates the post-uv-launch /
+    # pre-python-fork race window. _find_python_child retries 5x with
+    # 50ms backoff then gives up; we patch time.sleep to make the
+    # test instant.
     import subprocess as _subprocess
     monkeypatch.setattr("subprocess.run", lambda *a, **kw:
         _subprocess.CompletedProcess(a[0], 0, stdout="", stderr=""))
+    monkeypatch.setattr("time.sleep", lambda _s: None)
 
     pid = fresh_manager._find_pid("Subproc")
-    assert pid == UV_PID, "fallback to recorded PID when no child discoverable"
+    assert pid is None, (
+        "no python child after retries → must refuse rather than "
+        "signal the uv launcher (default-action=TERMINATE would "
+        "kill the agent)"
+    )
 
 
 # ─── E2E: real uv subprocess + signal delivery ────────────────────

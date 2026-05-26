@@ -50,6 +50,11 @@ from core.auth import (
 from sqlalchemy.orm import Session as DbSession
 
 from core import webauthn as wa
+from core.auth_cookies import (
+    clear_auth_cookies,
+    is_secure_request,
+    set_auth_cookies,
+)
 from core.database import (
     DEFAULT_USERNAME,
     DEFAULT_USER_ID,
@@ -99,51 +104,13 @@ class WhoamiResponse(BaseModel):
 # ---- Helpers ----------------------------------------------------------------
 
 
-def _is_secure_request(request: Request) -> bool:
-    """Decide whether to mark cookies ``Secure``.
-
-    True when the originating scheme is HTTPS or behind a proxy
-    forwarding ``X-Forwarded-Proto: https``.  In dev (``http://localhost``)
-    we leave Secure off so the cookies are actually accepted by the
-    browser.
-    """
-    if request.url.scheme == "https":
-        return True
-    fwd = request.headers.get("x-forwarded-proto", "")
-    return "https" in fwd.lower()
-
-
-def _set_auth_cookies(
-    response: Response,
-    request: Request,
-    session_token: str,
-    csrf_token: str,
-) -> None:
-    """Set both cookies with consistent attributes."""
-    secure = _is_secure_request(request)
-    common = {
-        "max_age": SESSION_TTL_SECONDS,
-        "httponly": True,
-        "secure": secure,
-        "samesite": "lax",
-        "path": "/",
-    }
-    response.set_cookie(SESSION_COOKIE_NAME, session_token, **common)
-    # CSRF cookie is readable by JS — it's the "double-submit" half.
-    response.set_cookie(
-        CSRF_COOKIE_NAME, csrf_token,
-        max_age=SESSION_TTL_SECONDS,
-        httponly=False,  # SPA must read this to echo as X-CSRF-Token
-        secure=secure,
-        samesite="lax",
-        path="/",
-    )
-
-
-def _clear_auth_cookies(response: Response, request: Request) -> None:
-    secure = _is_secure_request(request)
-    response.delete_cookie(SESSION_COOKIE_NAME, path="/", secure=secure, samesite="lax")
-    response.delete_cookie(CSRF_COOKIE_NAME, path="/", secure=secure, samesite="lax")
+# Cookie helpers were lifted to ``core/auth_cookies.py`` so the setup
+# wizard (and any future cookie-minting route) can import them by their
+# public names instead of from this module's underscore-prefixed namespace.
+# These shim names preserve call sites within this file.
+_is_secure_request = is_secure_request
+_set_auth_cookies = set_auth_cookies
+_clear_auth_cookies = clear_auth_cookies
 
 
 # ---- Routes -----------------------------------------------------------------
@@ -438,7 +405,10 @@ async def passkey_register_finish(
         # for malformed attestations; surface as 400 with the message
         # for client-side error rendering. Log at warning since this
         # often indicates browser-side bugs, not infra.
-        logger.warning("[AUTH] passkey register verify failed: %s", exc)
+        # Log exception type only — ``str(exc)`` on InvalidRegistrationResponse
+        # may contain raw attestation bytes (clientDataJSON, public-key bytes)
+        # which is too noisy for production logs and a small information leak.
+        logger.warning("[AUTH] passkey register verify failed: %s", type(exc).__name__)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={
@@ -465,20 +435,30 @@ async def passkey_register_finish(
     )
 
     # Idempotent insert: if the same credential id somehow appears
-    # twice (replay of the same finish call), refresh fields instead
-    # of duplicating.
+    # twice (replay of the same finish call, or two simultaneous
+    # registers of the same physical authenticator), refresh fields
+    # instead of duplicating. The IntegrityError catch closes a race
+    # where two finish calls both pass the "existing is None" probe
+    # before either commits: the loser of the commit race would hit
+    # UniqueConstraintViolation as a 500; instead, fall through to the
+    # update branch on retry.
+    from sqlalchemy.exc import IntegrityError as _IntegrityError
+
+    def _update_existing(row: PasskeyCredential) -> dict:
+        row.user_id = user.id
+        row.public_key = bytes(verified.credential_public_key)
+        row.sign_count = verified.sign_count
+        row.transports = transports_json
+        row.rp_id = rp_id
+        row.label = payload.label or row.label
+        db.commit()
+        return {"status": "ok", "credential_id": credential_id_b64, "replaced": True}
+
     existing = db.query(PasskeyCredential).filter(
         PasskeyCredential.id == credential_id_b64,
     ).first()
     if existing is not None:
-        existing.user_id = user.id
-        existing.public_key = bytes(verified.credential_public_key)
-        existing.sign_count = verified.sign_count
-        existing.transports = transports_json
-        existing.rp_id = rp_id
-        existing.label = payload.label or existing.label
-        db.commit()
-        return {"status": "ok", "credential_id": credential_id_b64, "replaced": True}
+        return _update_existing(existing)
 
     db.add(PasskeyCredential(
         id=credential_id_b64,
@@ -489,7 +469,25 @@ async def passkey_register_finish(
         rp_id=rp_id,
         label=payload.label,
     ))
-    db.commit()
+    try:
+        db.commit()
+    except _IntegrityError:
+        db.rollback()
+        # Lost the race — the other request committed our id first.
+        # Re-query and update.
+        racer_winner = db.query(PasskeyCredential).filter(
+            PasskeyCredential.id == credential_id_b64,
+        ).first()
+        if racer_winner is None:
+            # Different constraint failed — re-raise as 400.
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error": "passkey_register_failed",
+                    "reason": "integrity_violation",
+                },
+            )
+        return _update_existing(racer_winner)
     logger.info(
         "[AUTH] Passkey registered id=%s rp=%s label=%s",
         credential_id_b64[:12], rp_id, payload.label,
@@ -529,7 +527,17 @@ async def passkey_has_any(
     cookie. The information it leaks is just "this deployment has been
     set up with passkey" — not the credential id, not the user, not
     the key fingerprint. Same shape as ``/whoami`` revealing
-    ``authenticated:false``."""
+    ``authenticated:false``.
+
+    Rate-limited per-IP on the same bucket as /login so a malicious
+    client can't spam the DB-touching probe."""
+    client_ip = request.client.host if request.client else "unknown"
+    if not _check_rate_limit(client_ip):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={"error": "rate_limited"},
+        )
+    record_login_attempt(client_ip)
     rp_id = wa.rp_id_from_request(request)
     count = (
         db.query(PasskeyCredential)
@@ -546,26 +554,45 @@ async def passkey_has_any(
 )
 async def passkey_authenticate_begin(
     request: Request,
-    db: DbSession = Depends(get_db),
+) -> PasskeyAuthenticateBeginResponse:
+    # See passkey_has_any for rate-limit rationale. Begin allocates
+    # in-process ceremony state — without a cap a malicious client
+    # can balloon memory by spamming begin without ever finishing.
+    client_ip = request.client.host if request.client else "unknown"
+    if not _check_rate_limit(client_ip):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={"error": "rate_limited"},
+        )
+    record_login_attempt(client_ip)
+    return await _passkey_authenticate_begin_impl(request)
+
+
+async def _passkey_authenticate_begin_impl(
+    request: Request,
 ) -> PasskeyAuthenticateBeginResponse:
     """Start a sign-in ceremony. Public (no auth) — this is the
     pre-login step.
 
-    We pass an empty ``allow_credentials`` so the browser uses
-    discoverable-credential UX (Touch ID picker). The registered
-    credentials for the current RP are loaded anyway so we can verify
-    the assertion at finish time."""
-    rp_id = wa.rp_id_from_request(request)
-    creds = (
-        db.query(PasskeyCredential)
-        .filter(PasskeyCredential.user_id == DEFAULT_USER_ID)
-        .filter(PasskeyCredential.rp_id == rp_id)
-        .all()
-    )
-    allow_ids = [c.id for c in creds]
+    Always passes an EMPTY ``allow_credentials``. Two reasons:
+
+    1. Credentials were registered with ``resident_key=REQUIRED`` so
+       the browser can offer them via the discoverable-credential UX
+       (Touch ID picker) without the server having to enumerate IDs.
+    2. This route is public; echoing back the real credential id list
+       would leak it to an unauthenticated probe. The id is not a
+       secret per WebAuthn spec but combined with the rp_id it
+       uniquely identifies the deployment + an enrolled
+       authenticator — useful for an attacker pre-staging device
+       fingerprints.
+
+    Verification at ``finish`` time still works because the
+    authenticator includes the credential id in the assertion; the
+    server looks it up to fetch the public key + sign_count.
+    """
     ceremony_id, options = wa.build_authentication_options(
         request=request,
-        allow_credential_ids=allow_ids,
+        allow_credential_ids=[],
     )
     return PasskeyAuthenticateBeginResponse(
         ceremony_id=ceremony_id, options=options,
@@ -642,7 +669,8 @@ async def passkey_authenticate_finish(
             detail={"error": "passkey_auth_failed", "reason": str(exc)},
         ) from exc
     except Exception as exc:
-        logger.warning("[AUTH] passkey auth verify failed: %s", exc)
+        # Type-only — see register_finish for the rationale.
+        logger.warning("[AUTH] passkey auth verify failed: %s", type(exc).__name__)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={

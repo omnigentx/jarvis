@@ -236,9 +236,16 @@ def build_registration_options(
         # server having to send allowCredentials. This is what makes
         # "Sign in with passkey" possible without first asking for a
         # username.
+        #
+        # ``user_verification=REQUIRED`` is intentional: this is the
+        # SPA's primary credential (not a 2nd-factor), so the assertion
+        # MUST prove user presence + verification (Touch ID, Face ID,
+        # Windows Hello PIN, FIDO2 device PIN). PREFERRED would let an
+        # authenticator that *can* skip UV authenticate without it,
+        # making a stolen YubiKey without PIN sufficient for sign-in.
         authenticator_selection=AuthenticatorSelectionCriteria(
             resident_key=ResidentKeyRequirement.REQUIRED,
-            user_verification=UserVerificationRequirement.PREFERRED,
+            user_verification=UserVerificationRequirement.REQUIRED,
         ),
         exclude_credentials=exclude,
     )
@@ -281,7 +288,10 @@ def verify_registration(
         expected_challenge=entry.challenge,
         expected_rp_id=rp_id,
         expected_origin=origin_from_request(request),
-        require_user_verification=False,
+        # Match the REQUIRED policy in build_registration_options — UV
+        # is mandatory for primary-credential passkeys. See the
+        # authenticator_selection comment above for the threat model.
+        require_user_verification=True,
     )
 
 
@@ -306,7 +316,11 @@ def build_authentication_options(
     opts = generate_authentication_options(
         rp_id=rp_id,
         allow_credentials=allow if allow else None,
-        user_verification=UserVerificationRequirement.PREFERRED,
+        # REQUIRED matches the register policy — see
+        # ``build_registration_options`` for the threat model. UV is
+        # what makes the passkey a real credential and not just a
+        # possession factor.
+        user_verification=UserVerificationRequirement.REQUIRED,
     )
     cid = store_ceremony(
         challenge=opts.challenge,
@@ -345,7 +359,11 @@ def verify_authentication(
         expected_origin=origin_from_request(request),
         credential_public_key=credential_public_key,
         credential_current_sign_count=credential_current_sign_count,
-        require_user_verification=False,
+        # Match the REQUIRED policy in build_authentication_options.
+        # The library raises ``InvalidAuthenticationResponse`` if the
+        # assertion's UV flag is unset, which the route surfaces as
+        # 401 — so a YubiKey-without-PIN attempt fails closed.
+        require_user_verification=True,
     )
 
 

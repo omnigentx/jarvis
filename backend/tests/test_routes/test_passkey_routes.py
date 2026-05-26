@@ -527,7 +527,14 @@ class TestHasAny:
 class TestAuthenticateBegin:
     """Public — no auth header required."""
 
-    def test_returns_ceremony_id_and_options(self, db_factory):
+    def test_returns_ceremony_id_and_options_without_leaking_credential_ids(
+        self, db_factory,
+    ):
+        """H3 fix: even when credentials are registered for this RP,
+        the public /begin response MUST NOT echo them back — they leak
+        to unauthenticated probes that way. Discoverable-credential UX
+        means the browser already knows what to offer; the server
+        looks the credential up on the assertion at /finish time."""
         with db_factory() as db:
             db.add(PasskeyCredential(
                 id="cred-for-allow",
@@ -545,9 +552,11 @@ class TestAuthenticateBegin:
         assert len(body["ceremony_id"]) > 16
         opts = body["options"]
         assert opts["rpId"] == "localhost"
-        # allowCredentials lists the IDs the browser may pick from.
-        listed = opts.get("allowCredentials", [])
-        assert any(c["id"] == "cred-for-allow" for c in listed)
+        # H3: allowCredentials must be empty/absent regardless of how
+        # many credentials this user has registered.
+        assert not opts.get("allowCredentials")
+        # UV REQUIRED for the primary credential — see H1.
+        assert opts.get("userVerification") == "required"
 
     def test_no_credentials_returns_empty_or_omitted_allow_credentials(
         self, db_factory,
@@ -745,3 +754,102 @@ class TestAuthenticateFinish:
         private_resp = c.get("/api/private")
         assert private_resp.status_code == 200
         assert private_resp.json() == {"ok": True}
+
+
+# ---- PR #49 review hardening: rate-limit + race ----------------------------
+
+
+class TestRateLimits:
+    """M2: ``/passkey/has-any`` and ``/passkey/authenticate/begin`` are
+    public and allocate state — they must trip the same per-IP bucket
+    as ``/login`` so a noisy or malicious client can't balloon
+    in-process ceremony state or DB load."""
+
+    def test_has_any_rate_limited_after_burst(self, db_factory):
+        from core import auth as core_auth
+        c = _no_auth_client(db_factory)
+        # 5/60s bucket — first 5 succeed, 6th trips.
+        for _ in range(core_auth.LOGIN_RATE_LIMIT):
+            r = c.get(
+                "/api/auth/passkey/has-any",
+                headers={"Host": "localhost:3001"},
+            )
+            assert r.status_code == 200
+        r = c.get(
+            "/api/auth/passkey/has-any",
+            headers={"Host": "localhost:3001"},
+        )
+        assert r.status_code == 429
+        assert r.json()["detail"]["error"] == "rate_limited"
+
+    def test_authenticate_begin_rate_limited_after_burst(self, db_factory):
+        from core import auth as core_auth
+        c = _no_auth_client(db_factory)
+        for _ in range(core_auth.LOGIN_RATE_LIMIT):
+            r = c.post(
+                "/api/auth/passkey/authenticate/begin",
+                headers={"Host": "localhost:3001"},
+            )
+            assert r.status_code == 200
+        r = c.post(
+            "/api/auth/passkey/authenticate/begin",
+            headers={"Host": "localhost:3001"},
+        )
+        assert r.status_code == 429
+
+
+class TestRegisterFinishRace:
+    """M3: simultaneous register/finish for the same credential id
+    must not surface as a 500 UniqueConstraintViolation. The
+    ``IntegrityError`` retry path converts the lost race into the
+    same shape as the "existing row, refresh fields" branch."""
+
+    def test_race_winner_loses_to_existing_row_returns_replaced_true(
+        self, client, db_factory, monkeypatch,
+    ):
+        # Begin → mocked verify returns a credential_id that ALREADY
+        # exists in the DB. The "existing is None" probe sees it and
+        # takes the update branch immediately — we still cover that
+        # path. The genuine race (commit-time IntegrityError) is
+        # harder to reproduce deterministically in a unit test; this
+        # case at least pins the user-visible contract: same id twice
+        # → "replaced": True, never 500.
+        existing_id = wa.b64url_encode(b"race-existing-id")
+        with db_factory() as db:
+            db.add(PasskeyCredential(
+                id=existing_id, user_id=DEFAULT_USER_ID,
+                public_key=b"old-key", sign_count=0, rp_id="localhost",
+            ))
+            db.commit()
+
+        begin = client.post(
+            "/api/auth/passkey/register/begin",
+            headers={"Host": "localhost:3001"},
+        ).json()
+        monkeypatch.setattr(
+            wa, "verify_registration",
+            lambda **kw: _fake_verified_registration(
+                credential_id=b"race-existing-id",
+                public_key=b"new-key",
+                sign_count=1,
+            ),
+        )
+        resp = client.post(
+            "/api/auth/passkey/register/finish",
+            headers={"Host": "localhost:3001"},
+            json={
+                "ceremony_id": begin["ceremony_id"],
+                "credential": {"id": "x", "response": {}},
+                "label": "race-winner",
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.json()["replaced"] is True
+
+        with db_factory() as db:
+            rows = db.query(PasskeyCredential).filter(
+                PasskeyCredential.id == existing_id,
+            ).all()
+            assert len(rows) == 1  # no duplicate inserted
+            assert rows[0].public_key == b"new-key"  # refreshed
+            assert rows[0].sign_count == 1

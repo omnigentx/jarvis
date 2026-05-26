@@ -17,9 +17,16 @@ from core.database import Base, SetupWizardStep, SystemConfig
 
 @pytest.fixture(autouse=True)
 def _clean_module_state(monkeypatch):
-    """Every test starts with no master key + fresh crypto + a clean DB."""
+    """Every test starts with no master key + fresh crypto + a clean DB.
+
+    JWT_SECRET is set so the wizard's session-cookie mint succeeds
+    (step 1 now raises 503 if it's missing — see M1 fix). The
+    ``TestWizardMintCookieFailureLoud`` class explicitly unsets it
+    again to exercise that 503 path.
+    """
     monkeypatch.setattr(core_auth, "JARVIS_API_KEY", "")
     monkeypatch.delenv("JARVIS_API_KEY", raising=False)
+    monkeypatch.setenv("JWT_SECRET", "test-jwt-secret-xxxxxxxxxxxxxxxxxxxx")
     secrets_crypto._fernet = None
     secrets_crypto._fingerprint = None
     yield
@@ -490,3 +497,21 @@ class TestReset:
         for s in resp.json()["steps"]:
             assert s["completed"] is False
             assert s["skipped"] is False
+
+
+class TestWizardMintCookieFailureLoud:
+    """M1 (PR #49 review): if JWT_SECRET is missing the wizard MUST
+    fail loud with 503 + actionable detail instead of silently
+    proceeding without a cookie. Without the cookie, the SPA's
+    cookie-only auth would 401 on step 2 with no recovery path."""
+
+    def test_missing_jwt_secret_raises_503(self, client, monkeypatch):
+        monkeypatch.delenv("JWT_SECRET", raising=False)
+        resp = client.post("/api/setup/auth", json={})
+        assert resp.status_code == 503
+        body = resp.json()
+        assert body["detail"]["error"] == "not_configured"
+        assert body["detail"]["reason"] == "jwt_secret_unset"
+        # Actionable message names the env + what to do.
+        assert "JWT_SECRET" in body["detail"]["message"]
+        assert "restart" in body["detail"]["message"].lower()

@@ -438,7 +438,7 @@ test('refresh() success extends session, sends X-CSRF-Token header, and reschedu
   // CsrfMiddleware 403s the call (the endpoint is not in _EXEMPT_PREFIXES).
   assert.equal(refreshHeaders['X-CSRF-Token'], 'tok-1',
     'refresh must send the current CSRF cookie value as the header')
-  // A NEW timer should have been scheduled by _setAuthenticated.
+  // A NEW timer should have been scheduled by setAuthenticated.
   assert.ok(_pendingTimer(), 'next refresh must be re-scheduled')
 })
 
@@ -472,7 +472,7 @@ test('refresh() falls back to probe() when response is missing expires_in', asyn
 
   assert.equal(probeCalls, 1, 'whoami fallback must run')
   assert.equal(auth.status, STATUS.AUTHENTICATED, 'fallback keeps user authenticated')
-  assert.ok(_pendingTimer(), 'fallback re-schedules next refresh via _setAuthenticated')
+  assert.ok(_pendingTimer(), 'fallback re-schedules next refresh via setAuthenticated')
 })
 
 test('refresh() 401 (max_lifetime_exceeded) locks the UI', async () => {

@@ -87,12 +87,67 @@ class TestWsVoiceAuth:
         ) as ws:
             ws.send_json({"type": "noop"})
 
-    def test_session_cookie_accepted(self, client):
-        # Mint a fresh session token; this is what /api/auth/login would
-        # have set after a real login.
+    def test_session_cookie_accepted_with_matching_origin(self, client):
+        """Cookie path requires Origin to match the deployment (CSWSH
+        defence — see H2). Browser-issued WS upgrades carry Origin;
+        the TestClient simulates one explicitly."""
         session_token, _payload = create_session_token()
         client.cookies.set(SESSION_COOKIE_NAME, session_token)
+        with client.websocket_connect(
+            "/ws/voice",
+            headers={"Origin": "http://testserver"},
+        ) as ws:
+            ws.send_json({"type": "noop"})
+
+    def test_session_cookie_with_missing_origin_falls_through(self, client):
+        """No Origin header on the cookie path → rejection. Falls
+        through to Bearer/query; with neither, the connection closes."""
+        session_token, _payload = create_session_token()
+        client.cookies.set(SESSION_COOKIE_NAME, session_token)
+        # No Origin header — cookie path rejects, no other creds → 4401.
         with client.websocket_connect("/ws/voice") as ws:
+            with pytest.raises(WebSocketDisconnect) as exc_info:
+                ws.receive_text()
+            assert exc_info.value.code == 4401
+
+    def test_session_cookie_with_wrong_origin_falls_through(self, client):
+        """CSWSH simulation: attacker forged the cookie via SameSite
+        bypass but their Origin is some other site."""
+        session_token, _payload = create_session_token()
+        client.cookies.set(SESSION_COOKIE_NAME, session_token)
+        with client.websocket_connect(
+            "/ws/voice",
+            headers={"Origin": "https://attacker.example"},
+        ) as ws:
+            with pytest.raises(WebSocketDisconnect) as exc_info:
+                ws.receive_text()
+            assert exc_info.value.code == 4401
+
+    def test_session_cookie_wrong_origin_but_valid_bearer_accepted(self, client):
+        """Bearer bypasses the Origin check (it's credential-of-possession,
+        not exploitable cross-origin). Bad cookie+wrong Origin is fine
+        if a valid Bearer is also present."""
+        session_token, _payload = create_session_token()
+        client.cookies.set(SESSION_COOKIE_NAME, session_token)
+        with client.websocket_connect(
+            "/ws/voice",
+            headers={
+                "Origin": "https://attacker.example",
+                "Authorization": "Bearer test-api-key-xxxxxxxxxxxxxxxxxxxx",
+            },
+        ) as ws:
+            ws.send_json({"type": "noop"})
+
+    def test_trusted_ws_origins_env_extends_allow_list(self, client, monkeypatch):
+        """Operators with multiple front-ends can extend the allow-list
+        via the ``TRUSTED_WS_ORIGINS`` env (comma-separated)."""
+        monkeypatch.setenv("TRUSTED_WS_ORIGINS", "https://other.example,https://extra.example")
+        session_token, _payload = create_session_token()
+        client.cookies.set(SESSION_COOKIE_NAME, session_token)
+        with client.websocket_connect(
+            "/ws/voice",
+            headers={"Origin": "https://other.example"},
+        ) as ws:
             ws.send_json({"type": "noop"})
 
     def test_wrong_api_key_via_query_rejected(self, client):
@@ -124,7 +179,10 @@ class TestWsVoiceAuth:
 
     def test_invalid_cookie_alone_rejected(self, client):
         client.cookies.set(SESSION_COOKIE_NAME, "garbage-token")
-        with client.websocket_connect("/ws/voice") as ws:
+        with client.websocket_connect(
+            "/ws/voice",
+            headers={"Origin": "http://testserver"},
+        ) as ws:
             with pytest.raises(WebSocketDisconnect) as exc_info:
                 ws.receive_text()
             assert exc_info.value.code == 4401

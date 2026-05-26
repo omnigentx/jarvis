@@ -121,8 +121,8 @@ async function handlePasskey() {
     const result = await authenticateWithPasskey()
     if (result.ok) {
       // Mirror the cookie/CSRF state the API-key login path lands in.
-      // ``_setAuthenticated`` collapses the modal via reactive state.
-      auth._setAuthenticated(result.csrfToken, result.expiresIn)
+      // ``setAuthenticated`` collapses the modal via reactive state.
+      auth.setAuthenticated(result.csrfToken, result.expiresIn)
       return
     }
     switch (result.code) {

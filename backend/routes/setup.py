@@ -277,23 +277,34 @@ def _mint_wizard_session(request: "Request", response: "Response") -> None:
     """Mint a session cookie so the wizard's remaining steps can call
     cookie-authenticated endpoints (``/llm``, ``/services``, etc.).
 
-    Imports are local to keep the wizard module free of an auth-route
-    dependency at import time (the auth router imports the database
-    and would slow wizard cold-start otherwise).
+    Raises 503 if ``JWT_SECRET`` is missing. Previously this swallowed
+    the failure on the assumption the SPA could fall back to the
+    Bearer header — but that fallback was removed in the cookie-only
+    migration, so a silent miss here leaves the wizard wedged at step
+    2 with a confusing "Authentication required" modal. Fail loud so
+    the operator sees the actionable error.
     """
+    from core.auth_cookies import set_auth_cookies
     from core.session import create_session_token, make_csrf_token
-    from routes.auth import _set_auth_cookies
 
     try:
         session_token, _payload = create_session_token()
     except RuntimeError as exc:
-        # JWT_SECRET missing — degrade gracefully. The wizard can still
-        # finish via the legacy Bearer path if the FE has the key; we
-        # just won't have minted a cookie.
-        logger.warning("[SETUP] Could not mint wizard session: %s", exc)
-        return
+        logger.error("[SETUP] JWT_SECRET missing — wizard cannot mint cookie: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "not_configured",
+                "reason": "jwt_secret_unset",
+                "message": (
+                    "JWT_SECRET is not set. Add it to backend/.env "
+                    "(any 32+ char random string) and restart the backend, "
+                    "then re-run setup."
+                ),
+            },
+        ) from exc
     csrf_token = make_csrf_token()
-    _set_auth_cookies(response, request, session_token, csrf_token)
+    set_auth_cookies(response, request, session_token, csrf_token)
 
 
 @router.post("/llm", response_model=SetupStatus)

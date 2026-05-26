@@ -685,7 +685,24 @@ class PauseController:
                     except (ProcessLookupError, PermissionError):
                         continue
                     python_pid = self._find_python_child(uv_pid)
-                    return python_pid if python_pid is not None else uv_pid
+                    if python_pid is not None:
+                        return python_pid
+                    # No python child found — covers two cases:
+                    #   1) uv spawned a non-python binary (unlikely for
+                    #      our spawner, but possible if cmd changes).
+                    #   2) Pause called in the ~50ms race window between
+                    #      uv launching and python forking — the agent
+                    #      just spawned and the user hit pause.
+                    # Returning uv_pid here re-introduces the bug this
+                    # whole walk exists to prevent (SIGUSR1 → uv →
+                    # TERMINATE → agent dies). Refuse instead and let
+                    # the caller surface "agent still spawning, retry".
+                    logger.warning(
+                        "[PAUSE] uv pid=%d has no python child yet; "
+                        "refusing to signal uv directly to avoid killing it",
+                        uv_pid,
+                    )
+                    return None
         except Exception as e:
             logger.warning("[PAUSE] DB PID lookup failed: %s", e)
 
@@ -698,15 +715,35 @@ class PauseController:
         ``uv run`` execs the requested binary as a child while uv stays
         the parent. We want to signal the python interpreter where the
         SIGUSR1/SIGUSR2 handlers live, not uv.
+
+        Retries with a short backoff to cover the "agent just spawned"
+        race — uv has launched but hasn't yet forked python at the
+        moment the user clicks pause. Five attempts × 50ms is enough
+        in practice; longer waits would feel like UI lag.
+
+        Falls back to a non-python child only when one exists AND
+        ``ps`` couldn't confirm its identity — logs a warning so the
+        operator can see "signaled non-python child, may not handle
+        SIGUSR1" if something downstream goes wrong.
         """
-        try:
-            import subprocess
-            out = subprocess.run(
-                ["pgrep", "-P", str(uv_pid)],
-                capture_output=True, text=True, timeout=2.0,
-            )
-            children = [int(p) for p in out.stdout.split() if p.strip().isdigit()]
-            # Prefer a python interpreter; fall back to single child.
+        import subprocess
+        import time as _time
+
+        for attempt in range(5):
+            try:
+                out = subprocess.run(
+                    ["pgrep", "-P", str(uv_pid)],
+                    capture_output=True, text=True, timeout=2.0,
+                )
+                children = [
+                    int(p) for p in out.stdout.split() if p.strip().isdigit()
+                ]
+            except Exception as e:
+                logger.warning(
+                    "[PAUSE] child walk failed for uv pid=%d: %s", uv_pid, e,
+                )
+                return None
+
             for cpid in children:
                 try:
                     ps = subprocess.run(
@@ -718,10 +755,19 @@ class PauseController:
                         return cpid
                 except Exception:
                     continue
+
             if children:
+                logger.warning(
+                    "[PAUSE] uv pid=%d has %d non-python child(ren); "
+                    "signaling first one — may not handle SIGUSR1",
+                    uv_pid, len(children),
+                )
                 return children[0]
-        except Exception as e:
-            logger.warning("[PAUSE] child walk failed for uv pid=%d: %s", uv_pid, e)
+
+            # No children yet — retry after a short delay.
+            if attempt < 4:
+                _time.sleep(0.05)
+
         return None
 
     def _emit_sse(self, agent_name: str, event_type: str, state: str) -> None:

@@ -99,6 +99,12 @@ class ApprovalService:
 
         from core.database import SpawnRecordModel
         team_name: str | None = None
+        pause_agents: list[str]
+
+        # Single session for both lookups (team_name + team members).
+        # Was two consecutive SessionLocal() blocks; merged because they
+        # don't need transactional isolation between them and the second
+        # open + close was pure overhead.
         _db = SessionLocal()
         try:
             requester_row = _db.query(SpawnRecordModel.team_name).filter(
@@ -106,29 +112,25 @@ class ApprovalService:
             ).first()
             if requester_row:
                 team_name = requester_row[0]  # may be None for solo spawns
-        finally:
-            _db.close()
 
-        if llm_team_name and llm_team_name != team_name:
-            # Fail loud: refuse rather than silently substituting. The
-            # LLM is passing wrong context — the symptom is the wrong
-            # team gets paused (or none at all). Surface to the LLM via
-            # the MCP tool's error path so the prompt designer notices.
-            raise ValueError(
-                f"approval.create rejected: supplied team_name={llm_team_name!r} "
-                f"does not match agent {agent_name!r}'s actual team={team_name!r}. "
-                f"Pass team_name from your spawn config or omit it."
-            )
+            if llm_team_name and llm_team_name != team_name:
+                # Fail loud: refuse rather than silently substituting. The
+                # LLM is passing wrong context — the symptom is the wrong
+                # team gets paused (or none at all). Surface to the LLM via
+                # the MCP tool's error path so the prompt designer notices.
+                raise ValueError(
+                    f"approval.create rejected: supplied team_name={llm_team_name!r} "
+                    f"does not match agent {agent_name!r}'s actual team={team_name!r}. "
+                    f"Pass team_name from your spawn config or omit it."
+                )
 
-        if team_name:
-            # Real team — list every running/idle member.
-            _db = SessionLocal()
-            try:
+            if team_name:
+                # Real team — list every running/idle member.
                 team_members = _db.query(SpawnRecordModel.agent_name).filter(
                     SpawnRecordModel.team_name == team_name,
                     SpawnRecordModel.status.in_(["running", "idle"]),
                 ).all()
-                pause_agents = list(set(m[0] for m in team_members))
+                pause_agents = list({m[0] for m in team_members})
                 # Defensive: requester must be in the list. If their row
                 # status isn't running/idle (race with completion) the
                 # query misses them — add explicitly so we don't ship an
@@ -137,12 +139,12 @@ class ApprovalService:
                     pause_agents.append(agent_name)
                 logger.info("[APPROVAL] Team %r → pausing %d members: %s",
                             team_name, len(pause_agents), pause_agents)
-            finally:
-                _db.close()
-        else:
-            # Solo agent (in-process Jarvis or ad-hoc spawn with no team).
-            pause_agents = [agent_name]
-            logger.info("[APPROVAL] Solo agent %r → pausing self only", agent_name)
+            else:
+                # Solo agent (in-process Jarvis or ad-hoc spawn with no team).
+                pause_agents = [agent_name]
+                logger.info("[APPROVAL] Solo agent %r → pausing self only", agent_name)
+        finally:
+            _db.close()
 
         db = SessionLocal()
         try:

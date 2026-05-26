@@ -195,9 +195,13 @@ class TestBuildRegistrationOptions:
         assert opts["rp"]["name"] == wa.RP_NAME
         assert opts["user"]["name"] == "owner"
         # Resident-key required so passkey is discoverable without
-        # the server first sending allowCredentials.
+        # the server first sending allowCredentials. UV required so
+        # the credential is "what you have + what you are" (Touch ID
+        # / PIN / Face ID), not just "what you have" (stolen YubiKey
+        # without PIN).
         sel = opts.get("authenticatorSelection", {})
         assert sel.get("residentKey") == "required"
+        assert sel.get("userVerification") == "required"
 
     def test_excludes_existing_credentials(self):
         req = _make_request(host="localhost:3001")
