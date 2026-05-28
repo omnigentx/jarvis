@@ -683,6 +683,21 @@ class PauseController:
         Callers should surface a "N side-effects may have committed"
         warning to the user.
 
+        ⚠️ **Status semantics — "signal sent, not reaped":** the registry
+        row is marked ``status="killed"`` IMMEDIATELY after ``os.kill()``
+        returns. ``os.kill`` only delivers the signal; it doesn't wait for
+        the child to exit. ``uv`` catches SIGTERM and propagates SIGINT to
+        the python child, which raises ``KeyboardInterrupt`` → graceful
+        shutdown. If that hand-off ever breaks (uv quirk, child traps
+        SIGINT, signal mask), the registry will *briefly* show
+        ``"killed"`` while the process is still alive. Consumers that
+        need a hard exit guarantee must poll ``os.kill(pid, 0)`` or rely
+        on the subprocess reaper to refresh the row to a final state.
+        We don't synchronously wait here because the caller path is
+        user-initiated cancel — adding a poll loop would surface as UI
+        lag on the Stop button. Re-think this only if a downstream
+        consumer materializes that requires synchronous reaping.
+
         Returns ``{cancelled_tasks: [name], killed_pids: [{name, pid}]}``.
         """
         # 1. Cancel parent in-flight task (in-process Jarvis).
@@ -711,6 +726,8 @@ class PauseController:
                         # SIGTERM the uv launcher — uv catches it and
                         # propagates SIGINT to the python child, which
                         # raises KeyboardInterrupt → graceful shutdown.
+                        # See docstring §"signal sent, not reaped" for why
+                        # we mark "killed" before confirming exit.
                         os.kill(int(pid), signal.SIGTERM)
                         killed.append({"name": rec.get("agent_name"), "pid": int(pid)})
                         _state.registry_db.upsert_record(
