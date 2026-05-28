@@ -15,6 +15,12 @@ import { defineConfig, devices } from '@playwright/test'
 const RECORD_MODE = !!process.env.PW_RECORD
 const SMOKE_MODE = !!process.env.PW_SMOKE
 const PREVIEW_PORT = Number(process.env.PW_PORT || 3000)
+// Opt-in mobile + webkit projects. Default CI runs desktop-only so the
+// 23-spec suite × 3 projects doesn't 3× the wall time (and so the
+// webkit browser install isn't required on every PR). Set
+// `PW_FULL_MATRIX=1` locally or in a nightly job to exercise the full
+// device matrix.
+const FULL_MATRIX = !!process.env.PW_FULL_MATRIX
 
 export default defineConfig({
   testDir: './tests/e2e',
@@ -40,9 +46,31 @@ export default defineConfig({
   },
   projects: [
     {
-      name: 'chromium',
+      name: 'chromium-desktop',
       use: { ...devices['Desktop Chrome'] },
     },
+    // Mobile + webkit projects are opt-in (see FULL_MATRIX above). They
+    // exist so the mobile-responsive-sweep contract has a place to land
+    // future automated regression checks. Enable locally via
+    // `PW_FULL_MATRIX=1 npm run test:e2e` or in a nightly job.
+    ...(FULL_MATRIX ? [
+      // Mobile viewport ~371×659 class — catches responsive-sweep
+      // regressions (bottom tab bar, safe-area, dvh, touch targets)
+      // that don't surface on Desktop Chrome. Pixel 5 ≈ 393×851; for
+      // pixel-perfect 371×659 override `use.viewport` per spec.
+      {
+        name: 'chromium-mobile',
+        use: { ...devices['Pixel 5'] },
+      },
+      // Partial iOS smoke — webkit engine catches dvh / safe-area /
+      // -webkit-overflow-scrolling differences from blink. Does NOT
+      // simulate the iOS notch or home indicator faithfully;
+      // real-device verification on iOS Safari is still load-bearing.
+      {
+        name: 'webkit-mobile',
+        use: { ...devices['iPhone 13'] },
+      },
+    ] : []),
   ],
   webServer: {
     command:
