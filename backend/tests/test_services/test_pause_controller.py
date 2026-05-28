@@ -1344,3 +1344,244 @@ def test_uv_run_creates_two_level_process_tree(tmp_path):
     finally:
         proc.terminate()
         proc.wait(timeout=5)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# interrupt() — soft cancel without entering paused state
+# ──────────────────────────────────────────────────────────────────────
+#
+# Contract guarded here:
+#   1. Cancels the in-flight LLM task via task.cancel().
+#   2. Returns the list of agent names whose tasks were actually cancelled
+#      (skips done/missing tasks).
+#   3. Does NOT add the agent to ``_paused_agents`` — that's the whole
+#      reason ``interrupt()`` exists as a separate method from ``pause()``.
+#      If interrupt accidentally enters paused state, the on_pause_cancel
+#      retry hook would await resume + re-issue the LLM call instead of
+#      letting CancelledError propagate, defeating the user's "stop".
+
+def _run_async(coro):
+    """Run an async helper in a fresh event loop without leaking."""
+    return asyncio.new_event_loop().run_until_complete(coro)
+
+
+def test_interrupt_cancels_inflight_task_and_does_not_pause(
+    fresh_manager, fake_registry
+):
+    async def scenario():
+        async def waiter():
+            await asyncio.sleep(3600)
+        task = asyncio.create_task(waiter())
+        await asyncio.sleep(0)  # let the task actually start
+        fresh_manager._current_tasks["Jarvis"] = task
+
+        cancelled = fresh_manager.interrupt("Jarvis")
+
+        # Drain so the event loop closes cleanly.
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        assert cancelled == ["Jarvis"], (
+            "interrupt() must return the list of agents whose task was cancelled"
+        )
+        assert task.cancelled(), "interrupt() must call task.cancel() on the live task"
+        # CRITICAL invariant — the distinguishing behaviour vs pause().
+        assert "Jarvis" not in fresh_manager._paused_agents, (
+            "interrupt() MUST NOT enter paused state — that would make the "
+            "on_pause_cancel hook retry the LLM call instead of propagating "
+            "CancelledError up to the chat-stream handler."
+        )
+        # State machine must stay on 'running' (no pausing/paused side trip).
+        assert fresh_manager.state_of("Jarvis") == "running"
+
+    _run_async(scenario())
+
+
+def test_interrupt_returns_empty_when_no_inflight_task(
+    fresh_manager, fake_registry
+):
+    """No task registered → quiet no-op, not a raise. Common when the
+    agent is idle between turns or hasn't reached before_llm_call yet.
+    """
+    cancelled = fresh_manager.interrupt("AgentWithNoActiveTurn")
+    assert cancelled == []
+    assert "AgentWithNoActiveTurn" not in fresh_manager._paused_agents
+
+
+def test_interrupt_skips_already_done_task(fresh_manager, fake_registry):
+    """A stale task ref from a previous turn (cleanup gap) must not be
+    re-cancelled — the public contract is "cancel in-flight", not
+    "blindly call cancel on whatever ref we hold".
+    """
+    async def scenario():
+        async def noop():
+            return None
+        task = asyncio.create_task(noop())
+        await task  # let it complete
+        fresh_manager._current_tasks["Jarvis"] = task
+
+        cancelled = fresh_manager.interrupt("Jarvis")
+        assert cancelled == [], (
+            "interrupt() must skip done tasks — the cancellation contract "
+            "is in-flight-only"
+        )
+
+    _run_async(scenario())
+
+
+# ──────────────────────────────────────────────────────────────────────
+# hard_kill() — cascade SIGTERM to running subagents
+# ──────────────────────────────────────────────────────────────────────
+#
+# Contract guarded here:
+#   1. Cancels the parent's in-flight task (same as interrupt()).
+#   2. Iterates ``registry_db.get_all()`` and SIGTERMs every record whose
+#      status is one of ``running|idle|pending``.
+#   3. SKIPS terminal records (``completed|killed|error``) — must not
+#      double-signal a dead process or overwrite a legitimate 'completed'.
+#   4. Updates each killed record's status to 'killed' via upsert_record.
+#   5. Returns ``{cancelled_tasks, killed_pids}`` for the UI's collateral
+#      warning toast.
+#   6. ProcessLookupError / PermissionError on os.kill are caught — the
+#      sweep continues across the remaining records.
+
+def _install_fake_get_all(fake_registry, records: dict):
+    """Make ``registry_db.get_all()`` return a {run_id: rec} dict."""
+    fake_registry.get_all = MagicMock(return_value=records)
+
+
+def test_hard_kill_sigterms_running_records_and_marks_them_killed(
+    fresh_manager, fake_registry, monkeypatch
+):
+    _install_fake_get_all(fake_registry, {
+        "run-running": {"agent_name": "Dev", "status": "running", "pid": 1001},
+        "run-idle":    {"agent_name": "QE",  "status": "idle",    "pid": 1002},
+        "run-pending": {"agent_name": "Sa",  "status": "pending", "pid": 1003},
+    })
+
+    sent: list[tuple[int, int]] = []
+    monkeypatch.setattr(
+        "services.pause_controller.os.kill",
+        lambda pid, sig: sent.append((pid, sig)),
+    )
+
+    result = fresh_manager.hard_kill("Jarvis")
+
+    import signal as _sig
+    assert {pid for pid, _ in sent} == {1001, 1002, 1003}
+    assert all(sig == _sig.SIGTERM for _, sig in sent)
+
+    upserts = {
+        c.args[0]: c.args[1] for c in fake_registry.upsert_record.call_args_list
+    }
+    assert upserts["run-running"] == {"status": "killed"}
+    assert upserts["run-idle"]    == {"status": "killed"}
+    assert upserts["run-pending"] == {"status": "killed"}
+
+    assert {k["pid"]  for k in result["killed_pids"]} == {1001, 1002, 1003}
+    assert {k["name"] for k in result["killed_pids"]} == {"Dev", "QE", "Sa"}
+
+
+def test_hard_kill_skips_terminal_records(
+    fresh_manager, fake_registry, monkeypatch
+):
+    """Records whose status is already terminal must NOT receive a
+    redundant SIGTERM — the process is gone, and re-flipping status to
+    'killed' would clobber a legitimate 'completed'.
+    """
+    _install_fake_get_all(fake_registry, {
+        "run-done":   {"agent_name": "Done", "status": "completed", "pid": 2001},
+        "run-killed": {"agent_name": "Gone", "status": "killed",    "pid": 2002},
+        "run-err":    {"agent_name": "Errd", "status": "error",     "pid": 2003},
+        "run-live":   {"agent_name": "Live", "status": "running",   "pid": 2004},
+    })
+    sent: list[int] = []
+    monkeypatch.setattr(
+        "services.pause_controller.os.kill",
+        lambda pid, sig: sent.append(pid),
+    )
+
+    fresh_manager.hard_kill("Jarvis")
+
+    assert sent == [2004], "only the live record may be signalled"
+    touched = [c.args[0] for c in fake_registry.upsert_record.call_args_list]
+    assert touched == ["run-live"], (
+        "only the live record's status may be touched — terminal records "
+        "carry their final state and must be preserved"
+    )
+
+
+def test_hard_kill_continues_past_process_lookup_error(
+    fresh_manager, fake_registry, monkeypatch
+):
+    """A zombie pid (already dead) raises ProcessLookupError. The sweep
+    must absorb it and keep going — otherwise one stale registry row
+    blocks killing the rest.
+    """
+    _install_fake_get_all(fake_registry, {
+        "run-zombie": {"agent_name": "Zombie", "status": "running", "pid": 9001},
+        "run-alive":  {"agent_name": "Alive",  "status": "running", "pid": 9002},
+    })
+
+    def _kill(pid, _sig):
+        if pid == 9001:
+            raise ProcessLookupError
+
+    monkeypatch.setattr("services.pause_controller.os.kill", _kill)
+
+    result = fresh_manager.hard_kill("Jarvis")
+
+    assert [k["pid"] for k in result["killed_pids"]] == [9002], (
+        "zombie pid must NOT appear in the killed list; the live one must"
+    )
+
+
+def test_hard_kill_handles_missing_registry_db(fresh_manager):
+    """In fresh-boot / test contexts ``shared_state.registry_db`` may be
+    None. hard_kill must not crash — return empty kill list, still cancel
+    the parent task (none registered here, so just empty).
+    """
+    import services.shared_state as state
+
+    original = state.registry_db
+    state.registry_db = None
+    try:
+        result = fresh_manager.hard_kill("Jarvis")
+        assert result == {"cancelled_tasks": [], "killed_pids": []}
+    finally:
+        state.registry_db = original
+
+
+def test_hard_kill_cancels_parent_task_alongside_subagent_sweep(
+    fresh_manager, fake_registry, monkeypatch
+):
+    """Both halves of the contract together: the in-process parent's
+    LLM task gets task.cancel() AND every running subprocess record
+    gets SIGTERM. That's what makes hard mode actually "stop everything".
+    """
+    _install_fake_get_all(fake_registry, {
+        "run-1": {"agent_name": "Child", "status": "running", "pid": 5001},
+    })
+    monkeypatch.setattr("services.pause_controller.os.kill", lambda *_a: None)
+
+    async def scenario():
+        async def waiter():
+            await asyncio.sleep(3600)
+        task = asyncio.create_task(waiter())
+        await asyncio.sleep(0)
+        fresh_manager._current_tasks["Jarvis"] = task
+
+        result = fresh_manager.hard_kill("Jarvis")
+
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        assert result["cancelled_tasks"] == ["Jarvis"]
+        assert task.cancelled()
+        assert [k["pid"] for k in result["killed_pids"]] == [5001]
+
+    _run_async(scenario())
