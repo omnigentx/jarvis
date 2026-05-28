@@ -461,7 +461,7 @@ trial and error.
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **jarvis-2-workspace** (36513 symbols, 102696 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **jarvis** (37816 symbols, 106117 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -477,7 +477,7 @@ This project is indexed by GitNexus as **jarvis-2-workspace** (36513 symbols, 10
 
 1. `gitnexus_query({query: "<error or symptom>"})` — find execution flows related to the issue
 2. `gitnexus_context({name: "<suspect function>"})` — see all callers, callees, and process participation
-3. `READ gitnexus://repo/jarvis-2-workspace/process/{processName}` — trace the full execution flow step by step
+3. `READ gitnexus://repo/jarvis/process/{processName}` — trace the full execution flow step by step
 4. For regressions: `gitnexus_detect_changes({scope: "compare", base_ref: "main"})` — see what your branch changed
 
 ## When Refactoring
@@ -516,10 +516,10 @@ This project is indexed by GitNexus as **jarvis-2-workspace** (36513 symbols, 10
 
 | Resource | Use for |
 |----------|---------|
-| `gitnexus://repo/jarvis-2-workspace/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/jarvis-2-workspace/clusters` | All functional areas |
-| `gitnexus://repo/jarvis-2-workspace/processes` | All execution flows |
-| `gitnexus://repo/jarvis-2-workspace/process/{name}` | Step-by-step execution trace |
+| `gitnexus://repo/jarvis/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/jarvis/clusters` | All functional areas |
+| `gitnexus://repo/jarvis/processes` | All execution flows |
+| `gitnexus://repo/jarvis/process/{name}` | Step-by-step execution trace |
 
 ## Self-Check Before Finishing
 
