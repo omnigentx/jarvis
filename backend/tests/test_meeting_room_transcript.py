@@ -390,28 +390,22 @@ def test_get_transcript_not_available():
 
 
 def _identity_check(caller_env_name: str, param_agent_name: str):
-    """Drive _assert_self_identity directly with the env name set.
+    """Drive _assert_self_identity with TEAM_MY_NAME set to the given value.
 
-    The helper reads ``TEAM_MY_NAME`` from ``os.environ`` directly (NOT
-    via ``_get_my_name()``) — only that env var proves the process was
-    spawned as a specific team member. We set it via ``patch.dict`` so
-    the value is restored after the test. Empty string means "env var
-    unset" (the test for the permissive non-team contract).
+    Empty ``caller_env_name`` means TEAM_MY_NAME is UNSET — used to test
+    the strict refusal when a process has no authoritative identity to
+    verify a claim against.
     """
-    env_patch = {"TEAM_MY_NAME": caller_env_name} if caller_env_name else {}
-    with patch.dict(
-        "os.environ",
-        env_patch,
-        clear=False if caller_env_name else False,
-    ):
-        # When caller_env_name is empty, remove TEAM_MY_NAME so the
-        # "unset env" branch is exercised. patch.dict's clear=False
-        # leaves untouched keys alone, so we drop the key explicitly.
+    overrides = {}
+    if caller_env_name:
+        overrides["TEAM_MY_NAME"] = caller_env_name
+
+    with patch.dict("os.environ", overrides, clear=False):
         if not caller_env_name:
             os.environ.pop("TEAM_MY_NAME", None)
-        # ``_get_my_name`` is still consulted ONLY when ``param_agent_name``
-        # is empty (auto-detect). Patch it too so that branch produces
-        # the env name verbatim instead of falling back to TEAM_MY_ROLE.
+        # ``_get_my_name`` is consulted ONLY when ``param_agent_name``
+        # is empty (auto-detect). Patch it so that branch produces a
+        # predictable value instead of depending on the real env.
         with patch(
             "fast_agent.spawn.servers.meeting_room_server._get_my_name",
             return_value=caller_env_name or "agent",
@@ -462,15 +456,17 @@ def test_identity_check_auto_detects_when_param_empty():
     assert resolved == "Taylor [PM]"
 
 
-def test_identity_check_allows_any_name_when_env_unset():
-    """When TEAM_MY_NAME is unset, the process is NOT a team-spawned
-    agent (CLI tests, dashboard direct calls, library callers). There
-    is no real identity to compare against, so the caller-supplied
-    ``agent_name`` is accepted as-is — preserves the legacy permissive
-    contract for non-team contexts."""
+def test_identity_check_refuses_claim_when_env_unset():
+    """When TEAM_MY_NAME is unset, a claimed agent_name has nothing to
+    verify against — REFUSE. There is no permissive escape hatch: the
+    process must set TEAM_MY_NAME before claiming an identity, or it
+    can only use the auto-detect path (omit agent_name)."""
     resolved, err = _identity_check("", "Sawyer [BA]")
-    assert err is None
-    assert resolved == "Sawyer [BA]"
+    assert resolved == ""
+    assert err is not None
+    err_data = json.loads(err)
+    assert "Identity unverifiable" in err_data["error"]
+    assert err_data["claimed_agent_name"] == "Sawyer [BA]"
 
 
 def test_identity_check_pm_force_skip_pattern_all_six_blocked():
@@ -494,3 +490,28 @@ def test_identity_check_pm_force_skip_pattern_all_six_blocked():
         f"Expected all {len(teammates)} impersonation attempts to be "
         f"blocked; only {blocked} were."
     )
+
+
+# ── Strict no-escape-hatch contract ──
+#
+# Production observation: even with the 2026-05-20 fix in place, a
+# screenshot surfaced TWO members of one meeting posting identical
+# "PM force-advancing kickoff acknowledgment to avoid blocking…" skip
+# entries — same wording, both attributed to non-PM members. Root cause
+# suspected: ``TEAM_MY_NAME`` was unset on the PM process (spawn bug or
+# in-process call), so the old permissive branch accepted whatever
+# ``agent_name`` PM supplied. The new contract removes that branch
+# entirely: a CLAIMED agent_name always requires a matching
+# TEAM_MY_NAME — there is no context in which an unverified claim is
+# acceptable.
+
+
+def test_identity_check_auto_detect_still_works_when_env_unset():
+    """``agent_name=""`` doesn't claim any identity → no verification
+    needed → auto-detect path works regardless of TEAM_MY_NAME. This is
+    the safe path for non-team callers (CLI, dashboard) that don't need
+    to write as a specific named agent."""
+    resolved, err = _identity_check("", "")
+    assert err is None
+    # _get_my_name is patched to return "agent" when caller_env is empty.
+    assert resolved == "agent"
