@@ -19,7 +19,11 @@ class TestTTSRegistryShape:
         assert reg.default_tts_chat_config()["engine"] == "edge"
 
     def test_every_engine_declares_required_keys(self):
-        required = {"label", "params", "realtimetts_engine", "output_format"}
+        # ``realtimetts_engine`` is required only for engines that dispatch
+        # through RealtimeTTSProvider; Edge and Soniox both ship native
+        # providers that bypass the RealtimeTTS layer, so the registry-wide
+        # check covers only the truly-required keys.
+        required = {"label", "params", "output_format"}
         for name, spec in reg.TTS_ENGINES.items():
             missing = required - spec.keys()
             assert not missing, f"engine {name!r} missing keys {missing}"
@@ -111,6 +115,54 @@ class TestSTTDispatcher:
 
         assert called["fw"]["params"]["a"] == 1
         assert called["gv"]["params"]["b"] == 2
+
+
+class TestSonioxBackend:
+    """Plug-and-play smoke for the Soniox cloud STT + TTS pair."""
+
+    def test_tts_registered_with_secret(self):
+        assert "soniox" in reg.TTS_ENGINES
+        spec = reg.TTS_ENGINES["soniox"]
+        assert "api_key" in spec["secrets"]
+        # Soniox does not go through RealtimeTTS — the registry intentionally
+        # omits ``realtimetts_engine`` so a future linter that wires every
+        # listed engine into RealtimeTTSProvider doesn't silently grab it.
+        assert "realtimetts_engine" not in spec
+
+    def test_stt_registered_with_secret(self):
+        assert "soniox" in reg.STT_BACKENDS
+        spec = reg.STT_BACKENDS["soniox"]
+        assert "api_key" in spec.get("secrets", [])
+        # No wake-word plumbing for the WS streaming path.
+        assert set(spec["wake_word_backends"].keys()) == {"off"}
+
+    def test_stt_factory_wired(self):
+        from services.stt_realtime import _BACKEND_FACTORIES
+        assert _BACKEND_FACTORIES["soniox"].endswith(":build")
+
+    def test_tts_build_routes_to_soniox_provider(self, monkeypatch):
+        # build_chat_provider must dispatch the "soniox" engine to the
+        # native WS provider rather than RealtimeTTSProvider — otherwise
+        # the runtime would try to import a non-existent
+        # RealtimeTTS.SonioxEngine class.
+        from services import tts_realtime
+        from services.tts_backends import soniox as soniox_tts
+
+        captured: dict = {}
+
+        def fake_build(params, secrets):
+            captured["params"] = params
+            captured["secrets"] = secrets
+            return object()
+
+        monkeypatch.setattr(soniox_tts, "build_provider", fake_build)
+        provider = tts_realtime.build_chat_provider(
+            {"engine": "soniox", "params": {"voice": "Adrian"}},
+            secrets={"soniox": {"api_key": "sk-fake"}},
+        )
+        assert provider is not None
+        assert captured["params"]["voice"] == "Adrian"
+        assert captured["secrets"]["api_key"] == "sk-fake"
 
 
 class TestStoriesSchemaIsLocked:

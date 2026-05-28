@@ -48,6 +48,10 @@ class STTBackendSpec(TypedDict, total=False):
     description: str
     badges: list[str]
     params: list[ParamSpec]
+    # Encrypted credential slots (e.g. cloud STT API keys). Same shape as
+    # TTSEngineSpec.secrets — the UI renders an inline "set/clear" control
+    # per slot and the value is persisted via voice_config.set_engine_secret.
+    secrets: list[str]
     wake_word_backends: dict[str, dict[str, Any]]
     # If set, the backend supports only this BCP-47 language code. The UI
     # hides the language picker and the saved config forces this value.
@@ -145,6 +149,42 @@ TTS_ENGINES: dict[str, TTSEngineSpec] = {
             {"key": "model", "type": "select", "label": "Model", "default": "tts-1", "options": ["tts-1", "tts-1-hd"]},
         ],
     },
+    # Soniox real-time TTS — WebSocket streaming, 60+ languages, low TTFB.
+    # Bypasses RealtimeTTS (no engine class in that library); the provider
+    # lives in services/tts_backends/soniox.py and is wired in
+    # tts_realtime.build_chat_provider.
+    "soniox": {
+        "label": "Soniox TTS (real-time)",
+        "description": "Cloud WebSocket TTS, 60+ languages, low-latency streaming.",
+        "badges": ["cloud", "paid", "multilingual"],
+        "requires": [],
+        "secrets": ["api_key"],
+        "output_format": "mp3",
+        # Voice list is the full Soniox catalog as of tts-rt-v1 (28 studio
+        # voices — every voice can speak every supported language; pick one
+        # for accent/timbre, switch ``language`` for the actual locale).
+        # Source: https://soniox.com/docs/tts/concepts/voices
+        # Language list is curated to the locales we care about in this app
+        # (vi+en first, then common globals). Anyone needing a Soniox-supported
+        # code we don't list yet should add it here — the backend accepts any
+        # ISO code; the UI dropdown is the only thing gating it.
+        "params": [
+            {"key": "model", "type": "select", "label": "Model", "default": "tts-rt-v1", "options": ["tts-rt-v1"]},
+            {"key": "voice", "type": "select", "label": "Voice", "default": "Adrian", "options": [
+                # Male
+                "Adrian", "Arjun", "Arthur", "Cooper", "Daniel", "Jack", "Kenji",
+                "Mason", "Mateo", "Noah", "Oliver", "Owen", "Rafael", "Rohan",
+                # Female
+                "Claire", "Elise", "Emma", "Grace", "Isla", "Lucia", "Maya",
+                "Meera", "Mina", "Nina", "Priya", "Ruby", "Sofia", "Victoria",
+            ]},
+            {"key": "language", "type": "select", "label": "Language", "default": "en", "options": [
+                "en", "vi", "zh", "ja", "ko", "fr", "de", "es", "pt", "it",
+                "ru", "ar", "hi", "id", "th",
+            ]},
+            {"key": "sample_rate", "type": "select", "label": "Sample rate", "default": 24000, "options": [8000, 16000, 24000, 44100, 48000]},
+        ],
+    },
 }
 
 
@@ -217,6 +257,27 @@ STT_BACKENDS: dict[str, STTBackendSpec] = {
         # straight off Silero VAD and there is no Porcupine/OWW callback
         # plumbing. Surfacing only "off" prevents the UI from offering
         # a config that would silently be ignored.
+        "wake_word_backends": {
+            "off": {"label": "Disabled", "params": []},
+        },
+    },
+    # Soniox real-time STT — WebSocket streaming, 60+ languages, endpoint
+    # detection. No local models; needs only an API key.
+    "soniox": {
+        "label": "Soniox STT (real-time)",
+        "description": "Cloud WebSocket STT, 60+ languages, server-side endpoint detection.",
+        "badges": ["cloud", "paid", "multilingual"],
+        "secrets": ["api_key"],
+        "params": [
+            {"key": "model", "type": "select", "label": "Model", "default": "stt-rt-v4", "options": ["stt-rt-v4"]},
+            {"key": "language_hints", "type": "text", "label": "Language hints", "default": "vi,en", "help": "Comma-separated ISO codes, or blank for auto."},
+            {"key": "enable_language_identification", "type": "toggle", "label": "Detect language per token", "default": False},
+            {"key": "enable_speaker_diarization", "type": "toggle", "label": "Speaker diarization", "default": False},
+        ],
+        # Soniox handles endpoint detection server-side ("<end>" token) and
+        # streams audio over a single WS — there is no separate wake-word
+        # callback hook, so we surface "off" only (same pattern as
+        # gipformer_vi).
         "wake_word_backends": {
             "off": {"label": "Disabled", "params": []},
         },

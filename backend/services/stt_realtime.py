@@ -217,6 +217,7 @@ def _patch_torch_hub_trust() -> None:
 _BACKEND_FACTORIES: dict[str, str] = {
     "faster_whisper": "services.stt_backends.faster_whisper:build",
     "gipformer_vi":   "services.stt_backends.gipformer_vi:build",
+    "soniox":         "services.stt_backends.soniox:build",
 }
 
 
