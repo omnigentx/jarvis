@@ -73,6 +73,23 @@ class TestTokenHandling:
         # frame supersedes the first instead of building "hellohello there".
         assert partials == ["hello", "hello there"]
 
+    def test_multiple_provisional_tokens_in_one_frame_concatenate(self):
+        # Soniox can pack several non-final tokens into a single message.
+        # Old behaviour (``_provisional_tail = text`` per token) collapsed
+        # the frame down to the last token, dropping "hello " from
+        # ``[{"text":"hello ","is_final":False}, {"text":"world","is_final":False}]``.
+        # The accumulator now resets at the start of ``_handle_event`` and
+        # concatenates within the loop, so every provisional in the frame
+        # contributes to the running partial.
+        svc = _make_service()
+        events = _hook_recorder(svc)
+        svc._handle_event({"tokens": [
+            {"text": "hello ", "is_final": False},
+            {"text": "world", "is_final": False},
+        ]})
+        partials = [p["text"] for ev, p in events if ev == "partial_transcript"]
+        assert partials == ["hello world"]
+
     def test_final_tokens_accumulate_into_buffer(self):
         svc = _make_service()
         events = _hook_recorder(svc)

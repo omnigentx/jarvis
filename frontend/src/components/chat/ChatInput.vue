@@ -29,11 +29,14 @@ const attachedFiles = ref([])
 const fileInputRef = ref(null)
 const { isMobile } = useBreakpoint()
 
-// Dictation state. ``isRecording`` mirrors the session's "actively
-// listening" status so the existing pulse-animation styling keeps working
-// without refactoring the button class binding.
+// Dictation state. ``isRecording`` covers every non-idle, non-error
+// status — including ``connecting`` — so the button shows the active
+// pulse from the moment the user clicks the mic, not just after the WS
+// handshake completes a few hundred ms later. Without ``connecting``
+// here, an impatient user would see no feedback and double-click,
+// flipping the session straight back off.
 const dictation = useDictationSession()
-const isRecording = computed(() => dictation.status.value === 'listening' || dictation.status.value === 'loading_stt')
+const isRecording = computed(() => ['connecting', 'loading_stt', 'listening'].includes(dictation.status.value))
 // Snapshot of inputText BEFORE the user pressed the mic. We render
 // ``baseText + finals + partial`` while dictating so any text the user
 // already typed is preserved — without this snapshot, the partial-tail

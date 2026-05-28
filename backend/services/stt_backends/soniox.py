@@ -83,8 +83,22 @@ class SonioxSTTService(WSStreamingSTT):
             })
             return
 
+        # Soniox packs *all* current non-final tokens into every frame —
+        # the next frame fully replaces the previous provisional sequence
+        # rather than appending to it. Reset the provisional accumulator
+        # before iterating so a multi-token frame like
+        # ``[{"text":"hello ","is_final":False}, {"text":"world","is_final":False}]``
+        # ends up as ``"hello world"`` instead of just the last token.
+        # Finals stay sticky in ``_final_buffer`` until the next ``<end>``.
+        self._provisional_tail = ""
         for tk in data.get("tokens") or []:
             self._handle_token(tk)
+        # One partial-emit per frame, AFTER consuming every token, so the
+        # snapshot reflects the full provisional sequence rather than
+        # firing mid-loop with a stale tail.
+        snapshot = "".join(self._final_buffer) + self._provisional_tail
+        if snapshot.strip():
+            self._emit_partial(snapshot)
 
         if data.get("finished"):
             # ``async for msg in ws`` will exit on its own once the server
@@ -105,14 +119,11 @@ class SonioxSTTService(WSStreamingSTT):
 
         if is_final:
             self._final_buffer.append(text)
-            self._provisional_tail = ""
         else:
-            # Soniox emits provisional tokens that may be revised; track only
-            # the latest non-final text so the running partial doesn't snowball.
-            self._provisional_tail = text
-
-        snapshot = "".join(self._final_buffer) + self._provisional_tail
-        self._emit_partial(snapshot)
+            # Provisional accumulator — frame-scoped (cleared in
+            # ``_handle_event`` before the loop). Concatenate so a frame
+            # carrying multiple provisional tokens lands in order.
+            self._provisional_tail += text
 
 
 def _parse_language_hints(raw: Any) -> list[str]:
@@ -131,11 +142,13 @@ def build(config: dict[str, Any]) -> SonioxSTTService:
     The API key is loaded from the same encrypted ``voice.secrets.soniox.api_key``
     slot that the TTS engine uses — Soniox issues one key per account that
     works against both STT and TTS endpoints, so duplicating slots would
-    only invite drift.
+    only invite drift. Both halves go through ``get_engine_secrets`` so
+    decryption / hot-reload / future caching tweaks land on one read path.
     """
     from services.config_service import config_service as _cs
+    from services.voice_config import get_engine_secrets
 
-    api_key = _cs.get("voice", "secrets.soniox.api_key")
+    api_key = get_engine_secrets(_cs, "soniox").get("api_key")
     if not api_key:
         raise RuntimeError(
             "Soniox STT selected but no API key configured. "

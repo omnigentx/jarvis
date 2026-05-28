@@ -353,15 +353,11 @@ async def voice_ws(ws: WebSocket) -> None:
 
         # Mark a user turn as ready to dispatch on the asyncio side. The
         # actual scheduling happens in the main receive loop so we stay on
-        # the event-loop thread for create_task.
-        #
-        # Dictation mode short-circuits here: the client wants the raw
-        # transcript (already emitted via the standard ``final_transcript``
-        # event a few lines up) so it can put it in a text box for the user
-        # to edit. Skipping ``_dispatch_user_turn`` keeps the LLM + TTS
-        # pipeline cold, which is the whole point — no wasted tokens, no
-        # bot voice talking back.
-        if name == "final_transcript" and not dictation_mode:
+        # the event-loop thread for create_task. The dictation gate lives
+        # inside ``_dispatch_user_turn`` (single-threaded — asyncio loop
+        # only) so the worker thread never reads the flag concurrently
+        # with the receive loop's writes.
+        if name == "final_transcript":
             text = (payload or {}).get("text") or ""
             if text.strip():
                 user_query_pending = True
@@ -371,6 +367,16 @@ async def voice_ws(ws: WebSocket) -> None:
         """Fire-and-forget: schedule a coroutine that handles one full turn."""
         nonlocal agent_task, user_query_pending
         user_query_pending = False
+        # Dictation gate. ``dictation_mode`` is set by the receive loop
+        # (also asyncio thread) when the client sends
+        # ``{type:'start', mode:'dictation'}``. Checking here keeps both
+        # the read and the write on the event-loop thread, which is the
+        # only way to make the gate race-free without a lock — the client
+        # wants the raw transcript (already emitted upstream) so it can
+        # populate a text box; skipping the LLM/TTS pipeline below is the
+        # whole point of the flag.
+        if dictation_mode:
+            return
         # Cancel any previous in-flight agent/tts so a barge-in mid-turn
         # cleanly resets to the new user input.
         if (agent_task is not None and not agent_task.done()) or (

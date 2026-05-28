@@ -129,19 +129,12 @@ def test_dictation_mode_suppresses_llm_dispatch(ws_client, monkeypatch):
 
     client, fake_stt = ws_client
     with client.websocket_connect("/ws/voice") as ws:
-        # Flip the session into dictation mode BEFORE the STT fires its
-        # final, so the gate is in place by the time the handler runs.
+        # Flip the session into dictation mode BEFORE firing a final.
+        # The dictation gate is checked inside _dispatch_user_turn which
+        # runs on the asyncio loop — same thread that processes this
+        # start message — so once receive_text round-trips, the flag is
+        # guaranteed visible to the dispatcher. No "beat" trick needed.
         ws.send_text(json.dumps({"type": "start", "mode": "dictation"}))
-        # Give the receive loop a beat to process the start frame. The
-        # next emit fires the STT hook synchronously from the test thread,
-        # but the receive loop processes the start message on the asyncio
-        # side — without this short event, the dictation flag race could
-        # let final_transcript reach the dispatcher first.
-        fake_stt.emit("partial_transcript", {"text": "Xin"})
-        # Drain the bridged partial so the next receive_text sees the
-        # final, not the partial.
-        partial = json.loads(ws.receive_text())
-        assert partial["type"] == "partial_transcript"
 
         fake_stt.emit("final_transcript", {"text": "Xin chào Jarvis"})
         final = json.loads(ws.receive_text())
