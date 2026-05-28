@@ -46,5 +46,17 @@ export function youtubeEmbedUrl(videoId) {
   // `youtube-nocookie.com` is the privacy-enhanced variant — recommended
   // by Google for embedded players, identical UX, no cookie set until the
   // user actually presses play.
-  return `https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId)}`
+  //
+  // ``autoplay=1`` makes the chat feel responsive: the user asked for a
+  // song ("phát nhạc <bài>"), the agent replied with the embed, and the
+  // music starts without an extra click. Browsers gate autoplay-with-sound
+  // behind a "user has interacted with the page" check — the user's typed
+  // /api/chat/stream message counts, so this works on the same turn. The
+  // iframe element in ChatMessages.vue already lists ``autoplay`` in its
+  // ``allow`` attribute; the URL param is the missing half.
+  //
+  // ``rel=0`` keeps the "Up next" recommendations limited to the same
+  // channel when playback ends, avoiding random suggestion thumbnails
+  // taking over the player on a chat page.
+  return `https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId)}?autoplay=1&rel=0`
 }

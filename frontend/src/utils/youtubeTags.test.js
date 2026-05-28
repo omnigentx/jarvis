@@ -88,10 +88,13 @@ test('tag on its own line → leftover blank line is collapsed', () => {
   assert.equal(out.text.includes('PLAY:'), false)
 })
 
-test('youtubeEmbedUrl builds nocookie URL with id encoded', () => {
+test('youtubeEmbedUrl builds nocookie URL with id encoded + autoplay', () => {
+  // autoplay=1 + rel=0 are user-facing behaviour, not implementation
+  // detail — pin them so a future refactor that drops either flag is a
+  // visible diff in the PR rather than a silent UX regression.
   assert.equal(
     youtubeEmbedUrl('dQw4w9WgXcQ'),
-    'https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ'
+    'https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?autoplay=1&rel=0'
   )
 })
 
@@ -101,6 +104,6 @@ test('youtubeEmbedUrl encodes characters defensively', () => {
   // the parser, encodeURIComponent prevents URL injection.
   assert.equal(
     youtubeEmbedUrl('a/b'),
-    'https://www.youtube-nocookie.com/embed/a%2Fb'
+    'https://www.youtube-nocookie.com/embed/a%2Fb?autoplay=1&rel=0'
   )
 })
