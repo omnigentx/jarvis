@@ -42,7 +42,25 @@ export function parseYoutubeTags(text) {
   return { text: cleaned, videoIds }
 }
 
-export function youtubeEmbedUrl(videoId) {
+// In-session set of videoIds we've already rendered. ``youtubeEmbedUrl``
+// flips ``autoplay`` off the second time it sees an id, so scrolling back
+// through history (or switching conversations) doesn't fire a fresh
+// autoplay attempt for every old embed in the thread. Browsers would
+// block most of those (no gesture context for the historical message)
+// but the iframe still loads with the autoplay query, which is wasted
+// network + noise. Module-level Map persists for the page lifetime —
+// reloading the tab counts as a fresh start, which is the right scope.
+const _seenVideoIds = new Set()
+
+/**
+ * @param {string} videoId
+ * @param {{ autoplayIfFresh?: boolean }} [opts]
+ *   ``autoplayIfFresh`` (default true): set ``?autoplay=1`` the first
+ *   time this session sees ``videoId``. Pass ``false`` to force
+ *   ``autoplay=0`` regardless (history view, preview cards, tests).
+ */
+export function youtubeEmbedUrl(videoId, opts = {}) {
+  const { autoplayIfFresh = true } = opts
   // `youtube-nocookie.com` is the privacy-enhanced variant — recommended
   // by Google for embedded players, identical UX, no cookie set until the
   // user actually presses play.
@@ -58,5 +76,15 @@ export function youtubeEmbedUrl(videoId) {
   // ``rel=0`` keeps the "Up next" recommendations limited to the same
   // channel when playback ends, avoiding random suggestion thumbnails
   // taking over the player on a chat page.
-  return `https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId)}?autoplay=1&rel=0`
+  const isFreshSighting = autoplayIfFresh && !_seenVideoIds.has(videoId)
+  if (isFreshSighting) _seenVideoIds.add(videoId)
+  const autoplay = isFreshSighting ? '1' : '0'
+  return `https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId)}?autoplay=${autoplay}&rel=0`
+}
+
+// Test-only helper: resets the session-scoped autoplay cache so a unit
+// test asserting first-sight behavior doesn't have to monkeypatch the
+// module. Not part of the public app surface.
+export function _resetYoutubeAutoplayCacheForTests() {
+  _seenVideoIds.clear()
 }

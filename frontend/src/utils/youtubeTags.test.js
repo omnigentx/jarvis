@@ -1,7 +1,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { parseYoutubeTags, youtubeEmbedUrl } from './youtubeTags.js'
+import {
+  parseYoutubeTags,
+  youtubeEmbedUrl,
+  _resetYoutubeAutoplayCacheForTests,
+} from './youtubeTags.js'
 
 test('no tag → text unchanged, videoIds empty', () => {
   const out = parseYoutubeTags('Hello world')
@@ -88,13 +92,55 @@ test('tag on its own line → leftover blank line is collapsed', () => {
   assert.equal(out.text.includes('PLAY:'), false)
 })
 
-test('youtubeEmbedUrl builds nocookie URL with id encoded + autoplay', () => {
+test('youtubeEmbedUrl: first sighting → autoplay=1, second → autoplay=0', () => {
   // autoplay=1 + rel=0 are user-facing behaviour, not implementation
   // detail — pin them so a future refactor that drops either flag is a
-  // visible diff in the PR rather than a silent UX regression.
+  // visible diff in the PR rather than a silent UX regression. The
+  // session cache makes subsequent calls for the same id fall back to
+  // autoplay=0 so scrolling back through history doesn't fire fresh
+  // autoplay attempts on every embed in the thread.
+  _resetYoutubeAutoplayCacheForTests()
   assert.equal(
     youtubeEmbedUrl('dQw4w9WgXcQ'),
     'https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?autoplay=1&rel=0'
+  )
+  // Second call for the same id during the same session — history-scroll
+  // or conversation re-mount — must NOT request autoplay again.
+  assert.equal(
+    youtubeEmbedUrl('dQw4w9WgXcQ'),
+    'https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?autoplay=0&rel=0'
+  )
+})
+
+test('youtubeEmbedUrl: each distinct id gets its own first-sight autoplay', () => {
+  // Two different videos in one session — both deserve the
+  // "freshly emitted" autoplay since each is an independent agent
+  // action the user just initiated.
+  _resetYoutubeAutoplayCacheForTests()
+  assert.equal(
+    youtubeEmbedUrl('aaaaaa1111A'),
+    'https://www.youtube-nocookie.com/embed/aaaaaa1111A?autoplay=1&rel=0'
+  )
+  assert.equal(
+    youtubeEmbedUrl('bbbbbb2222B'),
+    'https://www.youtube-nocookie.com/embed/bbbbbb2222B?autoplay=1&rel=0'
+  )
+})
+
+test('youtubeEmbedUrl: autoplayIfFresh=false forces autoplay=0', () => {
+  // Opt-out path for callers that render an embed in a non-active
+  // context (preview cards, history-only views, tests) where firing
+  // autoplay would be wrong regardless of the cache state.
+  _resetYoutubeAutoplayCacheForTests()
+  assert.equal(
+    youtubeEmbedUrl('cccccc3333C', { autoplayIfFresh: false }),
+    'https://www.youtube-nocookie.com/embed/cccccc3333C?autoplay=0&rel=0'
+  )
+  // A subsequent call WITH autoplayIfFresh true should still get
+  // autoplay=1 — opt-out doesn't poison the cache.
+  assert.equal(
+    youtubeEmbedUrl('cccccc3333C'),
+    'https://www.youtube-nocookie.com/embed/cccccc3333C?autoplay=1&rel=0'
   )
 })
 
@@ -102,6 +148,7 @@ test('youtubeEmbedUrl encodes characters defensively', () => {
   // Defence-in-depth: even though the parser only emits sanitized ids,
   // the embed helper must not blindly concatenate. If a caller bypasses
   // the parser, encodeURIComponent prevents URL injection.
+  _resetYoutubeAutoplayCacheForTests()
   assert.equal(
     youtubeEmbedUrl('a/b'),
     'https://www.youtube-nocookie.com/embed/a%2Fb?autoplay=1&rel=0'

@@ -882,11 +882,23 @@ input[type="range"] {
      of the scroll container. Faded top edge so the panel content below
      it doesn't visibly cut off through transparent space. */
   position: sticky;
+  /* iOS Safari's soft keyboard sits on top of the visual viewport and
+     shrinks the layout viewport; ``bottom: 0`` alone collides with the
+     keyboard. ``env(safe-area-inset-bottom)`` adds the home-indicator
+     gutter; the padding-bottom hardens the gap on iOS without
+     re-measuring on every keystroke. Desktop browsers ignore the env()
+     fallback (resolves to 0) so this is iOS-only insurance. */
   bottom: 0;
+  padding-bottom: max(4px, env(safe-area-inset-bottom));
   margin-top: 8px;
-  padding: 14px 0 4px;
+  padding-top: 14px;
   background: linear-gradient(180deg, transparent 0%, var(--bg-1, #0b1020) 35%, var(--bg-1, #0b1020) 100%);
-  z-index: 5;
+  /* Bumped from 5 → 30 so native popovers that float over the panel
+     (voice-name <select> dropdown, reveal-eye tooltip, paid-engine
+     hint pill) don't render UNDER the sticky band. 30 is the same tier
+     SettingsGeneral.vue uses for its own sticky save row — keeps the
+     two settings tabs visually consistent. */
+  z-index: 30;
 }
 
 @media (max-width: 768px) {
