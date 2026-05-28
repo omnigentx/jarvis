@@ -1,0 +1,76 @@
+# Chat SSE streaming — happy path.
+#
+# User types a message and hits send. The dashboard POSTs to /api/chat-stream
+# (JSON body: {message, conversation_id, agent_name}), and the backend streams
+# a sequence of progress events terminated by a `done` event carrying the final
+# response text.
+#
+# NOTE: The production backend does NOT emit token_delta text chunks. Streaming
+# consists of tool_call / tool_result progress events plus a final `done` event
+# whose payload contains the full response string. See `progress_manager.push(...)`
+# calls in backend/routes/chat.py::chat_stream — the only text surface is the
+# `done` event's `response` field (used by chatStore.finalizeAgentMessage).
+
+backend_source:
+  - "backend/routes/chat.py::chat_stream"
+  - "backend/services/sse_progress.py::progress_manager.push"
+  - "backend/routes/sessions.py::list_conversations"
+  - "backend/routes/agents.py::list_agents"
+  - "dashboard/src/composables/useChatStream.js::send"
+  - "dashboard/src/views/ChatView.vue::handleSend"
+
+notes: |
+  ChatView mounts fetchConversations + fetchAgents + fetchAllActivities in
+  parallel with AppLayout's unread-count fetch. Those endpoints are covered
+  here because the noise fixture only handles global SSE streams + badge, not
+  the chat-specific boot calls.
+
+responses:
+  # ChatView.onMounted → chatStore.fetchConversations
+  "GET /api/conversations":
+    status: 200
+    json: []
+
+  # ChatView → agentsStore.fetchAgents (guarded by `if (!agentsList.length)`)
+  "GET /api/agents":
+    status: 200
+    json:
+      - name: "Jarvis"
+        description: "Main orchestrator"
+        status: "idle"
+        is_default: true
+        team_name: null
+
+  # useActivityStream.onMounted → store.fetchAllActivities(20)
+  "GET /api/agents/activities/recent":
+    status: 200
+    json: {}
+
+sse_streams:
+  # POST /api/chat-stream — SSE events parsed by useChatStream.send
+  # Events are JSON objects with a `type` discriminator. ChatView only reacts
+  # to tool_call / tool_result / done / error. The stream ends when `done` or
+  # `error` arrives (useChatStream.js:99).
+  "/api/chat-stream":
+    - data:
+        type: "start"
+        message: "Processing..."
+    - data:
+        type: "tool_call"
+        tools:
+          - name: "search_tool"
+            args: { query: "hello" }
+        message: "Searching..."
+    - data:
+        type: "tool_result"
+        tools:
+          - name: "search_tool"
+        message: "result"
+        duration_ms: 120
+        result_preview: "1 hit"
+    - data:
+        type: "done"
+        response: "Hello from Jarvis — streamed response."
+        audio: null
+        conversation_id: "e2e-conv-happy-001"
+        total_tokens: { input: 10, output: 8, reasoning: 0, cache_read: 0 }

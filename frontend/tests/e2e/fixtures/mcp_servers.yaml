@@ -1,0 +1,151 @@
+# MCP Servers view fixture: catalog list, create with smoke test, attach,
+# detach, delete (built-in protected).
+
+backend_source:
+  - "backend/routes/mcp.py"
+  - "backend/services/mcp_catalog.py"
+  - "backend/services/mcp_attachments.py"
+  - "dashboard/src/views/McpServersView.vue"
+
+responses:
+  "GET /api/agents":
+    status: 200
+    json:
+      - name: "PersonalAgent"
+        status: "idle"
+        type: "builtin"
+        model: "gpt-4o-mini"
+        is_default: true
+      - name: "FinanceAgent"
+        status: "idle"
+        type: "card"
+        model: "gpt-4o-mini"
+        is_default: false
+
+  "GET /api/agents/activities/recent":
+    status: 200
+    json: {}
+
+  "GET /api/usage/agents":
+    status: 200
+    json: { agents: [] }
+
+  "GET /api/mcp/servers":
+    - status: 200
+      json:
+        servers:
+          - name: "github"
+            transport: "stdio"
+            command: "docker"
+            args: ["run", "-i", "--rm", "mcp/github"]
+            env: { GITHUB_PERSONAL_ACCESS_TOKEN: "••••" }
+            url: null
+            is_builtin: true
+            attached_agents: ["PersonalAgent"]
+            status: "running"
+            created_at: 1700000000.0
+            updated_at: 1700000000.0
+          - name: "my-tool"
+            transport: "stdio"
+            command: "python"
+            args: ["my.py"]
+            env: {}
+            url: null
+            is_builtin: false
+            attached_agents: []
+            status: "stopped"
+            created_at: 1700000100.0
+            updated_at: 1700000100.0
+    - status: 200
+      json:
+        servers:
+          - name: "github"
+            transport: "stdio"
+            command: "docker"
+            args: ["run", "-i", "--rm", "mcp/github"]
+            env: { GITHUB_PERSONAL_ACCESS_TOKEN: "••••" }
+            url: null
+            is_builtin: true
+            attached_agents: ["PersonalAgent", "FinanceAgent"]
+            status: "running"
+            created_at: 1700000000.0
+            updated_at: 1700000000.0
+          - name: "my-tool"
+            transport: "stdio"
+            command: "python"
+            args: ["my.py"]
+            env: {}
+            url: null
+            is_builtin: false
+            attached_agents: []
+            status: "stopped"
+            created_at: 1700000100.0
+            updated_at: 1700000100.0
+
+  "GET /api/mcp/events":
+    status: 200
+    json: { events: [] }
+
+  "GET /api/mcp/servers/github":
+    status: 200
+    json:
+      name: "github"
+      transport: "stdio"
+      command: "docker"
+      args: ["run", "-i", "--rm", "mcp/github"]
+      env: { GITHUB_PERSONAL_ACCESS_TOKEN: "••••" }
+      url: null
+      is_builtin: true
+      attached_agents: ["PersonalAgent"]
+      status: "running"
+      tools:
+        - { name: "github-create_issue", description: "Open a GitHub issue" }
+        - { name: "github-list_issues", description: "List repo issues" }
+      created_at: 1700000000.0
+      updated_at: 1700000000.0
+
+  "GET /api/mcp/servers/my-tool":
+    status: 200
+    json:
+      name: "my-tool"
+      transport: "stdio"
+      command: "python"
+      args: ["my.py"]
+      env: {}
+      url: null
+      is_builtin: false
+      attached_agents: []
+      status: "stopped"
+      tools: []
+      created_at: 1700000100.0
+      updated_at: 1700000100.0
+
+  "POST /api/mcp/servers/github/agents/FinanceAgent":
+    status: 200
+    json:
+      agent: "FinanceAgent"
+      server: "github"
+      persisted: true
+      live_attached: true
+      tools_added: ["github-create_issue", "github-list_issues"]
+      tools_total: 12
+      warnings: []
+
+  "DELETE /api/mcp/servers/github/agents/PersonalAgent":
+    status: 200
+    json:
+      agent: "PersonalAgent"
+      server: "github"
+      live_detached: true
+      tools_removed: ["github-create_issue"]
+      warning: null
+
+  "DELETE /api/mcp/servers/my-tool":
+    status: 403
+    json:
+      detail:
+        message: "server 'my-tool' is built-in; cannot delete"
+
+sse_streams:
+  "/api/mcp/events/stream":
+    - { event: "ping", data: {} }

@@ -1,0 +1,67 @@
+# Settings → General, Timezone field — initial fetch + save flow.
+#
+# SettingsGeneral.vue mounts → fetchAll() → reads system.TIMEZONE from the
+# returned categories. The Timezone row renders with the current value, a
+# "Requires Restart" pill, and a Save button (disabled until the input
+# diverges from the loaded value).
+#
+# When the user types a new IANA name and clicks Save:
+#   1. PUT /api/settings/system/TIMEZONE  body: { value, is_secret: false }
+#   2. (store.setValue) refreshEntry → GET /api/settings/system/TIMEZONE
+#
+# Backend contract:
+#   - backend/routes/settings.py::list_all  (GET /api/settings)
+#   - backend/routes/settings.py::set_value (PUT /api/settings/{cat}/{key})
+#   - backend/routes/settings.py::get_value (GET /api/settings/{cat}/{key})
+#   - backend/services/runtime_config.py::apply_timezone (listener)
+#
+# We sequence the GET /api/settings/system/TIMEZONE response so the refresh
+# after PUT returns the NEW value — the test asserts both the request body
+# and the persisted local state.
+
+backend_source:
+  - "backend/routes/settings.py::list_all"
+  - "backend/routes/settings.py::set_value"
+  - "backend/routes/settings.py::get_value"
+  - "backend/services/runtime_config.py::apply_timezone"
+  - "dashboard/src/views/settings/SettingsGeneral.vue::saveTimezone"
+  - "dashboard/src/stores/settings.js::setValue, refreshEntry"
+
+responses:
+  # Initial fetchAll on SettingsGeneral mount.
+  "GET /api/settings":
+    status: 200
+    json:
+      categories:
+        system:
+          - category: "system"
+            key: "LOG_CONSOLE_LEVEL"
+            value: "INFO"
+            is_secret: false
+          - category: "system"
+            key: "SESSION_HISTORY_WINDOW"
+            value: "200"
+            is_secret: false
+          - category: "system"
+            key: "TIMEZONE"
+            value: "Asia/Ho_Chi_Minh"
+            is_secret: false
+
+  # PUT after the user clicks Save. Backend echoes a minimal ack.
+  "PUT /api/settings/system/TIMEZONE":
+    status: 200
+    json:
+      category: "system"
+      key: "TIMEZONE"
+      action: "updated"
+      is_secret: false
+
+  # store.setValue then refreshEntry → GET single key. Returns the NEW value
+  # so the local store mirrors the server.
+  "GET /api/settings/system/TIMEZONE":
+    status: 200
+    json:
+      category: "system"
+      key: "TIMEZONE"
+      value: "America/New_York"
+      is_secret: false

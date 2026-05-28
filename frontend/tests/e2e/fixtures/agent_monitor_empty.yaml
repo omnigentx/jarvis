@@ -1,0 +1,24 @@
+# Team Monitor negative control — no agents, no events.
+#
+# Asserts the empty-state placeholder renders instead of a phantom grid, and
+# that the view does not fire any endpoints beyond the documented boot set.
+
+backend_source:
+  - "backend/routes/agents.py::list_agents"
+  - "backend/routes/agents.py::activity_stream"
+  - "backend/routes/agents.py::get_recent_activities"
+  - "dashboard/src/views/TeamMonitor.vue::empty-state template branch"
+
+responses:
+  "GET /api/agents":
+    status: 200
+    json: []
+
+  "GET /api/agents/activities/recent":
+    status: 200
+    json: {}
+
+sse_streams:
+  # Quiet stream — no business events, just the handshake ping.
+  "/api/agents/activity-stream":
+    - data: { type: "connected", agent_filter: null }

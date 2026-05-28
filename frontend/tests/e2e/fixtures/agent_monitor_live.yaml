@@ -1,0 +1,73 @@
+# Team Monitor happy path — 2 agents exist, one receives an SSE status update.
+#
+# The view boots, fetches the agent roster + persisted activities, then the
+# activity-stream SSE emits a realtime event that flips one agent from
+# "running" to "idle". Verifies the Pinia store routes the event through
+# processEvent() and the Vue DOM reflects the new status badge.
+
+backend_source:
+  - "backend/routes/agents.py::list_agents"
+  - "backend/routes/agents.py::activity_stream"
+  - "backend/routes/agents.py::get_recent_activities"
+  - "backend/services/activity_stream.py::activity_stream_manager"
+  - "dashboard/src/stores/agents.js::fetchAgents, fetchAllActivities, processEvent"
+  - "dashboard/src/composables/useRealtimeStream.js::/api/agents/activity-stream consumer"
+  - "dashboard/src/composables/useActivityStream.js::agentEvents grouping"
+
+notes: |
+  The SSE event omits a named `event:` line deliberately — useRealtimeStream's
+  EventSource.onmessage handler only fires for the default message type. Named
+  events would silently be dropped.
+
+  Event type "idle" is handled by stores/agents.js::processEvent and flips
+  status to "idle" + appends a lastAction. That's what we assert in the DOM.
+
+responses:
+  # Initial agent roster fetch — onMounted in TeamMonitor.vue
+  "GET /api/agents":
+    status: 200
+    json:
+      - name: "alpha-agent"
+        status: "running"
+        type: "spawn"
+        model: "gpt-4o-mini"
+        is_default: false
+      - name: "beta-agent"
+        status: "idle"
+        type: "card"
+        model: "gpt-4o"
+        is_default: false
+
+  # Persisted history fetch fired by useActivityStream onMounted
+  "GET /api/agents/activities/recent":
+    status: 200
+    json: {}
+
+  # Per-agent message_history fetch fired by useAgentTurns.fetchInitial
+  # for every agent rendered in the AgentTerminal grid. Each agent in
+  # the roster triggers one of these on mount. Without the mock, the
+  # harness logs them as unexpected and ``backend.unexpected.length === 0``
+  # flips to red — same root cause as the FloatingChatDock leak: any
+  # new boot-time API call from a component the test mounts must be
+  # declared here.
+  "GET /api/agents/alpha-agent/messages":
+    status: 200
+    json:
+      agent_name: "alpha-agent"
+      turns: []
+  "GET /api/agents/beta-agent/messages":
+    status: 200
+    json:
+      agent_name: "beta-agent"
+      turns: []
+
+sse_streams:
+  # Realtime activity SSE — override the noise fixture's single ping so the
+  # onmessage handler receives a processable event that mutates the store.
+  "/api/agents/activity-stream":
+    - data: { type: "connected", agent_filter: null }
+    - data:
+        agent_name: "alpha-agent"
+        event_type: "idle"
+        message: "Agent went idle"
+        timestamp: 1714000000.0

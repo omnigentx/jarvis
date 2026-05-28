@@ -1,0 +1,44 @@
+# Wizard Step 3 (Services), Google OAuth fully connected.
+#
+# Idempotency / re-visit scenario: user already completed Google OAuth in
+# Settings (or in an earlier wizard run), then navigated back to Step 3.
+# The wizard should reflect that — show the "Connected" badge and skip
+# the Connect button entirely.
+
+backend_source:
+  - "backend/routes/setup.py::get_setup_status"
+  - "backend/routes/oauth.py::status"
+  - "dashboard/src/views/setup/StepServices.vue::fetchGoogleStatus"
+
+responses:
+  "GET /api/setup/auth/probe":
+    status: 200
+    json:
+      configured: true
+
+  "GET /api/setup/status":
+    status: 200
+    json:
+      steps:
+        - { name: "auth",        completed: true,  skipped: false }
+        - { name: "llm",         completed: true,  skipped: false }
+        - { name: "services",    completed: false, skipped: false }
+        - { name: "yaml_config", completed: false, skipped: false }
+        - { name: "verify",      completed: false, skipped: false }
+      overall_complete: false
+      current_step: "services"
+
+  "GET /api/oauth/google/status":
+    status: 200
+    json:
+      client_configured: true
+      client_type: "web"
+      desktop_redirect_uri: null
+      connected: true
+      scopes:
+        - "https://www.googleapis.com/auth/gmail.send"
+        - "https://www.googleapis.com/auth/calendar"
+      expires_at: 99999999999
+      has_refresh_token: true
+      project_number: "111222333444"
+      required_apis: []

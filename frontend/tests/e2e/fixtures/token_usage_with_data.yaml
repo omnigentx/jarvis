@@ -1,0 +1,84 @@
+# Token Usage — populated response.
+#
+# Boot sequence for /token-usage:
+#   1. AppLayout mounts → GET /api/notifications/unread-count + activity /
+#      scheduler SSE streams (covered by _app_boot_noise.yaml).
+#   2. TokenUsage.vue onMounted → GET /api/metrics/tokens?period=24h (default).
+#
+# Backend contract: routes/token_usage.py::get_token_metrics returns
+#   { period, totals, agents[], models[] }.  All cache fields are unified
+#   server-side as `cached_tokens` (= cache_hit_tokens + cache_read_tokens).
+#   agents[] and models[] are sorted by total_tokens desc.
+#
+# Numbers picked so fmt helpers (src/views/TokenUsage.vue::fmtTokens / fmtCost)
+# produce stable, human-readable strings the spec can pin exactly:
+#   fmtTokens(1_234_500)   => "1.2M"     (>=1M branch)
+#   fmtTokens(800_000)     => "800.0K"   (>=1K branch)
+#   fmtCost(12.34)         => "$12.34"   (>=0.01 branch)
+#   fmtCost(8.20)          => "$8.20"
+# Totals below equal the sum of the three agent rows (contract invariant).
+
+backend_source:
+  - "backend/routes/token_usage.py::get_token_metrics"
+  - "backend/services/pricing.py::get_model_pricing"
+  - "dashboard/src/views/TokenUsage.vue::fetchMetrics"
+  - "dashboard/src/api.js::apiFetch"
+
+notes: |
+  Three agents + two models so the Agent Breakdown table and the "By Model"
+  panel both render multiple rows.  Agent order here matches the sorted-by-
+  total_tokens output the real endpoint would produce.
+
+responses:
+  "GET /api/metrics/tokens":
+    status: 200
+    json:
+      period: "24h"
+      totals:
+        input_tokens: 900000
+        output_tokens: 334500
+        total_tokens: 1234500
+        cached_tokens: 100000
+        reasoning_tokens: 0
+        est_cost: 12.34
+        llm_calls: 42
+      agents:
+        - agent_name: "Jarvis"
+          input_tokens: 600000
+          output_tokens: 200000
+          total_tokens: 800000
+          cached_tokens: 80000
+          reasoning_tokens: 0
+          est_cost: 8.20
+          llm_calls: 30
+        - agent_name: "MusicAgent"
+          input_tokens: 250000
+          output_tokens: 50000
+          total_tokens: 300000
+          cached_tokens: 15000
+          reasoning_tokens: 0
+          est_cost: 3.10
+          llm_calls: 8
+        - agent_name: "CrawlAgent"
+          input_tokens: 50000
+          output_tokens: 84500
+          total_tokens: 134500
+          cached_tokens: 5000
+          reasoning_tokens: 0
+          est_cost: 1.04
+          llm_calls: 4
+      models:
+        - model: "gpt-4o-mini"
+          input_tokens: 700000
+          output_tokens: 234500
+          total_tokens: 934500
+          cached_tokens: 90000
+          est_cost: 9.20
+          llm_calls: 34
+        - model: "claude-3-5-sonnet"
+          input_tokens: 200000
+          output_tokens: 100000
+          total_tokens: 300000
+          cached_tokens: 10000
+          est_cost: 3.14
+          llm_calls: 8

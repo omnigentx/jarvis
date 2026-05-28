@@ -1,0 +1,80 @@
+# Settings → Services tab, Google already connected (negative control).
+#
+# Tokens are on file so SettingsServices.vue renders branch D: meta info
+# (scope count, expiry hint) and a "Disconnect" button.  Clicking the
+# button triggers useConfirm() which shows a modal; confirming fires
+# DELETE /api/oauth/google.  Backend returns {disconnected: true} and the
+# UI then re-fetches /status.
+#
+# /api/oauth/google/status uses SEQUENTIAL RESPONSES (array form): the
+# first N calls before DELETE return "connected: true"; subsequent calls
+# (the re-fetch after DELETE) return "connected: false" so the test can
+# assert the UI actually flips state, not just that the DELETE was sent.
+
+backend_source:
+  - "backend/routes/oauth.py::status"
+  - "backend/routes/oauth.py::disconnect"
+  - "backend/routes/settings.py::list_category"
+  - "backend/routes/settings.py::list_all"
+  - "backend/services/google_oauth.py::revoke"
+  - "dashboard/src/views/settings/SettingsServices.vue::disconnect"
+
+responses:
+  # SettingsGeneral mounts first (default tab) and calls store.fetchAll().
+  "GET /api/settings":
+    status: 200
+    json:
+      categories: {}
+
+  # Services tab: Google OAuth status. FIRST response → connected (initial
+  # render). SECOND response → disconnected (after DELETE re-fetch). Third+
+  # calls reuse the last entry (disconnected).
+  "GET /api/oauth/google/status":
+    - status: 200
+      json:
+        client_configured: true
+        client_type: "web"
+        desktop_redirect_uri: null
+        connected: true
+        scopes:
+          - "https://www.googleapis.com/auth/gmail.send"
+          - "https://www.googleapis.com/auth/calendar"
+        expires_at: 99999999999
+        has_refresh_token: true
+        project_number: "123456789012"
+        required_apis: []
+    - status: 200
+      json:
+        client_configured: true
+        client_type: "web"
+        desktop_redirect_uri: null
+        connected: false
+        scopes: []
+        expires_at: null
+        has_refresh_token: false
+        project_number: "123456789012"
+        required_apis: []
+
+  "GET /api/settings/service.roborock":
+    status: 200
+    json:
+      category: "service.roborock"
+      items: []
+
+  "GET /api/settings/service.github":
+    status: 200
+    json:
+      category: "service.github"
+      items: []
+
+  "GET /api/settings/service.jarvis_repo":
+    status: 200
+    json:
+      category: "service.jarvis_repo"
+      items: []
+
+  # User clicks Disconnect → confirm modal → confirm → DELETE fires.
+  "DELETE /api/oauth/google":
+    status: 200
+    json:
+      disconnected: true
