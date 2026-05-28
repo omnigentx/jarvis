@@ -284,6 +284,14 @@ async def voice_ws(ws: WebSocket) -> None:
     tts_task: Optional[asyncio.Task] = None
     user_query_pending = False  # set when STT finalises text but agent task hasn't started yet
     bot_speaking = False        # True from tts_start to tts_end / interruption
+    # Dictation mode: client picked the bottom mic in ChatInput (press-to-talk
+    # transcription) instead of the top hands-free button. In this mode the
+    # STT pipeline runs as usual but ``final_transcript`` does NOT trigger
+    # the LLM agent turn — the client is using transcripts to populate a
+    # text input the user will edit + submit manually. The flag is flipped
+    # by ``{"type":"start","mode":"dictation"}`` and never resets within a
+    # session (one socket = one role).
+    dictation_mode = False
     # AEC diagnostic — when bot is speaking, we copy incoming mic PCM into
     # this buffer + track RMS so we can prove whether echoCancellation is
     # actually scrubbing the loudspeaker bleed. Dumped to a WAV at tts_end.
@@ -346,7 +354,14 @@ async def voice_ws(ws: WebSocket) -> None:
         # Mark a user turn as ready to dispatch on the asyncio side. The
         # actual scheduling happens in the main receive loop so we stay on
         # the event-loop thread for create_task.
-        if name == "final_transcript":
+        #
+        # Dictation mode short-circuits here: the client wants the raw
+        # transcript (already emitted via the standard ``final_transcript``
+        # event a few lines up) so it can put it in a text box for the user
+        # to edit. Skipping ``_dispatch_user_turn`` keeps the LLM + TTS
+        # pipeline cold, which is the whole point — no wasted tokens, no
+        # bot voice talking back.
+        if name == "final_transcript" and not dictation_mode:
             text = (payload or {}).get("text") or ""
             if text.strip():
                 user_query_pending = True
@@ -755,7 +770,14 @@ async def voice_ws(ws: WebSocket) -> None:
                     logger.info("[ws_voice diag] frontend report: %s", payload)
                 elif kind == "stop":
                     return
-                # "start" is a noop — accepting the socket already starts
+                elif kind == "start":
+                    # Accepting the socket already starts the STT pipeline; the
+                    # client sends ``start`` mostly as a handshake-ack. The
+                    # one piece of payload we honour is ``mode: "dictation"``
+                    # which gates LLM/TTS dispatch on ``final_transcript``.
+                    if payload.get("mode") == "dictation":
+                        dictation_mode = True
+                        logger.info("[ws_voice] dictation mode enabled for this session")
     except WebSocketDisconnect:
         pass
     finally:

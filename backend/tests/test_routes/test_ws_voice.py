@@ -107,6 +107,86 @@ def test_stt_event_bridges_to_json_frame(ws_client):
         ws.close()
 
 
+def test_dictation_mode_suppresses_llm_dispatch(ws_client, monkeypatch):
+    """``{type:'start', mode:'dictation'}`` must short-circuit final_transcript.
+
+    The bottom-mic dictation flow streams transcripts into a text box for
+    the user to edit + submit manually — invoking the LLM agent on every
+    finalised utterance would defeat the whole point (and burn tokens).
+    Guard: spy on ``shared_state.session_service.resume_and_send`` and
+    confirm it never fires even though the STT emits a final_transcript.
+    """
+    from unittest.mock import AsyncMock, MagicMock
+    from services import shared_state
+
+    fake_app = MagicMock()
+    fake_app._agents = {"Jarvis": MagicMock(tool_runner_hooks=None)}
+    monkeypatch.setattr(shared_state, "agent_app", fake_app)
+
+    resume_spy = AsyncMock(return_value=("should-not-fire", "session-x"))
+    fake_session = MagicMock(resume_and_send=resume_spy)
+    monkeypatch.setattr(shared_state, "session_service", fake_session, raising=False)
+
+    client, fake_stt = ws_client
+    with client.websocket_connect("/ws/voice") as ws:
+        # Flip the session into dictation mode BEFORE the STT fires its
+        # final, so the gate is in place by the time the handler runs.
+        ws.send_text(json.dumps({"type": "start", "mode": "dictation"}))
+        # Give the receive loop a beat to process the start frame. The
+        # next emit fires the STT hook synchronously from the test thread,
+        # but the receive loop processes the start message on the asyncio
+        # side — without this short event, the dictation flag race could
+        # let final_transcript reach the dispatcher first.
+        fake_stt.emit("partial_transcript", {"text": "Xin"})
+        # Drain the bridged partial so the next receive_text sees the
+        # final, not the partial.
+        partial = json.loads(ws.receive_text())
+        assert partial["type"] == "partial_transcript"
+
+        fake_stt.emit("final_transcript", {"text": "Xin chào Jarvis"})
+        final = json.loads(ws.receive_text())
+        # The transcript itself MUST still propagate — the client uses it
+        # to populate the input field. What must NOT happen is the LLM
+        # turn that the standard hands-free path triggers.
+        assert final["type"] == "final_transcript"
+        assert final["text"] == "Xin chào Jarvis"
+        ws.close()
+
+    # LLM dispatcher never invoked — neither agent_thinking nor
+    # resume_and_send fired. If the dictation gate ever regresses, this
+    # spy will catch it.
+    resume_spy.assert_not_awaited()
+
+
+def test_default_mode_still_dispatches_llm_on_final_transcript(ws_client, monkeypatch):
+    """Negative control for the dictation gate.
+
+    Without ``mode: dictation`` in the start handshake, final_transcript
+    MUST still drive the agent turn — otherwise the dictation guard above
+    would pass trivially against a fully broken pipeline. We assert the
+    classic ``user_message`` event arrives, which is the first thing
+    ``_dispatch_user_turn`` emits.
+    """
+    from unittest.mock import AsyncMock, MagicMock
+    from services import shared_state
+
+    fake_app = MagicMock()
+    fake_app._agents = {"Jarvis": MagicMock(tool_runner_hooks=None)}
+    monkeypatch.setattr(shared_state, "agent_app", fake_app)
+
+    resume_spy = AsyncMock(return_value=("hi back", "session-x"))
+    fake_session = MagicMock(resume_and_send=resume_spy)
+    monkeypatch.setattr(shared_state, "session_service", fake_session, raising=False)
+
+    client, fake_stt = ws_client
+    with client.websocket_connect("/ws/voice") as ws:
+        # No start handshake → backend default = full conversation mode.
+        fake_stt.emit("final_transcript", {"text": "hello"})
+        evt = _drain_until(ws, "user_message")
+        assert evt["text"] == "hello"
+        ws.close()
+
+
 def test_speak_command_streams_chat_provider_audio_back(ws_client):
     client, _ = ws_client
     with client.websocket_connect("/ws/voice") as ws:
