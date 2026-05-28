@@ -1,0 +1,216 @@
+# Settings → Voice, Soniox plug-and-play flow.
+#
+# What this fixture stages:
+#   * GET /api/voice/engines returns the full registry including the new
+#     ``soniox`` TTS engine AND the ``soniox`` STT backend. The UI iterates
+#     ``engines.tts`` / ``engines.stt`` and renders a card per entry — so
+#     adding Soniox here is exactly what the live backend would emit.
+#   * GET /api/voice/active starts with the bootstrap defaults (Edge for
+#     chat, faster-whisper for STT). The flow exercises switching both to
+#     Soniox and persisting via POST /api/voice/active.
+#   * GET /api/voice/secrets reports no soniox.api_key on file, then flips
+#     to ``{api_key: true}`` after the user pastes the key and clicks Save.
+#   * GET /api/voice/requirements/soniox is asked on mount (Soniox declares
+#     ``secrets: ["api_key"]`` so the requirements probe iterates it).
+#     Initially ``ok: false`` because no key is set; the spec asserts the
+#     "set api_key" pill renders.
+#
+# Backend contract this asserts:
+#   * voice_engine_registry exposes ``soniox`` under both list_tts_engines
+#     and list_stt_backends
+#   * voice_config.set_chat_config accepts engine=soniox + nested params
+#   * voice_config.set_stt_config accepts backend=soniox + nested params +
+#     wake_word.backend=off (only wake-word option for Soniox)
+#   * routes/voice.list_secrets_status dedupes the shared "soniox" key
+
+backend_source:
+  - "backend/services/voice_engine_registry.py::TTS_ENGINES['soniox']"
+  - "backend/services/voice_engine_registry.py::STT_BACKENDS['soniox']"
+  - "backend/routes/voice.py::list_engines"
+  - "backend/routes/voice.py::list_secrets_status"
+  - "backend/routes/voice.py::set_active_config"
+  - "backend/routes/voice.py::set_secret"
+  - "backend/routes/voice.py::check_requirements"
+  - "dashboard/src/views/settings/SettingsVoice.vue::changeChatEngine, changeSttBackend, setSecret, save"
+
+notes: |
+  ``GET /api/voice/secrets`` and ``GET /api/voice/requirements/soniox``
+  are sequenced — the spec triggers a state flip when the user saves the
+  api_key, after which the secrets list must report ``api_key: true`` and
+  the requirements badge must flip from "set api_key" to "ready". Both
+  responses are arrays so the second-and-later GETs see the new state.
+
+responses:
+  # SettingsGeneral mounts before the Voice tab is selected and fires
+  # settings.store.fetchAll() → GET /api/settings. Stubbed empty so the
+  # Voice flow doesn't have to assert on a category that isn't relevant.
+  "GET /api/settings":
+    status: 200
+    json:
+      categories: {}
+
+  # ── Registry surface ────────────────────────────────────────────────
+  "GET /api/voice/engines":
+    status: 200
+    json:
+      tts:
+        edge:
+          label: "Microsoft Edge TTS"
+          description: "Free, no API key, native vi-VN + en-US voices."
+          badges: ["free", "cloud", "vi+en"]
+          requires: []
+          secrets: []
+          realtimetts_engine: "EdgeEngine"
+          output_format: "mp3"
+          params:
+            - key: "voice"
+              type: "select"
+              label: "Voice"
+              default: "vi-VN-NamMinhNeural"
+              options: ["vi-VN-NamMinhNeural", "vi-VN-HoaiMyNeural"]
+            - key: "rate"
+              type: "text"
+              label: "Speech rate"
+              default: "+20%"
+        soniox:
+          label: "Soniox TTS (real-time)"
+          description: "Cloud WebSocket TTS, 60+ languages, low-latency streaming."
+          badges: ["cloud", "paid", "multilingual"]
+          requires: []
+          secrets: ["api_key"]
+          output_format: "mp3"
+          params:
+            - key: "model"
+              type: "select"
+              label: "Model"
+              default: "tts-rt-v1"
+              options: ["tts-rt-v1"]
+            - key: "voice"
+              type: "text"
+              label: "Voice"
+              default: "Adrian"
+            - key: "language"
+              type: "text"
+              label: "Language"
+              default: "en"
+            - key: "sample_rate"
+              type: "select"
+              label: "Sample rate"
+              default: 24000
+              options: [8000, 16000, 24000, 44100, 48000]
+      stt:
+        faster_whisper:
+          label: "faster-whisper (local)"
+          description: "Local inference."
+          badges: ["free", "local"]
+          params:
+            - key: "model"
+              type: "select"
+              label: "Final model"
+              default: "base"
+              options: ["tiny", "base", "small"]
+            - key: "language"
+              type: "select"
+              label: "Language"
+              default: "auto"
+              options: ["auto", "vi", "en"]
+          wake_word_backends:
+            off:
+              label: "Disabled"
+              params: []
+        soniox:
+          label: "Soniox STT (real-time)"
+          description: "Cloud WebSocket STT, 60+ languages, server-side endpoint detection."
+          badges: ["cloud", "paid", "multilingual"]
+          secrets: ["api_key"]
+          params:
+            - key: "model"
+              type: "select"
+              label: "Model"
+              default: "stt-rt-v4"
+              options: ["stt-rt-v4"]
+            - key: "language_hints"
+              type: "text"
+              label: "Language hints"
+              default: "vi,en"
+          wake_word_backends:
+            off:
+              label: "Disabled"
+              params: []
+
+  # ── Active config (bootstrap defaults) ──────────────────────────────
+  "GET /api/voice/active":
+    status: 200
+    json:
+      tts_chat:
+        engine: "edge"
+        params: { voice: "vi-VN-NamMinhNeural", rate: "+20%" }
+      tts_stories:
+        voice: "vi-VN-NamMinhNeural"
+        rate: "+20%"
+      stt:
+        backend: "faster_whisper"
+        params: { model: "base", language: "auto" }
+        wake_word: { backend: "off", params: {} }
+
+  # ── Secrets status — flips after the user saves a key ───────────────
+  "GET /api/voice/secrets":
+    - status: 200
+      json:
+        engines:
+          elevenlabs: { api_key: false }
+          openai: { api_key: false }
+          azure: { api_key: false }
+          soniox: { api_key: false }
+    # After POST /api/voice/secrets/soniox/api_key, the next GET reflects
+    # the new state — proves we don't render a stale pill.
+    - status: 200
+      json:
+        engines:
+          elevenlabs: { api_key: false }
+          openai: { api_key: false }
+          azure: { api_key: false }
+          soniox: { api_key: true }
+
+  # ── Requirements per engine (probed for every engine with secrets) ──
+  # SettingsVoice.vue iterates both TTS + STT and probes any engine that
+  # declares ``requires`` or ``secrets``.
+  "GET /api/voice/requirements/soniox":
+    - status: 200
+      json:
+        ok: false
+        missing_binaries: []
+        secrets_present: { api_key: false }
+    - status: 200
+      json:
+        ok: true
+        missing_binaries: []
+        secrets_present: { api_key: true }
+  "GET /api/voice/requirements/elevenlabs":
+    status: 200
+    json:
+      ok: false
+      missing_binaries: ["mpv"]
+      secrets_present: { api_key: false }
+  "GET /api/voice/requirements/openai":
+    status: 200
+    json:
+      ok: false
+      missing_binaries: ["ffmpeg"]
+      secrets_present: { api_key: false }
+  "GET /api/voice/requirements/azure":
+    status: 200
+    json:
+      ok: false
+      missing_binaries: []
+      secrets_present: { api_key: false, region: false }
+
+  # ── Secret CRUD — the spec POSTs the key, the recorder asserts body ─
+  "POST /api/voice/secrets/soniox/api_key":
+    status: 200
+    json: { status: "ok" }
+
+  # ── Active config save — Soniox for both TTS chat AND STT ───────────
+  "POST /api/voice/active":
+    status: 200
+    json: { status: "ok" }

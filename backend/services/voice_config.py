@@ -87,9 +87,21 @@ def set_stt_config(config_service, config: dict[str, Any], updated_by: str = "vo
     config_service.set("voice", "stt", json.dumps(config), source=updated_by)
 
 
+def _engine_spec(engine: str) -> Optional[dict[str, Any]]:
+    """Look up an engine spec by name across both TTS and STT registries.
+
+    Cloud providers like Soniox appear in both registries under the same
+    engine name and share a single API-key slot (``voice.secrets.<engine>.api_key``).
+    Routing every secret call through one lookup keeps that contract honest:
+    we never silently fail to recognise a slot because we only checked one
+    half of the registry.
+    """
+    return registry.get_tts_engine(engine) or registry.get_stt_backend(engine)
+
+
 def get_engine_secrets(config_service, engine: str) -> dict[str, str]:
     """Return {secret_key: plaintext} for a given engine. Empty if none set."""
-    spec = registry.get_tts_engine(engine)
+    spec = _engine_spec(engine)
     if not spec:
         return {}
     out: dict[str, str] = {}
@@ -101,7 +113,7 @@ def get_engine_secrets(config_service, engine: str) -> dict[str, str]:
 
 
 def set_engine_secret(config_service, engine: str, secret_key: str, value: str, updated_by: str = "voice_api") -> None:
-    spec = registry.get_tts_engine(engine)
+    spec = _engine_spec(engine)
     if not spec or secret_key not in spec.get("secrets", []):
         raise ValueError(f"Engine {engine!r} has no declared secret {secret_key!r}")
     config_service.set(

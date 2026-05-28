@@ -72,9 +72,19 @@ onMounted(async () => {
     engines.value = reg
     active.value = cur
     secretsStatus.value = sec.engines || {}
-    const checks = Object.entries(reg.tts || {})
-      .filter(([_, spec]) => (spec.requires?.length || spec.secrets?.length))
-      .map(async ([id]) => [id, await apiFetch(`/api/voice/requirements/${id}`)])
+    // Probe requirements for every engine that declares either binaries or
+    // secrets — TTS and STT alike, so cloud STT backends (Soniox, ...) get
+    // the same "ready / missing key" badge as paid TTS engines.
+    const probeIds = new Set()
+    for (const [id, spec] of Object.entries(reg.tts || {})) {
+      if (spec.requires?.length || spec.secrets?.length) probeIds.add(id)
+    }
+    for (const [id, spec] of Object.entries(reg.stt || {})) {
+      if (spec.requires?.length || spec.secrets?.length) probeIds.add(id)
+    }
+    const checks = Array.from(probeIds).map(
+      async (id) => [id, await apiFetch(`/api/voice/requirements/${id}`)]
+    )
     for (const [id, req] of await Promise.all(checks)) requirements.value[id] = req
   } catch (e) {
     error.value = e?.message || String(e)
@@ -188,6 +198,12 @@ async function testStt() {
 
 const secretInput = ref({})
 const secretReveal = ref({})
+function _hasReqOrSecrets(engine) {
+  const tts = engines.value.tts?.[engine]
+  const stt = engines.value.stt?.[engine]
+  return !!(tts?.requires?.length || tts?.secrets?.length
+         || stt?.requires?.length || stt?.secrets?.length)
+}
 async function setSecret(engine, slot) {
   const key = `${engine}.${slot}`
   const val = secretInput.value[key]
@@ -199,7 +215,7 @@ async function setSecret(engine, slot) {
   secretInput.value[key] = ''
   const sec = await apiFetch('/api/voice/secrets')
   secretsStatus.value = sec.engines || {}
-  if ((engines.value.tts[engine]?.requires?.length || engines.value.tts[engine]?.secrets?.length)) {
+  if (_hasReqOrSecrets(engine)) {
     requirements.value[engine] = await apiFetch(`/api/voice/requirements/${engine}`)
   }
 }
@@ -207,7 +223,7 @@ async function clearSecret(engine, slot) {
   await apiFetch(`/api/voice/secrets/${engine}/${slot}`, { method: 'DELETE' })
   const sec = await apiFetch('/api/voice/secrets')
   secretsStatus.value = sec.engines || {}
-  if ((engines.value.tts[engine]?.requires?.length || engines.value.tts[engine]?.secrets?.length)) {
+  if (_hasReqOrSecrets(engine)) {
     requirements.value[engine] = await apiFetch(`/api/voice/requirements/${engine}`)
   }
 }
@@ -466,6 +482,9 @@ const chatProviderLabel = computed(() => {
 
         <div v-if="sttSpec" class="provider-hint">
           <strong>{{ sttSpec.label }}</strong> — {{ sttSpec.description }}
+          <span v-if="reqBadgeFor(sttBackendId)" class="key-status" :class="reqBadgeFor(sttBackendId).tone === 'ok' ? 'stored' : 'missing'">
+            {{ reqBadgeFor(sttBackendId).text }}
+          </span>
           <span v-if="sttSpec.language_locked" class="key-status stored">
             language locked: {{ sttSpec.language_locked }}
           </span>
@@ -527,6 +546,44 @@ const chatProviderLabel = computed(() => {
               />
             </div>
           </template>
+
+          <!-- Per-backend secrets (cloud STT API keys, e.g. Soniox). The
+               TTS panel renders the same shape; UI is duplicated rather
+               than extracted because the param/secret form is the only
+               non-trivial bit and refactoring two of them under a single
+               component is more churn than it's worth right now. -->
+          <div v-for="slot in (sttSpec?.secrets || [])" :key="slot" class="field">
+            <label :for="`stt-secret-${sttBackendId}-${slot}`">
+              Secret · {{ slot }}
+              <span v-if="(secretsStatus[sttBackendId] || {})[slot]" class="key-status stored">stored · hidden</span>
+              <span v-else class="key-status missing">not set</span>
+            </label>
+            <div class="input-group">
+              <input
+                :id="`stt-secret-${sttBackendId}-${slot}`"
+                class="pwd-input"
+                :type="secretReveal[`${sttBackendId}.${slot}`] ? 'text' : 'password'"
+                autocomplete="off"
+                :placeholder="(secretsStatus[sttBackendId] || {})[slot] ? 'Leave blank to keep current' : 'Paste API key'"
+                :value="secretInput[`${sttBackendId}.${slot}`] || ''"
+                @input="secretInput[`${sttBackendId}.${slot}`] = $event.target.value"
+              />
+              <button type="button" class="icon-btn" @click="secretReveal[`${sttBackendId}.${slot}`] = !secretReveal[`${sttBackendId}.${slot}`]">
+                <svg v-if="secretReveal[`${sttBackendId}.${slot}`]" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                  <line x1="1" y1="1" x2="23" y2="23" />
+                </svg>
+                <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                  <circle cx="12" cy="12" r="3" />
+                </svg>
+              </button>
+            </div>
+            <div class="action-row" style="margin-top: 8px;">
+              <button type="button" class="btn ghost" :disabled="!(secretsStatus[sttBackendId] || {})[slot]" @click="clearSecret(sttBackendId, slot)">Clear</button>
+              <button type="button" class="btn primary" :disabled="!secretInput[`${sttBackendId}.${slot}`]" @click="setSecret(sttBackendId, slot)">Save key</button>
+            </div>
+          </div>
         </template>
 
         <div class="action-row">
@@ -817,7 +874,31 @@ input[type="range"] {
 
 .footer-row {
   display: flex; justify-content: flex-end; align-items: center;
-  gap: 12px; margin-top: 4px;
+  gap: 12px;
+  /* Sticky so "Save changes" is always reachable — without this, a long
+     panel (engine picker → params → secret form) pushes the button below
+     the viewport on first visit, leaving the user staring at form fields
+     with no obvious way to commit them. The sticky band rides the bottom
+     of the scroll container. Faded top edge so the panel content below
+     it doesn't visibly cut off through transparent space. */
+  position: sticky;
+  /* iOS Safari's soft keyboard sits on top of the visual viewport and
+     shrinks the layout viewport; ``bottom: 0`` alone collides with the
+     keyboard. ``env(safe-area-inset-bottom)`` adds the home-indicator
+     gutter; the padding-bottom hardens the gap on iOS without
+     re-measuring on every keystroke. Desktop browsers ignore the env()
+     fallback (resolves to 0) so this is iOS-only insurance. */
+  bottom: 0;
+  padding-bottom: max(4px, env(safe-area-inset-bottom));
+  margin-top: 8px;
+  padding-top: 14px;
+  background: linear-gradient(180deg, transparent 0%, var(--bg-1, #0b1020) 35%, var(--bg-1, #0b1020) 100%);
+  /* Bumped from 5 → 30 so native popovers that float over the panel
+     (voice-name <select> dropdown, reveal-eye tooltip, paid-engine
+     hint pill) don't render UNDER the sticky band. 30 is the same tier
+     SettingsGeneral.vue uses for its own sticky save row — keeps the
+     two settings tabs visually consistent. */
+  z-index: 30;
 }
 
 @media (max-width: 768px) {

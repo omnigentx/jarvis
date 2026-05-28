@@ -1,6 +1,7 @@
 <script setup>
-import { ref, computed, nextTick } from 'vue'
+import { ref, computed, nextTick, watch } from 'vue'
 import { useBreakpoint } from '../../composables/useBreakpoint'
+import { useDictationSession } from '../../composables/useDictationSession'
 
 /**
  * ChatInput — restyled compose row.
@@ -9,8 +10,12 @@ import { useBreakpoint } from '../../composables/useBreakpoint'
  * Tokens used: var(--bg-1) container, var(--bg-2) compose row,
  * var(--primary) send button. Mic recording state animates pulse.
  *
- * Audio capture logic unchanged — same MediaRecorder approach the user
- * already relies on; we just restyled the button states.
+ * Mic behaviour is dictation, NOT auto-send: clicking the mic streams
+ * the configured STT (Soniox / faster-whisper / Gipformer) into
+ * ``inputText`` so the user can review and edit before pressing Send.
+ * That's the difference vs the hands-free VoiceBar above the chat — the
+ * floating bar auto-submits each utterance; this composer mic lets the
+ * user dictate, fix typos, and decide when to fire.
  */
 
 const props = defineProps({
@@ -21,11 +26,22 @@ const emit = defineEmits(['send', 'stop'])
 const inputText = ref('')
 const inputRef = ref(null)
 const attachedFiles = ref([])
-const isRecording = ref(false)
-const mediaRecorder = ref(null)
-const audioChunks = ref([])
 const fileInputRef = ref(null)
 const { isMobile } = useBreakpoint()
+
+// Dictation state. ``isRecording`` covers every non-idle, non-error
+// status — including ``connecting`` — so the button shows the active
+// pulse from the moment the user clicks the mic, not just after the WS
+// handshake completes a few hundred ms later. Without ``connecting``
+// here, an impatient user would see no feedback and double-click,
+// flipping the session straight back off.
+const dictation = useDictationSession()
+const isRecording = computed(() => ['connecting', 'loading_stt', 'listening'].includes(dictation.status.value))
+// Snapshot of inputText BEFORE the user pressed the mic. We render
+// ``baseText + finals + partial`` while dictating so any text the user
+// already typed is preserved — without this snapshot, the partial-tail
+// rewrite would clobber whatever they had.
+const dictationBase = ref('')
 
 const filePreviews = computed(() =>
   attachedFiles.value.map(file => ({
@@ -46,6 +62,14 @@ function handleSend() {
   const text = inputText.value.trim()
   const files = attachedFiles.value
   if ((!text && !files.length) || props.isStreaming) return
+  // If the user submits while still dictating, tear the session down so
+  // the mic doesn't stay hot in the background; their final text is what
+  // they reviewed in the textarea, no extra utterances expected.
+  if (isRecording.value || dictation.status.value === 'connecting') {
+    dictation.stop().catch(() => {})
+  }
+  dictation.reset()
+  dictationBase.value = ''
   emit('send', { text, files: files.length ? [...files] : null })
   inputText.value = ''
   attachedFiles.value = []
@@ -100,31 +124,41 @@ function removeFile(index) {
   attachedFiles.value.splice(index, 1)
 }
 
+// Live-merge incoming transcript fragments back into ``inputText`` so the
+// user sees their words land in the textarea as they speak. We rebuild
+// the whole field instead of appending each fragment so that
+// (a) Soniox's provisional-then-revised tokens overwrite cleanly, and
+// (b) any edits the user makes after stop() persist on the next dictate
+//     because we re-snapshot the field at start time.
+watch(
+  () => [dictation.final.value, dictation.partial.value],
+  ([finals, partial]) => {
+    if (dictation.status.value === 'idle' || dictation.status.value === 'error') return
+    const base = dictationBase.value
+    const tail = [finals, partial].filter(Boolean).join(' ')
+    inputText.value = base
+      ? (tail ? `${base} ${tail}` : base)
+      : tail
+    nextTick(autoGrow)
+  },
+)
+
 async function toggleRecording() {
-  if (isRecording.value) {
-    mediaRecorder.value?.stop()
-    isRecording.value = false
+  if (isRecording.value || dictation.status.value === 'connecting') {
+    // Second click ends the session but keeps the merged text in the
+    // input — user reviews, edits, then hits Send when ready.
+    await dictation.stop()
+    dictation.reset()
     return
   }
+  // Snapshot whatever is already typed; the live merge appends after it.
+  dictationBase.value = inputText.value.trimEnd()
+  dictation.reset()
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-    const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' })
-    audioChunks.value = []
-    recorder.ondataavailable = (e) => {
-      if (e.data.size > 0) audioChunks.value.push(e.data)
-    }
-    recorder.onstop = () => {
-      const blob = new Blob(audioChunks.value, { type: 'audio/webm' })
-      const file = new File([blob], `recording_${Date.now()}.webm`, { type: 'audio/webm' })
-      attachedFiles.value.push(file)
-      stream.getTracks().forEach(t => t.stop())
-    }
-    recorder.start()
-    mediaRecorder.value = recorder
-    isRecording.value = true
+    await dictation.start()
   } catch (err) {
-    console.error('[ChatInput] Microphone access denied:', err)
-    alert('Microphone access denied. Please allow microphone access in your browser settings.')
+    console.error('[ChatInput] Dictation start failed:', err)
+    alert('Mic access denied or voice session failed to start. Check Settings → Voice and browser permissions.')
   }
 }
 </script>
@@ -184,7 +218,8 @@ async function toggleRecording() {
       <button
         class="icon-btn"
         :class="{ recording: isRecording }"
-        :title="isRecording ? 'Stop recording' : 'Voice input (record)'"
+        :title="isRecording ? 'Stop dictation' : 'Dictate — speak to fill the text box'"
+        data-testid="chat-mic"
         @click="toggleRecording"
       >
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none">

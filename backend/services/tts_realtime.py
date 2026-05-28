@@ -182,6 +182,13 @@ def build_chat_provider(config: dict[str, Any], secrets: Optional[dict[str, dict
         )
 
     engine_secrets = (secrets or {}).get(engine, {})
+
+    if engine == "soniox":
+        # Soniox has no RealtimeTTS engine class — use the hand-rolled
+        # WebSocket provider so we don't have to maintain a RealtimeTTS fork.
+        from services.tts_backends.soniox import build_provider as _build_soniox
+        return _build_soniox(params, engine_secrets)
+
     return RealtimeTTSProvider(engine_name=engine, params=params, secrets=engine_secrets)
 
 

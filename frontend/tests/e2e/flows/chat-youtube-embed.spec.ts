@@ -29,7 +29,15 @@ const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), '..', 'fixtures')
 const NOISE = join(FIXTURES, '_app_boot_noise.yaml')
 
 const VIDEO_ID = 'dQw4w9WgXcQ'
-const EXPECTED_SRC = `https://www.youtube-nocookie.com/embed/${VIDEO_ID}`
+// ``autoplay=1`` lets the song start without an extra click after the
+// agent's response — the user already pressed Enter on the chat
+// composer, which browsers count as the gesture that unlocks
+// sound-autoplay. ``rel=0`` keeps the post-playback recommendation
+// thumbnails within the same channel. Pin both flags here so a future
+// refactor that drops either is a visible diff. ``autoplay=1`` only
+// fires on the FIRST sighting per session — second mount of the same
+// videoId (history scrollback) gets ``autoplay=0`` from the cache.
+const EXPECTED_SRC = `https://www.youtube-nocookie.com/embed/${VIDEO_ID}?autoplay=1&rel=0`
 
 test('PLAY tag → YouTube iframe renders, literal tag is hidden', async ({
   page,

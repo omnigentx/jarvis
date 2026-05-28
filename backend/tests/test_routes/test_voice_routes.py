@@ -142,6 +142,25 @@ class TestSecretsEndpoint:
         resp = client.post("/api/voice/secrets/edge/api_key", json={"value": "x"})
         assert resp.status_code == 400
 
+    def test_stt_only_engine_secret_surfaces(self, client):
+        # Soniox lives in both registries and shares the api_key slot. The
+        # secrets endpoint must list it from the STT side too so a user who
+        # only picks Soniox STT (not TTS) can still set the key from the
+        # STT card. Listed once (not duplicated) since both halves point at
+        # the same slot.
+        body = client.get("/api/voice/secrets").json()
+        assert body["engines"].get("soniox") == {"api_key": False}
+
+        resp = client.post("/api/voice/secrets/soniox/api_key", json={"value": "sk-soniox"})
+        assert resp.status_code == 200
+        body = client.get("/api/voice/secrets").json()
+        assert body["engines"]["soniox"]["api_key"] is True
+
+        # Cleanup path still works through the same engine name regardless
+        # of which registry side initially exposed it.
+        resp = client.delete("/api/voice/secrets/soniox/api_key")
+        assert resp.status_code == 200
+
 
 class TestSTTTestEndpoint:
     def test_returns_transcript_from_warmup(self, client, monkeypatch):

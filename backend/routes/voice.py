@@ -173,14 +173,24 @@ async def list_secrets_status(_=Depends(verify_api_key)):
 
     UI uses this to render "Set" / "Not set" badges on each engine card so
     the user knows whether they can pick a paid engine without entering keys
-    again.
+    again. Iterates both TTS and STT registries so cloud STT backends
+    (Soniox, etc.) can surface their own API-key slot from the STT card —
+    a user who only picks the cloud STT shouldn't have to first pick the
+    matching TTS engine just to enter the key.
     """
     cs = _config_service()
     out: dict[str, dict[str, bool]] = {}
-    for engine, spec in registry.list_tts_engines().items():
+    seen: set[str] = set()
+    for engine, spec in (
+        list(registry.list_tts_engines().items())
+        + list(registry.list_stt_backends().items())
+    ):
+        if engine in seen:
+            continue
         slots = spec.get("secrets", []) or []
         if not slots:
             continue
+        seen.add(engine)
         out[engine] = {
             slot: bool(cs.get("voice", f"secrets.{engine}.{slot}"))
             for slot in slots
@@ -203,7 +213,7 @@ async def delete_secret(engine: str, slot: str, _=Depends(verify_api_key)):
     """Clear a previously-set secret — frees the user from manual SQL surgery
     when rotating away from a paid engine.
     """
-    spec = registry.get_tts_engine(engine)
+    spec = registry.get_tts_engine(engine) or registry.get_stt_backend(engine)
     if not spec or slot not in spec.get("secrets", []):
         raise HTTPException(400, f"Engine {engine!r} has no declared secret {slot!r}")
     cs = _config_service()
@@ -213,7 +223,7 @@ async def delete_secret(engine: str, slot: str, _=Depends(verify_api_key)):
 
 @router.get("/requirements/{engine}")
 async def check_requirements(engine: str, _=Depends(verify_api_key)):
-    spec = registry.get_tts_engine(engine)
+    spec = registry.get_tts_engine(engine) or registry.get_stt_backend(engine)
     if not spec:
         raise HTTPException(404, f"Unknown engine {engine!r}")
     cs = _config_service()
