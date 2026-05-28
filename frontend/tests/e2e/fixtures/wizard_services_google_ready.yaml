@@ -1,0 +1,51 @@
+# Wizard Step 3 (Services), Google OAuth client configured but NOT connected.
+#
+# Re-run scenario: user previously uploaded client.json via Settings (or
+# imported a settings backup), but never completed OAuth consent. The
+# wizard should show a working "Connect Google" button that opens the
+# consent popup — same flow as Settings → Services.
+
+backend_source:
+  - "backend/routes/setup.py::get_setup_status"
+  - "backend/routes/oauth.py::status, start"
+  - "backend/services/google_oauth.py::build_consent_url"
+  - "dashboard/src/views/setup/StepServices.vue::startConnectGoogle"
+
+responses:
+  "GET /api/setup/auth/probe":
+    status: 200
+    json:
+      configured: true
+
+  "GET /api/setup/status":
+    status: 200
+    json:
+      steps:
+        - { name: "auth",        completed: true,  skipped: false }
+        - { name: "llm",         completed: true,  skipped: false }
+        - { name: "services",    completed: false, skipped: false }
+        - { name: "yaml_config", completed: false, skipped: false }
+        - { name: "verify",      completed: false, skipped: false }
+      overall_complete: false
+      current_step: "services"
+
+  "GET /api/oauth/google/status":
+    status: 200
+    json:
+      client_configured: true
+      client_type: "web"
+      desktop_redirect_uri: null
+      connected: false
+      scopes: []
+      expires_at: null
+      has_refresh_token: false
+      project_number: "111222333444"
+      required_apis: []
+
+  "POST /api/oauth/google/start":
+    status: 200
+    json:
+      url: "https://accounts.google.com/o/oauth2/v2/auth?client_id=fake&state=wizard-state-xyz"
+      state: "wizard-state-xyz"
+      redirect_uri: "http://localhost:3003/oauth/callback"
+      client_type: "web"

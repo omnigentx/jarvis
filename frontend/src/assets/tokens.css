@@ -1,0 +1,467 @@
+/* ──────────────────────────────────────────────────────────────────
+   Jarvis Dashboard — Extended Design Tokens
+   Builds on landing tokens.css; adds admin-density tokens for
+   data-dense screens (Team Monitor, Agent grids, Token Usage).
+   ────────────────────────────────────────────────────────────────── */
+
+:root {
+  /* Brand */
+  --primary: #6366F1;
+  --primary-hover: #818CF8;
+  --primary-active: #4F46E5;
+  --primary-bg: rgba(99, 102, 241, 0.08);
+  --primary-bg-strong: rgba(99, 102, 241, 0.18);
+  --primary-glow: rgba(99, 102, 241, 0.45);
+  --accent: #22D3EE;
+  --accent-warm: #F59E0B;
+  --accent-bg: rgba(34, 211, 238, 0.10);
+
+  /* Semantic */
+  --success: #10B981;
+  --warning: #F59E0B;
+  --danger:  #EF4444;
+  --info:    #3B82F6;
+  --success-bg: rgba(16, 185, 129, 0.10);
+  --warning-bg: rgba(245, 158, 11, 0.10);
+  --danger-bg:  rgba(239, 68, 68, 0.10);
+  --info-bg:    rgba(59, 130, 246, 0.10);
+  --paused-bg:  rgba(167, 139, 250, 0.12);
+
+  /* Agent status palette — canonical mapping consumed by every status
+     dot / accent in the app. See `components/agent/agentMeta.js`
+     ::statusColor for the JS-side mirror. Update both together. */
+  --status-running:    #10B981;  /* alias of --success */
+  --status-completed:  #10B981;  /* alias of --success */
+  --status-resuming:   #10B981;  /* alias of --success */
+  --status-idle:       #7B8094;  /* alias of --text-muted (quiet/inactive) */
+  --status-pausing:    #F59E0B;  /* alias of --warning (transitioning) */
+  --status-paused:     #A78BFA;  /* purple — distinct from warning */
+  --status-thinking:   #22D3EE;  /* alias of --accent (processing) */
+  --status-spawning:   #3B82F6;  /* alias of --info */
+  --status-starting:   #3B82F6;  /* alias of --info */
+  --status-blocked:    #EF4444;  /* alias of --danger */
+  --status-error:      #EF4444;  /* alias of --danger */
+  --status-unknown:    #7B8094;  /* fallback */
+
+  /* Agent role palette (from handoff §8) */
+  --role-pm:  #A5B4FC; /* indigo soft */
+  --role-sa:  #67E8F9; /* cyan soft */
+  --role-dev: #6EE7B7; /* mint */
+  --role-qe:  #FCD34D; /* amber */
+  --role-des: #F9A8D4; /* pink */
+  --role-ba:  #C4B5FD; /* violet */
+  --role-dso: #FDBA74; /* orange */
+
+  /* Surfaces (dark default) */
+  --bg-0: #07080B;          /* page */
+  --bg-1: #0B0D12;          /* section / sidebar */
+  --bg-2: #11141B;          /* card */
+  --bg-3: #161922;          /* elevated */
+  --bg-4: #1C2030;          /* input */
+  --bg-overlay: rgba(7, 8, 11, 0.72);
+
+  --border:        rgba(255, 255, 255, 0.06);
+  --border-strong: rgba(255, 255, 255, 0.12);
+  --border-bright: rgba(255, 255, 255, 0.18);
+
+  /* Text */
+  --text:         #F1F2F6;
+  --text-dim:     #B6BAC6;
+  --text-muted:   #7B8094;
+  --text-subtle:  #4F5468;
+
+  /* Type */
+  --font-display: 'Space Grotesk', 'Be Vietnam Pro', system-ui, sans-serif;
+  --font-body:    'Be Vietnam Pro', 'Inter', system-ui, sans-serif;
+  --font-mono:    'Geist Mono', 'JetBrains Mono', ui-monospace, Menlo, monospace;
+
+  /* Radii */
+  --r-sm: 6px;  --r-md: 10px; --r-lg: 14px;
+  --r-xl: 20px; --r-2xl: 28px; --r-full: 9999px;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.4);
+  --shadow-md: 0 6px 16px rgba(0,0,0,0.35);
+  --shadow-lg: 0 22px 48px rgba(0,0,0,0.55);
+  --shadow-glow: 0 0 40px var(--primary-glow);
+  --shadow-glow-cyan: 0 0 32px rgba(34, 211, 238, 0.35);
+
+  /* Easings */
+  --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+
+  /* Admin density (new — for data-dense screens) */
+  --row-h-sm: 32px;
+  --row-h-md: 40px;
+  --row-h-lg: 48px;
+  --grid-gutter: 1px;        /* terminal-style hairline grid */
+  --mono-num: 13px;          /* default mono numeric size */
+
+  /* Sidebar */
+  --sidebar-w: 248px;
+  --sidebar-w-collapsed: 64px;
+  --topbar-h: 56px;
+
+  /* Mobile breakpoint reference (matches useBreakpoint.js).
+     Don't read this with var() in @media — it's only a documentation token. */
+  --bp-mobile: 768px;
+
+  /* Safe-area insets (iOS notch + home indicator).
+     Resolve to 0 on non-iOS — safe to add unconditionally with max(). */
+  --safe-top:    env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left:   env(safe-area-inset-left, 0px);
+  --safe-right:  env(safe-area-inset-right, 0px);
+
+  /* Mobile chrome heights — used by sticky composers / FABs to clear
+     the bottom tab bar. Bottom-tab is 56px content + safe-area-bottom. */
+  --mobile-tabbar-h: 56px;
+  --mobile-header-h: 52px;
+  --mini-player-h: 0px;   /* updated to 64px when MiniAudioPlayer is visible */
+}
+
+/* Light theme */
+:root[data-theme="light"] {
+  --bg-0: #F7F7F9;          /* page (slight grey so cards lift) */
+  --bg-1: #FFFFFF;          /* card surface (elevated above page) */
+  --bg-2: #FAFAFC;          /* card secondary / inner pane — was #FFFFFF
+                                which made modals collapse into a single
+                                white blob with no hierarchy. Now sits
+                                between bg-1 (#FFFFFF) and bg-3 (#F1F2F6)
+                                so nested surfaces are visually
+                                distinguishable. (2026-05-27 contrast
+                                bug across SkillEditorModal + MCP modal.) */
+  --bg-3: #F1F2F6;          /* input bg / elevated */
+  --bg-4: #E9EBF1;          /* input border */
+  /* Modal backdrop must DIM the page (focus attention on the modal),
+     not blend with it. Previous value rgba(247,247,249,0.78) was nearly
+     identical to bg-0 → modals looked transparent / ghostly. Switch to
+     the same dark-overlay pattern dark-theme already uses, just with a
+     softer alpha so light surfaces underneath remain partially visible
+     for spatial context. */
+  --bg-overlay: rgba(15, 18, 30, 0.40);
+
+  --border:        rgba(15, 18, 30, 0.08);
+  --border-strong: rgba(15, 18, 30, 0.14);
+  --border-bright: rgba(15, 18, 30, 0.22);
+
+  --text:        #0E1019;
+  --text-dim:    #3A4055;
+  --text-muted:  #6B7185;
+  --text-subtle: #9CA0B2;
+
+  --primary-bg: rgba(99, 102, 241, 0.10);
+  --primary-bg-strong: rgba(99, 102, 241, 0.20);
+  --primary-glow: rgba(99, 102, 241, 0.25);
+  --accent-bg: rgba(34, 211, 238, 0.14);
+
+  --shadow-md: 0 6px 16px rgba(15, 18, 30, 0.08);
+  --shadow-lg: 0 22px 48px rgba(15, 18, 30, 0.12);
+}
+
+/* ─── Reset ─── */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+button { font: inherit; color: inherit; cursor: pointer; background: none; border: 0; }
+a { color: inherit; text-decoration: none; }
+img, svg { display: block; max-width: 100%; }
+
+/* ─── Atoms (scoped under .jv) ─── */
+.jv {
+  font-family: var(--font-body);
+  color: var(--text);
+  background: var(--bg-0);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+.jv h1, .jv h2, .jv h3, .jv h4 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  margin: 0;
+  text-wrap: balance;
+}
+.jv p { margin: 0; text-wrap: pretty; }
+.jv code, .jv kbd { font-family: var(--font-mono); font-size: 0.92em; }
+
+/* eyebrow / mono labels */
+.jv .eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--primary-hover);
+}
+.jv .eyebrow::before {
+  content: "";
+  width: 18px; height: 1px;
+  background: currentColor;
+  opacity: .55;
+}
+.jv .mono-label {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* gradient accent text */
+.jv .grad {
+  background: linear-gradient(120deg, #A5B4FC 0%, #6366F1 35%, #22D3EE 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  /* Italic slants overflow the glyph box; reserve right padding so the
+     trailing edge of digits / letters doesn't get clipped by an
+     overflow:hidden ancestor (h1, list items, etc). */
+  display: inline-block;
+  padding-right: 0.08em;
+  margin-right: -0.04em;
+}
+
+/* chip */
+.jv .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: var(--r-full);
+  background: var(--primary-bg);
+  border: 1px solid var(--border-strong);
+  color: var(--primary-hover);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.10em;
+}
+.jv .chip-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px currentColor;
+}
+.jv .chip-success { background: var(--success-bg); color: var(--success); border-color: rgba(16,185,129,0.25); }
+.jv .chip-success .chip-dot { background: var(--success); }
+.jv .chip-warn   { background: var(--warning-bg); color: var(--warning); border-color: rgba(245,158,11,0.25); }
+.jv .chip-warn .chip-dot { background: var(--warning); }
+.jv .chip-danger { background: var(--danger-bg); color: var(--danger); border-color: rgba(239,68,68,0.25); }
+.jv .chip-danger .chip-dot { background: var(--danger); }
+.jv .chip-muted  { background: var(--bg-3); color: var(--text-muted); border-color: var(--border); }
+.jv .chip-muted .chip-dot { background: var(--text-muted); box-shadow: none; }
+
+/* pulsing live dot */
+@keyframes pulseDot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: .55; transform: scale(1.15); }
+}
+.jv .pulse-dot { animation: pulseDot 1.4s ease-in-out infinite; }
+
+/* buttons */
+.jv .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: var(--r-md);
+  border: 1px solid transparent;
+  font-weight: 500;
+  font-size: 13.5px;
+  transition: all 0.18s var(--ease-out);
+  white-space: nowrap;
+}
+.jv .btn-primary {
+  background: linear-gradient(180deg, var(--primary-hover), var(--primary));
+  color: white;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.18) inset, 0 8px 24px -8px var(--primary-glow);
+}
+.jv .btn-primary:hover { transform: translateY(-1px); }
+.jv .btn-secondary {
+  background: var(--bg-3);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.jv .btn-secondary:hover { background: var(--bg-4); border-color: var(--border-bright); }
+.jv .btn-ghost { background: transparent; color: var(--text-dim); }
+.jv .btn-ghost:hover { color: var(--text); background: var(--bg-3); }
+.jv .btn-icon {
+  width: 32px; height: 32px; padding: 0; border-radius: var(--r-md);
+}
+
+/* card */
+.jv .card {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+}
+
+/* HUD corner brackets */
+.jv .hud {
+  position: relative;
+}
+.jv .hud::before, .jv .hud::after,
+.jv .hud > .hud-br::before, .jv .hud > .hud-br::after {
+  content: "";
+  position: absolute;
+  width: 12px; height: 12px;
+  border-color: var(--accent);
+  border-style: solid;
+  border-width: 0;
+  opacity: .85;
+  pointer-events: none;
+}
+.jv .hud::before    { top: -1px;    left: -1px;    border-top-width: 1px; border-left-width: 1px; }
+.jv .hud::after     { top: -1px;    right: -1px;   border-top-width: 1px; border-right-width: 1px; }
+.jv .hud > .hud-br::before { bottom: -1px; left: -1px;  border-bottom-width: 1px; border-left-width: 1px; }
+.jv .hud > .hud-br::after  { bottom: -1px; right: -1px; border-bottom-width: 1px; border-right-width: 1px; }
+
+/* hairline grid bg (for data-dense areas) */
+.jv .grid-bg {
+  background-image:
+    linear-gradient(to right, var(--border) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--border) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+/* code window chrome (mini) */
+.jv .code-window {
+  background: #0A0C12;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.65;
+  color: #D6DAE8;
+}
+.jv .code-window header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-strong);
+  background: rgba(255,255,255,0.02);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+.jv .code-window header .dots { display: inline-flex; gap: 5px; }
+.jv .code-window header .dots span {
+  width: 8px; height: 8px; border-radius: 50%; background: #2A2E3D;
+}
+.jv .code-window pre {
+  margin: 0; padding: 14px 16px; overflow-x: auto;
+}
+
+/* Syntax tokens */
+.jv .tok-cmt { color: #5B6175; font-style: italic; }
+.jv .tok-kw  { color: #C792EA; }
+.jv .tok-str { color: #C3E88D; }
+.jv .tok-num { color: #F78C6C; }
+.jv .tok-fn  { color: #82AAFF; }
+.jv .tok-key { color: #FFCB6B; }
+.jv .tok-op  { color: #89DDFF; }
+
+/* segmented control */
+.jv .seg {
+  display: inline-flex;
+  padding: 3px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  gap: 2px;
+}
+.jv .seg button {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 8px;
+  color: var(--text-dim);
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.jv .seg button.is-active {
+  background: var(--primary);
+  color: white;
+}
+
+/* toggle switch */
+.jv .switch {
+  position: relative;
+  width: 32px; height: 18px;
+  background: var(--bg-4);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background .15s;
+  border: 1px solid var(--border-strong);
+}
+.jv .switch::after {
+  content: "";
+  position: absolute;
+  top: 2px; left: 2px;
+  width: 12px; height: 12px;
+  background: white;
+  border-radius: 50%;
+  transition: left .18s var(--ease-out);
+  box-shadow: 0 1px 2px rgba(0,0,0,.35);
+}
+.jv .switch.on { background: var(--primary); border-color: transparent; }
+.jv .switch.on::after { left: 16px; }
+
+/* avatar (role tag) */
+.jv .ava {
+  width: 28px; height: 28px;
+  border-radius: var(--r-md);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  background: var(--bg-3);
+  color: var(--text-dim);
+  border: 1px solid var(--border-strong);
+}
+.jv .ava-pm  { color: #0B0D12; background: var(--role-pm); }
+.jv .ava-sa  { color: #0B0D12; background: var(--role-sa); }
+.jv .ava-dev { color: #0B0D12; background: var(--role-dev); }
+.jv .ava-qe  { color: #0B0D12; background: var(--role-qe); }
+.jv .ava-des { color: #0B0D12; background: var(--role-des); }
+.jv .ava-ba  { color: #0B0D12; background: var(--role-ba); }
+.jv .ava-dso { color: #0B0D12; background: var(--role-dso); }
+.jv .ava-jarvis {
+  background: linear-gradient(135deg, var(--primary), var(--accent));
+  color: white;
+}
+
+/* scrollbars hidden inside artboards */
+.jv ::-webkit-scrollbar { width: 6px; height: 6px; }
+.jv ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
+.jv ::-webkit-scrollbar-track { background: transparent; }
+
+/* ─── Safe-area utility classes ───────────────────────────────────
+   Apply to top-fixed elements (mobile headers) or bottom-fixed
+   elements (tabbars, sticky composers) so they clear the iOS notch
+   / dynamic island / home indicator. */
+.safe-top    { padding-top:    max(0px, var(--safe-top)); }
+.safe-bottom { padding-bottom: max(0px, var(--safe-bottom)); }
+.safe-x      { padding-left: max(0px, var(--safe-left)); padding-right: max(0px, var(--safe-right)); }
+
+/* Lock body scroll when a modal/drawer/sheet is open. Toggled via
+   `document.body.classList.toggle('no-scroll', open)` to prevent the
+   underlying page from scrolling behind the overlay. */
+.no-scroll { overflow: hidden !important; touch-action: none; }

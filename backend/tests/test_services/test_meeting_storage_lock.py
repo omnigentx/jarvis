@@ -55,7 +55,7 @@ def test_update_config_method_was_removed():
     )
 
 
-def test_speak_fail_verdict_extends_max_rounds_inside_lock(tmp_path: Path):
+def test_speak_fail_verdict_extends_max_rounds_inside_lock(tmp_path: Path, monkeypatch):
     """Integration: speak()'s FAIL-verdict path now mutates state.max_rounds
     inside the single ``acquire_lock`` transaction without deadlock.
     """
@@ -88,6 +88,9 @@ def test_speak_fail_verdict_extends_max_rounds_inside_lock(tmp_path: Path):
     mrs._storage = db
     mrs._get_bus = lambda: bus
     mrs._auto_wake_if_idle = lambda *a, **kw: None
+    # Production callers pin TEAM_MY_NAME at spawn time; tests must do
+    # the same now that _assert_self_identity refuses unverified claims.
+    monkeypatch.setenv("TEAM_MY_NAME", "PM")
 
     try:
         start = time.monotonic()
@@ -116,7 +119,7 @@ def test_speak_fail_verdict_extends_max_rounds_inside_lock(tmp_path: Path):
     assert "max_rounds" not in db.get_config("abc12345")
 
 
-def test_leave_meeting_inside_lock_completes(tmp_path: Path):
+def test_leave_meeting_inside_lock_completes(tmp_path: Path, monkeypatch):
     """Integration: leave_meeting — the exact tool that 32-second-hung in
     production — now completes promptly because participants lives in
     state_json (single update path).
@@ -152,6 +155,7 @@ def test_leave_meeting_inside_lock_completes(tmp_path: Path):
     mrs._storage = db
     mrs._get_bus = lambda: bus
     mrs._auto_wake_if_idle = lambda *a, **kw: None
+    monkeypatch.setenv("TEAM_MY_NAME", "BA")
 
     try:
         start = time.monotonic()
@@ -180,7 +184,7 @@ def test_leave_meeting_inside_lock_completes(tmp_path: Path):
     assert "participants" not in db.get_config("abc12345")
 
 
-def test_leave_meeting_rejected_for_current_speaker(tmp_path: Path):
+def test_leave_meeting_rejected_for_current_speaker(tmp_path: Path, monkeypatch):
     """R3 guard: leave_meeting MUST refuse when caller is current_speaker.
 
     The b61af7db incident hung for 24h because BA's LLM picked
@@ -215,6 +219,7 @@ def test_leave_meeting_rejected_for_current_speaker(tmp_path: Path):
     mrs._storage = db
     mrs._get_bus = lambda: bus
     mrs._auto_wake_if_idle = lambda *a, **kw: None
+    monkeypatch.setenv("TEAM_MY_NAME", "BA")
 
     try:
         result = asyncio.run(
@@ -246,7 +251,7 @@ def test_leave_meeting_rejected_for_current_speaker(tmp_path: Path):
     assert db.get_transcript("abc12345") == []
 
 
-def test_leave_meeting_allowed_for_non_current_speaker(tmp_path: Path):
+def test_leave_meeting_allowed_for_non_current_speaker(tmp_path: Path, monkeypatch):
     """R3 guard: non-current speakers can still leave normally."""
     from fast_agent.spawn.message_bus import MessageBus
     from fast_agent.spawn.servers.meeting_storage import SqliteMeetingStorage
@@ -275,6 +280,7 @@ def test_leave_meeting_allowed_for_non_current_speaker(tmp_path: Path):
     mrs._storage = db
     mrs._get_bus = lambda: bus
     mrs._auto_wake_if_idle = lambda *a, **kw: None
+    monkeypatch.setenv("TEAM_MY_NAME", "Dev")
 
     try:
         result = asyncio.run(

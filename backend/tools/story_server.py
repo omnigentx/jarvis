@@ -1046,7 +1046,7 @@ def crawl_story(url: str, content_selector: str = None, title_selector: str = "h
     except Exception as e:
         logger.error(f"Failed to create crawl job: {e}")
         return f"Error creating crawl job: {e}"
-    
+
     return f"Started crawl job {job_id}. Report this job_id to the user. The crawl runs in the background. Do NOT poll get_crawl_status repeatedly."
 
 @mcp.tool()

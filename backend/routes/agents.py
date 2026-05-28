@@ -1325,6 +1325,48 @@ async def resume_agent(agent_name: str):
     return {"status": "resumed", "agent": agent_name}
 
 
+@router.post("/{agent_name}/interrupt", dependencies=[Depends(verify_api_key)])
+async def interrupt_agent(agent_name: str, mode: str = "soft"):
+    """Interrupt an agent's current run.
+
+    Two-tier semantics — see ``backend/services/pause_controller.py``:
+
+    - ``mode='soft'`` (default): cancel the in-flight LLM call. Agent
+      returns to ``running`` state (idle, not paused). Running subagent
+      subprocesses are LEFT ALONE — they continue their own conversations.
+      This is what the chat "Stop" button should call by default.
+    - ``mode='hard'``: same as soft + SIGTERM every running subagent in
+      the spawn registry. Side-effects already committed by those
+      subagents (DB writes, files) are NOT rolled back — the response
+      includes the kill list so the UI can surface a
+      "N side-effects may have committed" warning.
+    """
+    from services.pause_controller import pause_controller
+
+    if mode not in ("soft", "hard"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"mode must be 'soft' or 'hard', got {mode!r}",
+        )
+
+    if mode == "soft":
+        cancelled = pause_controller.interrupt(agent_name)
+        return {
+            "status": "interrupted",
+            "mode": "soft",
+            "agent": agent_name,
+            "cancelled_tasks": cancelled,
+        }
+
+    result = pause_controller.hard_kill(agent_name)
+    return {
+        "status": "interrupted",
+        "mode": "hard",
+        "agent": agent_name,
+        **result,
+    }
+
+
 @router.delete("/teams/{team_name}", dependencies=[Depends(verify_api_key)])
 async def delete_team(team_name: str):
     """Delete an entire team and all associated data.

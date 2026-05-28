@@ -639,6 +639,108 @@ class PauseController:
             self._active.pop(name, None)
             self._current_tasks.pop(name, None)
 
+    def interrupt(self, scope: str) -> list[str]:
+        """Soft interrupt: cancel in-flight LLM call WITHOUT entering paused state.
+
+        Difference from ``pause()``:
+          - Does NOT add agent to ``_paused_agents`` → the ``on_pause_cancel``
+            retry hook sees ``event.is_set() == True`` and returns False,
+            letting ``CancelledError`` propagate up through ``tool_runner``
+            to whoever awaits the chat-stream (chat.py:run_chat). The chat
+            handler closes the SSE stream gracefully. Agent stays in
+            ``running`` state — user can immediately send a new message
+            without manually resuming.
+          - For subprocess subagents: NO signal sent. They keep running their
+            own conversation loops independently. Use ``hard_kill()`` to
+            cascade-terminate subagents.
+
+        Returns the list of agent names whose in-flight task was actually
+        cancelled. Empty list = nothing to interrupt (agent idle).
+        """
+        agents, _ = self._resolve_scope(scope)
+        cancelled: list[str] = []
+        for agent in agents:
+            task = self._current_tasks.get(agent)
+            if task is not None and not task.done():
+                task.cancel()
+                cancelled.append(agent)
+                logger.info("[INTERRUPT] Cancelled in-flight LLM task for %s", agent)
+        return cancelled
+
+    def hard_kill(self, scope: str) -> dict:
+        """Hard interrupt: cancel parent task + SIGTERM every running
+        subagent in the spawn registry.
+
+        Cascade semantics: ignores ``scope`` for the subagent sweep — we
+        kill EVERY running spawn record. Rationale: in this app Jarvis is
+        the only orchestrator; "running" spawn records by definition belong
+        to its current turn. A per-parent filter would need explicit parent
+        tracking that the registry doesn't carry today.
+
+        Side-effects already committed by killed subagents (DB writes,
+        file writes) are NOT rolled back here — see
+        ``backend/utils/compensation.py`` for the per-tool rollback pattern.
+        Callers should surface a "N side-effects may have committed"
+        warning to the user.
+
+        ⚠️ **Status semantics — "signal sent, not reaped":** the registry
+        row is marked ``status="killed"`` IMMEDIATELY after ``os.kill()``
+        returns. ``os.kill`` only delivers the signal; it doesn't wait for
+        the child to exit. ``uv`` catches SIGTERM and propagates SIGINT to
+        the python child, which raises ``KeyboardInterrupt`` → graceful
+        shutdown. If that hand-off ever breaks (uv quirk, child traps
+        SIGINT, signal mask), the registry will *briefly* show
+        ``"killed"`` while the process is still alive. Consumers that
+        need a hard exit guarantee must poll ``os.kill(pid, 0)`` or rely
+        on the subprocess reaper to refresh the row to a final state.
+        We don't synchronously wait here because the caller path is
+        user-initiated cancel — adding a poll loop would surface as UI
+        lag on the Stop button. Re-think this only if a downstream
+        consumer materializes that requires synchronous reaping.
+
+        Returns ``{cancelled_tasks: [name], killed_pids: [{name, pid}]}``.
+        """
+        # 1. Cancel parent in-flight task (in-process Jarvis).
+        agents, _ = self._resolve_scope(scope)
+        cancelled: list[str] = []
+        for agent in agents:
+            task = self._current_tasks.get(agent)
+            if task is not None and not task.done():
+                task.cancel()
+                cancelled.append(agent)
+
+        # 2. SIGTERM every running subprocess subagent.
+        killed: list[dict] = []
+        try:
+            import services.shared_state as _state
+            if _state.registry_db is not None:
+                records = _state.registry_db.get_all()
+                for run_id, rec in records.items():
+                    status = rec.get("status")
+                    if status not in ("running", "idle", "pending"):
+                        continue
+                    pid = rec.get("pid")
+                    if not pid:
+                        continue
+                    try:
+                        # SIGTERM the uv launcher — uv catches it and
+                        # propagates SIGINT to the python child, which
+                        # raises KeyboardInterrupt → graceful shutdown.
+                        # See docstring §"signal sent, not reaped" for why
+                        # we mark "killed" before confirming exit.
+                        os.kill(int(pid), signal.SIGTERM)
+                        killed.append({"name": rec.get("agent_name"), "pid": int(pid)})
+                        _state.registry_db.upsert_record(
+                            run_id, {"status": "killed"},
+                        )
+                        logger.info("[HARD_KILL] SIGTERM → %s (pid=%s)", rec.get("agent_name"), pid)
+                    except (ProcessLookupError, PermissionError) as e:
+                        logger.warning("[HARD_KILL] SIGTERM failed for %s pid=%s: %s", rec.get("agent_name"), pid, e)
+        except Exception as e:
+            logger.warning("[HARD_KILL] registry scan failed: %s", e)
+
+        return {"cancelled_tasks": cancelled, "killed_pids": killed}
+
     def cleanup(self, agent_name: str) -> None:
         """Remove pause state for an agent (e.g., when agent is destroyed)."""
         self._paused_agents.discard(agent_name)

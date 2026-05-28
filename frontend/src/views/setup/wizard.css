@@ -1,0 +1,242 @@
+/* Shared styling for wizard inputs & buttons.  Scoped via `.wizard-*` prefix
+   so these classes don't leak into the rest of the dashboard.
+
+   Rewired to the new design tokens (DESIGN_HANDOFF.md §7). All colors come
+   from var(--…) defined in src/assets/tokens.css. */
+
+.wizard-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.wizard-field label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-muted);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.wizard-input {
+  width: 100%;
+  background: var(--bg-4);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  padding: 11px 14px;
+  color: var(--text);
+  font-size: 13.5px;
+  font-family: var(--font-body);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.wizard-input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-bg-strong);
+}
+.wizard-input::placeholder { color: var(--text-subtle); }
+.wizard-input[disabled] { opacity: 0.6; cursor: not-allowed; }
+
+.wizard-input-group {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.wizard-input-group .wizard-input { padding-right: 44px; font-family: var(--font-mono); font-size: 12.5px; }
+.wizard-input-group .icon-btn {
+  position: absolute;
+  right: 8px;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+.wizard-input-group .icon-btn:hover { color: var(--text); background: var(--bg-3); }
+
+.wizard-help { font-size: 11.5px; color: var(--text-muted); line-height: 1.45; }
+.wizard-error {
+  font-size: 12.5px;
+  color: var(--danger);
+  padding: 10px 12px;
+  background: var(--danger-bg);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: var(--r-md);
+  line-height: 1.45;
+}
+.wizard-callout {
+  display: flex;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--primary-bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  font-size: 12.5px;
+  color: var(--text-dim);
+  line-height: 1.55;
+}
+.wizard-callout.warn {
+  background: var(--warning-bg);
+  border-color: rgba(245, 158, 11, 0.3);
+}
+.wizard-callout.success {
+  background: var(--success-bg);
+  border-color: rgba(16, 185, 129, 0.3);
+}
+.wizard-callout strong { color: var(--text); }
+.wizard-callout code { color: var(--accent); }
+
+.wizard-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-radius: var(--r-md);
+  font-family: var(--font-body);
+  font-size: 13.5px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-dim);
+  transition: all 0.18s var(--ease-out);
+}
+.wizard-btn:hover:not([disabled]) { color: var(--text); background: var(--bg-3); }
+.wizard-btn[disabled] { opacity: 0.5; cursor: not-allowed; }
+.wizard-btn.ghost { color: var(--text-dim); }
+.wizard-btn.primary {
+  background: linear-gradient(180deg, var(--primary-hover), var(--primary));
+  color: #ffffff;
+  border-color: transparent;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.18) inset, 0 8px 24px -8px var(--primary-glow);
+}
+.wizard-btn.primary:hover:not([disabled]) {
+  transform: translateY(-1px);
+  color: #ffffff;
+}
+.wizard-btn.danger { color: var(--danger); }
+.wizard-btn.danger:hover:not([disabled]) { background: var(--danger-bg); color: var(--danger); }
+
+.wizard-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.wizard-choice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 14px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  text-align: left;
+  position: relative;
+}
+.wizard-choice:hover { border-color: var(--border-bright); }
+.wizard-choice.selected {
+  border-color: var(--primary);
+  background: var(--primary-bg);
+}
+.wizard-choice .choice-title {
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.wizard-choice.selected .choice-title { color: var(--text); }
+.wizard-choice .choice-sub {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.wizard-choice .choice-check {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--primary);
+  display: grid;
+  place-items: center;
+  color: white;
+}
+
+.wizard-service-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+}
+.wizard-service-card .row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+.wizard-service-card h3 {
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+.wizard-service-card .desc { font-size: 12.5px; color: var(--text-dim); line-height: 1.55; }
+.wizard-service-card .badge {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--bg-3);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+.wizard-service-card .badge.connected {
+  background: var(--success-bg);
+  color: var(--success);
+  border-color: rgba(16, 185, 129, 0.3);
+}
+
+.wizard-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 4px 20px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+}
+.wizard-summary .row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+.wizard-summary .row:last-child { border-bottom: none; }
+.wizard-summary .label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.wizard-summary .value { font-size: 13.5px; font-weight: 500; color: var(--text); }
+.wizard-summary .value.ok { color: var(--success); }
+.wizard-summary .value.muted { color: var(--text-muted); }

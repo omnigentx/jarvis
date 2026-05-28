@@ -1,0 +1,69 @@
+# Backend's SetupGateMiddleware kicks in on every /api/* endpoint when the
+# wizard hasn't been completed, returning 503 + X-Setup-Required: true.
+# api.js::_handleSetupRequired routes the user into /setup automatically.
+#
+# Fixture: every /api call the app tries during the initial / navigation
+# returns the setup-gate shape. Tests assert the app ends up on /setup.
+
+backend_source:
+  - "backend/middleware/setup_gate.py::SetupGateMiddleware"
+  - "backend/routes/setup.py::get_setup_status"
+  - "backend/routes/setup.py::auth_probe"
+  - "dashboard/src/api.js::apiFetch (503 handler)"
+  - "dashboard/src/App.vue::onSetupRequired"
+
+responses:
+  # Every request the app fires on root load gets the same setup-gate 503.
+  # Catch-all isn't supported in the fixture schema (keys are literal) so
+  # we declare the ones the app actually fires — any extra will land in
+  # backend.unexpected and the test will fail loud, signalling a fixture
+  # update is needed.
+  "GET /api/agents":
+    status: 503
+    headers:
+      x-setup-required: "true"
+    json: { error: "setup_required" }
+  "GET /api/notifications/unread-count":
+    status: 503
+    headers:
+      x-setup-required: "true"
+    json: { error: "setup_required" }
+
+  # After the redirect lands the user on /setup/auth, the wizard bootstraps
+  # itself — these are outside the setup-gate so return 200. Declared here
+  # to keep backend.unexpected empty (the wizard's own behavior is covered
+  # by setup-wizard.spec.ts; this spec only cares the redirect happened).
+  "GET /api/setup/auth/probe":
+    status: 200
+    json: { configured: false }
+  # Auth probe fired by App.vue::onMounted before the SetupGate redirect
+  # kicks in. /api/auth/* is exempt from the SetupGate so it returns
+  # whatever the auth route would say — for a fresh install with no
+  # session, that's authenticated:false. The AuthGate would briefly
+  # render but the SetupGate redirect to /setup (bare layout) hides it
+  # again before the user can see anything.
+  "GET /api/auth/whoami":
+    status: 200
+    json: { authenticated: false }
+  "GET /api/auth/passkey/has-any":
+    status: 200
+    json: { has_passkey: false }
+  "GET /api/setup/status":
+    status: 200
+    json:
+      steps:
+        - { name: "auth",        completed: false, skipped: false }
+        - { name: "llm",         completed: false, skipped: false }
+        - { name: "services",    completed: false, skipped: false }
+        - { name: "yaml_config", completed: false, skipped: false }
+        - { name: "verify",      completed: false, skipped: false }
+      overall_complete: false
+      current_step: "auth"
+
+sse_streams:
+  "/api/agents/activity-stream":
+    - { event: "ping", data: {} }
+  "/api/scheduler/stream":
+    - { event: "ping", data: {} }
+  "/api/mcp/events/stream":
+    - { event: "ping", data: {} }

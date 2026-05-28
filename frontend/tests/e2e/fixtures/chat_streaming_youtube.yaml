@@ -1,0 +1,64 @@
+# Chat SSE streaming — YouTube embed via [[[PLAY: id]]] tag.
+#
+# When the agent calls the music-playback tool, backend's media_server.py
+# emits a `done` response that includes a [[[PLAY: <videoId>]]] tag. The
+# music-playback skill instructs the LLM to keep that tag in its reply, and
+# the dashboard parses it client-side to render an embedded YouTube player
+# under the bubble (and to strip the literal tag from the displayed text).
+#
+# Backend contract:
+#   - backend/tools/media_server.py emits f"... [[[PLAY: {video_id}]]]"
+#   - backend/.fast-agent/skills/music-playback/SKILL.md tells the LLM:
+#       "Dropping the [[[PLAY: ...]]] tag → VIOLATION"
+#
+# This fixture replays the happy-path SSE sequence with a tag-bearing final
+# response, so we can assert the iframe renders AND the literal tag is hidden.
+
+backend_source:
+  - "backend/tools/media_server.py"
+  - "backend/.fast-agent/skills/music-playback/SKILL.md"
+  - "backend/routes/chat.py::chat_stream"
+  - "dashboard/src/utils/youtubeTags.js::parseYoutubeTags"
+  - "dashboard/src/components/chat/ChatMessages.vue"
+
+responses:
+  "GET /api/conversations":
+    status: 200
+    json: []
+
+  "GET /api/agents":
+    status: 200
+    json:
+      - name: "Jarvis"
+        description: "Main orchestrator"
+        status: "idle"
+        is_default: true
+        team_name: null
+
+  "GET /api/agents/activities/recent":
+    status: 200
+    json: {}
+
+sse_streams:
+  "/api/chat-stream":
+    - data:
+        type: "start"
+        message: "Processing..."
+    - data:
+        type: "tool_call"
+        tools:
+          - name: "play_music"
+            args: { query: "rick astley never gonna give you up" }
+        message: "Looking up song..."
+    - data:
+        type: "tool_result"
+        tools:
+          - name: "play_music"
+        message: "found"
+        duration_ms: 80
+    - data:
+        type: "done"
+        response: "Đang phát Never Gonna Give You Up. [[[PLAY: dQw4w9WgXcQ]]]"
+        audio: null
+        conversation_id: "e2e-conv-youtube-001"
+        total_tokens: { input: 12, output: 14, reasoning: 0, cache_read: 0 }

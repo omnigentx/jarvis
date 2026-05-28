@@ -1,0 +1,55 @@
+# Chat interrupt — backend stubs for the soft/hard stop e2e spec.
+#
+# The chat-stream itself is held open by an inline page.route() in the
+# spec (Playwright's route.fulfill is atomic, so we can't time inter-
+# event delays via fixture). What this fixture covers:
+#
+#   * Boot endpoints (conversations, agents, activities) — same as the
+#     happy-path fixture, so the chat view mounts cleanly.
+#   * `POST /api/agents/Jarvis/interrupt` — the endpoint the soft/hard
+#     stop UX calls. We mock both query-string variants because the
+#     route handler reads `?mode=soft` vs `?mode=hard`. Returning realistic
+#     payloads lets us assert that the hard-mode toast renders the
+#     killed subagent name list.
+
+backend_source:
+  - "backend/routes/agents.py::interrupt_agent"
+  - "backend/services/pause_controller.py::PauseController.interrupt"
+  - "backend/services/pause_controller.py::PauseController.hard_kill"
+  - "dashboard/src/composables/useChatStream.js::cancel"
+  - "dashboard/src/views/ChatView.vue::handleStop"
+
+responses:
+  "GET /api/conversations":
+    status: 200
+    json: []
+
+  "GET /api/agents":
+    status: 200
+    json:
+      - name: "Jarvis"
+        description: "Main orchestrator"
+        status: "idle"
+        is_default: true
+        team_name: null
+
+  "GET /api/agents/activities/recent":
+    status: 200
+    json: {}
+
+  # Interrupt endpoint — soft and hard modes share the route and only
+  # differ by the `?mode=` query string. The mock-backend matcher keys
+  # on `${METHOD} ${pathname}` only (see harness/mock-backend.ts:64), so
+  # one entry serves both modes. We include ``killed_pids`` so the hard-
+  # mode warning toast renders subagent names; the soft branch in
+  # ChatView.handleStop doesn't read this field. The spec discriminates
+  # soft vs hard via `page.waitForResponse` matching `?mode=...` itself.
+  "POST /api/agents/Jarvis/interrupt":
+    status: 200
+    json:
+      status: "interrupted"
+      agent: "Jarvis"
+      cancelled_tasks: ["Jarvis"]
+      killed_pids:
+        - { name: "Minh - Dev", pid: 5101 }
+        - { name: "Linh - QE",  pid: 5102 }
