@@ -874,7 +874,19 @@ input[type="range"] {
 
 .footer-row {
   display: flex; justify-content: flex-end; align-items: center;
-  gap: 12px; margin-top: 4px;
+  gap: 12px;
+  /* Sticky so "Save changes" is always reachable — without this, a long
+     panel (engine picker → params → secret form) pushes the button below
+     the viewport on first visit, leaving the user staring at form fields
+     with no obvious way to commit them. The sticky band rides the bottom
+     of the scroll container. Faded top edge so the panel content below
+     it doesn't visibly cut off through transparent space. */
+  position: sticky;
+  bottom: 0;
+  margin-top: 8px;
+  padding: 14px 0 4px;
+  background: linear-gradient(180deg, transparent 0%, var(--bg-1, #0b1020) 35%, var(--bg-1, #0b1020) 100%);
+  z-index: 5;
 }
 
 @media (max-width: 768px) {
