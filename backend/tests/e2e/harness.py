@@ -134,6 +134,15 @@ async def build_scripted_agent(
     leaks a real session and the chat UI fills up with rows like
     "Run the kickoff for the audit project." — see hooks/session_history.py
     line 39-40 for the early-return contract.
+
+    Tool-call hooks wire ``TEAM_MY_NAME`` to ``agent_name`` for the
+    duration of each tool invocation. Production-spawned team agents
+    have this env var pinned at process creation; in tests, multiple
+    "agents" share one process, so the harness swaps the env var per
+    tool call so meeting_room_server's ``_assert_self_identity`` sees
+    the correct caller identity. Restored after each tool call so the
+    sequential agent-by-agent flow in flow tests (PM, BA, Dev, QE)
+    doesn't leak each agent's name into the next agent's calls.
     """
     agent = ToolAgent(
         config=AgentConfig(
@@ -149,8 +158,28 @@ async def build_scripted_agent(
 
     agent._llm = ScriptedLLM.from_yaml(fixture_path)
 
-    if recorder is not None:
-        agent.tool_runner_hooks = ToolRunnerHooks(before_tool_call=recorder.hook)
+    # Compose: env-setter runs first (so the tool sees the right
+    # TEAM_MY_NAME), then the optional recorder. Both hooks slot into
+    # ``before_tool_call`` / ``after_tool_call`` of the same dataclass.
+    _prior_env = {"value": None, "was_set": False}
+
+    async def _before(_runner, _msg):
+        _prior_env["value"] = os.environ.get("TEAM_MY_NAME")
+        _prior_env["was_set"] = "TEAM_MY_NAME" in os.environ
+        os.environ["TEAM_MY_NAME"] = agent_name
+        if recorder is not None:
+            await recorder.hook(_runner, _msg)
+
+    async def _after(_runner, _msg):
+        if _prior_env["was_set"]:
+            os.environ["TEAM_MY_NAME"] = _prior_env["value"] or ""
+        else:
+            os.environ.pop("TEAM_MY_NAME", None)
+
+    agent.tool_runner_hooks = ToolRunnerHooks(
+        before_tool_call=_before,
+        after_tool_call=_after,
+    )
 
     return agent
 

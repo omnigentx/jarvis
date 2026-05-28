@@ -270,15 +270,27 @@ async def test_speak_rejects_wrong_speaker(real_meeting_env):
     assert state["participants"] == ["Cameron [PM]", "Devon [BA]"]
 
     # Direct call to speak as BA — PM is current_speaker, BA should be rejected.
+    # Simulates BA's spawn-isolated process making the call: TEAM_MY_NAME=BA
+    # so the identity check passes; the "Not your turn" check (which is the
+    # contract under test here) is the one that must reject.
     import json
+    import os
 
-    result = json.loads(
-        await speak(
-            meeting_id=MEETING_ID,
-            message="BA jumping the queue.",
-            agent_name="Devon [BA]",
+    _prior = os.environ.get("TEAM_MY_NAME")
+    os.environ["TEAM_MY_NAME"] = "Devon [BA]"
+    try:
+        result = json.loads(
+            await speak(
+                meeting_id=MEETING_ID,
+                message="BA jumping the queue.",
+                agent_name="Devon [BA]",
+            )
         )
-    )
+    finally:
+        if _prior is None:
+            os.environ.pop("TEAM_MY_NAME", None)
+        else:
+            os.environ["TEAM_MY_NAME"] = _prior
     assert "error" in result, f"Expected rejection, got: {result}"
     assert "Not your turn" in result["error"]
     assert "Cameron [PM]" in result["error"], (
