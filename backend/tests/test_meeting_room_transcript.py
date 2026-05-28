@@ -18,7 +18,7 @@ async def test_create_meeting_auto_joins_all():
     mock_storage.create_meeting = MagicMock()
 
     with patch("fast_agent.spawn.servers.meeting_room_server._storage", mock_storage):
-        with patch("fast_agent.spawn.servers.meeting_room_server._get_my_name", return_value="PM"):
+        with patch("fast_agent.spawn.servers._team_helpers.get_my_name", return_value="PM"):
             with patch("fast_agent.spawn.servers.meeting_room_server._get_bus") as mock_bus:
                 mock_bus.return_value = MagicMock()
                 with patch("fast_agent.spawn.servers.meeting_room_server._auto_wake_if_idle"):
@@ -50,7 +50,7 @@ async def test_create_meeting_auto_includes_creator():
     mock_storage.create_meeting = MagicMock()
 
     with patch("fast_agent.spawn.servers.meeting_room_server._storage", mock_storage):
-        with patch("fast_agent.spawn.servers.meeting_room_server._get_my_name", return_value="Cameron [PM]"):
+        with patch("fast_agent.spawn.servers._team_helpers.get_my_name", return_value="Cameron [PM]"):
             with patch("fast_agent.spawn.servers.meeting_room_server._get_bus") as mock_bus:
                 mock_bus.return_value = MagicMock()
                 with patch("fast_agent.spawn.servers.meeting_room_server._auto_wake_if_idle"):
@@ -86,7 +86,7 @@ async def test_create_meeting_does_not_duplicate_creator():
     mock_storage.create_meeting = MagicMock()
 
     with patch("fast_agent.spawn.servers.meeting_room_server._storage", mock_storage):
-        with patch("fast_agent.spawn.servers.meeting_room_server._get_my_name", return_value="PM"):
+        with patch("fast_agent.spawn.servers._team_helpers.get_my_name", return_value="PM"):
             with patch("fast_agent.spawn.servers.meeting_room_server._get_bus") as mock_bus:
                 mock_bus.return_value = MagicMock()
                 with patch("fast_agent.spawn.servers.meeting_room_server._auto_wake_if_idle"):
@@ -122,7 +122,7 @@ async def test_create_meeting_truncates_long_agenda():
     mock_storage.create_meeting = MagicMock()
 
     with patch("fast_agent.spawn.servers.meeting_room_server._storage", mock_storage):
-        with patch("fast_agent.spawn.servers.meeting_room_server._get_my_name", return_value="PM"):
+        with patch("fast_agent.spawn.servers._team_helpers.get_my_name", return_value="PM"):
             with patch("fast_agent.spawn.servers.meeting_room_server._get_bus") as mock_bus:
                 mock_bus.return_value = MagicMock()
                 with patch("fast_agent.spawn.servers.meeting_room_server._auto_wake_if_idle"):
@@ -159,7 +159,7 @@ async def test_create_meeting_short_agenda_no_warning():
     mock_storage.create_meeting = MagicMock()
 
     with patch("fast_agent.spawn.servers.meeting_room_server._storage", mock_storage):
-        with patch("fast_agent.spawn.servers.meeting_room_server._get_my_name", return_value="PM"):
+        with patch("fast_agent.spawn.servers._team_helpers.get_my_name", return_value="PM"):
             with patch("fast_agent.spawn.servers.meeting_room_server._get_bus") as mock_bus:
                 mock_bus.return_value = MagicMock()
                 with patch("fast_agent.spawn.servers.meeting_room_server._auto_wake_if_idle"):
@@ -183,7 +183,7 @@ async def test_create_meeting_description_persisted():
     mock_storage.create_meeting = MagicMock()
 
     with patch("fast_agent.spawn.servers.meeting_room_server._storage", mock_storage):
-        with patch("fast_agent.spawn.servers.meeting_room_server._get_my_name", return_value="PM"):
+        with patch("fast_agent.spawn.servers._team_helpers.get_my_name", return_value="PM"):
             with patch("fast_agent.spawn.servers.meeting_room_server._get_bus") as mock_bus:
                 mock_bus.return_value = MagicMock()
                 with patch("fast_agent.spawn.servers.meeting_room_server._auto_wake_if_idle"):
@@ -206,7 +206,7 @@ async def test_create_meeting_solo_creator_rejected():
     mock_storage.create_meeting = MagicMock()
 
     with patch("fast_agent.spawn.servers.meeting_room_server._storage", mock_storage):
-        with patch("fast_agent.spawn.servers.meeting_room_server._get_my_name", return_value="PM"):
+        with patch("fast_agent.spawn.servers._team_helpers.get_my_name", return_value="PM"):
             with patch("fast_agent.spawn.servers.meeting_room_server._get_bus") as mock_bus:
                 mock_bus.return_value = MagicMock()
                 with patch("fast_agent.spawn.servers.meeting_room_server._auto_wake_if_idle"):
@@ -230,7 +230,7 @@ async def test_meeting_id_is_short():
     mock_storage.create_meeting = MagicMock()
 
     with patch("fast_agent.spawn.servers.meeting_room_server._storage", mock_storage):
-        with patch("fast_agent.spawn.servers.meeting_room_server._get_my_name", return_value="PM"):
+        with patch("fast_agent.spawn.servers._team_helpers.get_my_name", return_value="PM"):
             with patch("fast_agent.spawn.servers.meeting_room_server._get_bus") as mock_bus:
                 mock_bus.return_value = MagicMock()
                 with patch("fast_agent.spawn.servers.meeting_room_server._auto_wake_if_idle"):
@@ -407,7 +407,7 @@ def _identity_check(caller_env_name: str, param_agent_name: str):
         # is empty (auto-detect). Patch it so that branch produces a
         # predictable value instead of depending on the real env.
         with patch(
-            "fast_agent.spawn.servers.meeting_room_server._get_my_name",
+            "fast_agent.spawn.servers._team_helpers.get_my_name",
             return_value=caller_env_name or "agent",
         ):
             from fast_agent.spawn.servers.meeting_room_server import _assert_self_identity
@@ -421,7 +421,7 @@ def test_speak_refuses_impersonation_via_self_identity_check():
     assert err is not None
     err_data = json.loads(err)
     assert "Impersonation refused" in err_data["error"]
-    assert err_data["caller"] == "Taylor [PM]"
+    assert err_data["caller_env"] == "Taylor [PM]"
     assert err_data["claimed_agent_name"] == "Sawyer [BA]"
 
 
