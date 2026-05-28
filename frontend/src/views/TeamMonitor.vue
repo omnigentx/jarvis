@@ -22,7 +22,7 @@ const toast = useToast()
 
 const store = useAgentsStore()
 const approvalsStore = useApprovalsStore()
-const { filteredAgents, filter, selectedAgents, sortLocked, toggleAgent, selectAll, toggleSortLock } = useActivityStream()
+const { filteredAgents, filter, selectedAgents, toggleAgent, selectAll } = useActivityStream()
 
 // Terminal-style monitor grid (the only UI now — v1 card grid was
 // removed). Per-agent turn buffer keeps history available as new
@@ -510,16 +510,6 @@ onMounted(() => {
           <span class="team-dot" :style="{ background: teamColor(tn) }"></span>
           <span class="team-pill-label">{{ tn }}</span>
         </button>
-
-        <!-- Sort Lock Toggle -->
-        <button
-          class="filter-btn sort-lock-btn"
-          :class="{ active: sortLocked }"
-          @click="toggleSortLock"
-          :title="sortLocked ? 'Unlock sort' : 'Lock sort'"
-        >
-          {{ sortLocked ? '🔒' : '🔓' }}
-        </button>
       </div>
 
       <!-- Row 2 (desktop: same row as pills via flex; mobile: own row) -->
@@ -789,7 +779,7 @@ onMounted(() => {
   margin-bottom: 20px;
 }
 
-/* Row of pills: All / Active / team filters / sort lock */
+/* Row of pills: All / Active / team filters */
 .filter-pills-row {
   display: flex;
   align-items: center;
@@ -839,11 +829,6 @@ onMounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.sort-lock-btn {
-  font-size: 13px;
-  padding: 6px 10px;
 }
 
 /* ─── Agent Dropdown ─── */
