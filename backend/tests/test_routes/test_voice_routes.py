@@ -77,6 +77,81 @@ class TestEnginesEndpoint:
         assert {"voice", "rate"} <= keys
 
 
+class TestBackendsEndpoint:
+    """``GET /api/voice/backends`` — feature-flag allowlist for the
+    Settings UI. See ``test_voice_backend_flags.py`` for the underlying
+    allowlist logic; this class only pins the HTTP wire shape.
+    """
+
+    def test_returns_enabled_and_known_lists(self, client):
+        resp = client.get("/api/voice/backends")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        for section in ("stt", "tts"):
+            assert section in body
+            assert "enabled" in body[section]
+            assert "known" in body[section]
+            assert isinstance(body[section]["enabled"], list)
+            assert isinstance(body[section]["known"], list)
+            # Enabled is always a subset of known
+            assert set(body[section]["enabled"]) <= set(body[section]["known"])
+
+    def test_known_lists_match_static_codebase_view(self, client):
+        """``known`` is the codebase's full known-engines set, NOT a
+        function of the env var. Pinned here so adding a backend (e.g.
+        Deepgram) without updating both the registry AND the known set
+        fails this test loudly."""
+        body = client.get("/api/voice/backends").json()
+        assert {"faster_whisper", "gipformer_vi", "soniox"} <= set(
+            body["stt"]["known"]
+        )
+        assert {"edge", "soniox"} <= set(body["tts"]["known"])
+
+    def test_env_var_restricts_enabled_set(self, client, monkeypatch):
+        """Env var change is honoured per-request (no module reload
+        needed) — frontend can re-query after an operator edits .env
+        and restarts the backend."""
+        monkeypatch.setenv("STT_BACKENDS_ENABLED", "faster_whisper")
+        resp = client.get("/api/voice/backends")
+        body = resp.json()
+        assert body["stt"]["enabled"] == ["faster_whisper"]
+
+    def test_endpoint_requires_auth(self, tmp_path, monkeypatch):
+        """Should NOT serve without a valid bearer token, same as the
+        other voice routes."""
+        # Build a fresh client without the auth header.
+        monkeypatch.setenv("JARVIS_DB_PATH", str(tmp_path / "noauth.db"))
+        monkeypatch.setenv("JARVIS_API_KEY", "voice-routes-test-master-key")
+        from core import auth as core_auth
+        monkeypatch.setattr(core_auth, "JARVIS_API_KEY", "voice-routes-test-master-key")
+        from sqlalchemy import create_engine as _ce
+        from sqlalchemy.orm import sessionmaker
+        from core.database import Base, SETUP_WIZARD_CRITICAL_STEPS, SetupWizardStep
+        eng = _ce(
+            f"sqlite:///{tmp_path / 'noauth.db'}",
+            connect_args={"check_same_thread": False},
+        )
+        Base.metadata.create_all(bind=eng)
+        S = sessionmaker(autocommit=False, autoflush=False, bind=eng)
+        with S() as db:
+            for name in SETUP_WIZARD_CRITICAL_STEPS:
+                db.add(SetupWizardStep(step_name=name, completed=True))
+            db.commit()
+        import core.database as core_db
+        from services import config_service as config_module
+        monkeypatch.setattr(core_db, "SessionLocal", S)
+        monkeypatch.setattr(config_module, "SessionLocal", S)
+        from middleware.setup_gate import _reset_cache_for_tests, refresh_setup_complete
+        _reset_cache_for_tests()
+        refresh_setup_complete()
+        from server import app
+        c = TestClient(app)
+        resp = c.get("/api/voice/backends")
+        assert resp.status_code in (401, 403), (
+            f"Expected 401/403, got {resp.status_code}: {resp.text}"
+        )
+
+
 class TestActiveConfigEndpoint:
     def test_get_returns_defaults_when_unset(self, client):
         resp = client.get("/api/voice/active")

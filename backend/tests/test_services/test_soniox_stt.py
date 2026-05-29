@@ -112,11 +112,17 @@ class TestTokenHandling:
         ]})
         finals = [p["text"] for ev, p in events if ev == "final_transcript"]
         assert finals == ["Hello world"]
-        # Endpoint emits vad_stop → recording_stop → recording_start so the
-        # voice WS route resets its per-turn state and is ready for the
-        # next utterance on the same Soniox connection.
+        # Endpoint emits vad_stop → recording_stop only. The trailing
+        # ``recording_start`` was REMOVED on 2026-05-29 because it raced
+        # with ``final_transcript`` dispatch in the voice WS route: the
+        # late recording_start saw bot_speaking=True from the cancelled
+        # OLD turn and triggered _cancel_inflight on the NEW turn that
+        # had just been scheduled, killing it before it could run.
+        # Utterance-start signalling now lives upstream in
+        # ``_handle_event`` (first non-empty frame after silence), so
+        # ``_emit_endpoint`` only signals "speech ended" cleanly.
         sequence = [ev for ev, _ in events if ev in {"vad_stop", "recording_stop", "recording_start"}]
-        assert sequence == ["vad_stop", "recording_stop", "recording_start"]
+        assert sequence == ["vad_stop", "recording_stop"]
 
         # Buffer must be empty so the next utterance doesn't carry over.
         events.clear()
