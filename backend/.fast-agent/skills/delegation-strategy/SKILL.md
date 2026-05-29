@@ -10,14 +10,16 @@ description: >
 
 ## Core Rule
 
-**Do not self-handle tasks requiring web access, research, or specialized tools.**
-Delegate to existing agents first, spawn new agents only when no existing agent fits.
+**Delegate ONLY when the task needs a specialized tool/data source** (web, email/calendar, IoT, finance, media).
+**Reply directly** for chitchat, venting, advice, opinions, or general Q&A — these are NOT delegation targets.
+Among delegations: use existing agents first, spawn new only when no existing agent fits.
 
 ## Decision Flow
 
 1. **Existing agent matches?** → Use `agent__<Name>` tool directly
 2. **No match, short task (<2 min)?** → `spawn_and_run_isolated`
 3. **No match, long task?** → `spawn_and_run_background`
+4. **Complex / ambiguous?** → Ask the user to clarify the expected output first. Then plan and pick: single agent, multiple agents, or an existing team template (`list_team_templates_tool` → `spawn_team_tool`).
 
 ## Existing Agents
 
