@@ -69,20 +69,15 @@ watch(
   },
 )
 
-// Resolve the last assistant message id (used to show INTERRUPTED on the
-// most recent jarvis bubble when voice.wasInterrupted is true).
-const lastAssistantMsgId = computed(() => {
-  for (let i = props.messages.length - 1; i >= 0; i--) {
-    if (props.messages[i].role === 'assistant') return props.messages[i].id
-  }
-  return null
-})
-
+// Per-message INTERRUPTED flag (set by chatStore.markMessageInterrupted
+// when the LLM-in-progress placeholder gets cancelled mid-generation —
+// see useVoiceSession.js ``tts_interruption`` handler). Was previously
+// derived from ``voice.wasInterrupted`` (a single global ref) + last
+// assistant message id, which tagged the wrong bubble whenever a barge-in
+// happened *after* the LLM had already finalised (Case B — only TTS was
+// cancelled, the message itself was complete).
 function isInterrupted(msg) {
-  return msg.role === 'assistant'
-    && !msg.isStreaming
-    && voice.wasInterrupted.value
-    && msg.id === lastAssistantMsgId.value
+  return msg.role === 'assistant' && msg.isInterrupted === true
 }
 
 function isBargeIn(msg) {

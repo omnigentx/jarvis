@@ -44,6 +44,28 @@ const voiceStrip = computed(() => {
 
 const isVoiceOn = computed(() => voice.status.value !== 'idle' && voice.status.value !== 'error')
 
+// WS chip drives off the UPSTREAM STT WebSocket state (wsStatus), not the
+// frontend↔backend ws_voice state (isVoiceOn). Reason: pre-fix, frontend
+// had a healthy WS to the backend while Soniox WS was dead — chip showed
+// green but mic input silently dropped (2026-05-29 incident). Now green
+// ⇔ Soniox really is connected and audio is reaching it.
+//
+// Wire format matches STTConnectionState in
+// backend/services/stt_backends/types.py:
+//   'idle' (mic off)       → grey "OFF"
+//   'connecting'           → amber "WS…"
+//   'connected'            → green "WS"
+//   'reconnecting'         → amber pulse "RECONNECT"
+//   'error'                → red "WS ERR"
+const wsChip = computed(() => {
+  const s = voice.wsStatus?.value || 'idle'
+  if (s === 'connected')    return { label: 'WS',       cls: 'chip-success', pulse: false }
+  if (s === 'connecting')   return { label: 'WS…',      cls: 'chip-warning', pulse: true }
+  if (s === 'reconnecting') return { label: 'RECONNECT', cls: 'chip-warning', pulse: true }
+  if (s === 'error')        return { label: 'WS ERR',   cls: 'chip-danger',  pulse: false }
+  return                      { label: 'OFF',      cls: 'chip-muted',   pulse: false }
+})
+
 function selectAgent(name) {
   emit('switch-agent', name)
   showDropdown.value = false
@@ -78,9 +100,9 @@ function selectAgent(name) {
       </div>
     </div>
 
-    <!-- SSE chip placeholder (existing chat-stream is HTTP-stream not WS; surface voice WS state here) -->
-    <span class="hd-chip" :class="isVoiceOn ? 'chip-success' : 'chip-muted'">
-      <span class="hd-chip-dot" /> {{ isVoiceOn ? 'WS' : 'OFF' }}
+    <!-- WS chip reflects upstream STT WebSocket state (not frontend↔backend). -->
+    <span class="hd-chip" :class="wsChip.cls" :title="`Soniox/STT WS state: ${voice.wsStatus?.value || 'idle'}`">
+      <span class="hd-chip-dot" :class="{ pulse: wsChip.pulse }" /> {{ wsChip.label }}
     </span>
 
     <!-- Switch agent -->
@@ -232,10 +254,27 @@ function selectAgent(name) {
   background: var(--bg-3);
   color: var(--text-muted);
 }
+.hd-chip.chip-warning {
+  background: var(--warning-bg);
+  color: var(--warning);
+  border-color: rgba(245, 158, 11, 0.30);
+}
+.hd-chip.chip-danger {
+  background: var(--danger-bg);
+  color: var(--danger);
+  border-color: rgba(239, 68, 68, 0.30);
+}
 .hd-chip-dot {
   width: 5px; height: 5px; border-radius: 50%;
   background: currentColor;
   box-shadow: 0 0 6px currentColor;
+}
+.hd-chip-dot.pulse {
+  animation: hd-chip-pulse 0.9s ease-in-out infinite;
+}
+@keyframes hd-chip-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.4; transform: scale(1.3); }
 }
 
 .hd-switch { position: relative; }

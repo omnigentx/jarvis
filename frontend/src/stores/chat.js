@@ -323,6 +323,28 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   /**
+   * Mark a streaming placeholder as INTERRUPTED — the LLM was cancelled
+   * mid-generation (typically by a user barge-in over voice). Differs
+   * from ``setMessageError`` because no error happened: the user just
+   * cut the bot off. Differs from ``removeMessage`` because we keep
+   * the bubble visible so the user can see *which* turn was cut.
+   *
+   * Per-message flag (instead of a global ``wasInterrupted`` ref) so
+   * the chip lands on the right bubble — a global ref would also tag
+   * any already-finalised previous message every time TTS gets cut
+   * post-LLM (the false-positive bug for Case B).
+   */
+  function markMessageInterrupted(messageId) {
+    const conv = activeConversation.value
+    if (!conv) return
+    const msg = conv.messages.find(m => m.id === messageId)
+    if (!msg) return
+    msg.isStreaming = false
+    msg.isInterrupted = true
+    conv.updatedAt = Date.now()
+  }
+
+  /**
    * Mark a streaming message as errored (in-memory only).
    */
   function setMessageError(messageId, errorText) {
@@ -371,5 +393,6 @@ export const useChatStore = defineStore('chat', () => {
     finalizeAgentMessage,
     removeMessage,
     setMessageError,
+    markMessageInterrupted,
   }
 })

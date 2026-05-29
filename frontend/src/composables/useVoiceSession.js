@@ -43,6 +43,16 @@ export function useVoiceSession() {
 function _createVoiceSession() {
   const chatStore = useChatStore()
   const status = ref('idle')  // 'idle' | 'connecting' | 'loading_stt' | 'listening' | 'thinking' | 'speaking' | 'error'
+  // wsStatus mirrors the upstream STT WebSocket lifecycle (Soniox, Deepgram,
+  // …) — distinct from ``status`` which tracks the FRONTEND↔BACKEND ws_voice
+  // socket. Frontend chip renders off this so a green pill always means
+  // "STT really is connected and audio is reaching it", not "frontend has
+  // a WS to the backend". See [[ws lifecycle fix 2026-05-29]].
+  //
+  // Values match ``STTConnectionState`` in
+  // backend/services/stt_backends/types.py:
+  //   'idle' | 'connecting' | 'connected' | 'reconnecting' | 'error'
+  const wsStatus = ref('idle')
   const error = ref('')
   const partialTranscript = ref('')
   const lastFinalTranscript = ref('')
@@ -171,6 +181,12 @@ function _createVoiceSession() {
           break
         case 'recording_start': isUserSpeaking.value = true; break
         case 'recording_stop':  isUserSpeaking.value = false; break
+        case 'ws_status':
+          // Upstream STT WS state (idle/connecting/connected/reconnecting/error).
+          // Drives the WS chip in the chat header; does NOT replace the
+          // existing ``status`` ref which tracks the frontend↔backend WS.
+          wsStatus.value = msg.state || 'idle'
+          break
 
         case 'user_message': {
           // Push the user turn into chatStore so it appears in the main
@@ -293,16 +309,34 @@ function _createVoiceSession() {
           status.value = ws.value?.readyState === 1 ? 'listening' : 'idle'
           break
         case 'tts_interruption':
-          wasInterrupted.value = true
           // Same as barge_in_ack: stop any audio that already shipped from
           // server before the cancellation propagated, so the user's voice
           // gets the floor instantly instead of competing with bot residue.
           _flushPlaybackQueue()
-          // User barge-in or manual Interrupt — they already know what
-          // happened, so silently drop the in-flight placeholder instead of
-          // leaving "(interrupted by user)" noise in the chat. The previous
-          // (already-finalised) assistant message, if any, stays as-is.
-          _dropPending()
+          // Distinguish Case A vs Case B by the presence of a streaming
+          // placeholder:
+          //   * Case A — LLM still generating: ``pendingAgentMsgId`` set,
+          //     ``assistant_message`` hasn't landed yet. The placeholder
+          //     represents *this* turn so we mark it INTERRUPTED in place
+          //     instead of dropping it (keeps a visible "the bot was cut
+          //     off here" marker rather than a phantom missing turn).
+          //   * Case B — LLM finished, only TTS was cancelled: pending is
+          //     null, the assistant message has already been finalised.
+          //     Nothing on the chat side was interrupted — just the audio
+          //     — so we leave every bubble alone.
+          //
+          // ``wasInterrupted`` (global ref) remains set so the user-side
+          // BARGE-IN chip still lands on the most recent user message in
+          // both cases (the user *did* barge in either way).
+          if (pendingAgentMsgId !== null) {
+            wasInterrupted.value = true
+            if (typeof chatStore.markMessageInterrupted === 'function') {
+              try { chatStore.markMessageInterrupted(pendingAgentMsgId) } catch {}
+            }
+            pendingAgentMsgId = null
+          } else {
+            wasInterrupted.value = true  // for user-side BARGE-IN chip only
+          }
           status.value = ws.value?.readyState === 1 ? 'listening' : 'idle'
           break
         case 'error':
@@ -522,6 +556,11 @@ function _createVoiceSession() {
       audioContext.value = null
     }
     status.value = 'idle'
+    // The backend would emit ws_status: idle inside its pause() flow, but
+    // the WS is already torn down by the time we run — guarantee chip
+    // flips off immediately rather than waiting for a frame that won't
+    // arrive.
+    wsStatus.value = 'idle'
     isUserSpeaking.value = false
     partialTranscript.value = ''
   }
@@ -548,7 +587,7 @@ function _createVoiceSession() {
   })
 
   return {
-    status, error,
+    status, wsStatus, error,
     partialTranscript, lastFinalTranscript,
     isUserSpeaking, wasInterrupted, sessionId,
     wakeWordHits, events,
