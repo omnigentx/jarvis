@@ -16,10 +16,10 @@ Among delegations: use existing agents first, spawn new only when no existing ag
 
 ## Decision Flow
 
-1. **Existing agent matches?** → Use `agent__<Name>` tool directly
-2. **No match, short task (<2 min)?** → `spawn_and_run_isolated`
-3. **No match, long task?** → `spawn_and_run_background`
-4. **Complex / ambiguous?** → Ask the user to clarify the expected output first. Then plan and pick: single agent, multiple agents, or an existing team template (`list_team_templates_tool` → `spawn_team_tool`).
+1. **Ambiguous / underspecified?** → Ask the user to clarify the expected output FIRST. Then plan and pick: single agent, multiple agents, or an existing team template (`list_team_templates_tool` → `spawn_team_tool`).
+2. **Existing agent matches?** → Use `agent__<Name>` tool directly
+3. **No match, short task (<2 min)?** → `spawn_and_run_isolated`
+4. **No match, long task?** → `spawn_and_run_background`
 
 ## Existing Agents
 
@@ -27,7 +27,7 @@ Among delegations: use existing agents first, spawn new only when no existing ag
 |-------|--------|
 | ResearchAgent | Web search, news, information synthesis |
 | FinanceAgent | Stock prices, gold, crypto, market analysis |
-| PersonalAgent | Email, calendar, reminders (cron scheduler), personal task management |
+| PersonalAgent | Email, calendar events, reminders (cron) — task management only, NOT casual conversation |
 | CrawlStoriesAgent | Story crawling from web |
 | IoTAgent | Smart home device control |
 | MusicAgent | Music search and playback |
@@ -60,6 +60,7 @@ See [SKILLS.md](SKILLS.md) for skill catalog and pairing guidance.
 ## Anti-patterns
 
 - ❌ Jarvis self-researching (no direct web server access)
+- ❌ Delegating chitchat / venting / advice to PersonalAgent — reply directly instead
 - ❌ Spawning without servers (agent can't do anything)
 - ❌ Adding `chrome-devtools` for simple search (use `serpapi`)
 - ❌ Empty or vague instruction (always specify role + output format)
