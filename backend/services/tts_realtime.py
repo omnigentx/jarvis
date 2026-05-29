@@ -171,9 +171,17 @@ def build_chat_provider(config: dict[str, Any], secrets: Optional[dict[str, dict
 
     Edge bypasses RealtimeTTS for performance (3-tier chunking, native MP3).
     Other engines go through RealtimeTTS via :class:`RealtimeTTSProvider`.
+
+    Feature-flag gate: ``tts_backends.assert_engine_enabled`` runs FIRST
+    so selecting a disabled engine (per ``TTS_BACKENDS_ENABLED``) raises
+    ``RuntimeError`` with the env-var name in the message.
     """
+    from services.tts_backends import assert_engine_enabled
+
     engine = (config or {}).get("engine") or "edge"
     params = (config or {}).get("params") or {}
+
+    assert_engine_enabled(engine)  # raises on unknown or disabled
 
     if engine == "edge":
         return EdgeTTSProvider(

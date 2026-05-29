@@ -74,15 +74,25 @@ mcp:
       args: ["tools/gmail_server.py"]
       env:
          PYTHONUNBUFFERED: "1"
-         # Needed so services.google_oauth can decrypt the Fernet-encrypted
-         # OAuth tokens in system_config via core.secrets_crypto.
+         # JARVIS_API_KEY: auth for any callback into backend HTTP.
+         # JARVIS_MASTER_KEY: required so services.google_oauth can decrypt
+         # the Fernet-encrypted OAuth tokens stored in system_config (via
+         # core.secrets_crypto). MCP's get_default_environment() only
+         # inherits HOME/PATH/SHELL/TERM/USER/LOGNAME, so the master key
+         # MUST be forwarded here or every decrypt in the subprocess returns
+         # "stored secret could not be decrypted (master key rotated?)" —
+         # even right after a successful re-OAuth.
          JARVIS_API_KEY: "${JARVIS_API_KEY}"
+         JARVIS_MASTER_KEY: "${JARVIS_MASTER_KEY}"
     calendar:
       command: "python"
       args: ["tools/calendar_server.py"]
       env:
          PYTHONUNBUFFERED: "1"
+         # See gmail above — calendar shares services.google_oauth and has
+         # the same encrypted-token decrypt dependency.
          JARVIS_API_KEY: "${JARVIS_API_KEY}"
+         JARVIS_MASTER_KEY: "${JARVIS_MASTER_KEY}"
     media-server:
       command: "python"
       args: ["tools/media_server.py"]

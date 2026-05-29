@@ -359,6 +359,14 @@ async def voice_ws(ws: WebSocket) -> None:
         # with the receive loop's writes.
         if name == "final_transcript":
             text = (payload or {}).get("text") or ""
+            # BARGE-IN-DIAG: log every final_transcript arrival so we can
+            # prove from the log whether STT reached this point at all,
+            # and whether the text was empty / dispatched / dropped.
+            logger.info(
+                "[ws_voice] final_transcript received len=%d preview=%r → %s",
+                len(text), text[:60],
+                "dispatch" if text.strip() else "drop(empty)",
+            )
             if text.strip():
                 user_query_pending = True
                 loop.call_soon_threadsafe(_dispatch_user_turn, text.strip())
@@ -367,6 +375,13 @@ async def voice_ws(ws: WebSocket) -> None:
         """Fire-and-forget: schedule a coroutine that handles one full turn."""
         nonlocal agent_task, user_query_pending
         user_query_pending = False
+        # BARGE-IN-DIAG: log dispatch entry + dictation gate + cancel state.
+        agent_state = "none" if agent_task is None else ("done" if agent_task.done() else "active")
+        tts_state = "none" if tts_task is None else ("done" if tts_task.done() else "active")
+        logger.info(
+            "[ws_voice] _dispatch_user_turn entry text=%r dictation=%s agent=%s tts=%s",
+            text[:60], dictation_mode, agent_state, tts_state,
+        )
         # Dictation gate. ``dictation_mode`` is set by the receive loop
         # (also asyncio thread) when the client sends
         # ``{type:'start', mode:'dictation'}``. Checking here keeps both
@@ -376,6 +391,7 @@ async def voice_ws(ws: WebSocket) -> None:
         # populate a text box; skipping the LLM/TTS pipeline below is the
         # whole point of the flag.
         if dictation_mode:
+            logger.info("[ws_voice] _dispatch_user_turn skipped (dictation mode)")
             return
         # Cancel any previous in-flight agent/tts so a barge-in mid-turn
         # cleanly resets to the new user input.
@@ -384,6 +400,7 @@ async def voice_ws(ws: WebSocket) -> None:
         ):
             _cancel_inflight("new_user_turn")
         agent_task = asyncio.create_task(_handle_user_turn(text))
+        logger.info("[ws_voice] _dispatch_user_turn scheduled new agent_task")
 
     async def writer() -> None:
         """Drain the event queue → WebSocket. JSON dicts → text frames; raw
@@ -408,8 +425,25 @@ async def voice_ws(ws: WebSocket) -> None:
     # (~3–10s cold start, +75 MB whisper + 50 MB silero on first run). We
     # announce status events so the UI shows "Loading STT model…" rather
     # than pretending to listen.
+    #
+    # Health probe before reuse: ``state.stt_recorder`` is a process-level
+    # singleton. Pre-fix, a Soniox 408 idle timeout would leave the singleton
+    # object alive with a dead inner WS — every subsequent /ws/voice connect
+    # would reuse it and silently drop all audio (2026-05-29 incident). The
+    # ``is_alive`` probe forces a rebuild when the singleton crashed
+    # (thread died, transitioned to terminal ERROR after consecutive failures).
     stt_service = state.stt_recorder
-    if stt_service is None:
+    needs_rebuild = stt_service is None or not getattr(stt_service, "is_alive", True)
+    if needs_rebuild:
+        if stt_service is not None:
+            logger.warning(
+                "[ws_voice] STT singleton unhealthy "
+                "(is_alive=False) — rebuilding"
+            )
+            try:
+                stt_service.shutdown()
+            except Exception:
+                logger.exception("[ws_voice] old STT singleton shutdown failed")
         await out_queue.put({"type": "stt_loading"})
         try:
             from services.runtime_config import apply_voice_stt_config
@@ -422,7 +456,22 @@ async def voice_ws(ws: WebSocket) -> None:
             await out_queue.put({"type": "stt_ready"})
 
     if stt_service is not None:
+        # Order matters: install hook FIRST so the ``ws_status`` event the
+        # backend emits inside ``resume()`` (e.g. CONNECTING → CONNECTED)
+        # arrives at the frontend chip. set_hook itself replays the
+        # current state, so even before resume() flips anything the UI
+        # gets one event (IDLE) to render off.
         stt_service.set_hook(on_stt_event)
+        # Mic-driven lifecycle: open the upstream WS (Soniox) or unblock
+        # the local worker. Without this the singleton stays IDLE and
+        # silently drops audio. The route's ``finally`` block calls
+        # ``pause()`` to mirror — singletons stay around between sessions
+        # cheaply (no model reload on next mic-on) but the upstream WS
+        # is only held while the user is actively on mic.
+        try:
+            stt_service.resume()
+        except Exception:
+            logger.exception("[ws_voice] STT resume() failed")
 
     async def speak(text: str) -> None:
         """Stream TTS audio chunks back over the socket. Cancellable.
@@ -788,6 +837,17 @@ async def voice_ws(ws: WebSocket) -> None:
         pass
     finally:
         if stt_service is not None:
+            # Mirror of the resume() call above: pause closes the upstream
+            # WS (Soniox) or stops audio gating into the local worker,
+            # but keeps the singleton + thread alive for the next mic-on.
+            # Order matters: pause FIRST so the upstream WS close emits
+            # ``ws_status: idle`` THROUGH the hook before we detach it,
+            # which lets the frontend chip flip off cleanly even if the
+            # operator closes the tab mid-session.
+            try:
+                stt_service.pause()
+            except Exception:
+                logger.exception("[ws_voice] STT pause() failed")
             stt_service.set_hook(None)
         for t in (agent_task, tts_task):
             if t is not None and not t.done():
