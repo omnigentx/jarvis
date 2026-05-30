@@ -48,6 +48,14 @@ class SonioxSTTService(WSStreamingSTT):
         # Per-utterance buffer of finalized tokens. Reset on every endpoint.
         self._final_buffer: list[str] = []
         self._provisional_tail: str = ""
+        # Tracks whether we're currently inside an utterance. Used to emit
+        # ``recording_start`` exactly once when the user opens their mouth,
+        # which is what the voice WS route uses as the barge-in trigger
+        # (ws_voice.py:345). Without this, ``recording_start`` only ever
+        # fired from ``_emit_endpoint`` *after* the user finished — so the
+        # bot's TTS kept playing during the user's barge-in for the full
+        # length of the new utterance.
+        self._in_utterance: bool = False
 
     # ---- WSStreamingSTT extension points ---------------------------------
 
@@ -73,6 +81,7 @@ class SonioxSTTService(WSStreamingSTT):
         # don't bleed into the new transcript.
         self._final_buffer.clear()
         self._provisional_tail = ""
+        self._in_utterance = False
 
     def _handle_event(self, data: dict[str, Any]) -> None:
         err_code = data.get("error_code")
@@ -98,6 +107,21 @@ class SonioxSTTService(WSStreamingSTT):
         # firing mid-loop with a stale tail.
         snapshot = "".join(self._final_buffer) + self._provisional_tail
         if snapshot.strip():
+            # First non-empty snapshot after silence = user just started
+            # speaking. Emit ``recording_start`` here so the voice WS route
+            # can fire its barge-in path immediately, instead of waiting
+            # for ``<end>`` to come through ``_emit_endpoint`` — by then
+            # the bot's TTS has already kept playing over the user for
+            # the full duration of their new utterance.
+            if not self._in_utterance:
+                self._in_utterance = True
+                # BARGE-IN-DIAG: prove the early recording_start fires.
+                logger.info(
+                    "[Soniox STT] first content of utterance — emitting "
+                    "recording_start (snapshot=%r)",
+                    snapshot[:60],
+                )
+                self._emit("recording_start", {})
             self._emit_partial(snapshot)
 
         if data.get("finished"):
@@ -110,9 +134,26 @@ class SonioxSTTService(WSStreamingSTT):
         is_final = bool(tk.get("is_final"))
 
         if text == ENDPOINT_TOKEN_TEXT:
-            final = "".join(self._final_buffer).strip()
+            # Fold provisional tail into the final string. Soniox occasionally
+            # emits ``<end>`` before flushing the trailing provisional tokens
+            # as ``is_final=True`` — especially on short utterances after a
+            # barge-in. Without this, ``final`` is empty, ``_emit_final``'s
+            # empty-text guard suppresses the event, and the voice WS never
+            # dispatches the turn. The same content already showed up in the
+            # frontend STT bar via ``_emit_partial`` (which concatenates both
+            # buffers); the user expects exactly that text to be sent.
+            final_buf_text = "".join(self._final_buffer)
+            final = (final_buf_text + self._provisional_tail).strip()
+            # BARGE-IN-DIAG: log endpoint detection so we can prove whether
+            # Soniox actually emitted ``<end>`` and what the final text
+            # composition was (final-buffer vs provisional-tail).
+            logger.info(
+                "[Soniox STT] <end> received: final_buf=%r prov_tail=%r combined=%r",
+                final_buf_text[:60], self._provisional_tail[:60], final[:60],
+            )
             self._final_buffer.clear()
             self._provisional_tail = ""
+            self._in_utterance = False
             self._emit_final(final)
             self._emit_endpoint()
             return

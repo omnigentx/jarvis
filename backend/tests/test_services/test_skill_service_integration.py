@@ -25,8 +25,10 @@ from routes import skills as skill_routes
 
 # Import the REAL fast-agent types we want to integrate against.
 from fast_agent.skills.registry import SkillManifest
+from fast_agent.skills import SKILLS_DEFAULT
 from fast_agent.core.instruction_refresh import (
     McpInstructionCapable,
+    ConfiguredMcpInstructionCapable,
     rebuild_agent_instruction,
 )
 
@@ -49,13 +51,35 @@ class _StubAggregator:
         return {}
 
 
-class _RealProtocolAgent:
-    """An agent stub that satisfies McpInstructionCapable. fast-agent's own
-    rebuild_agent_instruction is exercised against this same shape in
-    fast-agent/tests/.../test_instruction_refresh.py — so if our pipeline
-    works for this stub, it works for the real McpAgent.
+class _MockAgentConfig:
+    """Minimal stand-in for ``fast_agent.config.AgentConfig`` — only the
+    ``skills`` attribute is read by ``resolve_instruction_skill_manifests``.
+    Defaults to ``SKILLS_DEFAULT`` (the sentinel that means "inherit the
+    shared environment skills") so the stub matches a freshly-decorated
+    agent that hasn't been given an explicit skills override.
     """
-    def __init__(self, template: str):
+    def __init__(self):
+        self.skills = SKILLS_DEFAULT
+
+
+class _RealProtocolAgent:
+    """An agent stub that satisfies ``ConfiguredMcpInstructionCapable`` —
+    which extends ``McpInstructionCapable`` with ``.name`` + ``.config``.
+    fast-agent's own ``rebuild_agent_instruction`` is exercised against
+    this same shape in fast-agent/tests/.../test_instruction_refresh.py,
+    so if our pipeline works for this stub, it works for the real
+    McpAgent.
+
+    Adding ``name`` + ``config.skills`` was needed on 2026-05-29 after the
+    fast-agent submodule sync introduced ``resolve_instruction_skill_manifests``
+    (reads ``agent.config.skills``) and propagated ``source=agent.name`` into
+    ``build_instruction`` — both via the new ``ConfiguredMcpInstructionCapable``
+    protocol. The old stub satisfied only the parent ``McpInstructionCapable``
+    surface and failed with AttributeError once the new code paths ran.
+    """
+    def __init__(self, template: str, *, name: str = "TestAgent"):
+        self._name = name
+        self._config = _MockAgentConfig()
         self._instruction = template
         self._instruction_template = template
         self._instruction_context: dict[str, str] = {}
@@ -63,6 +87,14 @@ class _RealProtocolAgent:
         self._skill_registry = None
         self._aggregator = _StubAggregator()
         self._skill_read_tool_name = "read_skill"
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def config(self) -> _MockAgentConfig:
+        return self._config
 
     @property
     def instruction(self) -> str:
@@ -110,10 +142,16 @@ class _RealProtocolAgent:
         return self._skill_read_tool_name
 
 
-# Sanity: must satisfy the protocol. If this fails, fast-agent's contract
-# changed and we'd silently lose coverage — fail loudly here instead.
+# Sanity: must satisfy BOTH protocols. ConfiguredMcpInstructionCapable
+# adds .name + .config; the integration tests below exercise code paths
+# that read them, so satisfying only the parent McpInstructionCapable
+# would silently lose coverage on those paths — fail loudly here instead.
 assert isinstance(_RealProtocolAgent("x"), McpInstructionCapable), (
     "fast-agent McpInstructionCapable contract changed — update _RealProtocolAgent"
+)
+assert isinstance(_RealProtocolAgent("x"), ConfiguredMcpInstructionCapable), (
+    "fast-agent ConfiguredMcpInstructionCapable contract changed — "
+    "update _RealProtocolAgent (likely needs name/config additions)"
 )
 
 
@@ -185,7 +223,7 @@ def _wire_real_runtime(monkeypatch, agents_with_skills: dict[str, list[SkillMani
     """
     cfgs: dict[str, _AgentCfg] = {n: _AgentCfg(skills) for n, skills in agents_with_skills.items()}
     instances: dict[str, _RealProtocolAgent] = {
-        n: _RealProtocolAgent(template=f"{n} template:\n\n{{{{agentSkills}}}}\n")
+        n: _RealProtocolAgent(template=f"{n} template:\n\n{{{{agentSkills}}}}\n", name=n)
         for n in agents_with_skills
     }
     # Pre-seed each agent's skill_manifests with its starting list, mimicking

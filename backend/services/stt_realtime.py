@@ -14,12 +14,14 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Any, Callable, Optional
+from typing import Any, Optional
+
+from services.stt_backends.types import (
+    EventHook,
+    STTConnectionState,
+)
 
 logger = logging.getLogger(__name__)
-
-
-EventHook = Callable[[str, dict[str, Any]], None]
 
 
 class RealtimeSTTService:
@@ -35,6 +37,12 @@ class RealtimeSTTService:
     callbacks never fire even when audio is being fed. The thread blocks on
     each ``text()`` call until VAD detects a speech-end transition, then
     emits the final transcript via ``on_final`` and loops back.
+
+    Implements :class:`services.stt_backends.types.STTServiceProtocol`. As a
+    local backend the model is always loaded and there is no upstream WS to
+    drop, so ``resume`` / ``pause`` flip an in-process gating flag that the
+    audio path checks — they only emit ``ws_status`` events for UI
+    consistency with cloud providers, not real connection lifecycle.
     """
 
     def __init__(self, recorder, *, language: str = "auto") -> None:
@@ -44,13 +52,30 @@ class RealtimeSTTService:
         self._language = language
         self._closed = False
         self._listen_thread: Optional[threading.Thread] = None
+        # ``_active`` is False until ``resume()`` flips it. Symmetric with
+        # cloud backends so the route's mic-driven lifecycle works the
+        # same for both: mic on → resume() → audio flows; mic off →
+        # pause() → audio drops at feed_audio without tearing down the
+        # listen thread (model stays warm for the next session).
+        self._active = False
+        self._connection_state: STTConnectionState = STTConnectionState.IDLE
 
     # ---- hook management --------------------------------------------------
 
     def set_hook(self, hook: Optional[EventHook]) -> None:
-        """Register the active event consumer. ``None`` detaches."""
+        """Register the active event consumer. ``None`` detaches.
+
+        Replays current ``connection_state`` to a fresh subscriber so a
+        late-attached frontend sees the right chip immediately.
+        """
         with self._lock:
             self._hook = hook
+        if hook is not None:
+            self._emit("ws_status", {
+                "state": self._connection_state.value,
+                "attempt": 0,
+                "detail": "hook attached — replay current state",
+            })
 
     def _emit(self, event: str, payload: dict[str, Any]) -> None:
         with self._lock:
@@ -66,7 +91,7 @@ class RealtimeSTTService:
 
     def feed_audio(self, pcm_chunk: bytes) -> None:
         """Push 16 kHz mono int16 PCM bytes from the WebSocket into the recorder."""
-        if self._closed:
+        if self._closed or not self._active:
             return
         # DEBUG-level amplitude meter so we can diagnose silent-mic issues
         # without spamming production logs. Re-enable by setting
@@ -93,10 +118,65 @@ class RealtimeSTTService:
                 )
         self._recorder.feed_audio(pcm_chunk)
 
+    def resume(self) -> None:
+        """Activate the local backend. Drives IDLE → CONNECTED.
+
+        No real connection to open — the model is already loaded — so this
+        is effectively just flipping ``_active`` so ``feed_audio`` stops
+        dropping. Idempotent.
+        """
+        if self._closed:
+            logger.warning("[STT] resume() called after shutdown — ignored")
+            return
+        if self._active and self._connection_state == STTConnectionState.CONNECTED:
+            return
+        self._active = True
+        self._set_state(STTConnectionState.CONNECTED, detail="local backend ready")
+
+    def pause(self) -> None:
+        """Deactivate the local backend. Drives → IDLE.
+
+        ``feed_audio`` becomes a drop. The listen thread keeps running so
+        the model stays warm for the next ``resume`` (cheap restart).
+        Idempotent.
+        """
+        if not self._active and self._connection_state == STTConnectionState.IDLE:
+            return
+        self._active = False
+        self._set_state(STTConnectionState.IDLE, detail="paused")
+
+    @property
+    def is_alive(self) -> bool:
+        """True while listen thread is alive and the service hasn't been
+        shut down. Distinct from ``_active`` — paused-but-warm is alive.
+        """
+        if self._closed:
+            return False
+        if self._listen_thread is None:
+            # ``start_listen_loop`` not called yet — boot pending.
+            return True
+        return self._listen_thread.is_alive()
+
+    @property
+    def connection_state(self) -> STTConnectionState:
+        return self._connection_state
+
+    def _set_state(self, state: STTConnectionState, *, detail: str = "") -> None:
+        """Transition + emit ``ws_status``. Only emits on actual change."""
+        if state == self._connection_state and detail == "":
+            return
+        self._connection_state = state
+        self._emit("ws_status", {
+            "state": state.value,
+            "attempt": 0,
+            "detail": detail,
+        })
+
     def shutdown(self) -> None:
         if self._closed:
             return
         self._closed = True
+        self._active = False
         # Trip the recorder's interrupt so any pending ``text()`` call in the
         # listen loop returns instead of blocking on VAD forever.
         try:
@@ -110,6 +190,7 @@ class RealtimeSTTService:
             logger.exception("[STT] recorder.shutdown failed")
         if self._listen_thread is not None:
             self._listen_thread.join(timeout=2.0)
+        self._set_state(STTConnectionState.IDLE, detail="shutdown")
 
     def start_listen_loop(self) -> None:
         """Run ``recorder.text()`` in a daemon thread on a never-ending loop.
@@ -226,13 +307,25 @@ def build_stt_service(config: dict[str, Any]):
 
     Heavy imports happen inside each backend module, not here, so loading
     this module stays cheap for tests and non-voice routes.
+
+    The feature-flag check in ``stt_backends.assert_backend_enabled``
+    runs FIRST — selecting a disabled backend (per ``STT_BACKENDS_ENABLED``
+    env var) raises ``RuntimeError`` with the env-var name in the
+    message so the operator can fix config without spelunking.
     """
+    from services.stt_backends import assert_backend_enabled
+
     backend = config.get("backend", "faster_whisper")
+    assert_backend_enabled(backend)  # raises on unknown or disabled
+
     spec = _BACKEND_FACTORIES.get(backend)
     if spec is None:
+        # Should be unreachable — assert_backend_enabled would have raised
+        # ValueError above. Kept as belt-and-braces in case _KNOWN and
+        # _BACKEND_FACTORIES drift.
         raise ValueError(
-            f"Unknown STT backend: {backend!r}. "
-            f"Known backends: {sorted(_BACKEND_FACTORIES)}"
+            f"Backend {backend!r} passed allowlist but has no factory entry. "
+            f"_BACKEND_FACTORIES out of sync with stt_backends._KNOWN."
         )
     mod_path, fn_name = spec.split(":")
     module = __import__(mod_path, fromlist=[fn_name])

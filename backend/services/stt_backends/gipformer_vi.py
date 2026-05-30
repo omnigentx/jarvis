@@ -23,7 +23,12 @@ import queue
 import threading
 import urllib.request
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Optional
+
+from services.stt_backends.types import (
+    EventHook,
+    STTConnectionState,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -84,18 +89,28 @@ class GipformerSTTService:
     def __init__(self, recognizer, vad) -> None:
         self._recognizer = recognizer
         self._vad = vad
-        self._hook: Optional[Callable[[str, dict[str, Any]], None]] = None
+        self._hook: Optional[EventHook] = None
         self._lock = threading.Lock()
         self._closed = False
         self._chunks: queue.Queue[bytes] = queue.Queue()
         self._listen_thread: Optional[threading.Thread] = None
         self._was_speaking = False
+        # Mic-driven activation flag — mirrors RealtimeSTTService /
+        # WSStreamingSTT for symmetric ws_voice lifecycle.
+        self._active = False
+        self._connection_state: STTConnectionState = STTConnectionState.IDLE
 
     # ---- hook glue (mirrors RealtimeSTTService) ---------------------------
 
-    def set_hook(self, hook):
+    def set_hook(self, hook: Optional[EventHook]) -> None:
         with self._lock:
             self._hook = hook
+        if hook is not None:
+            self._emit("ws_status", {
+                "state": self._connection_state.value,
+                "attempt": 0,
+                "detail": "hook attached — replay current state",
+            })
 
     def _emit(self, event: str, payload: dict):
         with self._lock:
@@ -131,7 +146,7 @@ class GipformerSTTService:
     # ---- audio path ------------------------------------------------------
 
     def feed_audio(self, pcm_chunk: bytes) -> None:
-        if self._closed:
+        if self._closed or not self._active:
             return
         self._chunks.put(pcm_chunk)
 
@@ -144,12 +159,59 @@ class GipformerSTTService:
         self._listen_thread = t
         t.start()
 
+    def resume(self) -> None:
+        """Activate — local backend, just flips gating flag."""
+        if self._closed:
+            logger.warning("[Gipformer] resume() called after shutdown — ignored")
+            return
+        if self._active and self._connection_state == STTConnectionState.CONNECTED:
+            return
+        self._active = True
+        self._set_state(STTConnectionState.CONNECTED, detail="local backend ready")
+
+    def pause(self) -> None:
+        """Deactivate — drops further audio, drains buffered chunks so a
+        ``resume`` doesn't replay stale audio from the previous session."""
+        if not self._active and self._connection_state == STTConnectionState.IDLE:
+            return
+        self._active = False
+        try:
+            while True:
+                self._chunks.get_nowait()
+        except queue.Empty:
+            pass
+        self._set_state(STTConnectionState.IDLE, detail="paused")
+
+    @property
+    def is_alive(self) -> bool:
+        if self._closed:
+            return False
+        if self._listen_thread is None:
+            return True  # boot pending
+        return self._listen_thread.is_alive()
+
+    @property
+    def connection_state(self) -> STTConnectionState:
+        return self._connection_state
+
+    def _set_state(self, state: STTConnectionState, *, detail: str = "") -> None:
+        if state == self._connection_state and detail == "":
+            return
+        self._connection_state = state
+        self._emit("ws_status", {
+            "state": state.value,
+            "attempt": 0,
+            "detail": detail,
+        })
+
     def shutdown(self) -> None:
         if self._closed:
             return
         self._closed = True
+        self._active = False
         if self._listen_thread is not None:
             self._listen_thread.join(timeout=2.0)
+        self._set_state(STTConnectionState.IDLE, detail="shutdown")
 
     # ---- worker -----------------------------------------------------------
 

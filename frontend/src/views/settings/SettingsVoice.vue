@@ -26,6 +26,20 @@ const engines = ref({ tts: {}, stt: {} })
 const active = ref({ tts_chat: null, tts_stories: null, stt: null })
 const secretsStatus = ref({})
 const requirements = ref({})
+// Feature-flag allowlist from GET /api/voice/backends. Drives the
+// engine/backend dropdowns: disabled options are hidden so a user can't
+// pick something the backend will RuntimeError on at save. See
+// services/stt_backends/__init__.py + services/tts_backends/__init__.py.
+const enabledFlags = ref({
+  stt: { enabled: [], known: [] },
+  tts: { enabled: [], known: [] },
+})
+function isSttBackendEnabled(id) {
+  return enabledFlags.value.stt.enabled.includes(id)
+}
+function isTtsEngineEnabled(id) {
+  return enabledFlags.value.tts.enabled.includes(id)
+}
 
 const previewing = ref(null)  // 'chat' | 'stories' | null
 const previewError = ref('')
@@ -64,14 +78,37 @@ const activeWakeBackend = computed({
 
 onMounted(async () => {
   try {
-    const [reg, cur, sec] = await Promise.all([
+    const [reg, cur, sec, flags] = await Promise.all([
       apiFetch('/api/voice/engines'),
       apiFetch('/api/voice/active'),
       apiFetch('/api/voice/secrets'),
+      // Feature-flag allowlist (STT_BACKENDS_ENABLED / TTS_BACKENDS_ENABLED).
+      // Drives dropdown filtering + fallback-on-disabled below.
+      apiFetch('/api/voice/backends'),
     ])
     engines.value = reg
     active.value = cur
     secretsStatus.value = sec.engines || {}
+    enabledFlags.value = flags || { stt: { enabled: [], known: [] }, tts: { enabled: [], known: [] } }
+    // Fallback when the saved preference is now disabled (operator
+    // changed env between sessions). Pick the first enabled option of
+    // the same kind so the UI never shows an unselectable engine.
+    const sttSel = active.value.stt?.backend
+    if (sttSel && !enabledFlags.value.stt.enabled.includes(sttSel)) {
+      const fallback = enabledFlags.value.stt.enabled[0]
+      if (fallback) {
+        console.warn(`[voice] STT backend "${sttSel}" disabled — falling back to "${fallback}"`)
+        active.value.stt.backend = fallback
+      }
+    }
+    const ttsSel = active.value.tts_chat?.engine
+    if (ttsSel && !enabledFlags.value.tts.enabled.includes(ttsSel)) {
+      const fallback = enabledFlags.value.tts.enabled[0]
+      if (fallback) {
+        console.warn(`[voice] TTS engine "${ttsSel}" disabled — falling back to "${fallback}"`)
+        active.value.tts_chat.engine = fallback
+      }
+    }
     // Probe requirements for every engine that declares either binaries or
     // secrets — TTS and STT alike, so cloud STT backends (Soniox, ...) get
     // the same "ready / missing key" badge as paid TTS engines.
@@ -301,21 +338,26 @@ const chatProviderLabel = computed(() => {
         </header>
 
         <div class="provider-grid">
-          <button
-            v-for="(spec, id) in engines.tts"
-            :key="id"
-            type="button"
-            class="provider-card"
-            :class="{ selected: active.tts_chat?.engine === id }"
-            @click="changeChatEngine(id)"
-          >
-            <span class="provider-title">
-              {{ spec.label }}
-              <span v-if="(secretsStatus[id]?.api_key) || (spec.secrets?.length === 0)" class="mini-dot" title="Ready"></span>
-            </span>
-            <span class="provider-sub">{{ badgesFor(spec).join(' · ') || spec.description }}</span>
-          </button>
+          <template v-for="(spec, id) in engines.tts" :key="id">
+            <button
+              v-if="isTtsEngineEnabled(id)"
+              type="button"
+              class="provider-card"
+              :class="{ selected: active.tts_chat?.engine === id }"
+              @click="changeChatEngine(id)"
+            >
+              <span class="provider-title">
+                {{ spec.label }}
+                <span v-if="(secretsStatus[id]?.api_key) || (spec.secrets?.length === 0)" class="mini-dot" title="Ready"></span>
+              </span>
+              <span class="provider-sub">{{ badgesFor(spec).join(' · ') || spec.description }}</span>
+            </button>
+          </template>
         </div>
+        <p v-if="enabledFlags.tts.known.length > enabledFlags.tts.enabled.length" class="provider-flag-hint">
+          {{ enabledFlags.tts.known.length - enabledFlags.tts.enabled.length }} TTS engine(s) hidden by
+          <code>TTS_BACKENDS_ENABLED</code> in <code>backend/.env</code>.
+        </p>
 
         <div v-if="chatEngineSpec" class="provider-hint">
           <strong>{{ chatEngineSpec.label }}</strong> — {{ chatEngineSpec.description }}
@@ -467,18 +509,23 @@ const chatProviderLabel = computed(() => {
         </header>
 
         <div class="provider-grid">
-          <button
-            v-for="(spec, id) in engines.stt"
-            :key="id"
-            type="button"
-            class="provider-card"
-            :class="{ selected: sttBackendId === id }"
-            @click="changeSttBackend(id)"
-          >
-            <span class="provider-title">{{ spec.label }}</span>
-            <span class="provider-sub">{{ (spec.badges || []).join(' · ') || spec.description }}</span>
-          </button>
+          <template v-for="(spec, id) in engines.stt" :key="id">
+            <button
+              v-if="isSttBackendEnabled(id)"
+              type="button"
+              class="provider-card"
+              :class="{ selected: sttBackendId === id }"
+              @click="changeSttBackend(id)"
+            >
+              <span class="provider-title">{{ spec.label }}</span>
+              <span class="provider-sub">{{ (spec.badges || []).join(' · ') || spec.description }}</span>
+            </button>
+          </template>
         </div>
+        <p v-if="enabledFlags.stt.known.length > enabledFlags.stt.enabled.length" class="provider-flag-hint">
+          {{ enabledFlags.stt.known.length - enabledFlags.stt.enabled.length }} STT backend(s) hidden by
+          <code>STT_BACKENDS_ENABLED</code> in <code>backend/.env</code>.
+        </p>
 
         <div v-if="sttSpec" class="provider-hint">
           <strong>{{ sttSpec.label }}</strong> — {{ sttSpec.description }}
@@ -747,6 +794,21 @@ const chatProviderLabel = computed(() => {
   font-size: 13px; line-height: 1.45;
   color: var(--text);
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+
+.provider-flag-hint {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+.provider-flag-hint code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 1px 5px;
+  background: var(--bg-3);
+  border-radius: var(--r-xs);
+  color: var(--text-dim);
 }
 
 /* ── Form rows ────────────────────────────────────────────────────── */

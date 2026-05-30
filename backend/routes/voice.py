@@ -97,6 +97,44 @@ async def list_engines(_=Depends(verify_api_key)):
     }
 
 
+@router.get("/backends")
+async def list_enabled_voice_backends(_=Depends(verify_api_key)):
+    """Return the current feature-flag allowlist for STT + TTS.
+
+    Frontend uses this to:
+
+    * filter the Settings dropdowns to only show buildable engines (a
+      paid TTS engine the operator hasn't enabled in env should not be
+      offered as a choice that will RuntimeError at save time);
+    * detect when the user's saved preference is now disabled (env
+      var changed between sessions) and fall back to a default that
+      IS in the allowlist, with a visible warning.
+
+    Shape: ``{stt: {enabled: [...], known: [...]}, tts: {...}}``. The
+    ``known`` list is the static set the codebase ships with — useful
+    for the Settings UI to show "this engine exists but is disabled
+    (enable via TTS_BACKENDS_ENABLED in backend/.env)".
+    """
+    from services.stt_backends import (
+        list_enabled_backends as _stt_enabled,
+        list_known_backends as _stt_known,
+    )
+    from services.tts_backends import (
+        list_enabled_engines as _tts_enabled,
+        list_known_engines as _tts_known,
+    )
+    return {
+        "stt": {
+            "enabled": _stt_enabled(),
+            "known": _stt_known(),
+        },
+        "tts": {
+            "enabled": _tts_enabled(),
+            "known": _tts_known(),
+        },
+    }
+
+
 @router.get("/engines/{engine}/voices")
 async def list_engine_voices(engine: str, _=Depends(verify_api_key)):
     """Live voice catalog for an engine. Best-effort — falls back to defaults

@@ -11,7 +11,6 @@
  *       - ChatHeader (agent, voice readiness)
  *       - VoiceBar (mic toggle + waveform + status pill)
  *       - ChatMessages (bubble stream with STT caret / TTS dots / interrupt)
- *       - Voice status footer ("VAD active" / "transcribed ✓" / etc.)
  *       - ChatInput
  *       - hidden TTS audio element
  */
@@ -72,27 +71,6 @@ const currentAgent = computed(() => {
   const name = chatStore.activeAgentName
   return agentsStore.agentsList.find(a => a.name === name) || null
 })
-
-// Voice status footer label — distilled from useVoiceSession state. The
-// "barge-in · interrupting" state is the wasInterrupted flag tied to the
-// transient between barge_in_ack and the next tts_start/listening.
-const STATUS_FOOTER_LABEL = {
-  idle: '',
-  connecting: 'connecting…',
-  loading_stt: 'loading stt model…',
-  listening: 'VAD active',
-  thinking: 'transcribed ✓ · awaiting reply',
-  speaking: 'speaking…',
-  error: 'error',
-}
-const statusFooter = computed(() => {
-  if (voice.wasInterrupted.value) return 'barge-in · interrupting'
-  return STATUS_FOOTER_LABEL[voice.status.value] || ''
-})
-const statusFooterActive = computed(() =>
-  ['listening', 'thinking', 'speaking', 'connecting', 'loading_stt'].includes(voice.status.value)
-  || voice.wasInterrupted.value,
-)
 
 async function handleStop({ mode }) {
   // Hard mode is destructive: SIGTERMs running subagents. We do NOT
@@ -259,12 +237,6 @@ function handleSwitchAgent(name) {
         </button>
       </div>
 
-      <!-- Status footer (above input) -->
-      <div v-if="statusFooter" class="status-footer">
-        <span class="status-footer-dot" :class="{ pulse: statusFooterActive }" />
-        <span class="status-footer-text">{{ statusFooter }}</span>
-      </div>
-
       <ChatInput
         :isStreaming="isStreaming"
         @send="handleSend"
@@ -327,34 +299,6 @@ function handleSwitchAgent(name) {
 .conv-overlay-enter-from, .conv-overlay-leave-to { opacity: 0; }
 .conv-overlay-enter-from .conv-slide-panel,
 .conv-overlay-leave-to .conv-slide-panel { transform: translateX(-100%); }
-
-/* Status footer */
-.status-footer {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 24px;
-  background: var(--bg-1);
-  border-top: 1px solid var(--border);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-muted);
-  letter-spacing: 0.08em;
-}
-.status-footer-dot {
-  width: 6px; height: 6px;
-  border-radius: 50%;
-  background: var(--text-muted);
-}
-.status-footer-dot.pulse {
-  background: var(--accent);
-  animation: status-pulse 1.2s ease-in-out infinite;
-}
-@keyframes status-pulse {
-  0%, 100% { opacity: 1;    transform: scale(1);    }
-  50%      { opacity: 0.45; transform: scale(1.4);  }
-}
 
 /* TTS Now Playing */
 .tts-now-playing {

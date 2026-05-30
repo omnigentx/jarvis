@@ -115,6 +115,10 @@ async def test_soniox_stt_full_websocket_roundtrip(monkeypatch):
     })
     svc.set_hook(hook)
     svc.start_listen_loop()
+    # Mic-driven lifecycle: boot the thread (above) is cheap; only
+    # resume() flips the active flag so the runner actually dials the
+    # upstream. Without this the fake handler never sees the handshake.
+    svc.resume()
 
     # Give the WS thread a beat to connect + send config. The handler keeps
     # us honest: the server only registers the config once the handshake
@@ -189,6 +193,7 @@ async def test_soniox_stt_surfaces_server_error_event(monkeypatch):
     svc = soniox_stt.SonioxSTTService(api_key="sk-bad", params={})
     svc.set_hook(hook)
     svc.start_listen_loop()
+    svc.resume()  # mic-driven: flip active flag so the runner dials
 
     try:
         deadline = time.monotonic() + 5.0

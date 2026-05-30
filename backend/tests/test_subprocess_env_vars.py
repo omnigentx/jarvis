@@ -17,12 +17,14 @@ when agents try to collaborate or save state.
 
 import json
 import os
+import shutil
 import sqlite3
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import yaml
 
 
 # ═══════════════════════════════════════════════
@@ -976,3 +978,175 @@ class TestRuntimeRpcSocketMultiHop:
         # In a broken chain, expandvars returns the literal placeholder
         # because the var is unset → approval-server gets ENOENT.
         assert leaked == "${JARVIS_RUNTIME_RPC_SOCKET}"
+
+
+# ═══════════════════════════════════════════════
+# 11. MCP server env: secrets.yaml must override Docker-only defaults
+# ═══════════════════════════════════════════════
+
+
+_BACKEND_DIR = Path(__file__).resolve().parent.parent
+
+
+def _deep_merge(base: dict, overlay: dict) -> dict:
+    """Mimic FastAgent's startup deep_merge(config, secrets): nested dicts
+    merge recursively, scalars/lists are overlay-wins.
+    """
+    out = dict(base)
+    for k, v in overlay.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
+@pytest.mark.skipif(
+    not (_BACKEND_DIR / "fastagent.secrets.yaml").exists(),
+    reason=(
+        "fastagent.secrets.yaml is gitignored — these are local-dev "
+        "regression catchers for the Docker-default override. CI has no "
+        "secrets to verify; skip rather than emit false-positive failures. "
+        "Locally, the absence of this file means the override hasn't been "
+        "configured yet, which is itself a setup bug — see the class "
+        "docstring for the fix."
+    ),
+)
+class TestMCPDockerDefaultOverrides:
+    """Pin the 2026-05-29 figma-ui-mcp regression.
+
+    Root cause: ``fastagent.config.yaml`` hard-codes
+    ``figma-ui-mcp.env.FIGMA_BRIDGE_HOST: host.docker.internal`` as the
+    Docker default. Spawned subagents (Trang - Designer in the agile_team
+    template) inherit this value via the parent config's ``env:`` block
+    inside ``isolated_runner.create_child_config()``. The secrets.yaml is
+    copied as-is to the child temp dir, and FastAgent deep_merges them at
+    child startup — so the override lives in secrets.yaml.
+
+    Without the secrets override, the Docker default leaks into local dev:
+    the MCP subprocess tries to connect to a hostname that doesn't resolve
+    outside Docker → ``figma_status`` returns ``pluginConnected: false``
+    even though the Figma Desktop plugin is up and the bridge is reachable
+    on 127.0.0.1:38451.
+
+    Same shape applies to any future MCP server that uses ``*.docker.internal``
+    as a config-level default — secrets.yaml MUST override.
+    """
+
+    @pytest.fixture
+    def merged_mcp_servers(self):
+        config = yaml.safe_load((_BACKEND_DIR / "fastagent.config.yaml").read_text()) or {}
+        secrets = yaml.safe_load((_BACKEND_DIR / "fastagent.secrets.yaml").read_text()) or {}
+        return _deep_merge(config, secrets).get("mcp", {}).get("servers", {})
+
+    def test_figma_bridge_host_overridden_for_local_dev(self, merged_mcp_servers):
+        """After deep_merge(config, secrets), figma-ui-mcp.env.FIGMA_BRIDGE_HOST
+        must NOT resolve to ``host.docker.internal`` — that hostname only
+        exists inside Docker. The override belongs in fastagent.secrets.yaml
+        under ``mcp.servers.figma-ui-mcp.env``.
+        """
+        env = merged_mcp_servers.get("figma-ui-mcp", {}).get("env", {}) or {}
+        host = env.get("FIGMA_BRIDGE_HOST", "")
+
+        assert host, (
+            "FIGMA_BRIDGE_HOST missing from merged figma-ui-mcp env. "
+            "Add `FIGMA_BRIDGE_HOST: 127.0.0.1` (or a Tailscale IP for split-"
+            "machine setups) under mcp.servers.figma-ui-mcp.env in "
+            "fastagent.secrets.yaml."
+        )
+        assert "docker.internal" not in host, (
+            f"FIGMA_BRIDGE_HOST={host!r} still resolves to the Docker default "
+            f"from fastagent.config.yaml. This breaks local dev — the hostname "
+            f"doesn't resolve outside Docker, so the MCP subprocess can't reach "
+            f"the bridge and figma_status reports pluginConnected: false. "
+            f"Add `FIGMA_BRIDGE_HOST: 127.0.0.1` under "
+            f"mcp.servers.figma-ui-mcp.env in fastagent.secrets.yaml."
+        )
+
+    def test_no_docker_only_hostnames_leak_into_merged_config(self, merged_mcp_servers):
+        """Generalized regression catcher — fails loud if any MCP server's
+        merged env still contains ``host.docker.internal``. Same root cause
+        as the figma bug: Docker-only defaults that local dev can't resolve.
+        """
+        offenders: list[str] = []
+        for srv_name, srv_cfg in merged_mcp_servers.items():
+            if not isinstance(srv_cfg, dict):
+                continue
+            env = srv_cfg.get("env", {}) or {}
+            for key, value in env.items():
+                if isinstance(value, str) and "host.docker.internal" in value:
+                    offenders.append(f"{srv_name}.env.{key}={value!r}")
+
+        assert not offenders, (
+            "These merged MCP env values still resolve to Docker-only hostnames "
+            "and will fail silently in local dev:\n  "
+            + "\n  ".join(offenders)
+            + "\nAdd local overrides under mcp.servers.<server>.env in "
+            "fastagent.secrets.yaml for each."
+        )
+
+    def test_spawned_child_config_inherits_secrets_override(self, tmp_path):
+        """End-to-end on the spawn path itself: invoke
+        ``isolated_runner.create_child_config()`` with figma-ui-mcp in the
+        server list, then simulate FastAgent's child-startup deep_merge of
+        the generated child config + the copied child secrets. The resolved
+        ``FIGMA_BRIDGE_HOST`` must NOT be the Docker default.
+
+        This catches a regression that the static merge test above would
+        miss — e.g. if someone refactors create_child_config and stops
+        copying ``fastagent.secrets.yaml`` into the child temp dir
+        (current behaviour: isolated_runner.py:393-399), the static test
+        would still pass but spawned subagents would silently break.
+        """
+        try:
+            from fast_agent.spawn.isolated_runner import create_child_config
+        except ImportError as e:
+            pytest.skip(f"fast_agent.spawn not importable: {e}")
+
+        try:
+            child_dir = create_child_config(
+                project_dir=str(_BACKEND_DIR),
+                workspace_dir=str(tmp_path),
+                servers=["figma-ui-mcp"],
+            )
+        except Exception as e:
+            pytest.skip(
+                f"create_child_config raised — backend runtime layout may "
+                f"differ in CI: {e}"
+            )
+
+        try:
+            child_config_path = Path(child_dir) / "fastagent.config.yaml"
+            child_secrets_path = Path(child_dir) / "fastagent.secrets.yaml"
+
+            assert child_config_path.exists(), (
+                "create_child_config did not write fastagent.config.yaml"
+            )
+            assert child_secrets_path.exists(), (
+                "create_child_config did not copy fastagent.secrets.yaml into "
+                "the child temp dir. Without secrets, FastAgent's startup "
+                "deep_merge has nothing to overlay → config.yaml's Docker "
+                "defaults leak through. Check "
+                "isolated_runner.create_child_config (the shutil.copy2 "
+                "around line 393-399 must run unconditionally)."
+            )
+
+            child_config = yaml.safe_load(child_config_path.read_text()) or {}
+            child_secrets = yaml.safe_load(child_secrets_path.read_text()) or {}
+            merged = _deep_merge(child_config, child_secrets)
+
+            env = (
+                merged.get("mcp", {}).get("servers", {})
+                .get("figma-ui-mcp", {}).get("env", {}) or {}
+            )
+            host = env.get("FIGMA_BRIDGE_HOST", "")
+
+            assert "docker.internal" not in host, (
+                f"Spawned subagent's figma-ui-mcp got FIGMA_BRIDGE_HOST={host!r}. "
+                f"The Docker default leaked through the spawn path. Either the "
+                f"secrets override is missing (check fastagent.secrets.yaml) OR "
+                f"the spawn path stopped copying secrets into the child temp "
+                f"dir (check isolated_runner.create_child_config lines 393-399)."
+            )
+        finally:
+            shutil.rmtree(child_dir, ignore_errors=True)

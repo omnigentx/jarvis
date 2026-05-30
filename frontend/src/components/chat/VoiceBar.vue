@@ -3,20 +3,13 @@
  * VoiceBar — single-strip hands-free toggle.
  *
  * Sits between ChatHeader and ChatMessages. The bar shows mic toggle,
- * a live waveform, status pill, partial transcript, and an Interrupt button
- * while the agent is talking. Conversation messages themselves are NOT
- * rendered here — they go straight into the normal chat message panel via
- * chatStore (addUserMessage / addAgentMessagePlaceholder / finalizeAgentMessage),
+ * status pill, live transcript, and an Interrupt button while the agent
+ * is talking. Conversation messages themselves are NOT rendered here —
+ * they go straight into the normal chat message panel via chatStore
+ * (addUserMessage / addAgentMessagePlaceholder / finalizeAgentMessage),
  * so voice and typed turns share one UI.
- *
- * Restyle (Track 5):
- *   - Match design tokens (var(--bg-1), var(--bg-2), var(--primary), etc).
- *   - Status pill uses primary/accent/warning/danger tokens.
- *   - Added live waveform driven by AnalyserNode (~40px height). Falls back
- *     to a sin-wave placeholder if the analyser is unavailable.
- *   - Composable (useVoiceSession) UNCHANGED — read-only consumer here.
  */
-import { computed, ref, watch, onBeforeUnmount } from 'vue'
+import { computed } from 'vue'
 import { useVoiceSession } from '../../composables/useVoiceSession.js'
 
 const session = useVoiceSession()
@@ -47,74 +40,6 @@ async function toggle() {
   if (isOn.value) await session.stop()
   else await session.start()
 }
-
-// ── Waveform ──────────────────────────────────────────────────────────────
-// Renders a sin-wave placeholder (live, animated) into the canvas. The
-// existing useVoiceSession doesn't expose its AudioContext analyser, so we
-// keep this as a visual indicator only — pulse amplitude depends on
-// `isOn` and `session.isUserSpeaking` for an obvious on/off feel. Doing the
-// drawing inside the component keeps composable contract untouched.
-const canvasRef = ref(null)
-const dpr = typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1
-let rafId = null
-let t0 = 0
-
-function drawFrame(ts) {
-  rafId = requestAnimationFrame(drawFrame)
-  const canvas = canvasRef.value
-  if (!canvas) return
-  const ctx = canvas.getContext('2d')
-  if (!ctx) return
-  if (!t0) t0 = ts
-  const dt = (ts - t0) / 1000
-  const w = canvas.width
-  const h = canvas.height
-  ctx.clearRect(0, 0, w, h)
-  // Idle = flat hairline. Active = larger wave. Speaking = denser.
-  const amplitude = isOn.value
-    ? (session.status.value === 'speaking' ? h * 0.34 : h * 0.22)
-    : 1
-  const freq = session.status.value === 'speaking' ? 6 : 3
-  const speed = session.isUserSpeaking.value ? 3 : 1.6
-  ctx.strokeStyle = isOn.value
-    ? (session.status.value === 'speaking'
-        ? 'rgba(129, 140, 248, 0.95)'  // primary-hover
-        : 'rgba(34, 211, 238, 0.85)')  // accent
-    : 'rgba(123, 128, 148, 0.4)'        // text-muted
-  ctx.lineWidth = 1.5 * dpr
-  ctx.beginPath()
-  const steps = 96
-  for (let i = 0; i <= steps; i++) {
-    const x = (i / steps) * w
-    const phase = (i / steps) * Math.PI * 2 * freq + dt * speed * Math.PI
-    const y = h / 2 + Math.sin(phase) * amplitude * (0.6 + 0.4 * Math.sin(dt * 1.3 + i * 0.1))
-    if (i === 0) ctx.moveTo(x, y)
-    else ctx.lineTo(x, y)
-  }
-  ctx.stroke()
-}
-
-function startDrawing() {
-  if (rafId) return
-  rafId = requestAnimationFrame(drawFrame)
-}
-function stopDrawing() {
-  if (rafId) cancelAnimationFrame(rafId)
-  rafId = null
-  const canvas = canvasRef.value
-  if (canvas) canvas.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height)
-}
-
-watch(canvasRef, (el) => {
-  if (!el) return
-  // Resize canvas to its CSS size × DPR so the line is crisp.
-  const rect = el.getBoundingClientRect()
-  el.width = Math.max(1, Math.floor(rect.width * dpr))
-  el.height = Math.max(1, Math.floor(rect.height * dpr))
-  startDrawing()
-})
-
-onBeforeUnmount(stopDrawing)
 </script>
 
 <template>
@@ -133,8 +58,6 @@ onBeforeUnmount(stopDrawing)
       </svg>
       <span class="mic-label">{{ isOn ? 'Stop' : 'Mic' }}</span>
     </button>
-
-    <canvas ref="canvasRef" class="waveform" aria-hidden="true" />
 
     <span
       class="status-pill"
@@ -210,15 +133,6 @@ onBeforeUnmount(stopDrawing)
 }
 .mic-btn svg { flex-shrink: 0; }
 .mic-label { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
-
-.waveform {
-  flex: 0 1 280px;
-  height: 32px;
-  width: 280px;
-  border-radius: var(--r-sm);
-  background: var(--bg-2);
-  border: 1px solid var(--border);
-}
 
 .status-pill {
   display: inline-flex;
@@ -311,13 +225,7 @@ onBeforeUnmount(stopDrawing)
 
 @media (max-width: 640px) {
   .voice-bar { gap: 8px; padding: 8px 12px; flex-wrap: wrap; min-height: 0; }
-  .waveform { flex: 1 1 100%; width: 100%; height: 28px; order: 5; }
-  .transcript { display: none; }
-  /* Idle voice bar = empty waveform + tiny "MIC OFF" pill. On phone
-     that was eating ~90px of chrome above the messages. Collapse the
-     bar to a single 40px row by hiding the waveform until the user
-     activates voice. Pill + button stay so the affordance is reachable. */
-  .voice-bar:not(.on) .waveform { display: none; }
+  .transcript { flex: 1 1 100%; white-space: normal; order: 5; }
   .voice-bar:not(.on) { padding: 6px 12px; }
 }
 </style>
