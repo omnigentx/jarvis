@@ -306,7 +306,7 @@ else:
 
     {{agentSkills}}
     """,
-    skills=CORE_SKILLS + get_skills("terminal-execution", "delegation-strategy", "scrape-web", "skill-authoring", "mcp-authoring", "cron-management"),
+    skills=CORE_SKILLS + get_skills("terminal-execution", "delegation-strategy", "scrape-web", "skill-creator", "mcp-authoring", "cron-management"),
     servers=_JARVIS_SERVERS,
     tools=_JARVIS_TOOLS,
     agents=[
