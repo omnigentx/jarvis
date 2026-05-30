@@ -6,6 +6,14 @@ license: Complete terms in LICENSE.txt
 
 # MCP Server Development Guide
 
+> **Working inside Jarvis?** For runtime install / scaffold / smoke-test /
+> attach / promote via the `mcp_admin` tools, see the companion
+> [`mcp-authoring`](../mcp-authoring/SKILL.md) skill — that's Jarvis's
+> management surface. This guide covers the *design* of a good MCP server
+> (tool surface, schemas, evaluations) and is provider-agnostic. The two
+> skills complement each other: read `mcp-authoring` for the buttons to
+> press; read this for what to build behind them.
+
 ## Overview
 
 Create MCP (Model Context Protocol) servers that enable LLMs to interact with external services through well-designed tools. The quality of an MCP server is measured by how well it enables LLMs to accomplish real-world tasks.
