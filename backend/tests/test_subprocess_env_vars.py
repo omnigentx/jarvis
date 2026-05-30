@@ -1001,6 +1001,17 @@ def _deep_merge(base: dict, overlay: dict) -> dict:
     return out
 
 
+@pytest.mark.skipif(
+    not (_BACKEND_DIR / "fastagent.secrets.yaml").exists(),
+    reason=(
+        "fastagent.secrets.yaml is gitignored — these are local-dev "
+        "regression catchers for the Docker-default override. CI has no "
+        "secrets to verify; skip rather than emit false-positive failures. "
+        "Locally, the absence of this file means the override hasn't been "
+        "configured yet, which is itself a setup bug — see the class "
+        "docstring for the fix."
+    ),
+)
 class TestMCPDockerDefaultOverrides:
     """Pin the 2026-05-29 figma-ui-mcp regression.
 

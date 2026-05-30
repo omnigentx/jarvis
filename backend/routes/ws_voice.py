@@ -468,8 +468,14 @@ async def voice_ws(ws: WebSocket) -> None:
         # ``pause()`` to mirror — singletons stay around between sessions
         # cheaply (no model reload on next mic-on) but the upstream WS
         # is only held while the user is actively on mic.
+        #
+        # Why to_thread: on cold-boot / rebuild paths the WS thread
+        # hasn't attached its asyncio loop yet, so resume() spins for
+        # up to ~500 ms waiting for ``_loop``. Running it on the event
+        # loop directly would stall every other socket frame for that
+        # window. The thread is cheap (one shot per session).
         try:
-            stt_service.resume()
+            await asyncio.to_thread(stt_service.resume)
         except Exception:
             logger.exception("[ws_voice] STT resume() failed")
 
@@ -840,10 +846,12 @@ async def voice_ws(ws: WebSocket) -> None:
             # Mirror of the resume() call above: pause closes the upstream
             # WS (Soniox) or stops audio gating into the local worker,
             # but keeps the singleton + thread alive for the next mic-on.
-            # Order matters: pause FIRST so the upstream WS close emits
-            # ``ws_status: idle`` THROUGH the hook before we detach it,
-            # which lets the frontend chip flip off cleanly even if the
-            # operator closes the tab mid-session.
+            # Best-effort cleanup — the client is disconnecting anyway, so
+            # any in-flight IDLE ``ws_status`` event the hook would have
+            # surfaced is moot. pause() is fire-and-forget cross-thread
+            # (the real close lands later when ``_run_ws`` notices the
+            # cleared active flag), and set_hook(None) detaches before
+            # that lands; this is intentional, not an ordering bug.
             try:
                 stt_service.pause()
             except Exception:
