@@ -96,14 +96,27 @@ typosquat", ask the user before adding it to `requirements.txt`.
 
 Decide every tool the server will expose BEFORE scaffolding. For each:
 
-- **name**: snake_case, lowercase, ≤ 30 chars
+- **name**: snake_case, lowercase, ≤ 30 chars. Use a consistent prefix
+  per server (e.g. `github_create_issue`, `github_list_repos`) — keeps
+  tool discovery clean once attached.
 - **description**: ≥ 10 chars; describe what the LLM should know
-  (purpose + when to use). This text goes into other agents' system
-  prompts — be precise.
-- **args**: list of `{"name", "type"}` pairs
+  (purpose + when to use + what comes back). This text goes into other
+  agents' system prompts — be precise. Vague descriptions are the #1
+  reason a tool never gets called.
+- **args**: list of `{"name", "type"}` pairs.
 
 Don't over-design — start with the minimum tools that solve the user's
 ask. You can always `mcp_patch_tool(...)` or scaffold a v2 later.
+
+**For deeper tool-design guidance** — naming conventions, API-coverage
+vs. workflow-tool tradeoffs, response shape (JSON vs. Markdown),
+pagination, MCP tool annotations (`readOnlyHint`/`destructiveHint`/
+`idempotentHint`/`openWorldHint`), `outputSchema` + `structuredContent`,
+and the 10-Q&A evaluation framework — see the upstream
+[`mcp-builder`](../mcp-builder/SKILL.md) skill. Jarvis's current
+scaffold emits bare `@mcp.tool()` (no annotations/outputSchema), but if
+you intend to publish the server outside Jarvis, those design choices
+matter and `mcp-builder` covers them.
 
 ### Step 4: Scaffold
 

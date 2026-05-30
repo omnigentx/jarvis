@@ -12,6 +12,7 @@
 # Adding/removing entries here is reserved for repo maintainers when the
 # shipped skill set changes.
 builtin:
+  - algorithmic-art
   - angular-developer
   - api-design
   - api-testing
@@ -19,7 +20,10 @@ builtin:
   - audio-reading
   - ba-workflow
   - brainstorming
+  - brand-guidelines
+  - canvas-design
   - cicd-pipeline
+  - claude-api
   - code-review
   - crawling
   - cron-management
@@ -27,18 +31,22 @@ builtin:
   - delegation-strategy
   - design-system
   - dev-workflow
+  - doc-coauthoring
   - dso-workflow
   - engineering-principles
   - figma-designer
   - finance
   - flutter-patterns
+  - frontend-design
   - git-workflow
   - implementation
+  - internal-comms
   - iot-control
   - jarvis-infra
   - jarvis-knowledge
   - kaizen
   - mcp-authoring
+  - mcp-builder
   - meeting-facilitator
   - meeting-participant
   - music-playback
@@ -53,7 +61,8 @@ builtin:
   - retrospective
   - review-implementing
   - scrape-web
-  - skill-authoring
+  - skill-creator
+  - slack-gif-creator
   - software-architecture
   - sprint-planning
   - subagent-coordination
@@ -63,6 +72,9 @@ builtin:
   - terminal-execution
   - test-driven-development
   - test-fixing
+  - theme-factory
   - ui-ux-design
   - user-context
   - verification-before-completion
+  - web-artifacts-builder
+  - webapp-testing
