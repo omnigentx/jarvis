@@ -1,5 +1,7 @@
 # Stage 1: Build Vue frontend
-FROM node:20-alpine AS build
+# Minor-pin so a rebuild a month from now picks up the same Node line.
+# Bump manually when upstream issues a new LTS minor.
+FROM node:20.18-alpine AS build
 
 WORKDIR /app
 
@@ -16,7 +18,8 @@ COPY . .
 RUN npm run build
 
 # Stage 2: Serve with nginx
-FROM nginx:alpine AS final
+# Minor-pin so the runtime image is reproducible across rebuilds.
+FROM nginx:1.27-alpine AS final
 
 # Copy built frontend
 COPY --from=build /app/dist /usr/share/nginx/html
