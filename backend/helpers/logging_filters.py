@@ -70,6 +70,13 @@ class RedactSecretsFilter(logging.Filter):
     Apply to handlers (not loggers) so the scrub catches records propagated
     from child loggers too. On any internal error the record passes through
     unchanged — log delivery is more important than perfect redaction.
+
+    NOTE: this filter only touches ``record.msg`` / merged args. It does
+    NOT see the rendered exception traceback emitted by handlers that use
+    ``exc_info=True`` — that text is produced by
+    :py:meth:`logging.Formatter.formatException` and bypasses the filter
+    chain. Pair this filter with :class:`RedactingFormatter` on every
+    handler to scrub the traceback too.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:  # noqa: A003
@@ -85,3 +92,27 @@ class RedactSecretsFilter(logging.Filter):
             # Logging path must never raise. Best-effort only.
             pass
         return True
+
+
+class RedactingFormatter(logging.Formatter):
+    """Formatter that scrubs the *fully rendered* log line, including the
+    exception traceback that :class:`RedactSecretsFilter` cannot reach.
+
+    ``Logger.error("X", exc_info=True)`` and ``logger.exception(...)`` cause
+    the formatter to append a traceback produced by
+    :py:meth:`logging.Formatter.formatException`. If a secret is stuffed
+    in a frame's local repr or in an exception message, the filter chain
+    has already finished and the secret lands in the file untouched.
+
+    Attaching this formatter to every handler closes that gap by running
+    ``redact_secrets`` over the final output. Never raises — on regex
+    failure it falls back to the unredacted superclass output.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        text = super().format(record)
+        try:
+            return redact_secrets(text)
+        except Exception:
+            # Same rule as the filter: logging path must never raise.
+            return text

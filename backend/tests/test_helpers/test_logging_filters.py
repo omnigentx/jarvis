@@ -9,7 +9,7 @@ import logging
 
 import pytest
 
-from helpers.logging_filters import RedactSecretsFilter, redact_secrets
+from helpers.logging_filters import RedactingFormatter, RedactSecretsFilter, redact_secrets
 
 
 # ---------- redact_secrets ----------
@@ -98,3 +98,45 @@ def test_filter_never_raises():
     )
     # Must not raise — record passes through.
     assert RedactSecretsFilter().filter(rec) is True
+
+
+# ---------- RedactingFormatter (exc_info traceback scrub) ----------
+
+def test_formatter_scrubs_exception_message():
+    fmt = RedactingFormatter("%(message)s")
+    try:
+        # Stuff a secret into the exception message — simulates a third-
+        # party lib that prints the full request body on error.
+        raise RuntimeError("call failed: api_key=verysecret_abc123")
+    except RuntimeError:
+        import sys
+        rec = logging.LogRecord(
+            name="t", level=logging.ERROR, pathname=__file__, lineno=1,
+            msg="upstream failed", args=None, exc_info=sys.exc_info(),
+        )
+    rendered = fmt.format(rec)
+    # The traceback text appended by formatException contains the
+    # exception message — that's where the secret lives. Must be scrubbed.
+    assert "verysecret_abc123" not in rendered
+    assert "api_key=***" in rendered
+
+
+def test_formatter_scrubs_record_message():
+    fmt = RedactingFormatter("%(message)s")
+    rec = logging.LogRecord(
+        name="t", level=logging.INFO, pathname=__file__, lineno=1,
+        msg='request headers: {"Authorization": "Bearer eyJxxx"}',
+        args=None, exc_info=None,
+    )
+    rendered = fmt.format(rec)
+    assert "eyJxxx" not in rendered
+    assert "***" in rendered
+
+
+def test_formatter_passes_clean_log_unchanged():
+    fmt = RedactingFormatter("%(message)s")
+    rec = logging.LogRecord(
+        name="t", level=logging.INFO, pathname=__file__, lineno=1,
+        msg="user signed in", args=None, exc_info=None,
+    )
+    assert fmt.format(rec) == "user signed in"

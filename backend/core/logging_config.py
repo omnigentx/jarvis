@@ -7,6 +7,8 @@ import sys
 import logging
 from logging.handlers import RotatingFileHandler
 
+from helpers.logging_filters import RedactingFormatter
+
 # Logs directory (relative to backend/)
 LOGS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
 
@@ -22,7 +24,13 @@ def setup_logging():
     root_logger = logging.getLogger()
     root_logger.setLevel(getattr(logging, DEFAULT_LOG_LEVEL, logging.INFO))
 
-    formatter = logging.Formatter(LOG_FORMAT)
+    # Use the redacting formatter on every handler so the rendered output
+    # (including exception tracebacks from exc_info=True) is scrubbed of
+    # secret-looking values.  Pair this with the handler-level
+    # RedactSecretsFilter below — filter catches record.msg early so other
+    # consumers see the scrubbed text; formatter catches the final render
+    # including traceback text the filter cannot reach.
+    formatter = RedactingFormatter(LOG_FORMAT)
 
     # Remove only FileHandlers pointing to old locations (cleanup legacy)
     for handler in root_logger.handlers[:]:
