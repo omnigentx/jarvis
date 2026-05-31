@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 
 from core.auth import verify_api_key
+from helpers.http_errors import safe_500
 from services.approval_service import approval_service
 
 logger = logging.getLogger(__name__)
@@ -58,8 +59,7 @@ async def create_approval(req: CreateApprovalRequest):
         result = approval_service.create_approval(req.model_dump())
         return result
     except Exception as e:
-        logger.error("[APPROVAL] Create failed: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise safe_500(e, logger, "approval_create_failed") from e
 
 
 @router.get("")
@@ -68,8 +68,7 @@ async def list_approvals(status: Optional[str] = None, type: Optional[str] = Non
     try:
         return approval_service.list_approvals(status=status, approval_type=type)
     except Exception as e:
-        logger.error("[APPROVAL] List failed: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise safe_500(e, logger, "approval_list_failed") from e
 
 
 @router.get("/stats")
@@ -78,8 +77,7 @@ async def get_stats():
     try:
         return approval_service.get_stats()
     except Exception as e:
-        logger.error("[APPROVAL] Stats failed: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise safe_500(e, logger, "approval_stats_failed") from e
 
 
 @router.get("/{approval_id}")
@@ -99,8 +97,7 @@ async def resolve_approval(approval_id: str, req: ResolveApprovalRequest):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error("[APPROVAL] Resolve failed: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise safe_500(e, logger, "approval_resolve_failed") from e
 
 
 @router.post("/{approval_id}/comments", status_code=201)
@@ -114,8 +111,7 @@ async def add_comment(approval_id: str, req: AddCommentRequest):
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        logger.error("[APPROVAL] Add comment failed: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise safe_500(e, logger, "approval_add_comment_failed") from e
 
 
 @router.put("/comments/{comment_id}")
@@ -126,8 +122,7 @@ async def update_comment(comment_id: str, req: UpdateCommentRequest):
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        logger.error("[APPROVAL] Update comment failed: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise safe_500(e, logger, "approval_update_comment_failed") from e
 
 
 @router.delete("/comments/{comment_id}")
@@ -138,5 +133,4 @@ async def delete_comment(comment_id: str):
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        logger.error("[APPROVAL] Delete comment failed: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise safe_500(e, logger, "approval_delete_comment_failed") from e

@@ -21,6 +21,7 @@ from sqlalchemy import desc, select
 
 from core.auth import verify_api_key
 from core.database import McpEventLogModel, SessionLocal
+from helpers.http_errors import safe_500
 from services import mcp_attachments, mcp_catalog
 from services.activity_stream import activity_stream_manager
 from services.mcp_runtime import audit
@@ -230,7 +231,7 @@ async def attach_to_agent(name: str, agent: str) -> dict[str, Any]:
     except LookupError as e:
         raise HTTPException(status_code=404, detail={"message": str(e)})
     except Exception as e:
-        raise HTTPException(status_code=500, detail={"message": f"{type(e).__name__}: {e}"})
+        raise safe_500(e, logger, "mcp_attach_failed") from e
 
 
 @router.delete("/servers/{name}/agents/{agent}", dependencies=[Depends(verify_api_key)])

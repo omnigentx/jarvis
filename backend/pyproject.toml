@@ -36,6 +36,9 @@ dependencies = [
   # Optional STT backend: Gipformer-65M Vietnamese (sherpa-onnx runtime).
   # Wheel ships prebuilt for macOS/Linux/Windows; only loaded when the
   # user picks the gipformer_vi backend in the voice settings.
+  # Licensing: the Gipformer model weights are MIT; sherpa-onnx itself
+  # is Apache-2.0 (attribution in the root NOTICE file). Both ship as
+  # data inside the wheel — see NOTICE for redistribution terms.
   # Pin to 1.10.46 — last version that bundles libonnxruntime in the wheel.
   # 1.12+ wheels drop the bundled dylib and require an external onnxruntime
   # install whose ABI version exactly matches what sherpa-onnx was built

@@ -41,6 +41,7 @@ without a round-trip.
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import logging
 import os
@@ -173,13 +174,13 @@ def _ws_authenticated(ws: WebSocket, expected_api_key: str) -> bool:
     auth_header = ws.headers.get("authorization", "")
     if auth_header.lower().startswith("bearer "):
         token = auth_header.split(" ", 1)[1].strip()
-        if token == expected_api_key:
+        if token and hmac.compare_digest(token, expected_api_key):
             logger.debug("[WS-AUTH] accepted via Bearer header")
             return True
 
     # 3) ?api_key= query param (legacy — Xiaozhi device).
     token = ws.query_params.get("api_key", "")
-    if token and token == expected_api_key:
+    if token and hmac.compare_digest(token, expected_api_key):
         logger.debug("[WS-AUTH] accepted via ?api_key= query")
         return True
 

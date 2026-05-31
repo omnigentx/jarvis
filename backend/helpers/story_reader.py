@@ -4,7 +4,9 @@ import re
 import json
 import time
 import logging
+from pathlib import Path
 
+from helpers.path_safety import safe_story_path
 from helpers.text_processing import clean_text_for_tts
 
 logger = logging.getLogger(__name__)
@@ -16,9 +18,16 @@ def handle_read_local(story_title: str, chapter_filename: str, library_manager, 
     Reads local chapter text, creates a library entry, saves TTS text.
     Returns dict with keys: book_id, tts_text on success, or error on failure.
     """
-    path = os.path.join("data/stories", story_title, chapter_filename)
+    # PendingAction payload originates from LLM tool calls — guard against
+    # `../../etc/passwd`-style chapter_filename or story_title before any
+    # filesystem touch.
+    try:
+        path = safe_story_path(Path("data") / "stories", story_title, chapter_filename)
+    except ValueError as e:
+        logger.warning(f"handle_read_local rejected unsafe payload {story_title!r}/{chapter_filename!r}: {e}")
+        return {"error": "Invalid story/chapter path"}
 
-    if not os.path.exists(path):
+    if not path.exists():
         return {"error": f"File not found: {story_title}/{chapter_filename}"}
 
     try:

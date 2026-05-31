@@ -39,6 +39,20 @@ from services.sse_progress import (
 )
 
 
+# Cron agent-turn tests below call ``_execute_agent_turn`` directly. Since
+# the approval-gate fix landed in cron_scheduler, those calls would
+# otherwise reach into the real approval pipeline + DB and wait the full
+# 1h gate timeout in CI. Patch the gate at the source module so the local
+# `from services.approval_gate import gate as _gate` inside
+# `_execute_agent_turn` sees the auto-approving stub.
+@pytest.fixture(autouse=True)
+def _auto_approve_cron_gate():
+    async def _allow(**_kw):
+        return True, "test auto-approve"
+    with patch("services.approval_gate.gate", side_effect=_allow):
+        yield
+
+
 def _fake_agent_with_usage(input_tokens=100, output_tokens=20, model="gpt-5.5"):
     """Build a minimal stand-in for a fast-agent ``LlmAgent`` with a
     usage_accumulator that the hook can read like the real thing."""

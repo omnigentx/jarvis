@@ -18,6 +18,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from core.auth import verify_api_key
+from helpers.http_errors import safe_500
 from agent import fast
 import time as _time
 
@@ -1176,7 +1177,7 @@ async def create_agent(agent: AgentCreate):
         status = 409 if "already exists" in msg else 400
         raise HTTPException(status_code=status, detail=msg)
     except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e))
+        raise safe_500(e, logger, "agent_create_unavailable", status_code=503) from e
 
     activity_stream_manager.broadcast({
         "agent_name": agent.name,
@@ -1208,7 +1209,7 @@ async def update_agent(name: str, update: AgentUpdate):
         status = 404 if "not found" in msg else 400
         raise HTTPException(status_code=status, detail=msg)
     except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e))
+        raise safe_500(e, logger, "agent_update_unavailable", status_code=503) from e
 
     logger.info("[AGENTS API] Updated agent: %s", name)
     return {"status": "updated", "name": name}

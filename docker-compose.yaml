@@ -8,7 +8,6 @@ services:
     volumes:
       - ./backend:/app
       - /app/.venv
-      - /var/run/docker.sock:/var/run/docker.sock
       # --- Secrets & Credentials ---
       # fastagent.secrets.yaml is mounted read-write from the persistent host
       # directory so Setup Wizard edits (via /api/yaml/secrets) and

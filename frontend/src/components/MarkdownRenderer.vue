@@ -170,8 +170,17 @@ async function renderMermaidBlocks() {
       el.innerHTML = svg
     } catch (err) {
       // Surface errors loud-but-contained: keep the original source visible
-      // so the agent (or user) can see what went wrong.
-      el.innerHTML = `<pre class="mermaid-error"><strong>Mermaid syntax error</strong>\n${(err && err.message) || err}\n\n${source.replace(/</g, '&lt;')}</pre>`
+      // so the agent (or user) can see what went wrong. Build the DOM via
+      // textContent so a Mermaid error message that echoes attacker-supplied
+      // source (or the source itself) can't break out into live markup.
+      const pre = document.createElement('pre')
+      pre.className = 'mermaid-error'
+      const strong = document.createElement('strong')
+      strong.textContent = 'Mermaid syntax error'
+      pre.appendChild(strong)
+      const errText = (err && err.message) || String(err)
+      pre.appendChild(document.createTextNode(`\n${errText}\n\n${source}`))
+      el.replaceChildren(pre)
     }
   }
 }
@@ -211,20 +220,31 @@ function decorateCodeBlocks() {
     shell.className = 'code-chrome'
     const header = document.createElement('div')
     header.className = 'code-chrome__header'
-    header.innerHTML = `
-      <span class="code-chrome__dots">
-        <span class="code-chrome__dot" style="background:#FF5F57"></span>
-        <span class="code-chrome__dot" style="background:#FEBC2E"></span>
-        <span class="code-chrome__dot" style="background:#28C840"></span>
-      </span>
-      <span class="code-chrome__label">${lang || 'code'}</span>
-      <button class="code-chrome__copy" type="button" aria-label="Copy code">Copy</button>
-    `
+    // Build header via DOM API so `lang` (derived from a className that
+    // survives DOMPurify untouched) can't smuggle markup into innerHTML.
+    const dots = document.createElement('span')
+    dots.className = 'code-chrome__dots'
+    for (const color of ['#FF5F57', '#FEBC2E', '#28C840']) {
+      const dot = document.createElement('span')
+      dot.className = 'code-chrome__dot'
+      dot.style.background = color
+      dots.appendChild(dot)
+    }
+    header.appendChild(dots)
+    const label = document.createElement('span')
+    label.className = 'code-chrome__label'
+    label.textContent = lang || 'code'  // textContent — not innerHTML
+    header.appendChild(label)
+    const btn = document.createElement('button')
+    btn.className = 'code-chrome__copy'
+    btn.type = 'button'
+    btn.setAttribute('aria-label', 'Copy code')
+    btn.textContent = 'Copy'
+    header.appendChild(btn)
     pre.parentNode.insertBefore(shell, pre)
     shell.appendChild(header)
     shell.appendChild(pre)
 
-    const btn = header.querySelector('.code-chrome__copy')
     btn.addEventListener('click', async () => {
       const text = code ? code.innerText : pre.innerText
       try {

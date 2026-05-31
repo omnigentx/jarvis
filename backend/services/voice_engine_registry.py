@@ -238,8 +238,10 @@ STT_BACKENDS: dict[str, STTBackendSpec] = {
     },
     "gipformer_vi": {
         "label": "Gipformer 65M (Vietnamese only)",
-        "description": "Vietnamese-optimised Zipformer-RNNT via sherpa-onnx. ~73 MB int8. MIT-licensed.",
-        "badges": ["free", "local", "vi-only", "MIT"],
+        # The Gipformer MODEL weights are MIT. The sherpa-onnx RUNTIME
+        # that loads them is Apache-2.0 (see root NOTICE). Both are local.
+        "description": "Vietnamese-optimised Zipformer-RNNT via sherpa-onnx. ~73 MB int8. Model: MIT · Runtime: Apache-2.0.",
+        "badges": ["free", "local", "vi-only", "model:MIT", "runtime:Apache-2.0"],
         "language_locked": "vi",
         "params": [
             {"key": "quantize", "type": "select", "label": "Quantization", "default": "int8", "options": ["int8", "fp32"]},

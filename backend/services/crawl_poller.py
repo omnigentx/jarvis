@@ -18,7 +18,11 @@ import re
 import threading
 import time
 from datetime import datetime
+from pathlib import Path
 from urllib.parse import urljoin
+
+from helpers.http_safety import get_capped_text
+from helpers.path_safety import safe_story_path
 
 import requests
 from bs4 import BeautifulSoup
@@ -194,8 +198,10 @@ class CrawlPoller:
                         sels = provider.get("selectors", {})
                         c_sel = sels.get("content")
                         if c_sel:
-                            test_resp = requests.get(start_url, headers=headers, timeout=10)
-                            test_soup = BeautifulSoup(test_resp.text, "html.parser")
+                            _vs, test_text = get_capped_text(
+                                start_url, headers=headers, timeout=10,
+                            )
+                            test_soup = BeautifulSoup(test_text, "html.parser")
                             test_div = test_soup.select_one(c_sel)
                             if test_div and len(test_div.get_text(strip=True)) > 200:
                                 provider["trust_level"] = "verified"
@@ -246,8 +252,8 @@ class CrawlPoller:
                 return
             
             # --- Determine story name ---
-            resp = requests.get(start_url, headers=headers, timeout=10)
-            soup = BeautifulSoup(resp.text, "html.parser")
+            _ts, resp_text = get_capped_text(start_url, headers=headers, timeout=10)
+            soup = BeautifulSoup(resp_text, "html.parser")
             title_tag = soup.select_one(title_selector)
             full_title = title_tag.get_text(strip=True) if title_tag else "Unknown Story"
             
@@ -260,9 +266,17 @@ class CrawlPoller:
             story_folder = re.sub(r'[\\/*?:"<>|]', "", story_name).strip()
             if not story_folder:
                 story_folder = "Untitled_Story"
-            
-            save_dir = os.path.join(DATA_DIR, "stories", story_folder)
-            os.makedirs(save_dir, exist_ok=True)
+            try:
+                save_dir = safe_story_path(Path(DATA_DIR) / "stories", story_folder)
+            except ValueError as e:
+                # Scraped <title> produced a traversal-like value (eg "..").
+                # Don't write outside the sandbox — fall back to a timestamped
+                # name and log the rejection so a future debug has evidence.
+                _dbg(job_id, f"Unsafe story folder {story_folder!r} rejected: {e}; using timestamped fallback")
+                story_folder = f"Untitled_Story_{int(time.time())}"
+                save_dir = safe_story_path(Path(DATA_DIR) / "stories", story_folder)
+            save_dir.mkdir(parents=True, exist_ok=True)
+            save_dir = str(save_dir)  # downstream os.path.join() callers expect str
             
             # Register story metadata in DB (replaces legacy metadata.json)
             try:
@@ -325,31 +339,35 @@ class CrawlPoller:
                 
                 _dbg(job_id, f"Fetching #{count+1}: {current_url[:80]}")
                 
-                # Fetch with retry on 429
-                resp = None
+                # Fetch with retry on 429. Body is streamed + capped at
+                # MAX_CHAPTER_BYTES so a hostile/oversized chapter page
+                # can't fill RAM or disk on its own.
+                resp_status: int | None = None
+                resp_text = ""
                 for attempt in range(4):
                     try:
-                        resp = requests.get(current_url, headers=headers, timeout=10)
-                        if resp.status_code == 429:
-                            if attempt < 3:
-                                _dbg(job_id, f"429 Too Many Requests, retry {attempt+1}/3 in 5s")
-                                time.sleep(5)
-                                continue
+                        resp_status, resp_text = get_capped_text(
+                            current_url, headers=headers, timeout=10,
+                        )
+                        if resp_status == 429 and attempt < 3:
+                            _dbg(job_id, f"429 Too Many Requests, retry {attempt+1}/3 in 5s")
+                            time.sleep(5)
+                            continue
                         break
                     except Exception as e:
                         _dbg(job_id, f"Request failed: {e}")
-                        resp = None
+                        resp_status = None
                         break
-                
-                if not resp:
+
+                if resp_status is None:
                     break
-                if resp.status_code != 200:
-                    _dbg(job_id, f"HTTP {resp.status_code} for {current_url[:60]}")
+                if resp_status != 200:
+                    _dbg(job_id, f"HTTP {resp_status} for {current_url[:60]}")
                     if chapter_iterator:
                         continue
                     break
-                
-                soup = BeautifulSoup(resp.text, "html.parser")
+
+                soup = BeautifulSoup(resp_text, "html.parser")
                 
                 # Extract content
                 content_div = soup.select_one(content_selector) if content_selector else None

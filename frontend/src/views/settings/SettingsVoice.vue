@@ -275,7 +275,20 @@ function reqBadgeFor(engineId) {
   return { text: missing.join(' · '), tone: 'warn' }
 }
 function badgesFor(spec) {
-  return spec?.badges || []
+  // Filter out the network badge — it's rendered separately as a coloured
+  // chip so the user can tell at a glance whether picking this engine
+  // sends audio/text off-box.
+  return (spec?.badges || []).filter((b) => b !== 'cloud' && b !== 'local')
+}
+
+// Derive the network chip (cloud vs local) from the same `badges` field.
+// Returns {label, tone} or null when the engine declares neither — UI then
+// shows nothing rather than guessing.
+function netBadgeFor(spec) {
+  const tags = spec?.badges || []
+  if (tags.includes('local')) return { label: 'Local', tone: 'local' }
+  if (tags.includes('cloud')) return { label: 'Cloud', tone: 'cloud' }
+  return null
 }
 
 // ─── Provider split summary (top-of-page glance card) ──────────────────
@@ -348,6 +361,12 @@ const chatProviderLabel = computed(() => {
             >
               <span class="provider-title">
                 {{ spec.label }}
+                <span
+                  v-if="netBadgeFor(spec)"
+                  class="net-chip"
+                  :class="`net-chip--${netBadgeFor(spec).tone}`"
+                  :title="netBadgeFor(spec).tone === 'cloud' ? 'Audio/text leaves your host' : 'Runs on-box, no network egress'"
+                >{{ netBadgeFor(spec).label }}</span>
                 <span v-if="(secretsStatus[id]?.api_key) || (spec.secrets?.length === 0)" class="mini-dot" title="Ready"></span>
               </span>
               <span class="provider-sub">{{ badgesFor(spec).join(' · ') || spec.description }}</span>
@@ -517,8 +536,16 @@ const chatProviderLabel = computed(() => {
               :class="{ selected: sttBackendId === id }"
               @click="changeSttBackend(id)"
             >
-              <span class="provider-title">{{ spec.label }}</span>
-              <span class="provider-sub">{{ (spec.badges || []).join(' · ') || spec.description }}</span>
+              <span class="provider-title">
+                {{ spec.label }}
+                <span
+                  v-if="netBadgeFor(spec)"
+                  class="net-chip"
+                  :class="`net-chip--${netBadgeFor(spec).tone}`"
+                  :title="netBadgeFor(spec).tone === 'cloud' ? 'Audio leaves your host' : 'Runs on-box, no network egress'"
+                >{{ netBadgeFor(spec).label }}</span>
+              </span>
+              <span class="provider-sub">{{ badgesFor(spec).join(' · ') || spec.description }}</span>
             </button>
           </template>
         </div>
@@ -784,6 +811,20 @@ const chatProviderLabel = computed(() => {
   width: 6px; height: 6px; border-radius: 50%;
   background: var(--success); display: inline-block;
 }
+/* Network chip — Cloud / Local — surfaces data-egress at a glance. */
+.net-chip {
+  font-size: 9.5px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 999px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 1px solid currentColor;
+  background: transparent;
+}
+.net-chip--cloud { color: #d97706; }      /* amber-700 — data leaves host */
+.net-chip--local { color: #15803d; }      /* green-700 — stays on-box */
 
 .provider-hint {
   margin: 4px 0 14px;
