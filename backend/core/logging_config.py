@@ -108,3 +108,23 @@ def setup_logging():
     for noisy in ("httpcore", "httpx", "uvicorn.access", "uvicorn.error",
                    "mcp.server.fastmcp", "mcp.client"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
+
+    # Defense-in-depth: scrub secret-looking values from every log line.
+    # Attached at handler level (not logger level) so records propagated
+    # from child loggers are also caught.
+    from helpers.logging_filters import RedactSecretsFilter
+    redact = RedactSecretsFilter()
+    _attach_filter_once(root_logger.handlers, redact)
+    for child_name in ("story_server", "iot_server", "library_server",
+                       "background_jobs", "tts_pregen_job", "spawn_activity"):
+        _attach_filter_once(logging.getLogger(child_name).handlers, redact)
+
+
+def _attach_filter_once(handlers, flt):
+    """Attach ``flt`` to each handler, skipping handlers that already
+    carry a filter of the same class (the same handler instance is shared
+    across multiple named loggers, so this loop visits it more than once)."""
+    flt_cls = type(flt)
+    for h in handlers:
+        if not any(isinstance(existing, flt_cls) for existing in h.filters):
+            h.addFilter(flt)
