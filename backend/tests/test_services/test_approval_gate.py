@@ -26,17 +26,36 @@ from services.approval_gate import (
 
 
 @pytest.fixture
-def isolated_db(tmp_path, monkeypatch):
-    """Point SessionLocal at a throwaway SQLite file for the test."""
-    db_file = tmp_path / "approval_gate_test.db"
-    monkeypatch.setenv("JARVIS_DB_PATH", str(db_file))
+def isolated_db():
+    """Ensure the ``approval_requests`` table exists on the shared test DB
+    (conftest already points ``JARVIS_DB_PATH`` at ``data/jarvis.test.db``)
+    and clear any rows this test inserted before yielding control to the
+    next test.
 
-    # Reset the module-level engine so the env var takes effect.
-    import importlib
+    We deliberately do NOT ``importlib.reload(database)`` — that would
+    rebuild ``SessionLocal`` / ``Base`` / engine in the live module, while
+    other modules still hold references to the originals. The mixed state
+    surfaced as UNIQUE-constraint / team_name failures across unrelated
+    test suites in CI.
+    """
     from core import database
-    importlib.reload(database)
-    database.init_db()
+    database.init_db()  # idempotent — CREATE TABLE IF NOT EXISTS
+    # Clean slate so prior tests' rows don't leak into _find_* lookups.
+    db = database.SessionLocal()
+    try:
+        db.query(database.ApprovalRequestModel).delete()
+        db.commit()
+    finally:
+        db.close()
     yield database
+    # Tear down: drop the rows this test inserted so the next test sees a
+    # clean approval_requests table.
+    db = database.SessionLocal()
+    try:
+        db.query(database.ApprovalRequestModel).delete()
+        db.commit()
+    finally:
+        db.close()
 
 
 def _insert_approval(database, *, approval_type, scope_key, content_hash, status, **extra):
