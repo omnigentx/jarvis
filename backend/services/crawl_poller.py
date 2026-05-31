@@ -198,8 +198,10 @@ class CrawlPoller:
                         sels = provider.get("selectors", {})
                         c_sel = sels.get("content")
                         if c_sel:
-                            test_resp = requests.get(start_url, headers=headers, timeout=10)
-                            test_soup = BeautifulSoup(test_resp.text, "html.parser")
+                            _vs, test_text = get_capped_text(
+                                start_url, headers=headers, timeout=10,
+                            )
+                            test_soup = BeautifulSoup(test_text, "html.parser")
                             test_div = test_soup.select_one(c_sel)
                             if test_div and len(test_div.get_text(strip=True)) > 200:
                                 provider["trust_level"] = "verified"
@@ -250,8 +252,8 @@ class CrawlPoller:
                 return
             
             # --- Determine story name ---
-            resp = requests.get(start_url, headers=headers, timeout=10)
-            soup = BeautifulSoup(resp.text, "html.parser")
+            _ts, resp_text = get_capped_text(start_url, headers=headers, timeout=10)
+            soup = BeautifulSoup(resp_text, "html.parser")
             title_tag = soup.select_one(title_selector)
             full_title = title_tag.get_text(strip=True) if title_tag else "Unknown Story"
             
