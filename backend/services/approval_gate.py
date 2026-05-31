@@ -119,6 +119,21 @@ async def gate(
     Returns:
         (approved, reason) — ``reason`` is a short string for logging /
         propagating back to the caller's error envelope.
+
+    Trade-off:
+        Timeout persists the row as ``rejected`` (see ``except
+        asyncio.TimeoutError`` below). Combined with the
+        ``_find_prior_decision`` short-circuit at the top of this
+        function, that means a single missed approval window — eg
+        the operator was AFK for the full ``timeout_s`` — permanently
+        blocks this exact ``(approval_type, scope_key, content_hash)``
+        triple. Every later call returns ``(False, "previously
+        rejected ...")``` without re-prompting. This is intentional:
+        a never-answered cron should not re-spawn a fresh approval
+        every 5 minutes forever. If the operator wants to revisit a
+        timed-out decision, they delete the rejected row (or change
+        the payload so the content_hash differs) and the next call
+        will create a fresh prompt.
     """
     # Local import keeps services/__init__.py free of an import cycle —
     # approval_service depends on activity_stream_manager which depends on

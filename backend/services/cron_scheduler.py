@@ -119,12 +119,26 @@ class CronScheduler:
                         "[CRON] Job %s still in flight (likely awaiting approval) — "
                         "skipping this fire", job_id,
                     )
+                    # MUST yield here too — without an `await` between this
+                    # `continue` and the next `_get_next_due()` call we'd hit
+                    # a 100% CPU spin (overdue job + sleep_seconds==0 + no
+                    # other await on the path). `_get_next_due` itself filters
+                    # in-flight ids so it won't keep returning the same job,
+                    # but the yield is the safety net.
+                    await asyncio.sleep(0)
                 else:
                     task = asyncio.create_task(self._run_job_isolated(job_id))
                     self._inflight_tasks[job_id] = task
                     task.add_done_callback(
                         lambda _t, jid=job_id: self._inflight_tasks.pop(jid, None)
                     )
+                    # Yield so the freshly spawned task actually runs (and
+                    # flips its job's status to "running" inside _execute_job)
+                    # before the next iteration's _get_next_due. Without
+                    # this, `create_task` only *schedules* the coroutine and
+                    # the next loop sees the same job in status="active" with
+                    # next_run_at<=now — busy-spin instead of executing.
+                    await asyncio.sleep(0)
 
             except asyncio.CancelledError:
                 logger.info("[CRON] Scheduler shutdown")
@@ -174,18 +188,26 @@ class CronScheduler:
             db.close()
 
     def _get_next_due(self) -> tuple[Optional[CronJobModel], float]:
-        """Find the next job to execute and how long to sleep."""
+        """Find the next job to execute and how long to sleep.
+
+        Excludes any job currently in :attr:`_inflight_tasks` — those have
+        already been dispatched as a background task (eg waiting on
+        human approval) and must not be picked up again until they
+        resolve, even though their DB row may still read ``status="active"``
+        for the brief window between dispatch and ``_execute_job``'s status
+        flip. Without this filter the loop tight-spins on an overdue job
+        whose task is queued but not yet scheduled.
+        """
         db = get_db_session()
         try:
-            job = (
-                db.query(CronJobModel)
-                .filter(
-                    CronJobModel.status == "active",
-                    CronJobModel.next_run_at.isnot(None),
-                )
-                .order_by(CronJobModel.next_run_at.asc())
-                .first()
+            q = db.query(CronJobModel).filter(
+                CronJobModel.status == "active",
+                CronJobModel.next_run_at.isnot(None),
             )
+            inflight_ids = [jid for jid, t in self._inflight_tasks.items() if not t.done()]
+            if inflight_ids:
+                q = q.filter(~CronJobModel.id.in_(inflight_ids))
+            job = q.order_by(CronJobModel.next_run_at.asc()).first()
             if not job:
                 return None, 0
 
@@ -679,7 +701,14 @@ class CronScheduler:
 
     async def _catch_up_missed(self):
         """On startup, check for jobs whose next_run_at is in the past.
-        Execute each at most once (catch-up policy)."""
+        Execute each at most once (catch-up policy).
+
+        Dispatches each missed run through :meth:`_run_job_isolated` —
+        same pattern as the steady-state loop — so a single missed
+        ``agent_turn`` waiting on human approval doesn't freeze the
+        rest of the catch-up batch (each gets its own DB session and
+        its own approval window).
+        """
         db = get_db_session()
         try:
             now = time.time()
@@ -692,15 +721,26 @@ class CronScheduler:
                 )
                 .all()
             )
-            if missed_jobs:
-                logger.info("[CRON] Catching up %d missed jobs", len(missed_jobs))
-                for job in missed_jobs:
-                    try:
-                        await self._execute_job(job, db)
-                    except Exception as e:
-                        logger.error("[CRON] Catch-up failed for '%s': %s", job.name, e)
+            missed_ids = [j.id for j in missed_jobs]
         finally:
             db.close()
+
+        if not missed_ids:
+            return
+
+        logger.info("[CRON] Catching up %d missed jobs", len(missed_ids))
+        for job_id in missed_ids:
+            if job_id in self._inflight_tasks and not self._inflight_tasks[job_id].done():
+                logger.info("[CRON] Catch-up: %s already in flight, skipping", job_id)
+                continue
+            task = asyncio.create_task(self._run_job_isolated(job_id))
+            self._inflight_tasks[job_id] = task
+            task.add_done_callback(
+                lambda _t, jid=job_id: self._inflight_tasks.pop(jid, None)
+            )
+        # Yield once so all the spawned tasks at least register status="running"
+        # before the steady-state loop picks them up.
+        await asyncio.sleep(0)
 
     # ─── SSE Broadcast ────────────────────────────────────
 
