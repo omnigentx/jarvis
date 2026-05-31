@@ -81,3 +81,6 @@ Found a vulnerability? See [`SECURITY.md`](SECURITY.md). Please don't file publi
 ## License
 
 [MIT](LICENSE) © 2026 Phuc Nguyen Van.
+
+Jarvis bundles third-party components under their own terms (Apache-2.0
+and others). See [`NOTICE`](NOTICE) for the attribution list.

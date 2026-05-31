@@ -1,0 +1,85 @@
+Jarvis
+Copyright 2026 Phuc Nguyen Van and Jarvis contributors
+
+This product is distributed under the MIT License (see LICENSE).
+
+It also bundles or depends on third-party software licensed under the
+Apache License, Version 2.0 (or other compatible terms). The full
+license texts are preserved alongside each component. The attributions
+below satisfy Section 4(d) of the Apache License where applicable.
+
+
+================================================================
+fast-agent  —  Apache License 2.0
+================================================================
+  Path:     backend/fast-agent/   (git submodule)
+  License:  backend/fast-agent/LICENSE
+  Notice:   backend/fast-agent/NOTICE   (reproduced below)
+  Upstream: https://github.com/evalstate/fast-agent
+  Fork:     https://github.com/omnigentx/fast-agent
+
+  ----- begin fast-agent NOTICE -----
+  OpenAI Codex
+  Copyright 2025 OpenAI
+
+  This repository includes a Python port of the openai/codex apply_patch
+  tool, licensed under the Apache 2.0 license.
+  ----- end fast-agent NOTICE -----
+
+
+================================================================
+Anthropic Skills  —  Apache License 2.0
+================================================================
+  Path:     backend/.fast-agent/skills/<skill-name>/
+  Upstream: https://github.com/anthropics/skills
+  License:  each skill ships its own LICENSE.txt next to SKILL.md.
+
+  Twelve skills are vendored as on-demand built-ins:
+
+    algorithmic-art         brand-guidelines        canvas-design
+    claude-api              frontend-design         internal-comms
+    mcp-builder             skill-creator           slack-gif-creator
+    theme-factory           web-artifacts-builder   webapp-testing
+
+  Vendored as exact copies (commit dd410c4). No modifications were
+  made to the upstream skill content.
+
+
+================================================================
+sherpa-onnx  —  Apache License 2.0
+================================================================
+  Pinned:   backend/pyproject.toml  (sherpa-onnx==1.10.46)
+  Upstream: https://github.com/k2-fsa/sherpa-onnx
+  License:  bundled inside the published wheel distribution.
+
+  Optional STT backend (Gipformer-65M Vietnamese) — only loaded when
+  the user selects ``gipformer_vi`` in voice settings.
+
+
+================================================================
+RealtimeSTT  /  RealtimeTTS  —  see upstream forks
+================================================================
+  Paths:    backend/realtimestt_src/   (git submodule)
+            backend/realtimetts_src/   (git submodule)
+  Upstream: https://github.com/KoljaB/RealtimeSTT
+            https://github.com/KoljaB/RealtimeTTS
+  Forks:    https://github.com/omnigentx/RealtimeSTT
+            https://github.com/omnigentx/RealtimeTTS
+  License:  preserved inside each submodule.
+
+
+================================================================
+Other runtime dependencies
+================================================================
+  Standard Python and JavaScript packages declared in
+  backend/pyproject.toml, frontend/package.json, and the respective
+  uv.lock / package-lock.json files. Each ships its own license
+  metadata via its package manager; we do not duplicate them here.
+
+
+----------------------------------------------------------------
+Skills authored in this repository
+----------------------------------------------------------------
+  In-house skills under backend/.fast-agent/skills/ without a sibling
+  LICENSE.txt inherit this repository's root MIT LICENSE. See
+  SKILL_LICENSING.md for the policy and any documented exceptions.
