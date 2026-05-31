@@ -174,9 +174,28 @@ async def gate(
         )
     except asyncio.TimeoutError:
         logger.warning(
-            "[GATE] %s/%s — timeout after %.0fs",
-            approval_type, scope_key, timeout_s,
+            "[GATE] %s/%s — timeout after %.0fs", approval_type, scope_key, timeout_s,
         )
+        # Persist the timeout as a rejection so subsequent gate() calls for
+        # the same (type, scope_key, content_hash) fast-skip via
+        # _find_prior_decision instead of re-creating a fresh pending row
+        # and waiting another full timeout window. Without this, a
+        # never-answered cron payload re-blocks the scheduler on every
+        # fire (and stale pending rows pile up forever).
+        try:
+            approval_service.resolve_approval(
+                approval_id,
+                decision="reject",
+                comment=f"auto-rejected after {timeout_s:.0f}s timeout",
+            )
+        except Exception as resolve_exc:
+            # Race: the user might have just resolved it manually between
+            # the timeout firing and our persist call. Log but don't mask
+            # the actual timeout reason returned to the caller.
+            logger.warning(
+                "[GATE] %s/%s — failed to persist timeout rejection: %s",
+                approval_type, scope_key, resolve_exc,
+            )
         return False, f"approval timeout ({timeout_s:.0f}s)"
 
     if resolved.get("user_decision") == "approve":

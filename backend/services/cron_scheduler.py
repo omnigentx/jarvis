@@ -27,6 +27,20 @@ from services.background_jobs import BackgroundJobRunner
 logger = logging.getLogger("cron_scheduler")
 
 
+class ApprovalBlocked(Exception):
+    """Raised by ``_execute_agent_turn`` when the approval gate refuses to run.
+
+    Caught by ``_execute_job`` and recorded as ``status="blocked"`` on the
+    run row — *not* counted as a failure. This is the difference between
+    "user said no / didn't respond in time" (no fail-count bump,
+    no auto-disable) and "code crashed" (counts toward 5-strike disable).
+    """
+
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
+
+
 class CronScheduler:
     """Core scheduler engine — sleep-until-next pattern."""
 
@@ -36,6 +50,11 @@ class CronScheduler:
         self._sse_broadcast = None  # set by server.py
         self._agent_app = None  # set by server.py
         self._session_service = None  # set by server.py
+        # Track in-flight per job so a long-running run (eg awaiting human
+        # approval) doesn't get re-spawned on its next scheduled fire. The
+        # scheduler loop itself stays non-blocking — each fire spawns a
+        # task and immediately returns to evaluating the next due job.
+        self._inflight_tasks: dict[str, asyncio.Task] = {}
 
     def set_sse_broadcast(self, broadcast_fn):
         """Set SSE broadcast function for realtime updates."""
@@ -89,17 +108,23 @@ class CronScheduler:
                         # Timer expired — time to execute
                         pass
 
-                # Re-fetch job (it may have been modified/deleted while sleeping)
-                db = get_db_session()
-                try:
-                    job = db.query(CronJobModel).filter(
-                        CronJobModel.id == next_job.id,
-                        CronJobModel.status == "active",
-                    ).first()
-                    if job:
-                        await self._execute_job(job, db)
-                finally:
-                    db.close()
+                # Spawn the job execution as a background task so a blocking
+                # call (eg awaiting human approval, which can take an hour by
+                # design) doesn't freeze the rest of the schedule. The loop
+                # immediately re-evaluates the next due job. Same-job double-
+                # fires are prevented by `_inflight_tasks`.
+                job_id = next_job.id
+                if job_id in self._inflight_tasks and not self._inflight_tasks[job_id].done():
+                    logger.info(
+                        "[CRON] Job %s still in flight (likely awaiting approval) — "
+                        "skipping this fire", job_id,
+                    )
+                else:
+                    task = asyncio.create_task(self._run_job_isolated(job_id))
+                    self._inflight_tasks[job_id] = task
+                    task.add_done_callback(
+                        lambda _t, jid=job_id: self._inflight_tasks.pop(jid, None)
+                    )
 
             except asyncio.CancelledError:
                 logger.info("[CRON] Scheduler shutdown")
@@ -115,6 +140,38 @@ class CronScheduler:
         logger.info("[CRON] Scheduler stopped")
 
     # ─── Core Logic ───────────────────────────────────────
+
+    async def _run_job_isolated(self, job_id: str) -> None:
+        """Open a fresh DB session and run one job to completion.
+
+        Used by ``start()`` to dispatch each fire as its own task so the
+        scheduler loop stays non-blocking. The session opened here is
+        owned by this task — ``_execute_job`` does not share state with
+        the scheduler loop's own DB lifetimes.
+        """
+        db = get_db_session()
+        try:
+            job = (
+                db.query(CronJobModel)
+                .filter(
+                    CronJobModel.id == job_id,
+                    CronJobModel.status.in_(("active", "running")),
+                )
+                .first()
+            )
+            if job:
+                await self._execute_job(job, db)
+        except Exception:
+            # _execute_job already handles its own errors and persists them
+            # to the run row. Anything that escapes here is a bug in the
+            # error-handling path itself — log loudly but don't crash the
+            # scheduler.
+            logger.error(
+                "[CRON] Isolated run for job %s crashed in dispatcher",
+                job_id, exc_info=True,
+            )
+        finally:
+            db.close()
 
     def _get_next_due(self) -> tuple[Optional[CronJobModel], float]:
         """Find the next job to execute and how long to sleep."""
@@ -260,6 +317,81 @@ class CronScheduler:
                 datetime.fromtimestamp(job.next_run_at).strftime("%Y-%m-%d %H:%M") if job.next_run_at else "none",
             )
 
+        except ApprovalBlocked as exc:
+            # Gate refused / timed out. NOT a failure — the user simply
+            # hasn't approved this payload yet (or rejected it). Record
+            # the run as `blocked`, do NOT bump fail_count, and let the
+            # job stay `active` for its next scheduled fire.
+            completed_at = time.time()
+            duration_ms = int((completed_at - started_at) * 1000)
+            block_reason = exc.reason[:500]
+
+            if run_id:
+                run = db.query(CronRunModel).filter(CronRunModel.id == run_id).first()
+                if run:
+                    run.status = "blocked"
+                    run.completed_at = completed_at
+                    run.duration_ms = duration_ms
+                    run.error = f"approval gate: {block_reason}"
+
+            job.last_run_at = completed_at
+            job.last_result = "blocked"
+            job.last_error = block_reason
+            # run_count counts attempts including blocked ones so the dashboard
+            # shows the job *did* tick. fail_count stays put — no auto-disable
+            # for blocked runs.
+            job.run_count = (job.run_count or 0) + 1
+
+            job.status = "active"  # Restore from 'running'
+            if not job.one_shot:
+                job.next_run_at = self.compute_next_run(
+                    job.schedule_cron, job.calendar_type, job.schedule_timezone, job.lunar_leap
+                )
+
+            job.updated_at = time.time()
+            db.commit()
+
+            self._broadcast_event("job_blocked", {
+                "job_id": job.id,
+                "job_name": job.name,
+                "run_id": run_id,
+                "reason": block_reason,
+            })
+
+            # Blocked notification — distinct from `error` so the dashboard
+            # can colour-code it (amber) vs failed (red).
+            notif = NotificationModel(
+                run_id=run_id,
+                job_id=job.id,
+                type="blocked",
+                title=job.name,
+                preview=f"Blocked: {block_reason[:180]}",
+                content=f"## Job blocked: {job.name}\n\n```\n{block_reason}\n```",
+                content_type="markdown",
+                is_read=0,
+                created_at=completed_at,
+                metadata_json=json.dumps({
+                    "agent": job.exec_agent or "system",
+                    "exec_mode": job.exec_mode,
+                    "duration_ms": duration_ms,
+                    "status": "blocked",
+                }),
+            )
+            db.add(notif)
+            db.commit()
+            db.refresh(notif)
+
+            self._broadcast_event("new_notification", {
+                "id": notif.id,
+                "notif_type": "blocked",
+                "title": job.name,
+                "preview": f"Blocked: {block_reason[:150]}",
+                "created_at": completed_at,
+            })
+
+            logger.warning("[CRON] Job '%s' blocked: %s", job.name, block_reason)
+            return
+
         except Exception as e:
             # Failure
             completed_at = time.time()
@@ -402,7 +534,11 @@ class CronScheduler:
                 "job_name": job.name,
                 "reason": reason,
             })
-            return f"Approval gate blocked execution: {reason}"
+            # Raise so _execute_job records this as `blocked` rather than
+            # success. Different from failure: no fail_count bump, no
+            # auto-disable — the user simply hasn't approved this payload
+            # yet (or rejected it).
+            raise ApprovalBlocked(reason)
 
         # Tag every LLM call this turn makes with a deterministic run_id
         # so the dashboard can correlate ``token_usage`` rows back to the

@@ -15,11 +15,28 @@ this test.
 """
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from services.cron_scheduler import CronScheduler
+from services.cron_scheduler import ApprovalBlocked, CronScheduler
+
+
+# All tests in this module exercise the *post-gate* behaviour of
+# ``_execute_agent_turn``. The approval gate itself has its own
+# coverage in test_approval_gate.py — here we patch it to auto-
+# approve so each test can focus on the resume_and_send contract
+# (originally added for the 2026-05-05 "no agent_name" regression).
+# ``_execute_agent_turn`` imports the gate locally as
+# ``from services.approval_gate import gate as _gate`` — patching
+# at the source module ``services.approval_gate.gate`` is the only
+# anchor that intercepts that local re-bind.
+@pytest.fixture(autouse=True)
+def _auto_approve_gate():
+    async def _allow(**_kw):
+        return True, "test auto-approve"
+    with patch("services.approval_gate.gate", side_effect=_allow):
+        yield
 
 
 @pytest.mark.asyncio
@@ -81,3 +98,37 @@ async def test_execute_agent_turn_logs_warning_on_empty_response(caplog):
         "EMPTY response" in r.message and "ResearchAgent" in r.message
         for r in caplog.records
     ), f"empty-response warning missing; records: {[r.message for r in caplog.records]}"
+
+
+@pytest.mark.asyncio
+async def test_execute_agent_turn_raises_approval_blocked_when_gate_refuses(_auto_approve_gate):
+    """When the approval gate returns ``approved=False`` the agent turn
+    MUST raise :class:`ApprovalBlocked`. This is the contract _execute_job
+    catches separately so a gate-blocked run is recorded as ``blocked``
+    rather than ``success`` (PR #57 reviewer finding, comment on
+    cron_scheduler.py:405).
+    """
+    # Replace the auto-approve fixture's gate with one that refuses.
+    async def _refuse(**_kw):
+        return False, "user rejected: not happy with payload"
+
+    sched = CronScheduler()
+    sched._agent_app = MagicMock()
+    sched._session_service = MagicMock()
+    sched._session_service.resume_and_send = AsyncMock(return_value=("should not run", "sid"))
+
+    job = MagicMock()
+    job.id = "abc123"
+    job.name = "Blocked job"
+    job.exec_agent = "Jarvis"
+    job.exec_payload = "do thing"
+    job.schedule_cron = "* * * * *"
+    job.calendar_type = "solar"
+
+    with patch("services.approval_gate.gate", side_effect=_refuse):
+        with pytest.raises(ApprovalBlocked) as excinfo:
+            await sched._execute_agent_turn(job)
+
+    assert "user rejected" in str(excinfo.value)
+    # The actual resume_and_send must NEVER be called when the gate refused.
+    sched._session_service.resume_and_send.assert_not_called()

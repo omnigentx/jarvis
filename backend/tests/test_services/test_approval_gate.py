@@ -208,3 +208,64 @@ async def test_gate_timeout_returns_rejected(isolated_db):
         )
     assert ok is False
     assert "timeout" in reason
+
+
+@pytest.mark.asyncio
+async def test_gate_timeout_persists_rejection(isolated_db):
+    """Reviewer's MEDIUM finding: on timeout we MUST call resolve_approval
+    so the row no longer sits `pending`. Otherwise every subsequent fire
+    re-attaches to the same stale pending row via _find_pending_match and
+    re-blocks for another full timeout window."""
+
+    async def _hang(approval_id):
+        await asyncio.sleep(10)
+
+    with patch("services.approval_service.approval_service.create_approval",
+               return_value={"id": "x"}), \
+         patch("services.approval_service.approval_service.wait_for_resolution",
+               side_effect=_hang), \
+         patch("services.approval_service.approval_service.resolve_approval") as mock_resolve:
+        await gate(
+            approval_type="cron_first_fire",
+            scope_key="cron:hang",
+            content_md="payload",
+            title="t",
+            timeout_s=0.05,
+        )
+    # The timeout path must persist the row as rejected so _find_prior_decision
+    # short-circuits future calls.
+    mock_resolve.assert_called_once()
+    args, kwargs = mock_resolve.call_args
+    assert args[0] == "x"
+    assert kwargs.get("decision") == "reject"
+    assert "timeout" in (kwargs.get("comment") or "")
+
+
+@pytest.mark.asyncio
+async def test_gate_timeout_persist_failure_does_not_mask_timeout(isolated_db):
+    """If resolve_approval itself raises (e.g. user resolved manually in
+    the race window), the gate should still return the timeout reason —
+    don't swallow it behind a 'persist failed' string."""
+
+    async def _hang(approval_id):
+        await asyncio.sleep(10)
+
+    def _resolve_fails(*a, **kw):
+        raise RuntimeError("already resolved")
+
+    with patch("services.approval_service.approval_service.create_approval",
+               return_value={"id": "x"}), \
+         patch("services.approval_service.approval_service.wait_for_resolution",
+               side_effect=_hang), \
+         patch("services.approval_service.approval_service.resolve_approval",
+               side_effect=_resolve_fails):
+        ok, reason = await gate(
+            approval_type="cron_first_fire",
+            scope_key="cron:hang2",
+            content_md="payload",
+            title="t",
+            timeout_s=0.05,
+        )
+    assert ok is False
+    assert "timeout" in reason
+    assert "persist" not in reason  # caller still sees the real reason
