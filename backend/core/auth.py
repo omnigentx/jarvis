@@ -13,6 +13,7 @@ Two paths are accepted:
 When ``JARVIS_API_KEY`` is empty (dev / fresh install pre-Setup) auth is
 open — the Setup-Gate middleware blocks the API surface anyway.
 """
+import hmac
 import logging
 import os
 import time
@@ -103,9 +104,9 @@ async def verify_api_key(
     # Legacy fallbacks.  Both compared against the live module global so
     # an in-process key rotation takes effect immediately.
     query_key = request.query_params.get("api_key")
-    if query_key and query_key == JARVIS_API_KEY:
+    if query_key and hmac.compare_digest(query_key, JARVIS_API_KEY):
         return True
-    if credentials and credentials.credentials == JARVIS_API_KEY:
+    if credentials and hmac.compare_digest(credentials.credentials, JARVIS_API_KEY):
         return True
 
     raise HTTPException(
@@ -129,9 +130,9 @@ async def verify_optional_api_key(
         return True
 
     query_key = request.query_params.get("api_key")
-    if query_key and query_key == JARVIS_API_KEY:
+    if query_key and hmac.compare_digest(query_key, JARVIS_API_KEY):
         return True
-    if credentials and credentials.credentials == JARVIS_API_KEY:
+    if credentials and hmac.compare_digest(credentials.credentials, JARVIS_API_KEY):
         return True
 
     return False

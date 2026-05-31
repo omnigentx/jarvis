@@ -34,6 +34,7 @@ fields.
 """
 from __future__ import annotations
 
+import hmac
 import logging
 import os
 from typing import Optional
@@ -147,7 +148,7 @@ async def login(payload: LoginRequest, request: Request, response: Response) -> 
             detail={"error": "not_configured", "reason": "auth_key_unset"},
         )
 
-    if payload.api_key.strip() != expected:
+    if not hmac.compare_digest(payload.api_key.strip(), expected):
         logger.warning("[AUTH] Login failed from %s — wrong api_key", client_ip)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
