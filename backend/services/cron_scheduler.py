@@ -355,7 +355,15 @@ class CronScheduler:
         return msg
 
     async def _execute_agent_turn(self, job: CronJobModel) -> str:
-        """Execute agent turn — send message to specified agent via session."""
+        """Execute agent turn — send message to specified agent via session.
+
+        Human-approval gate: cron payloads are LLM-supplied (the agent calls
+        ``cron_create(exec_payload=...)``) and run unsupervised at fire time
+        with the configured agent's full tool set — including terminal exec.
+        Block the first fire of every (job_id, hash(payload)) pair so the
+        operator sees the prompt before it goes live. Same hash on repeat
+        fires auto-proceeds.
+        """
         if not self._agent_app or not self._session_service:
             raise RuntimeError("Agent references not set — cannot execute agent_turn")
 
@@ -363,6 +371,38 @@ class CronScheduler:
         payload = job.exec_payload
 
         logger.info("[CRON] Agent turn: '%s' → agent=%s payload='%s'", job.name, agent_name, payload[:80])
+
+        # Approval gate. Coalesces on (job_id, payload_hash) so re-runs of
+        # an already-approved cron skip the prompt.
+        from services.approval_gate import gate as _gate
+        content_md = (
+            f"## Cron job: `{job.name}`\n\n"
+            f"**Schedule:** `{job.schedule_cron}` ({job.calendar_type})\n"
+            f"**Target agent:** `{agent_name}`\n\n"
+            f"**Payload to run:**\n\n```text\n{(payload or '').rstrip()}\n```\n\n"
+            f"---\n\n"
+            f"⚠️ **Use at your own risk.** Approving lets this exact payload "
+            f"run on the schedule above, unsupervised. The target agent has "
+            f"its full tool set available — including any that touch the "
+            f"filesystem, shell, network, or external accounts.\n\n"
+            f"Approve only if you recognise the payload and trust the source "
+            f"that created this job."
+        )
+        approved, reason = await _gate(
+            approval_type="cron_first_fire",
+            scope_key=f"cron:{job.id}",
+            content_md=content_md,
+            title=f"Cron first run: {job.name}",
+            agent_name=agent_name,
+        )
+        if not approved:
+            logger.warning("[CRON] Job %s blocked by approval gate: %s", job.id, reason)
+            self._broadcast_event("agent_turn_blocked", {
+                "job_id": job.id,
+                "job_name": job.name,
+                "reason": reason,
+            })
+            return f"Approval gate blocked execution: {reason}"
 
         # Tag every LLM call this turn makes with a deterministic run_id
         # so the dashboard can correlate ``token_usage`` rows back to the

@@ -1,0 +1,210 @@
+"""Unit tests for services.approval_gate.
+
+Three behaviours we MUST keep:
+
+1. Hash-keyed decision memory — once approved, identical content auto-
+   proceeds; once rejected, identical content stays rejected (so a
+   recurring cron doesn't re-prompt every 5 min after rejection).
+2. Pending-coalescing — concurrent gate calls for the same hash join
+   the same pending approval instead of stacking duplicates.
+3. Timeout — caller never hangs forever; treat timeout as rejection.
+"""
+
+import asyncio
+import time
+import uuid
+from unittest.mock import patch
+
+import pytest
+
+from services.approval_gate import (
+    _content_hash,
+    _find_prior_decision,
+    _find_pending_match,
+    gate,
+)
+
+
+@pytest.fixture
+def isolated_db(tmp_path, monkeypatch):
+    """Point SessionLocal at a throwaway SQLite file for the test."""
+    db_file = tmp_path / "approval_gate_test.db"
+    monkeypatch.setenv("JARVIS_DB_PATH", str(db_file))
+
+    # Reset the module-level engine so the env var takes effect.
+    import importlib
+    from core import database
+    importlib.reload(database)
+    database.init_db()
+    yield database
+
+
+def _insert_approval(database, *, approval_type, scope_key, content_hash, status, **extra):
+    import json
+    db = database.SessionLocal()
+    try:
+        approval_id = str(uuid.uuid4())
+        now = time.time()
+        row = database.ApprovalRequestModel(
+            id=approval_id,
+            agent_name=extra.get("agent_name", "Jarvis"),
+            team_name=None,
+            run_id="",
+            conversation_id=None,
+            approval_type=approval_type,
+            title="test",
+            content="payload",
+            content_format="markdown",
+            urgency="normal",
+            status=status,
+            paused_agents="[]",
+            created_at=now,
+            resolved_at=now if status != "pending" else None,
+            user_decision="approve" if status == "approved" else ("reject" if status == "rejected" else None),
+            metadata_json=json.dumps({
+                "scope_key": scope_key,
+                "content_hash": content_hash,
+            }),
+        )
+        db.add(row)
+        db.commit()
+        return approval_id
+    finally:
+        db.close()
+
+
+def test_hash_is_deterministic_short():
+    h1 = _content_hash("hello")
+    h2 = _content_hash("hello")
+    h3 = _content_hash("hello2")
+    assert h1 == h2
+    assert h1 != h3
+    assert len(h1) == 16
+
+
+def test_find_prior_decision_returns_approved(isolated_db):
+    _insert_approval(
+        isolated_db,
+        approval_type="mcp_install", scope_key="mcp:foo",
+        content_hash="deadbeef", status="approved",
+    )
+    assert _find_prior_decision("mcp_install", "mcp:foo", "deadbeef") == "approved"
+
+
+def test_find_prior_decision_returns_rejected(isolated_db):
+    _insert_approval(
+        isolated_db,
+        approval_type="cron_first_fire", scope_key="cron:abc",
+        content_hash="cafebabe", status="rejected",
+    )
+    assert _find_prior_decision("cron_first_fire", "cron:abc", "cafebabe") == "rejected"
+
+
+def test_find_prior_decision_ignores_pending(isolated_db):
+    # Pending approvals are NOT prior decisions — they are still ambiguous.
+    _insert_approval(
+        isolated_db,
+        approval_type="mcp_install", scope_key="mcp:bar",
+        content_hash="1111", status="pending",
+    )
+    assert _find_prior_decision("mcp_install", "mcp:bar", "1111") is None
+
+
+def test_find_pending_match_coalesces(isolated_db):
+    pending_id = _insert_approval(
+        isolated_db,
+        approval_type="mcp_install", scope_key="mcp:baz",
+        content_hash="2222", status="pending",
+    )
+    assert _find_pending_match("mcp_install", "mcp:baz", "2222") == pending_id
+
+
+def test_find_pending_match_ignores_resolved(isolated_db):
+    _insert_approval(
+        isolated_db,
+        approval_type="mcp_install", scope_key="mcp:qux",
+        content_hash="3333", status="approved",
+    )
+    assert _find_pending_match("mcp_install", "mcp:qux", "3333") is None
+
+
+@pytest.mark.asyncio
+async def test_gate_short_circuits_on_prior_approval(isolated_db):
+    _insert_approval(
+        isolated_db,
+        approval_type="mcp_install", scope_key="mcp:auto",
+        content_hash=_content_hash("payload"), status="approved",
+    )
+    # No prompt should reach approval_service — patch to detect.
+    with patch("services.approval_service.approval_service.create_approval") as mock_create:
+        ok, reason = await gate(
+            approval_type="mcp_install",
+            scope_key="mcp:auto",
+            content_md="payload",
+            title="t",
+        )
+    assert ok is True
+    assert "previously approved" in reason
+    mock_create.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_gate_short_circuits_on_prior_rejection(isolated_db):
+    _insert_approval(
+        isolated_db,
+        approval_type="cron_first_fire", scope_key="cron:bad",
+        content_hash=_content_hash("evil payload"), status="rejected",
+    )
+    with patch("services.approval_service.approval_service.create_approval") as mock_create:
+        ok, reason = await gate(
+            approval_type="cron_first_fire",
+            scope_key="cron:bad",
+            content_md="evil payload",
+            title="t",
+        )
+    assert ok is False
+    assert "previously rejected" in reason
+    mock_create.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_gate_creates_and_awaits_when_no_prior(isolated_db):
+    fake_resolved = {"id": "x", "user_decision": "approve", "user_comment": None}
+
+    async def _fake_wait(approval_id):
+        return fake_resolved
+
+    with patch("services.approval_service.approval_service.create_approval",
+               return_value={"id": "x"}) as mock_create, \
+         patch("services.approval_service.approval_service.wait_for_resolution",
+               side_effect=_fake_wait) as mock_wait:
+        ok, reason = await gate(
+            approval_type="mcp_install",
+            scope_key="mcp:new",
+            content_md="fresh payload",
+            title="t",
+        )
+    assert ok is True
+    assert reason == "user approved"
+    mock_create.assert_called_once()
+    mock_wait.assert_called_once_with("x")
+
+
+@pytest.mark.asyncio
+async def test_gate_timeout_returns_rejected(isolated_db):
+    async def _hang(approval_id):
+        await asyncio.sleep(10)  # longer than gate timeout
+
+    with patch("services.approval_service.approval_service.create_approval",
+               return_value={"id": "x"}), \
+         patch("services.approval_service.approval_service.wait_for_resolution",
+               side_effect=_hang):
+        ok, reason = await gate(
+            approval_type="mcp_install",
+            scope_key="mcp:slow",
+            content_md="fresh payload",
+            title="t",
+            timeout_s=0.1,
+        )
+    assert ok is False
+    assert "timeout" in reason

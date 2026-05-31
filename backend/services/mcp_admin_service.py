@@ -623,12 +623,50 @@ async def static_check(name: str) -> dict[str, Any]:
 
 async def install_dependencies(name: str) -> dict[str, Any]:
     """Create `.venv` (uv preferred, fall back to stdlib venv) and install
-    requirements.txt into it. Per-server isolation per user policy."""
+    requirements.txt into it. Per-server isolation per user policy.
+
+    Human-approval gate: the agent can scaffold an MCP server, edit
+    ``requirements.txt`` via filesystem tools, then trigger pip install.
+    pip executes setup.py / build hooks of every package with backend
+    privileges — so a prompt-injected agent could land arbitrary code
+    via this path. We block on user approval per ``(server, content_hash)``
+    so the operator sees the package list before any install fires.
+    """
     sdir = _server_dir(name)
     req = sdir / "requirements.txt"
     if not req.exists():
         raise LookupError(f"requirements.txt missing for {name!r}")
     venv = sdir / ".venv"
+
+    # Approval gate — see services/approval_gate.py. Once a (server, hash)
+    # pair is approved, identical requirements.txt re-installs (re-runs of
+    # smoke tests etc.) auto-proceed without prompting.
+    req_text = req.read_text(encoding="utf-8")
+    from services.approval_gate import gate as _gate
+    warning_md = (
+        "\n\n---\n\n"
+        "⚠️ **Use at your own risk.** Approving runs `pip install` against the "
+        "package list above. pip executes `setup.py` / build hooks of every "
+        "package with the backend process's privileges.\n\n"
+        "Before approving:\n"
+        "- Verify each package name matches its **official** source on PyPI "
+        "(typo-squatting and package-name confusion are common attack vectors).\n"
+        "- Prefer packages from reputable, well-known publishers.\n"
+        "- Consider scanning the dependency tree with `pip-audit` or `safety`.\n"
+    )
+    content_md = (
+        f"## Install dependencies for MCP server `{name}`\n\n"
+        f"```text\n{req_text.rstrip()}\n```"
+        f"{warning_md}"
+    )
+    approved, reason = await _gate(
+        approval_type="mcp_install",
+        scope_key=f"mcp:{name}",
+        content_md=content_md,
+        title=f"Install dependencies for MCP server: {name}",
+    )
+    if not approved:
+        return {"ok": False, "error": f"install_dependencies blocked by approval gate: {reason}"}
 
     async with audit("install_deps", server=name, actor="jarvis") as a:
         uv = shutil.which("uv")
