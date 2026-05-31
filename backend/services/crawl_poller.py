@@ -21,6 +21,7 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import urljoin
 
+from helpers.http_safety import get_capped_text
 from helpers.path_safety import safe_story_path
 
 import requests
@@ -336,31 +337,35 @@ class CrawlPoller:
                 
                 _dbg(job_id, f"Fetching #{count+1}: {current_url[:80]}")
                 
-                # Fetch with retry on 429
-                resp = None
+                # Fetch with retry on 429. Body is streamed + capped at
+                # MAX_CHAPTER_BYTES so a hostile/oversized chapter page
+                # can't fill RAM or disk on its own.
+                resp_status: int | None = None
+                resp_text = ""
                 for attempt in range(4):
                     try:
-                        resp = requests.get(current_url, headers=headers, timeout=10)
-                        if resp.status_code == 429:
-                            if attempt < 3:
-                                _dbg(job_id, f"429 Too Many Requests, retry {attempt+1}/3 in 5s")
-                                time.sleep(5)
-                                continue
+                        resp_status, resp_text = get_capped_text(
+                            current_url, headers=headers, timeout=10,
+                        )
+                        if resp_status == 429 and attempt < 3:
+                            _dbg(job_id, f"429 Too Many Requests, retry {attempt+1}/3 in 5s")
+                            time.sleep(5)
+                            continue
                         break
                     except Exception as e:
                         _dbg(job_id, f"Request failed: {e}")
-                        resp = None
+                        resp_status = None
                         break
-                
-                if not resp:
+
+                if resp_status is None:
                     break
-                if resp.status_code != 200:
-                    _dbg(job_id, f"HTTP {resp.status_code} for {current_url[:60]}")
+                if resp_status != 200:
+                    _dbg(job_id, f"HTTP {resp_status} for {current_url[:60]}")
                     if chapter_iterator:
                         continue
                     break
-                
-                soup = BeautifulSoup(resp.text, "html.parser")
+
+                soup = BeautifulSoup(resp_text, "html.parser")
                 
                 # Extract content
                 content_div = soup.select_one(content_selector) if content_selector else None

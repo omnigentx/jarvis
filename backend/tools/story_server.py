@@ -7,6 +7,7 @@ import unicodedata
 from pathlib import Path
 from bs4 import BeautifulSoup
 
+from helpers.http_safety import get_capped_text
 from helpers.path_safety import safe_story_path
 from mcp.server.fastmcp import FastMCP
 from typing import List, Dict, Optional
@@ -1305,12 +1306,17 @@ def _crawl_worker(job_id: str, start_url: str, content_selector: str, title_sele
 
             logger.info(f"[{job_id}] Step {count+1}: Fetching {current_url}")
             _dbg(f"Fetching #{count+1}: {current_url[:80]}")
-            resp = None
-            # [NEW] Retry Logic for 429: max 3 retries, 5s delay
+            resp_status: int | None = None
+            resp_text = ""
+            # [NEW] Retry Logic for 429: max 3 retries, 5s delay. Body
+            # is streamed + capped at MAX_CHAPTER_BYTES to bound disk +
+            # RAM use per chapter.
             for attempt in range(4): # Initial + 3 retries
                 try:
-                    resp = requests.get(current_url, headers=headers, timeout=(3, 10))
-                    if resp.status_code == 429:
+                    resp_status, resp_text = get_capped_text(
+                        current_url, headers=headers, timeout=(3, 10),
+                    )
+                    if resp_status == 429:
                         if attempt < 3:
                             logger.warning(f"[{job_id}] 429 Too Many Requests. Retrying in 5s... ({attempt+1}/3)")
                             time.sleep(5)
@@ -1320,21 +1326,21 @@ def _crawl_worker(job_id: str, start_url: str, content_selector: str, title_sele
                     break # Success or non-retriable status
                 except Exception as e:
                     logger.error(f"[{job_id}] Request failed: {e}")
-                    resp = None
+                    resp_status = None
                     break
-            
-            if not resp: break
-                
-            logger.info(f"[{job_id}] Status {resp.status_code} for {current_url}")
-            if resp.status_code != 200:
-                logger.error(f"[{job_id}] Failed to fetch {current_url}: {resp.status_code}")
+
+            if resp_status is None: break
+
+            logger.info(f"[{job_id}] Status {resp_status} for {current_url}")
+            if resp_status != 200:
+                logger.error(f"[{job_id}] Failed to fetch {current_url}: {resp_status}")
                 # Try next chapter if in list mode, otherwise break
                 if chapter_iterator:
                     continue
                 else:
                     break
-                
-            soup = BeautifulSoup(resp.text, "html.parser")
+
+            soup = BeautifulSoup(resp_text, "html.parser")
             logger.info(f"[{job_id}] Parsed HTML for {current_url}. Title selector: {title_selector}, Content: {content_selector}")
             
             # Content
