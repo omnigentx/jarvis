@@ -74,6 +74,39 @@ Jarvis is a `fast-agent` application. A root agent (Jarvis) delegates tool calls
 
 Pull requests welcome. Please read [`CONTRIBUTING.md`](CONTRIBUTING.md) before opening one.
 
+## Privacy & external APIs
+
+Voice and chat features can route through cloud providers. What
+leaves your host per backend:
+
+**TTS (text-to-speech)** — sends the text body:
+
+| Engine     | Network egress         | Default |
+|------------|------------------------|---------|
+| edge       | Microsoft Edge TTS API | ✅      |
+| soniox     | Soniox (US)            | opt-in  |
+| elevenlabs | ElevenLabs (US)        | opt-in  |
+| openai     | OpenAI (US)            | opt-in  |
+| azure      | Microsoft Azure        | opt-in  |
+| system     | Local only             | opt-in  |
+
+**STT (speech-to-text)** — sends audio frames:
+
+| Engine          | Network egress | Default |
+|-----------------|----------------|---------|
+| faster_whisper  | Local only     | ✅      |
+| gipformer_vi    | Local only     | opt-in  |
+| soniox          | Soniox (US)    | opt-in  |
+
+**Chat LLM** — your messages + tool outputs are sent to whichever
+provider you configure (Anthropic / OpenAI / OpenRouter / local
+Ollama / etc). Pick the one whose privacy policy fits your data.
+
+For sensitive content, choose a local-only path: `faster_whisper`
+STT + `system` TTS + Ollama for the chat LLM. Settings → Voice
+shows a **Cloud** / **Local** chip next to every engine in the
+picker so you can tell at a glance.
+
 ## Security
 
 Found a vulnerability? See [`SECURITY.md`](SECURITY.md). Please don't file public issues for security bugs.
