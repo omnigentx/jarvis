@@ -4,7 +4,10 @@ import json
 import os
 import re
 import unicodedata
+from pathlib import Path
 from bs4 import BeautifulSoup
+
+from helpers.path_safety import safe_story_path
 from mcp.server.fastmcp import FastMCP
 from typing import List, Dict, Optional
 import time
@@ -1230,9 +1233,16 @@ def _crawl_worker(job_id: str, start_url: str, content_selector: str, title_sele
 
         story_folder_name = re.sub(r'[\\/*?:"<>|]', "", story_name).strip()
         if not story_folder_name: story_folder_name = "Untitled_Story"
-        
-        save_dir = os.path.join(DATA_DIR, "stories", story_folder_name)
-        os.makedirs(save_dir, exist_ok=True)
+        try:
+            save_dir_path = safe_story_path(Path(DATA_DIR) / "stories", story_folder_name)
+        except ValueError as e:
+            # Scraped <title> produced a traversal-like value. Fall back to
+            # a timestamped name rather than writing outside the sandbox.
+            logger.warning(f"Unsafe story folder {story_folder_name!r} rejected: {e}; using timestamped fallback")
+            story_folder_name = f"Untitled_Story_{int(time.time())}"
+            save_dir_path = safe_story_path(Path(DATA_DIR) / "stories", story_folder_name)
+        save_dir_path.mkdir(parents=True, exist_ok=True)
+        save_dir = str(save_dir_path)  # downstream os.path.join() callers expect str
         
         meta_file = os.path.join(save_dir, "metadata.json")
         if not os.path.exists(meta_file):

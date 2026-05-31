@@ -18,7 +18,10 @@ import re
 import threading
 import time
 from datetime import datetime
+from pathlib import Path
 from urllib.parse import urljoin
+
+from helpers.path_safety import safe_story_path
 
 import requests
 from bs4 import BeautifulSoup
@@ -260,9 +263,17 @@ class CrawlPoller:
             story_folder = re.sub(r'[\\/*?:"<>|]', "", story_name).strip()
             if not story_folder:
                 story_folder = "Untitled_Story"
-            
-            save_dir = os.path.join(DATA_DIR, "stories", story_folder)
-            os.makedirs(save_dir, exist_ok=True)
+            try:
+                save_dir = safe_story_path(Path(DATA_DIR) / "stories", story_folder)
+            except ValueError as e:
+                # Scraped <title> produced a traversal-like value (eg "..").
+                # Don't write outside the sandbox — fall back to a timestamped
+                # name and log the rejection so a future debug has evidence.
+                _dbg(job_id, f"Unsafe story folder {story_folder!r} rejected: {e}; using timestamped fallback")
+                story_folder = f"Untitled_Story_{int(time.time())}"
+                save_dir = safe_story_path(Path(DATA_DIR) / "stories", story_folder)
+            save_dir.mkdir(parents=True, exist_ok=True)
+            save_dir = str(save_dir)  # downstream os.path.join() callers expect str
             
             # Register story metadata in DB (replaces legacy metadata.json)
             try:

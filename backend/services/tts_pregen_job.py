@@ -14,7 +14,10 @@ import logging
 import os
 import re
 import time
+from pathlib import Path
 from typing import Optional
+
+from helpers.path_safety import safe_story_path
 
 import edge_tts
 
@@ -584,9 +587,15 @@ class TTSPreGenJob(BackgroundJobRunner):
     
     def _read_chapter_text(self, story_title: str, chapter_file: str) -> Optional[str]:
         """Read chapter text file content."""
-        path = os.path.join(STORIES_DIR, story_title, chapter_file)
+        # StoryProgress rows can carry attacker-controlled fields (LLM tool
+        # write path). Reject `..` / separator components before touching FS.
         try:
-            if os.path.exists(path):
+            path = safe_story_path(STORIES_DIR, story_title, chapter_file)
+        except ValueError as e:
+            logger.warning(f"[PRE-GEN] Rejected unsafe path for {story_title!r}/{chapter_file!r}: {e}")
+            return None
+        try:
+            if path.exists():
                 with open(path, "r", encoding="utf-8") as f:
                     return f.read().strip()
         except Exception as e:
