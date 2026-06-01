@@ -89,5 +89,10 @@ dashboard/playwright-report/
 dashboard/test-results/
 backend/test-results/
 
+# ─── Frontend Playwright E2E + Vite cache ────────
+frontend/playwright-report/
+frontend/test-results/
+frontend/.vite/
+
 # ─── Skill auto-backups (.bak siblings created on edit) ──
 backend/.fast-agent/skills/**/*.bak
