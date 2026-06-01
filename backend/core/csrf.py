@@ -46,10 +46,13 @@ Exemptions
 ----------
 
 * ``GET / HEAD / OPTIONS`` are always allowed.
-* The auth bootstrap endpoints (``/api/auth/login``, ``/api/setup/...``)
-  are exempt because the user has not yet been issued a CSRF cookie at
-  that point.  ``/api/auth/login`` itself is rate-limited per-IP and
-  same-origin enforced by SameSite=Lax on the response Set-Cookie.
+* The auth bootstrap endpoints (``/api/auth/login``,
+  ``/api/auth/passkey/authenticate/*``, ``/api/setup/...``) are exempt because
+  the user has not yet been issued a (valid) CSRF cookie at that point — a
+  stale cookie from an expired session must not block re-login. Passkey
+  authenticate is defended by WebAuthn's own challenge/signature; ``login`` is
+  rate-limited per-IP and same-origin enforced by SameSite=Lax. Passkey
+  REGISTER stays protected (needs an authenticated session).
 * OAuth callback endpoints (``/api/oauth/.../callback``) are exempt —
   third-party redirect cannot carry our header.  Those routes have
   their own ``state``-parameter CSRF defence.
@@ -75,6 +78,15 @@ _PROTECTED_METHODS: frozenset[str] = frozenset({"POST", "PUT", "PATCH", "DELETE"
 _EXEMPT_PREFIXES: tuple[str, ...] = (
     "/api/auth/login",       # user has no CSRF cookie yet
     "/api/auth/logout",      # safe to invoke without prior cookie (no side effect on logout)
+    # Passkey AUTHENTICATE is a LOGIN flow (same class as /api/auth/login): the
+    # user is not signed in yet, so they have no valid CSRF token to send in the
+    # header. A stale CSRF cookie left over from an expired session would
+    # otherwise make this 403 ("has cookie, header empty") and lock the user out
+    # of re-logging-in. WebAuthn's own challenge/signature is the CSRF defence
+    # here. NOTE: passkey REGISTER is intentionally NOT exempt — it requires an
+    # authenticated session + real CSRF token (don't let an attacker silently
+    # enrol a passkey).
+    "/api/auth/passkey/authenticate",
     "/api/setup",            # bootstrap surface; user has no CSRF cookie until wizard ends
     "/api/oauth/google/callback",  # third-party redirect; has its own `state` CSRF
 )
