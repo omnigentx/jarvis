@@ -12,7 +12,7 @@ from helpers.path_safety import safe_story_path
 from mcp.server.fastmcp import FastMCP
 from typing import List, Dict, Optional
 import time
-from urllib.parse import urljoin, quote
+from urllib.parse import urljoin
 import uuid
 import threading
 from dotenv import load_dotenv
@@ -574,67 +574,6 @@ def _get_story_chapters_impl(story_url: str) -> list:
 
 
 @mcp.tool()
-def test_crawl_chapter(chapter_url: str, content_selector: str = None, title_selector: str = "h1") -> str:
-    """
-    Test crawling a single chapter to verify selectors.
-    If selectors are provided, uses them. Otherwise checks saved config or heuristics.
-    Returns preview of Title + Start/End content.
-    """
-    logger.info(f"Testing crawl for: {chapter_url} with sel={content_selector}")
-    try:
-        headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36"}
-        resp = requests.get(chapter_url, headers=headers, timeout=(3, 15))
-        resp.raise_for_status()
-        
-        soup = BeautifulSoup(resp.text, 'html.parser')
-        
-        # Determine Selectors
-        c_sel = content_selector
-        t_sel = title_selector
-        
-        # If not provided, try to find from config
-        if not c_sel:
-             provider = StoryConfigManager.get_provider_for_url(chapter_url)
-             if provider and provider.get('selectors'):
-                 c_sel = provider['selectors'].get('content')
-                 t_sel = provider['selectors'].get('title', 'h1')
-        
-        # Extraction
-        title_text = "Unknown Title"
-        if t_sel:
-            t_tag = soup.select_one(t_sel)
-            if t_tag: title_text = t_tag.get_text(strip=True)
-            
-        content_text = ""
-        if c_sel:
-            c_tag = soup.select_one(c_sel)
-            if c_tag:
-                # Clean before extraction
-                _clean_dom(c_tag) 
-                content_text = c_tag.get_text(separator="\n", strip=True)
-        else:
-            # Fallback to heuristic
-            content_text, _ = heuristic_extract(resp.text)
-            title_text = "Heuristic Title"
-
-        if not content_text:
-            return f"Error: No content found with selector '{c_sel}'"
-            
-        len_txt = len(content_text)
-        preview_start = content_text[:200].replace("\n", " ")
-        preview_end = content_text[-200:].replace("\n", " ")
-        
-        return (f"SUCCESS: Found {len_txt} chars.\n"
-                f"TITLE: {title_text}\n"
-                f"SELECTOR: {c_sel}\n"
-                f"START: {preview_start}\n"
-                f"...\n"
-                f"END: {preview_end}")
-                
-    except Exception as e:
-        return f"Error testing crawl: {e}"   
-
-@mcp.tool()
 def get_chapter_content(chapter_url: str) -> str:
     """
     Get text content of a chapter. 
@@ -812,6 +751,236 @@ def _find_best_next_selector(soup: BeautifulSoup) -> list[dict]:
     next_candidates.sort(key=lambda x: x["score"], reverse=True)
     return next_candidates
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# AI-DRIVEN CRAWL (redesign — see docs/crawl-redesign-spec.md)
+#
+# Principle: render the page (JS-aware), hand the LLM a compact, LANGUAGE-AGNOSTIC
+# structural summary, let the LLM produce a small "recipe". Code (the worker) then
+# enumerates the full chapter list from that recipe — the 1000 URLs never touch
+# the LLM context, so token cost is fixed regardless of chapter count.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def render_page(url: str, timeout_ms: int = 45000) -> Optional[str]:
+    """Fetch a page WITH JS rendering via Scrapling StealthyFetcher.
+
+    Falls back to plain ``requests`` if rendering is unavailable/fails — many
+    chapter pages are static HTML (verified: truyenfull chapter content is
+    static), so the fallback is fine for content; rendering matters mainly for
+    JS-built chapter-list/overview pages (verified: truyencom needs it).
+
+    Returns HTML string, or None on total failure.
+    """
+    try:
+        from scrapling.fetchers import StealthyFetcher
+        page = StealthyFetcher.fetch(
+            url, headless=True, network_idle=True, timeout=timeout_ms,
+        )
+        html = getattr(page, "html_content", None)
+        if html:
+            return html
+        # Some Scrapling versions expose body differently
+        return str(page) if page is not None else None
+    except Exception as e:
+        logger.warning(f"[render_page] StealthyFetcher failed ({e}); falling back to requests")
+        try:
+            headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                       "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+            resp = requests.get(url, headers=headers, timeout=(3, 20))
+            return resp.text if resp.status_code == 200 else None
+        except Exception as e2:
+            logger.error(f"[render_page] requests fallback also failed: {e2}")
+            return None
+
+
+def _url_path_pattern(path: str) -> str:
+    """Collapse digits to '#' so chapter URLs of one story share one pattern.
+    Language-agnostic: works on URL structure, not on words.
+    e.g. /thien-anh/quyen-1-chuong-12/ -> /thien-anh/quyen-#-chuong-#/"""
+    return re.sub(r"\d+", "#", path)
+
+
+@mcp.tool()
+def detect_story_structure(url: str) -> str:
+    """Render a story page (overview OR chapter URL) and return a compact,
+    language-agnostic STRUCTURAL summary for the LLM to build a crawl recipe.
+
+    The LLM uses the output to decide a recipe:
+      { "mode": "list" | "chain",
+        "story_root": "/story-slug/",              # same-story guard (path prefix)
+        "chapter_link_selector": "...",            # list mode: CSS for chapter <a>
+        "chapter_url_pattern": "/slug/...-#...",    # digits→# template the worker matches
+        "next_page_selector": "...",               # list mode: pagination link (optional)
+        "first_chapter_url": "https://...",         # chain mode: where to start
+        "next_chapter_selector": "...",            # chain mode: 'next chapter' link
+        "content_selector": "#chapter-c",          # chapter body
+        "title_selector": "h1" }
+
+    Output groups same-domain links by URL path-pattern (digits collapsed to #)
+    with counts + a sample, so the LLM sees "this pattern appears 53x → likely
+    chapter links" vs "this 1x → nav" WITHOUT reading 1000 URLs or any words.
+    """
+    from urllib.parse import urlparse
+    html = render_page(url)
+    if not html:
+        return json.dumps({"error": f"Could not fetch/render {url}"}, ensure_ascii=False)
+
+    soup = BeautifulSoup(html, "html.parser")
+    base = urlparse(url)
+    base_host = base.netloc
+    segs = [s for s in base.path.split("/") if s]
+
+    # story_root candidates — the same-story guard prefix. NOT always the first
+    # path segment: e.g. truyenfull /thien-anh/<ch> → root /thien-anh/, but
+    # webnovel /book/<slug>_id/<ch> → root must be /book/<slug>_id/ (just /book/
+    # would match EVERY story). We surface multiple candidates and let the LLM
+    # pick — language-agnostic, no per-site rule.
+    root_candidates = []
+    if segs:
+        root_candidates.append(f"/{segs[0]}/")                    # segment-1
+    # If the CURRENT url is a chapter, the prefix before the chapter segment is
+    # a strong story_root candidate (handles /book/<slug>_id/chapter-N).
+    cur_path = base.path.rstrip("/")
+    m = re.search(r"^(.*?)/(chuong|chapter|chap|ch|episode|quyen|c)[-_/]?\d", cur_path, re.I)
+    if m and m.group(1):
+        root_candidates.append(m.group(1) + "/")
+    if len(segs) >= 2:
+        root_candidates.append(f"/{segs[0]}/{segs[1]}/")          # segment-1+2
+    # de-dup preserve order
+    seen_r = set(); root_candidates = [r for r in root_candidates if not (r in seen_r or seen_r.add(r))]
+    story_root = root_candidates[0] if root_candidates else "/"
+
+    # 1. Group same-domain links by path-pattern (structural, language-agnostic)
+    import collections
+    pat_count = collections.Counter()
+    pat_sample = {}
+    pat_samples = collections.defaultdict(list)  # up to a few real URLs per pattern
+    pat_selector = {}  # representative CSS-ish hint (parent class) per pattern
+    for a in soup.find_all("a", href=True):
+        p = urlparse(a["href"])
+        host = p.netloc or base_host
+        if host != base_host:
+            continue
+        if not p.path or p.path == "/":
+            continue
+        key = _url_path_pattern(p.path)
+        pat_count[key] += 1
+        full = a["href"] if a["href"].startswith("http") else urljoin(url, a["href"])
+        if len(pat_samples[key]) < 4:
+            pat_samples[key].append(full)
+        if key not in pat_sample:
+            pat_sample[key] = full
+            # capture a structural hint: nearest ancestor with class/id
+            hint = None
+            for anc in [a] + list(a.parents)[:3]:
+                if getattr(anc, "get", None):
+                    cls = anc.get("class"); aid = anc.get("id")
+                    if aid:
+                        hint = f"#{aid} a"; break
+                    if cls:
+                        hint = f".{'.'.join(cls)} a"; break
+            pat_selector[key] = hint
+
+    def _common_path_prefix(urls: list) -> str:
+        """Longest shared path prefix (segment-wise) of chapter URLs → a precise
+        story_root candidate even when site nests under /book/<slug>_id/."""
+        paths = [urlparse(u).path for u in urls]
+        if not paths:
+            return ""
+        split = [p.strip("/").split("/") for p in paths]
+        pref = []
+        for parts in zip(*split):
+            if len(set(parts)) == 1:
+                pref.append(parts[0])
+            else:
+                break
+        return "/" + "/".join(pref) + "/" if pref else "/"
+
+    # Sort patterns by count desc; the chapter-link pattern usually dominates
+    link_patterns = []
+    for key, cnt in pat_count.most_common(20):
+        same_story = any(key.startswith(_url_path_pattern(r).rstrip("/")) for r in root_candidates)
+        # For a high-count pattern, the common prefix of its samples is a great
+        # story_root candidate (e.g. /book/<slug>_id/).
+        cp = _common_path_prefix(pat_samples[key]) if cnt >= 2 else ""
+        if cp and cp not in root_candidates and cp != "/":
+            root_candidates.append(cp)
+        link_patterns.append({
+            "path_pattern": key,
+            "count": cnt,
+            "sample_url": pat_sample[key],
+            "common_prefix": cp,
+            "selector_hint": pat_selector.get(key),
+            "within_story_root": same_story,
+        })
+
+    # 2. Content candidates (density-based; selector only, no language words)
+    content_candidates = []
+    for tag in soup.find_all(["div", "article", "section", "main"]):
+        text = tag.get_text(separator=" ", strip=True)
+        if len(text) < 300:
+            continue
+        p_count = len(tag.find_all("p"))
+        sel = None
+        if tag.get("id"):
+            sel = f"#{tag['id']}"
+        elif tag.get("class"):
+            sel = f".{'.'.join(tag.get('class'))}"
+        content_candidates.append({
+            "selector": sel,
+            "tag": tag.name,
+            "p_count": p_count,
+            "text_len": len(text),
+            "text_head": text[:120],
+        })
+    content_candidates.sort(key=lambda c: (c["p_count"], c["text_len"]), reverse=True)
+    content_candidates = content_candidates[:5]
+
+    # 3. Pagination / next-page hints (structural attrs only)
+    pagination_hints = []
+    for a in soup.select("a[rel='next'], .pagination a, .paging a, nav a"):
+        href = a.get("href")
+        if not href:
+            continue
+        pagination_hints.append({
+            "rel": a.get("rel"),
+            "class": a.get("class"),
+            "href": href if href.startswith("http") else urljoin(url, href),
+            "text_len": len(a.get_text(strip=True)),
+        })
+
+    # de-dup root candidates, keep order
+    seen_r = set()
+    story_root_candidates = [r for r in root_candidates if not (r in seen_r or seen_r.add(r))]
+
+    out = {
+        "url": url,
+        "host": base_host,
+        "story_root_candidates": story_root_candidates,
+        "story_root_guess": story_root,
+        "rendered": True,
+        "link_patterns": link_patterns,
+        "content_candidates": content_candidates,
+        "pagination_hints": pagination_hints[:8],
+        "guidance": (
+            "Build a recipe (language-agnostic — use URL/DOM structure, never words). "
+            "STORY_ROOT: pick from story_root_candidates the prefix that uniquely "
+            "identifies THIS story. WARNING: the first candidate (first path segment) "
+            "is often TOO BROAD — e.g. '/book/' matches every story on the site. Prefer "
+            "the 'common_prefix' of the high-count chapter link_pattern (e.g. "
+            "'/book/<slug>_<id>/') which is unique to this story. "
+            "MODE: if a within_story_root link_pattern has a high count (chapters listed "
+            "here) → mode='list' with its selector_hint + a chapter sample as "
+            "chapter_url_pattern + a pagination_hint as next_page_selector. If the page "
+            "is a single chapter (no high-count chapter pattern; a 'next' link exists) → "
+            "mode='chain' with first_chapter_url + next_chapter_selector. "
+            "CONTENT: pick content_selector from content_candidates (highest p_count, "
+            "text_head reads like narrative). Then call verify_chapters before crawling."
+        ),
+    }
+    return json.dumps(out, ensure_ascii=False)
+
+
 @mcp.tool()
 def get_story_page_structure(url: str) -> str:
     """
@@ -970,88 +1139,247 @@ def test_crawl_chapter(url: str, content_selector: str, title_selector: str = "h
     except Exception as e:
         return f"Test failed: {e}"
 
-# Global Crawl State — DB-backed for cross-process visibility
-_crawl_db_initialized = False
 
-def _save_crawl_status():
-    """Persist crawl_jobs to DB so FastAPI can read it."""
-    global _crawl_db_initialized
-    try:
-        from core.database import get_db_session, CrawlJob, init_db
-        if not _crawl_db_initialized:
-            init_db()
-            _crawl_db_initialized = True
-        from datetime import datetime
-        db = get_db_session()
+def _recipe_first_chapters(recipe: dict, n: int = 3) -> list[str]:
+    """Resolve the first N chapter URLs from a recipe (LIST: enumerate page 1;
+    CHAIN: follow next_chapter_selector from first_chapter_url). Used by
+    verify_chapters — only N pages fetched, so this is cheap."""
+    from urllib.parse import urlparse
+    mode = recipe.get("mode", "list")
+    story_root = recipe.get("story_root") or "/"
+    if mode == "list":
+        # Reuse the poller's enumerator for parity with the real crawl.
         try:
-            for job_id, job in crawl_jobs.items():
-                existing = db.query(CrawlJob).filter(CrawlJob.job_id == job_id).first()
-                if existing:
-                    existing.status = job.get("status", "unknown")
-                    existing.story_title = job.get("story_title")
-                    existing.current_chapter = job.get("current", 0)
-                    existing.total_chapters = job.get("total", 0)
-                    existing.message = job.get("message")
-                    existing.updated_at = datetime.now().timestamp()
-                else:
-                    db.add(CrawlJob(
-                        job_id=job_id,
-                        status=job.get("status", "pending"),
-                        story_title=job.get("story_title"),
-                        current_chapter=job.get("current", 0),
-                        total_chapters=job.get("total", 0),
-                        message=job.get("message"),
-                        start_url=job.get("start_url"),
-                    ))
-            db.commit()
-        finally:
-            db.close()
-    except Exception as e:
-        logger.warning(f"Failed to save crawl status to DB: {e}")
+            from services.crawl_poller import CrawlPoller
+            chs = CrawlPoller()._enumerate_list_mode("verify", recipe.get("overview_url") or recipe.get("first_chapter_url") or "", recipe)
+            return [c["url"] for c in chs[:n]]
+        except Exception as e:
+            logger.warning(f"[verify] list enumerate failed: {e}")
+            return []
+    # CHAIN: walk next links
+    urls = []
+    cur = recipe.get("first_chapter_url")
+    nsel = recipe.get("next_chapter_selector")
+    base_host = urlparse(cur).netloc if cur else ""
+    for _ in range(n):
+        if not cur:
+            break
+        urls.append(cur)
+        html = render_page(cur)
+        if not html or not nsel:
+            break
+        nx = BeautifulSoup(html, "html.parser").select_one(nsel)
+        nxt = urljoin(cur, nx["href"]) if (nx and nx.get("href")) else None
+        # same-story guard
+        if not nxt or urlparse(nxt).netloc not in ("", base_host) or not urlparse(nxt).path.startswith(story_root):
+            break
+        cur = nxt
+    return urls
 
-crawl_jobs = {}
+
+@mcp.tool()
+def verify_chapters(recipe_json: str) -> str:
+    """Verify a crawl recipe on the FIRST 3 CHAPTERS before a full crawl.
+
+    Stronger than testing one chapter: fetches 3 consecutive chapters, returns
+    a longer preview of each, and runs language-agnostic CONTINUITY checks so
+    the agent can catch a wrong/garbage selector OR a drift into another story
+    BEFORE committing to 1000 chapters.
+
+    Pass the recipe as JSON (from detect_story_structure analysis). Returns a
+    verdict {ok, chapters:[{url,len,head,tail}], issues:[...]} for the agent to
+    decide: crawl, or fix the recipe and re-verify.
+    """
+    try:
+        recipe = json.loads(recipe_json) if isinstance(recipe_json, str) else recipe_json
+    except Exception as e:
+        return json.dumps({"ok": False, "issues": [f"recipe_json parse error: {e}"]}, ensure_ascii=False)
+
+    content_sel = recipe.get("content_selector")
+    title_sel = recipe.get("title_selector", "h1")
+    if not content_sel:
+        return json.dumps({"ok": False, "issues": ["recipe missing content_selector"]}, ensure_ascii=False)
+
+    urls = _recipe_first_chapters(recipe, n=3)
+    if not urls:
+        return json.dumps({"ok": False, "issues": ["could not resolve first chapters from recipe (mode/selectors likely wrong)"]}, ensure_ascii=False)
+
+    chapters = []
+    issues = []
+    headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+               "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+    for i, u in enumerate(urls):
+        html = None
+        try:
+            r = requests.get(u, headers=headers, timeout=(3, 15))
+            html = r.text if r.status_code == 200 and len(r.text) > 2000 else None
+        except Exception:
+            pass
+        if not html:
+            html = render_page(u)
+        if not html:
+            issues.append(f"ch{i+1}: could not fetch {u}")
+            continue
+        soup = BeautifulSoup(html, "html.parser")
+        cdiv = soup.select_one(content_sel)
+        text = ""
+        if cdiv:
+            for s in cdiv(["script", "style", "iframe"]):
+                s.decompose()
+            text = cdiv.get_text(separator="\n\n").strip()
+        t = soup.select_one(title_sel)
+        chapters.append({
+            "url": u,
+            "title": t.get_text(strip=True) if t else None,
+            "len": len(text),
+            "head": text[:1000],
+            "tail": text[-500:] if len(text) > 500 else "",
+        })
+
+    # ── Continuity / sanity checks (language-agnostic) ──
+    if len(chapters) < 3:
+        issues.append(f"only resolved {len(chapters)}/3 chapters")
+    for c in chapters:
+        if c["len"] < 500:
+            issues.append(f"{c['url']}: content too short ({c['len']} chars) — selector likely wrong/garbage")
+    # distinct content: 3 chapters must not be identical (selector grabbing a static block)
+    heads = [c["head"] for c in chapters if c["head"]]
+    if len(heads) >= 2 and len(set(heads)) == 1:
+        issues.append("all chapters returned identical content — selector grabs a non-chapter block")
+    # URL monotonic (numbers increase) — drift / wrong order guard
+    nums = []
+    from urllib.parse import urlparse
+    for c in chapters:
+        ns = [int(x) for x in re.findall(r"\d+", urlparse(c["url"]).path)]
+        nums.append(ns)
+    if len(nums) >= 2 and not all(nums[i] <= nums[i+1] for i in range(len(nums)-1)):
+        issues.append("chapter URLs not in increasing order — list/sort may be wrong")
+
+    return json.dumps({
+        "ok": len(issues) == 0,
+        "chapter_count_checked": len(chapters),
+        "chapters": chapters,
+        "issues": issues,
+        "guidance": "If ok=false, inspect issues. Common fix: choose a different content_selector "
+                    "(longer narrative text, not nav/sidebar) and re-run verify_chapters. "
+                    "If chapters are short or identical, the selector is wrong.",
+    }, ensure_ascii=False)
 
 
 
 @mcp.tool()
-def crawl_story(url: str, content_selector: str = None, title_selector: str = "h1", next_selector: str = None, speed: float = 2.0, max_chapters: int = 2000) -> str:
+def crawl_story(recipe_json: str, max_chapters: int = 2000, speed: float = 2.0) -> str:
     """
-    Start a background job to crawl a story.
-    The job is inserted as 'pending' into DB. FastAPI CrawlPoller picks it up.
-    
+    Start a background crawl job from a VERIFIED recipe (preferred path).
+
+    Call this AFTER detect_story_structure + verify_chapters confirm the recipe
+    is good. The CrawlPoller (FastAPI process) enumerates the full chapter list
+    from the recipe (the 1000 URLs never pass through the LLM) and fetches each
+    chapter — so token cost is independent of chapter count.
+
     Args:
-        url: The starting chapter URL.
-        content_selector: CSS selector for chapter text (Required if not saved).
-        title_selector: CSS selector for chapter title.
-        next_selector: CSS selector for 'next chapter' link.
-        speed: Delay between requests (seconds).
-        max_chapters: Limit number of chapters.
+        recipe_json: JSON recipe. Required keys depend on mode:
+          { "mode": "list" | "chain",
+            "story_root": "/story-slug/",         # same-story guard (REQUIRED)
+            "content_selector": "#chapter-c",      # chapter body (REQUIRED)
+            "title_selector": "h1",
+            # list mode:
+            "overview_url": "https://.../story/",  # page that lists chapters
+            "chapter_url_pattern": "/story/chuong-1/",  # a sample chapter URL (digits→# template)
+            "next_page_selector": "...",           # optional pagination link
+            # chain mode:
+            "first_chapter_url": "https://.../chuong-1/",
+            "next_chapter_selector": "a.next",
+            "story_title": "..."                    # optional; else derived from page
+          }
+        max_chapters: safety cap.
+        speed: delay between chapter fetches (seconds).
     """
+    try:
+        recipe = json.loads(recipe_json) if isinstance(recipe_json, str) else recipe_json
+    except Exception as e:
+        return f"Error: recipe_json is not valid JSON: {e}"
+    if not recipe.get("content_selector"):
+        return "Error: recipe missing required 'content_selector'."
+    if not recipe.get("story_root"):
+        return "Error: recipe missing required 'story_root' (same-story guard)."
+    start_url = (recipe.get("overview_url") or recipe.get("first_chapter_url")
+                 or recipe.get("chapter_url_pattern"))
+    if not start_url:
+        return "Error: recipe needs overview_url (list mode) or first_chapter_url (chain mode)."
+
     job_id = str(uuid.uuid4())
     params = json.dumps({
-        "content_selector": content_selector,
-        "title_selector": title_selector,
-        "next_selector": next_selector,
+        "recipe": recipe,
         "speed": speed,
         "max_chapters": max_chapters,
-    })
+    }, ensure_ascii=False)
     try:
         from core.database import get_db_session, CrawlJob, init_db
         init_db()
         db = get_db_session()
-        db.add(CrawlJob(
-            job_id=job_id,
-            status="pending",
-            start_url=url,
-            params=params,
-        ))
+        db.add(CrawlJob(job_id=job_id, status="pending", start_url=start_url, params=params))
         db.commit()
         db.close()
     except Exception as e:
         logger.error(f"Failed to create crawl job: {e}")
         return f"Error creating crawl job: {e}"
 
-    return f"Started crawl job {job_id}. Report this job_id to the user. The crawl runs in the background. Do NOT poll get_crawl_status repeatedly."
+    return (f"Started crawl job {job_id}. The crawl runs in the background. "
+            f"Report this job_id to the user with the tag [[[CRAWL_STARTED: {job_id}]]]. "
+            f"Do NOT poll get_crawl_status repeatedly.")
+
+
+@mcp.tool()
+def resume_crawl(job_id: str, recipe_patch_json: str = "{}", mark_done: bool = False) -> str:
+    """Resume a crawl job that flagged 'needs_attention' (self-heal path).
+
+    The crawl worker pauses and wakes CrawlStoriesAgent when it gets stuck
+    (selector broke mid-crawl, drift, etc). After diagnosing (detect_story_
+    structure + verify_chapters), call this to fix the recipe and continue
+    FROM THE CHECKPOINT (not from chapter 1).
+
+    Args:
+        job_id: the stuck job.
+        recipe_patch_json: JSON of recipe keys to override (e.g.
+            {"content_selector": ".reading-content"}). Merged onto the saved recipe.
+        mark_done: pass true if the "stuck" point is actually the real end of
+            the story (no fix needed) — marks the job completed as-is.
+    """
+    try:
+        from core.database import get_db_session, CrawlJob
+        db = get_db_session()
+        job = db.query(CrawlJob).filter(CrawlJob.job_id == job_id).first()
+        if not job:
+            db.close()
+            return json.dumps({"status": "not_found"})
+        params = json.loads(job.params) if job.params else {}
+        if mark_done:
+            job.status = "completed"
+            job.message = f"Marked done by agent at chapter {job.current_chapter}."
+            db.commit(); db.close()
+            return json.dumps({"status": "completed", "job_id": job_id})
+        try:
+            patch = json.loads(recipe_patch_json) if isinstance(recipe_patch_json, str) else (recipe_patch_json or {})
+        except Exception as e:
+            db.close()
+            return json.dumps({"status": "error", "message": f"recipe_patch_json invalid: {e}"})
+        recipe = params.get("recipe") or {}
+        recipe.update(patch)
+        params["recipe"] = recipe
+        # resume_from: checkpoint stuck_index → worker skips already-saved chapters
+        cp = params.get("checkpoint") or {}
+        params["resume_from"] = cp.get("stuck_index", 0)
+        job.params = json.dumps(params, ensure_ascii=False)
+        job.status = "pending"   # CrawlPoller re-picks it up
+        job.message = "Resuming after recipe fix..."
+        db.commit(); db.close()
+        return json.dumps({"status": "resuming", "job_id": job_id,
+                           "resume_from_chapter": params["resume_from"] + 1,
+                           "patched_keys": list(patch.keys())}, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"status": "error", "message": str(e)})
+
 
 @mcp.tool()
 def get_crawl_status(job_id: str) -> str:
@@ -1078,422 +1406,6 @@ def get_crawl_status(job_id: str) -> str:
     except Exception as e:
         return json.dumps({"status": "error", "message": str(e)})
 
-def _crawl_worker(job_id: str, start_url: str, content_selector: str, title_selector: str, next_selector: str, speed: float, max_chapters: int):
-    import traceback as _tb
-    _log_path = os.path.join(DATA_DIR, "crawl_debug.log")
-    def _dbg(msg):
-        line = f"[{time.strftime('%H:%M:%S')}][{job_id[:8]}] {msg}"
-        print(line, flush=True)
-        try:
-            with open(_log_path, "a") as _f:
-                _f.write(line + "\n")
-        except: pass
-    _dbg(f"Worker started: {start_url}")
-    try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
-        
-        # 1. Check Cancellation Early
-        if crawl_jobs[job_id].get("status") == "cancelled":
-             logger.info(f"[{job_id}] Cancelled before start.")
-             return
-
-        # 2. Determine Story Name & Chapter 1
-        logger.info(f"[{job_id}] Initializing crawl for: {start_url}")
-
-        # [NEW] Check for Saved Provider Overrides OR Auto-Discover
-        provider = StoryConfigManager.get_provider_for_url(start_url)
-        
-        if not provider:
-            logger.info(f"[{job_id}] No known provider for {start_url}. Initiating Auto-Discovery...")
-            try:
-                # 1. Analyze
-                analysis_json = _analyze_story_pattern_impl(start_url)
-                analysis = json.loads(analysis_json)
-                
-                if analysis and analysis.get("content"):
-                    # 2. Extract Domain
-                    from urllib.parse import urlparse
-                    domain_obj = urlparse(start_url)
-                    domain = domain_obj.netloc
-                    name = domain.split(':')[0]
-                    
-                    # 3. Create Provider
-                    new_provider = {
-                        "domain": domain,
-                        "name": name.capitalize(),
-                        "selectors": {
-                            "content": analysis.get("content"),
-                            "title": analysis.get("title", "h1"),
-                            "next_chapter": analysis.get("next_chapter")
-                        },
-                        "trust_level": "auto-learned"
-                    }
-                    
-                    # 4. Save and Use
-                    StoryConfigManager.save_provider(new_provider)
-                    logger.info(f"[{job_id}] Auto-Discovery Successful! Registered provider: {name} ({domain})")
-                    provider = new_provider
-                else:
-                    logger.warning(f"[{job_id}] Auto-Discovery failed to find reliable selectors.")
-            except Exception as e:
-                logger.error(f"[{job_id}] Auto-Discovery failed: {e}")
-
-        if provider:
-            logger.info(f"[{job_id}] Found provider: {provider.get('name')} ({provider.get('trust_level')})")
-            
-            # [NEW] Pipeline Step 2: Verification
-            if provider.get("trust_level") != "verified":
-                logger.info(f"[{job_id}] Verifying provider '{provider.get('name')}'...")
-                
-                # Use current selectors
-                sels = provider.get('selectors', {})
-                c_sel = sels.get('content')
-                t_sel = sels.get('title', 'h1')
-                
-                if not c_sel:
-                     logger.warning(f"[{job_id}] Verification failed: No content selector.")
-                     provider = None # Abort use
-                else:
-                    # Test extraction
-                    test_result = test_crawl_chapter(start_url, c_sel, t_sel)
-                    
-                    # Analyze test result (simple check: length > 200 and no error)
-                    if "Error:" not in test_result and len(test_result.split("START:\n")[-1]) > 200:
-                         logger.info(f"[{job_id}] Verification PASSED. Promoting to 'verified'.")
-                         provider["trust_level"] = "verified"
-                         StoryConfigManager.save_provider(provider)
-                    else:
-                         logger.warning(f"[{job_id}] Verification FAILED. Result: {test_result[:100]}...")
-                         # Do not use this provider, fallback to heuristic or fail
-                         provider = None
-            
-            if provider:
-                logger.info(f"[{job_id}] Using verified provider: {provider.get('name')}")
-                if provider.get('selectors'):
-                    sels = provider['selectors']
-                    if sels.get('content'): 
-                        content_selector = sels['content']
-                    if sels.get('title'): 
-                        title_selector = sels['title']
-                    if sels.get('next_chapter'): 
-                        next_selector = sels['next_chapter']
-        
-        # [AUTO-DETECT CHAPTER 1]
-        try:
-             # Heuristic: If URL looks like a chapter, check if we can find Chapter 1
-             domain_match = re.search(r"https?://([^/]+)", start_url)
-             if domain_match:
-                 logger.info(f"[{job_id}] checking if we should rewind to Chapter 1...")
-                 # Call implementation directly (bypassing Tool wrapper)
-                 chapters = _get_story_chapters_impl(start_url)
-                 logger.info(f"[{job_id}] Found {len(chapters)} chapters from list.")
-                 
-                 if chapters and len(chapters) > 0:
-                     # Filter for "Chapter 1"
-                     # TODO(i18n): VN literals — regex matches Vietnamese chapter-1/prologue titles
-                     c1 = next((c for c in chapters if re.search(r'(chương|chapter)\s+0*1(\s+:|$|\D)', c['title'], re.I) or re.search(r'(mở đầu|văn án)', c['title'], re.I)), None)
-                     
-                     if c1:
-                         if c1['url'] != start_url:
-                             logger.info(f"[{job_id}] Switching start URL to Found Chapter 1: {c1['url']}")
-                             start_url = c1['url']
-                     if c1:
-                         if c1['url'] != start_url:
-                             logger.info(f"[{job_id}] Switching start URL to Found Chapter 1: {c1['url']}")
-                             start_url = c1['url']
-                     else:
-                         # Fallback: If no explicit "Chapter 1" found, but list exists and has items
-                         # And start_url seems to be a Story URL (not in list)
-                         logger.info(f"[{job_id}] 'Chapter 1' not explicitly detected by regex. Defaulting to first chapter in list.")
-                         c1 = chapters[0]
-                         if c1['url'] != start_url:
-                             logger.info(f"[{job_id}] Switching start URL to First Chapter: {c1['url']}")
-                             start_url = c1['url']
-        except Exception as e:
-            logger.warning(f"[{job_id}] Chapter 1 auto-detect error: {e}")
-            chapters = [] # Retrieve failed, reset to empty for safety
-
-        # Check Cancellation Again
-        if crawl_jobs[job_id].get("status") == "cancelled":
-             logger.info(f"[{job_id}] Cancelled during setup.")
-             return
-
-        resp = requests.get(start_url, headers=headers, timeout=(3, 15))
-        soup = BeautifulSoup(resp.text, "html.parser")
-        title_tag = soup.select_one(title_selector)
-        full_title = title_tag.get_text(strip=True) if title_tag else "Unknown Story"
-        
-        story_name = full_title.split("-")[0].strip()
-        # Cleanup if title captured chapter info
-        # TODO(i18n): VN literal — strips Vietnamese chapter suffix from scraped page titles
-        story_name = re.sub(r'\s*(Chương|Chapter)\s+\d+.*$', '', story_name, flags=re.I).strip()
-        
-        if not story_name: story_name = f"Story_{int(time.time())}"
-
-        story_folder_name = re.sub(r'[\\/*?:"<>|]', "", story_name).strip()
-        if not story_folder_name: story_folder_name = "Untitled_Story"
-        try:
-            save_dir_path = safe_story_path(Path(DATA_DIR) / "stories", story_folder_name)
-        except ValueError as e:
-            # Scraped <title> produced a traversal-like value. Fall back to
-            # a timestamped name rather than writing outside the sandbox.
-            logger.warning(f"Unsafe story folder {story_folder_name!r} rejected: {e}; using timestamped fallback")
-            story_folder_name = f"Untitled_Story_{int(time.time())}"
-            save_dir_path = safe_story_path(Path(DATA_DIR) / "stories", story_folder_name)
-        save_dir_path.mkdir(parents=True, exist_ok=True)
-        save_dir = str(save_dir_path)  # downstream os.path.join() callers expect str
-        
-        meta_file = os.path.join(save_dir, "metadata.json")
-        if not os.path.exists(meta_file):
-            with open(meta_file, "w", encoding="utf-8") as f:
-                json.dump({"title": story_name, "source": start_url}, f, ensure_ascii=False)
-        
-        crawl_jobs[job_id].update({
-            "status": "running",
-            "story_title": story_name,
-            "total": max_chapters, 
-            "current": 0,
-            "message": "Starting crawl..."
-        })
-        _save_crawl_status()
-
-        current_url = start_url
-        count = 0
-        
-        # [NEW Logic] Logic: "List Mode" vs "Chain Mode"
-        # If we have a `chapters` list and `start_url` is in it, use the list!
-        chapter_iterator = None
-        _dbg(f"chapters={len(chapters) if chapters else 0}, start_url={start_url}")
-        if chapters and len(chapters) > 0:
-            # Find index of start_url
-            start_index = -1
-            for i, c in enumerate(chapters):
-                # Loose compare URLs (sometimes http vs https or trailing slash)
-                if c['url'].strip('/') == start_url.strip('/'):
-                    start_index = i
-                    break
-            
-            if start_index != -1:
-                _dbg(f"LIST MODE from index {start_index}/{len(chapters)}")
-                logger.info(f"[{job_id}] Engaging 'List Mode' crawling starting from index {start_index} (total {len(chapters)}).")
-                chapter_iterator = iter(chapters[start_index:])
-            else:
-                 _dbg(f"start_url NOT in chapter list, CHAIN MODE. first_url={chapters[0]['url'][:80]}")
-                 logger.info(f"[{job_id}] Start URL not found in chapter list. Falling back to chain mode.")
-        
-        _dbg(f"Entering loop. chapter_iterator={'yes' if chapter_iterator else 'no'}, max={max_chapters}")
-        while count < max_chapters:
-            _dbg(f"Loop top: count={count}, status={crawl_jobs[job_id].get('status')}")
-            # Check for stop signal
-            if crawl_jobs[job_id].get("status") == "cancelled":
-                logger.info(f"[{job_id}] Job cancelled by user.")
-                crawl_jobs[job_id]["message"] = "Cancelled by user."
-                _save_crawl_status()
-                break
-            
-            if chapter_iterator:
-                try:
-                    chapter_node = next(chapter_iterator)
-                    current_url = chapter_node['url']
-                    # We could also use chapter_node['title'] to assume title, but fetching content confirms existence.
-                except StopIteration:
-                    logger.info(f"[{job_id}] End of chapter list reached.")
-                    break
-            
-            # ... rest of fetch log ...
-
-            logger.info(f"[{job_id}] Step {count+1}: Fetching {current_url}")
-            _dbg(f"Fetching #{count+1}: {current_url[:80]}")
-            resp_status: int | None = None
-            resp_text = ""
-            # [NEW] Retry Logic for 429: max 3 retries, 5s delay. Body
-            # is streamed + capped at MAX_CHAPTER_BYTES to bound disk +
-            # RAM use per chapter.
-            for attempt in range(4): # Initial + 3 retries
-                try:
-                    resp_status, resp_text = get_capped_text(
-                        current_url, headers=headers, timeout=(3, 10),
-                    )
-                    if resp_status == 429:
-                        if attempt < 3:
-                            logger.warning(f"[{job_id}] 429 Too Many Requests. Retrying in 5s... ({attempt+1}/3)")
-                            time.sleep(5)
-                            continue
-                        else:
-                            logger.error(f"[{job_id}] Max retries exceeded for 429.")
-                    break # Success or non-retriable status
-                except Exception as e:
-                    logger.error(f"[{job_id}] Request failed: {e}")
-                    resp_status = None
-                    break
-
-            if resp_status is None: break
-
-            logger.info(f"[{job_id}] Status {resp_status} for {current_url}")
-            if resp_status != 200:
-                logger.error(f"[{job_id}] Failed to fetch {current_url}: {resp_status}")
-                # Try next chapter if in list mode, otherwise break
-                if chapter_iterator:
-                    continue
-                else:
-                    break
-
-            soup = BeautifulSoup(resp_text, "html.parser")
-            logger.info(f"[{job_id}] Parsed HTML for {current_url}. Title selector: {title_selector}, Content: {content_selector}")
-            
-            # Content
-            content_div = soup.select_one(content_selector)
-            if not content_div:
-                logger.warning(f"[{job_id}] Content selector '{content_selector}' not found in {current_url}. Trying fallbacks...")
-                # Try simpler selectors?
-                # ...
-                # Fallback handled later in loop? 
-                
-            if not content_div:
-                crawl_jobs[job_id]["message"] = f"No content found at {current_url}"
-                # DO NOT BREAK yet, Try next chapter if list mode!
-                if chapter_iterator:
-                    logger.info(f"[{job_id}] skipping {current_url} due to no content.")
-                    continue
-                else:
-                     break
-                
-            for s in content_div(["script", "style", "iframe"]):
-                s.decompose()
-            text = content_div.get_text(separator="\n\n").strip()
-            logger.info(f"[{job_id}] Extracted content length: {len(text)}")
-            
-            # Title
-            t_tag = soup.select_one(title_selector)
-            chap_title = t_tag.get_text(strip=True) if t_tag else f"Chapter {count+1}"
-            
-            # Save
-            filename = f"{count+1:03d}_{re.sub(r'[\\\\/*?:\"<>|]', '', chap_title)[:50]}.txt"
-            with open(os.path.join(save_dir, filename), "w", encoding="utf-8") as f:
-                f.write(text)
-                
-            count += 1
-            crawl_jobs[job_id].update({
-                "current": count,
-                "message": f"Crawled: {chap_title}"
-            })
-            _save_crawl_status()
-            _dbg(f"Saved #{count}: {chap_title}")
-            
-            # Next chapter: chain mode only (list mode uses iterator at top of loop)
-            if not chapter_iterator:
-                next_url = None
-                if next_selector:
-                    n = soup.select_one(next_selector)
-                    if n and n.get("href"):
-                        next_url = n.get("href")
-                
-                # Smart next detection if explicit selector failed or wasn't provided
-                if not next_url:
-                    # 1. Search for typical "Next" buttons by class/id
-                    next_candidates = soup.select("a.next, a.chap-next, a#next_chap, a.btn-next, a[title*='sau'], a[title*='next']")
-                    if next_candidates:
-                        next_url = next_candidates[0]["href"]
-                    else:
-                        # 2. Look for keywords in text
-                        for a in soup.find_all("a"):
-                            t = a.get_text(strip=True).lower()
-                            # TODO(i18n): VN literals — matches Vietnamese "next chapter" link text
-                            if "chương sau" in t or "tiếp" in t or "next" in t or "chap sau" in t:
-                                next_url = a.get("href")
-                                logger.info(f"[{job_id}] Auto-detected next link: {t} -> {next_url}")
-                                break
-                
-                if next_url:
-                    if not next_url.startswith("http"):
-                        next_url = urljoin(current_url, next_url)
-                    logger.info(f"[{job_id}] Next URL found: {next_url}")
-                else:
-                    _dbg("CHAIN MODE: No next URL found. Stopping.")
-                    logger.info(f"[{job_id}] No next URL found. Stopping.")
-                
-                if not next_url:
-                    break
-                    
-                current_url = next_url
-            # else: In List Mode, loop continues to `next(chapter_iterator)` at top
-                
-            _dbg(f"Sleeping {speed}s before next chapter...")
-            time.sleep(speed)
-            _dbg(f"Woke up, looping back")
-            
-        _dbg(f"Loop exited. count={count}, status={crawl_jobs[job_id].get('status')}")
-        crawl_jobs[job_id]["status"] = "completed"
-        crawl_jobs[job_id]["message"] = f"Completed. Saved {count} chapters."
-        _save_crawl_status()
-        logger.info(f"[{job_id}] Crawl completed. Total chapters: {count}")
-        
-    except Exception as e:
-        _dbg(f"EXCEPTION: {e}\n{_tb.format_exc()}")
-        logger.error(f"Crawl job {job_id} failed: {e}")
-        crawl_jobs[job_id].update({
-            "status": "failed",
-            "message": str(e)
-        })
-        _save_crawl_status()
-
-@mcp.tool()
-def crawl_story_full(start_url: str, content_selector: str, title_selector: str = "h1", next_selector: str = None, speed: float = 1.0, max_chapters: int = 1000) -> str:
-    """
-    Start a background crawl job for a story.
-    
-    This tool crawls multiple chapters starting from `start_url`.
-    It automatically detects if `start_url` is a Chapter or a Story page.
-    
-    Args:
-        start_url: The URL to start crawling from. Can be a Chapter URL (e.g., .../chapter-1) or a Story URL (e.g., .../story-name).
-                   If a Story URL is provided, it will attempt to find the chapter list and start from Chapter 1.
-        content_selector: CSS selector to find the chapter content (e.g., 'div.chapter-c').
-        title_selector: CSS selector for the chapter title. Defaults to 'h1'.
-        next_selector: (Optional) CSS selector for the 'Next Chapter' link. 
-                       If not provided, the crawler uses heuristics to find the next link.
-        speed: Delay in seconds between requests to avoid blocking. Default is 1.0s.
-        max_chapters: Maximum number of chapters to crawl. Default is 1000. 
-                      Increase this if you expect the story to be longer.
-
-    Returns:
-        JSON string containing the `job_id` to track progress via `get_crawl_status(job_id)`.
-    """
-    import threading
-    import uuid
-    
-    job_id = str(uuid.uuid4())
-    crawl_jobs[job_id] = {
-        "status": "pending",
-        "story_title": "Initializing...",
-        "current": 0,
-        "total": max_chapters,
-        "message": "Starting..."
-    }
-    _save_crawl_status()
-    
-    thread = threading.Thread(
-        target=_crawl_worker,
-        args=(job_id, start_url, content_selector, title_selector, next_selector, speed, max_chapters),
-        daemon=True
-    )
-    thread.start()
-    
-    return json.dumps({"job_id": job_id})
-
-@mcp.tool()
-def cancel_crawl(job_id: str) -> str:
-    """Cancel a running crawl job."""
-    logger.info(f"Received cancel request for job: {job_id}")
-    if job_id in crawl_jobs:
-        crawl_jobs[job_id]["status"] = "cancelled"
-        _save_crawl_status()
-        logger.info(f"Job {job_id} marked as cancelled. Current Status: {crawl_jobs[job_id]}")
-        return json.dumps({"status": "cancelled", "job_id": job_id})
-    logger.warning(f"Cancel failed: Job {job_id} not found in {list(crawl_jobs.keys())}")
-    return json.dumps({"status": "not_found", "job_id": job_id})
 
 def delete_local_story(story_id: str) -> dict:
     """Delete a story and all its chapters from local storage."""
@@ -1620,11 +1532,6 @@ def _find_chapter_in_list(chapters: list, chapter_number: int) -> Optional[str]:
     return None
 
 
-def _build_audio_url(book_id: str) -> Optional[str]:
-    """Build relative audio URL for a given book_id."""
-    return f"/api/tts/{quote(book_id, safe='')}"
-
-
 def _save_pending_read(action: dict):
     """Write pending read action to DB for FastAPI process to pick up.
     Replaces file-based pending_read.json — atomic, crash-safe."""
@@ -1675,13 +1582,15 @@ def find_story_chapter(story_name: str, chapter_number: int) -> str:
                         filename = files[0]
                         logger.info(f"find_story_chapter: Found local: {dir_name}/{filename}")
                         _save_pending_read({"type": "READ_LOCAL", "story_title": dir_name, "chapter_filename": filename})
-                        # Compute book_id (same pattern as handle_read_local in server.py)
-                        safe_fname = re.sub(r'[^\w\-\.]', '_', filename)
-                        book_id = f"story_{dir_name}_{safe_fname}"
-                        audio_url = _build_audio_url(book_id)
-                        response_text = f"Now playing {dir_name} chapter {chapter_number}."
-                        if audio_url:
-                            response_text += f" [[[AUDIO_URL: {audio_url}]]]"
+                        # ONE canonical tag for local playback: [[[READ_LOCAL: title|file]]].
+                        # The chat/voice routes resolve playback via the pending-read queue
+                        # above (check_pending_read → handle_read_local). The old extra
+                        # [[[AUDIO_URL: ...]]] tag was redundant — same mechanism, two
+                        # surface strings — and leaked into the chat bubble. Dropped.
+                        response_text = (
+                            f"Now playing {dir_name} chapter {chapter_number}. "
+                            f"[[[READ_LOCAL: {dir_name}|{filename}]]]"
+                        )
                         return json.dumps({
                             "response": response_text,
                             "source": "local"

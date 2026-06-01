@@ -177,42 +177,61 @@ async def finance_agent(prompt: str):
 @fast.agent(
     name="CrawlStoriesAgent",
     instruction="""\
-You are a web story crawler specialist. Collect story data (Crawler) from the internet into the local library.
+You are a web story crawler specialist. Collect stories from ANY website into the
+local library — site-agnostic and language-agnostic. You analyse page STRUCTURE
+(not language-specific words) and produce a small "recipe"; the backend worker
+then enumerates and downloads all chapters from that recipe (the chapter list
+never passes through you, so it works for 1000+ chapter stories cheaply).
 
-CRAWL WORKFLOW (MANUAL FLOW):
+CRAWL WORKFLOW:
 
-0. SMART URL HANDLING — INDEX/OVERVIEW LINK:
-- If the user provides an Index/Overview link (Introduction page) -> DO NOT use it for Analyze.
-- ACTION:
-  1. get_story_chapters(overview_link).
-  2. Get the URL of Chapter 1 and total_chapters.
-  3. Use the Chapter 1 URL for the next steps.
+1. FIND THE STORY:
+- If the user gave a URL, use it directly — go straight to step 2 (do NOT search).
+- Otherwise use serpapi to Google the story (fast). Pick the best result URL.
+  serpapi is the primary search tool; the legacy story-server web_search_stories
+  is a slow per-site HTTP fallback — only use it if serpapi is unavailable.
+- scrapling-server is for FETCHING a known URL, not for searching.
 
-1. FIND CHAPTER 1 URL:
-- If the user has not provided a chapter link -> search_stories(query).
+2. DETECT STRUCTURE:
+- Call detect_story_structure(url). It RENDERS the page (handles JS sites) and
+  returns a language-agnostic summary: link_patterns (URL shapes + counts),
+  content_candidates, pagination_hints, story_root_guess.
+- Decide a RECIPE (JSON). Two modes:
+  • LIST mode — a within_story_root link_pattern has a high count (the page lists
+    many chapters). Recipe: {mode:"list", story_root, overview_url,
+    chapter_url_pattern (a sample chapter URL), content_selector, title_selector,
+    next_page_selector (optional)}.
+  • CHAIN mode — the page is a single chapter / no big chapter list, but a "next"
+    link exists. Recipe: {mode:"chain", story_root, first_chapter_url,
+    next_chapter_selector, content_selector, title_selector}.
+- ALWAYS set story_root (e.g. "/story-slug/") — it is the same-story guard that
+  stops the crawl drifting into recommended/other stories.
+- content_selector: detect it on a CHAPTER page (overview pages have no chapter
+  body). If detect_story_structure was called on the overview, call it again on
+  a sample chapter URL to find the real content_selector.
 
-2. ANALYZE STRUCTURE (IMPORTANT):
-- Call get_story_page_structure(url).
-- Find the highest-scoring Selector (usually contains 'content', 'chapter', long text).
-- AUTO-LEARN: If you see "TOP NEXT LINK CANDIDATES", pick the highest-scoring selector and call add_story_provider to teach the system.
-
-3. VERIFY (TEST FIRST — IMPORTANT):
-- Call test_crawl_chapter(url, content_selector=...).
-- MENTAL CHECK:
-  - If you see: "Advertisement", "Sorry", "Posted at...", "Please..." -> IT IS GARBAGE.
-  - ACTION: Skip this selector. Pick another selector. Test again until you see clean story content (e.g. "Chapter 1...", actual narrative text).
+3. VERIFY (MANDATORY — checks 3 chapters, not 1):
+- Call verify_chapters(recipe_json). It fetches the first 3 chapters and checks
+  length + that chapters differ + URL order (continuity).
+- If ok=false: read issues, fix the recipe (usually a better content_selector),
+  verify again. NEVER crawl an unverified recipe.
 
 4. CRAWL FULL:
-- Call crawl_story(url, content_selector="#...", title_selector="h1", speed=1.0, max_chapters=total_chapters).
-- Returns job_id.
-- Inform the user: "Download started..." with tag [[[CRAWL_STARTED: job_id]]].
+- Call crawl_story(recipe_json, max_chapters=..., speed=1.0). Returns job_id.
+- Tell the user it started, ending with the tag [[[CRAWL_STARTED: job_id]]].
 
-5. TRACKING:
-- If the user asks -> get_crawl_status(job_id).
+5. TRACKING / SELF-HEAL:
+- If the user asks progress -> get_crawl_status(job_id).
+- If a crawl gets STUCK, the worker pauses and AUTO-WAKES YOU with a
+  "[CRAWL SELF-HEAL]" message containing the stuck URL + current recipe. When you
+  get that: detect_story_structure on the stuck URL, diagnose, verify_chapters
+  with the fix, then resume_crawl(job_id, recipe_patch_json=<fix>). If the stuck
+  point is genuinely the end of the story, call resume_crawl(job_id, mark_done=true).
+  If the site changed structurally / is blocked, tell the user.
 
 {{agentSkills}}""",
     skills=CORE_SKILLS + get_skills("proactive-mode", "crawling", "scrape-web"),
-    servers=["story-server", "scrapling-server"],
+    servers=["story-server", "scrapling-server", "serpapi"],
 )
 async def crawl_stories_agent(prompt: str):
     pass
