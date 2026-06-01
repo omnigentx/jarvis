@@ -1,0 +1,225 @@
+# Settings → Running Templates happy-path fixture.
+#
+# Drives this real click-flow through SettingsRunningTemplates.vue:
+#   1. mount: GET /api/team-sessions returns 1 active session.
+#   2. session-pick: GET /template + /history + /yaml-diff fire in parallel.
+#   3. edit role: user changes pm.instruction → click Save.
+#   4. PATCH /template/roles/pm fires; history refetches with the new audit.
+#   5. rollback: click Rollback on the new history row → POST /rollback;
+#      history refetches with both the original PATCH and the rollback row.
+#
+# Backend endpoints exercised (single source of truth — keep in sync):
+#   - backend/routes/team_template.py::list_sessions  GET /api/team-sessions
+#   - backend/routes/team_template.py::get_template
+#   - backend/routes/team_template.py::get_history
+#   - backend/routes/team_template.py::yaml_diff
+#   - backend/routes/team_template.py::patch_role
+#   - backend/routes/team_template.py::rollback
+#   - backend/routes/team_templates_factory.py::list_templates  (called by
+#     SettingsYaml tab — silenced via the noise fixture's notifications block)
+#
+# Why two sequential entries for /template/history?
+#   The Save and Rollback handlers each call loadTemplate(), which refetches
+#   history. Sequential YAML arrays let us serve the pre-edit / post-edit /
+#   post-rollback states in order.
+
+backend_source:
+  - "backend/routes/team_template.py::list_sessions"
+  - "backend/routes/team_template.py::get_template, get_history, yaml_diff"
+  - "backend/routes/team_template.py::patch_role, rollback"
+  - "frontend/src/views/settings/SettingsRunningTemplates.vue"
+
+responses:
+  # SettingsView mounts SettingsGeneral by default — its store eagerly
+  # fetches /api/settings. Stub with empty categories so it renders and
+  # leaves the rest of the surface alone.
+  "GET /api/settings":
+    status: 200
+    json:
+      categories: {}
+
+  # Boot — session enumeration. One active team so the dropdown autoselects it.
+  "GET /api/team-sessions":
+    status: 200
+    json:
+      sessions:
+        - session_id: "agile-team_e2e0test"
+          team_name: "agile-team-e2e"
+          template_name: "agile-team"
+          agents_count: 3
+
+  # Per-session template: sequenced so each loadTemplate() call returns the
+  # latest state. Vue triggers loadTemplate on activeSessionId change AND
+  # after Save / Rollback via await loadTemplate(...).
+  "GET /api/team-sessions/agile-team_e2e0test/template":
+    - status: 200
+      json:
+        session_id: "agile-team_e2e0test"
+        template:
+          name: "agile-team"
+          orchestrator: "pm"
+          roles:
+            pm:
+              role_display: "PM"
+              instruction: "You are the orchestrator."
+              servers: ["filesystem"]
+              skills: ["project-management"]
+              model: ""
+              server_overrides: {}
+            qe:
+              role_display: "QE"
+              instruction: "You are QE."
+              servers: ["filesystem", "playwright"]
+              skills: ["qe-workflow"]
+              model: ""
+              server_overrides: {}
+    - status: 200
+      json:
+        session_id: "agile-team_e2e0test"
+        template:
+          name: "agile-team"
+          orchestrator: "pm"
+          roles:
+            pm:
+              role_display: "PM"
+              instruction: "You are the new orchestrator (edited via UI)."
+              servers: ["filesystem"]
+              skills: ["project-management"]
+              model: ""
+              server_overrides: {}
+            qe:
+              role_display: "QE"
+              instruction: "You are QE."
+              servers: ["filesystem", "playwright"]
+              skills: ["qe-workflow"]
+              model: ""
+              server_overrides: {}
+    # Third call: after rollback — pm.instruction back to original.
+    - status: 200
+      json:
+        session_id: "agile-team_e2e0test"
+        template:
+          name: "agile-team"
+          orchestrator: "pm"
+          roles:
+            pm:
+              role_display: "PM"
+              instruction: "You are the orchestrator."
+              servers: ["filesystem"]
+              skills: ["project-management"]
+              model: ""
+              server_overrides: {}
+            qe:
+              role_display: "QE"
+              instruction: "You are QE."
+              servers: ["filesystem", "playwright"]
+              skills: ["qe-workflow"]
+              model: ""
+              server_overrides: {}
+
+  "GET /api/team-sessions/agile-team_e2e0test/template/history":
+    # Initial — empty audit.
+    - status: 200
+      json:
+        session_id: "agile-team_e2e0test"
+        role: null
+        count: 0
+        rows: []
+    # After PATCH — one row from the edit.
+    - status: 200
+      json:
+        session_id: "agile-team_e2e0test"
+        role: null
+        count: 1
+        rows:
+          - id: 101
+            session_id: "agile-team_e2e0test"
+            role: "pm"
+            field: "instruction"
+            before: "You are the orchestrator."
+            after: "You are the new orchestrator (edited via UI)."
+            source: "api"
+            edited_by: "system"
+            edited_at: 1827542400
+            comment: "edited from Settings UI"
+    # After rollback — original row + rollback row.
+    - status: 200
+      json:
+        session_id: "agile-team_e2e0test"
+        role: null
+        count: 2
+        rows:
+          - id: 102
+            session_id: "agile-team_e2e0test"
+            role: "pm"
+            field: "instruction"
+            before: "You are the new orchestrator (edited via UI)."
+            after: "You are the orchestrator."
+            source: "rollback"
+            edited_by: "system"
+            edited_at: 1827542460
+            comment: "rollback of audit_id=101 (instruction). rollback from Settings UI"
+          - id: 101
+            session_id: "agile-team_e2e0test"
+            role: "pm"
+            field: "instruction"
+            before: "You are the orchestrator."
+            after: "You are the new orchestrator (edited via UI)."
+            source: "api"
+            edited_by: "system"
+            edited_at: 1827542400
+            comment: "edited from Settings UI"
+
+  # yaml-diff — return in_sync so the drift pill doesn't pollute the spec.
+  # The diff-modal test is a separate concern.
+  "GET /api/team-sessions/agile-team_e2e0test/template/yaml-diff":
+    status: 200
+    json:
+      session_id: "agile-team_e2e0test"
+      yaml_path: "/srv/jarvis/backend/team_templates/agile_team.yaml"
+      in_sync: true
+      diverged_count: 0
+      per_role:
+        pm: { status: "in_sync" }
+        qe: { status: "in_sync" }
+
+  # PATCH from the Save click.
+  "PATCH /api/team-sessions/agile-team_e2e0test/template/roles/pm":
+    status: 200
+    json:
+      session_id: "agile-team_e2e0test"
+      role: "pm"
+      audit_ids: [101]
+      diff:
+        instruction:
+          before: "You are the orchestrator."
+          after: "You are the new orchestrator (edited via UI)."
+      after_role:
+        role_display: "PM"
+        instruction: "You are the new orchestrator (edited via UI)."
+        servers: ["filesystem"]
+        skills: ["project-management"]
+        model: ""
+        server_overrides: {}
+      edited_at: 1827542400
+      warning: "Edit applied to DB. To survive a team recreate / reset, also commit the equivalent change to team_templates/<team>.yaml."
+
+  # Rollback from the Rollback button click.
+  "POST /api/team-sessions/agile-team_e2e0test/template/rollback/101":
+    status: 200
+    json:
+      session_id: "agile-team_e2e0test"
+      audit_id: 101
+      audit_ids: [102]
+      diff:
+        instruction:
+          before: "You are the new orchestrator (edited via UI)."
+          after: "You are the orchestrator."
+      after_role:
+        role_display: "PM"
+        instruction: "You are the orchestrator."
+        servers: ["filesystem"]
+        skills: ["project-management"]
+        model: ""
+        server_overrides: {}
+      edited_at: 1827542460

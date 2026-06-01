@@ -186,13 +186,19 @@ async def lifespan(app: FastAPI):
     runtime_rpc_server = None
     try:
         from services.runtime_rpc import RuntimeRpcServer
-        from services import skill_rpc_handlers, mcp_rpc_handlers, approval_rpc_handlers
+        from services import (
+            skill_rpc_handlers,
+            mcp_rpc_handlers,
+            approval_rpc_handlers,
+            team_template_rpc_handlers,
+        )
 
         rpc_socket_path = os.environ["JARVIS_RUNTIME_RPC_SOCKET"]
         runtime_rpc_server = RuntimeRpcServer(rpc_socket_path)
         skill_rpc_handlers.register(runtime_rpc_server)
         mcp_rpc_handlers.register(runtime_rpc_server)
         approval_rpc_handlers.register(runtime_rpc_server)
+        team_template_rpc_handlers.register(runtime_rpc_server)
         await runtime_rpc_server.start()
         state.runtime_rpc_server = runtime_rpc_server
         logger.info(

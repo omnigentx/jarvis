@@ -233,6 +233,17 @@ mcp:
       env:
         PYTHONUNBUFFERED: "1"
         JARVIS_RUNTIME_RPC_SOCKET: "${JARVIS_RUNTIME_RPC_SOCKET}"
+    # Edit team-template factory yamls + per-session running templates.
+    # Same RPC bridge as mcp_admin: every tool delegates to
+    # team_template_rpc_handlers in the main backend so audit rows, DB SSoT
+    # updates, and force-reload all land in the live process. No HTTP, no
+    # API key — trust is fs permissions on the UDS socket.
+    team_template:
+      command: "python"
+      args: ["tools/team_template_server.py"]
+      env:
+        PYTHONUNBUFFERED: "1"
+        JARVIS_RUNTIME_RPC_SOCKET: "${JARVIS_RUNTIME_RPC_SOCKET}"
     mcp-atlassian:
       command: "uv"
       args: ["run", "--directory", "mcp-atlassian", "mcp-atlassian"]

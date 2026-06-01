@@ -28,6 +28,7 @@ const { confirm } = useConfirm()
 
 const files = ref([])
 const activeName = ref(null)
+const activeKind = ref('fastagent')
 const content = ref('')
 const savedContent = ref('')
 const loading = ref(false)
@@ -64,34 +65,89 @@ const dirtyLineCount = computed(() => {
   for (let i = 0; i < n; i++) if (cur[i] !== sav[i]) count++
   return count
 })
-const activeFile = computed(() => files.value.find((f) => f.name === activeName.value) || null)
+const activeFile = computed(() =>
+  files.value.find(
+    (f) => f.name === activeName.value && f.kind === activeKind.value,
+  ) || null,
+)
 
-// Group files by backend's is_secret_file flag (the only structural metadata
-// the API exposes — we don't synthesize agent_card / team_template groups
-// the backend can't actually serve).
+// Group files by kind. Two surfaces here:
+//   • fastagent — fastagent.config.yaml + fastagent.secrets.yaml (handled
+//     by /api/yaml/{name}).
+//   • team-template — backend/team_templates/*.yaml (handled by
+//     /api/team-templates/{name}; spawned teams use these as factory
+//     defaults — edits do NOT touch already-running teams, see Running
+//     Templates tab for that).
+// We keep the editor + chrome identical and just branch the load/save URLs.
 const groupedFiles = computed(() => {
   const core = []
   const secrets = []
+  const teamTemplates = []
   for (const f of files.value) {
-    if (f.is_secret_file) secrets.push(f)
+    if (f.kind === 'team-template') teamTemplates.push(f)
+    else if (f.is_secret_file) secrets.push(f)
     else core.push(f)
   }
   return [
     { label: 'FAST-AGENT', items: core },
     { label: 'SECRETS', items: secrets },
+    { label: 'TEAM TEMPLATES', items: teamTemplates },
   ].filter((g) => g.items.length)
 })
 
+function _fileKey(f) {
+  // Unique key across surfaces — both APIs use "name" as their stem so we
+  // namespace by kind to avoid a collision if a team template is ever
+  // named "config" or "secrets".
+  return `${f.kind}:${f.name}`
+}
+
 async function refreshList() {
-  const res = await apiFetch('/api/yaml/files')
-  files.value = res?.files || []
+  // Fetch both surfaces in parallel; surface a per-source failure rather
+  // than letting one outage hide the other (matches the rest of the
+  // backend's defensive listing patterns).
+  const [coreRes, tmplRes] = await Promise.allSettled([
+    apiFetch('/api/yaml/files'),
+    apiFetch('/api/team-templates'),
+  ])
+  const coreFiles = (coreRes.status === 'fulfilled' ? coreRes.value?.files : []) || []
+  const tmplFiles = (tmplRes.status === 'fulfilled' ? tmplRes.value?.templates : []) || []
+  files.value = [
+    ...coreFiles.map((f) => ({ ...f, kind: 'fastagent' })),
+    ...tmplFiles.map((f) => ({
+      ...f,
+      kind: 'team-template',
+      // Match the chrome description used by /api/yaml/files
+      description: f.description || `Team template — ${f.display_name}`,
+      // Factory templates are never secret files; surfaces the lock-icon
+      // logic that already exists in the file tree.
+      is_secret_file: false,
+    })),
+  ]
   if (!activeName.value && files.value.length) {
-    await selectFile(files.value[0].name)
+    await selectFile(files.value[0])
   }
 }
 
-async function selectFile(name) {
-  if (activeName.value === name) return
+function _endpointFor(file) {
+  if (!file) return null
+  return file.kind === 'team-template'
+    ? `/api/team-templates/${encodeURIComponent(file.name)}`
+    : `/api/yaml/${encodeURIComponent(file.name)}`
+}
+
+async function selectFile(file) {
+  // Backwards-compat: existing callers pass the bare name. Resolve it
+  // against the current list so we don't have to thread the kind through
+  // every click handler.
+  const target = typeof file === 'string'
+    ? files.value.find((f) => f.name === file && f.kind === 'fastagent')
+      || files.value.find((f) => f.name === file)
+    : file
+  if (!target) return
+  const targetKey = _fileKey(target)
+  const currentKey = activeFile.value ? _fileKey(activeFile.value) : null
+  if (targetKey === currentKey) return
   if (dirty.value) {
     const ok = await confirm({
       title: 'Discard unsaved changes',
@@ -105,8 +161,9 @@ async function selectFile(name) {
   successMsg.value = ''
   loading.value = true
   try {
-    const res = await apiFetch(`/api/yaml/${encodeURIComponent(name)}`)
-    activeName.value = name
+    const res = await apiFetch(_endpointFor(target))
+    activeName.value = target.name
+    activeKind.value = target.kind
     content.value = res.content || ''
     savedContent.value = res.content || ''
     exists.value = !!res.exists
@@ -120,20 +177,29 @@ async function selectFile(name) {
 
 async function onSave() {
   if (!activeName.value || !dirty.value) return
+  const target = activeFile.value
+  if (!target) return
   saving.value = true
   error.value = ''
   successMsg.value = ''
   try {
-    const res = await apiFetch(`/api/yaml/${encodeURIComponent(activeName.value)}`, {
+    const url = _endpointFor(target)
+    const res = await apiFetch(url, {
       method: 'PUT',
       body: JSON.stringify({ content: content.value }),
     })
-    const fresh = await apiFetch(`/api/yaml/${encodeURIComponent(activeName.value)}`)
+    const fresh = await apiFetch(url)
     content.value = fresh.content
     savedContent.value = fresh.content
     exists.value = true
     sizeBytes.value = res?.size ?? fresh.size
     successMsg.value = `${fresh.filename} saved (${sizeBytes.value} bytes).`
+    if (target.kind === 'team-template') {
+      // Surface the decision-2026-05-17 invariant inline: factory yaml edits
+      // are NEVER auto-applied to running teams. The user opens Running
+      // Templates → <session> → "Reset role to yaml" / "Reload" to apply.
+      successMsg.value += ' Edits to factory yaml do NOT touch running teams — open Running Templates to apply.'
+    }
     refreshList().catch(() => {})
   } catch (err) {
     error.value = _friendly(err)
@@ -202,11 +268,14 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
         <div class="tree-section">{{ group.label }}</div>
         <button
           v-for="f in group.items"
-          :key="f.name"
+          :key="`${f.kind}:${f.name}`"
           type="button"
           class="file-item"
-          :class="{ active: activeName === f.name, dirty: activeName === f.name && dirty }"
-          @click="selectFile(f.name)"
+          :class="{
+            active: activeName === f.name && activeKind === f.kind,
+            dirty: activeName === f.name && activeKind === f.kind && dirty,
+          }"
+          @click="selectFile(f)"
         >
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />

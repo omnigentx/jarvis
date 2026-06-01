@@ -14,6 +14,7 @@ import { ref } from 'vue'
 import SettingsGeneral from './settings/SettingsGeneral.vue'
 import SettingsAuth from './settings/SettingsAuth.vue'
 import SettingsYaml from './settings/SettingsYaml.vue'
+import SettingsRunningTemplates from './settings/SettingsRunningTemplates.vue'
 import SettingsServices from './settings/SettingsServices.vue'
 import SettingsLLM from './settings/SettingsLLM.vue'
 import SettingsVoice from './settings/SettingsVoice.vue'
@@ -26,6 +27,7 @@ const TABS = [
   { id: 'voice',        label: 'Voice',          eyebrow: 'MODELS' },
   { id: 'services',     label: 'Services',       eyebrow: 'INTEGRATIONS' },
   { id: 'yaml',         label: 'YAML Config',    eyebrow: 'INTEGRATIONS' },
+  { id: 'running-tmpl', label: 'Running Templates', eyebrow: 'INTEGRATIONS' },
   { id: 'experimental', label: 'Experimental',   eyebrow: 'ADVANCED' },
 ]
 const active = ref('general')
@@ -86,6 +88,7 @@ function labelFor(id) {
         <SettingsLLM v-else-if="active === 'llm'" />
         <SettingsVoice v-else-if="active === 'voice'" />
         <SettingsYaml v-else-if="active === 'yaml'" />
+        <SettingsRunningTemplates v-else-if="active === 'running-tmpl'" />
         <SettingsServices v-else-if="active === 'services'" />
         <SettingsExperimental v-else-if="active === 'experimental'" />
       </section>
