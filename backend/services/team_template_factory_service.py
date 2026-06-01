@@ -11,11 +11,21 @@ Safety properties (mirrors :mod:`routes.yaml_config`):
 
 * Only files directly inside the ``team_templates`` directory may be touched;
   path-traversal (``..``) is refused.
-* Writes are ``yaml.safe_load``-validated before they hit disk so a broken
-  edit never bricks the next spawn.
+* Writes are validated for BOTH syntax (``yaml.safe_load``) and the minimal
+  template structure (top-level dict with a ``roles`` mapping, either at
+  the root or under ``team:``). The structural check is deliberately strict
+  because the MCP tool lets an unattended LLM write these — a syntactically
+  valid but structurally wrong yaml would brick every subsequent
+  ``spawn_team`` call.
 * Atomic write via ``tmp → os.replace`` with ``EBUSY`` fallback for bind-mounted
   files (Docker compose dev loop).
 * Previous content rotates into a ``.bak`` sibling so a bad edit is recoverable.
+
+Concurrency: writes are single-writer (no file lock). The MCP tool plus the
+UI can in principle race on the same file, but the only realistic concurrent
+caller pair is "human in the UI" + "human-driven LLM", which is implicitly
+serialised by the human. If true concurrent automated writers ever land,
+gate this module behind a per-path lock.
 """
 from __future__ import annotations
 
@@ -142,11 +152,52 @@ def read_factory_template(name: str) -> dict[str, Any]:
     }
 
 
+def _validate_template_structure(parsed: Any) -> None:
+    """Reject yaml that parses but is shaped wrong for the spawner.
+
+    Minimal contract enforced here:
+      * Top-level must be a mapping.
+      * Either the top-level OR a ``team:`` child must contain a ``roles``
+        mapping (the two layouts the spawner accepts today).
+      * ``roles`` itself must be a mapping (``role_name → role_config``).
+      * Each role config must be a mapping (an empty dict ``{}`` is OK —
+        the spawner falls back to whole-team defaults).
+
+    Wider checks (per-field types, allowed servers, ...) live in
+    :mod:`services.team_template_service.validate_patch`; we don't duplicate
+    them here because the factory file is read once at spawn time and any
+    silly value will surface immediately. The point of this check is solely
+    to keep a malformed top-level (missing ``roles``, ``roles`` is a list,
+    etc.) from saving and bricking ``spawn_team``.
+    """
+    if not isinstance(parsed, dict):
+        raise ValidationError(
+            "template must be a YAML mapping at top level (got "
+            f"{type(parsed).__name__})"
+        )
+    team = parsed.get("team") if isinstance(parsed.get("team"), dict) else None
+    roles = (team or parsed).get("roles")
+    if not isinstance(roles, dict):
+        raise ValidationError(
+            "template must have a 'roles' mapping (at top level or under 'team:')"
+        )
+    if not roles:
+        raise ValidationError("template 'roles' mapping must define at least one role")
+    for role_name, role_cfg in roles.items():
+        if not isinstance(role_name, str) or not role_name:
+            raise ValidationError(f"role name must be a non-empty string (got {role_name!r})")
+        if not isinstance(role_cfg, dict):
+            raise ValidationError(
+                f"role '{role_name}' config must be a mapping (got {type(role_cfg).__name__})"
+            )
+
+
 def write_factory_template(name: str, content: str) -> dict[str, Any]:
     """Validate + atomically write yaml. Rotates previous content to ``.bak``.
 
     Returns ``{name, filename, size, saved: True}``. Raises:
-      * ValidationError — content fails ``yaml.safe_load`` or exceeds cap.
+      * ValidationError — content fails ``yaml.safe_load``, is structurally
+        invalid (missing ``roles``, etc.), or exceeds cap.
       * PathTraversalError — name escapes the factory dir.
       * FactoryTemplateError — underlying OSError.
     """
@@ -155,9 +206,15 @@ def write_factory_template(name: str, content: str) -> dict[str, Any]:
 
     path = _resolve(name)
     try:
-        yaml.safe_load(content)
+        parsed = yaml.safe_load(content)
     except yaml.YAMLError as exc:
         raise ValidationError(f"invalid YAML — file not saved: {exc}") from exc
+
+    # Structural check — refuses syntactically valid but shape-wrong yaml
+    # (e.g. ``roles:`` missing) that would brick the next spawn_team call.
+    # Critical because team_template_write_factory MCP tool lets the LLM
+    # write here without a human review step.
+    _validate_template_structure(parsed)
 
     if path.exists():
         backup = path.with_suffix(path.suffix + ".bak")

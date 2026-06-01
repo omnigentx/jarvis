@@ -184,6 +184,72 @@ class TestWrite:
         original = (factory_dir / "agile_team.yaml").read_text(encoding="utf-8")
         assert "Agile crew" in original
 
+    def test_structurally_invalid_no_roles_400(self, client, factory_dir):
+        # Parses cleanly but has no `roles` mapping — would brick spawn_team.
+        # Critical: this is the path team_template_write_factory MCP tool
+        # takes, so an unattended LLM must not be able to write this shape.
+        r = client.put(
+            "/api/team-templates/agile_team",
+            json={"content": "name: agile-team\ndescription: no roles here\n"},
+            headers=_h(),
+        )
+        assert r.status_code == 400
+        assert "roles" in r.json()["detail"]["message"].lower()
+        # Original content preserved
+        assert "Agile crew" in (factory_dir / "agile_team.yaml").read_text(encoding="utf-8")
+
+    def test_structurally_invalid_roles_is_list_400(self, client, factory_dir):
+        # `roles:` exists but is a list, not a mapping — also brick-shaped.
+        r = client.put(
+            "/api/team-templates/agile_team",
+            json={"content": "name: agile-team\nroles:\n  - pm\n  - dev\n"},
+            headers=_h(),
+        )
+        assert r.status_code == 400
+
+    def test_structurally_invalid_role_config_not_mapping_400(self, client, factory_dir):
+        r = client.put(
+            "/api/team-templates/agile_team",
+            json={"content": "name: agile-team\nroles:\n  pm: not-a-mapping\n"},
+            headers=_h(),
+        )
+        assert r.status_code == 400
+
+    def test_structurally_invalid_empty_roles_400(self, client, factory_dir):
+        r = client.put(
+            "/api/team-templates/agile_team",
+            json={"content": "name: agile-team\nroles: {}\n"},
+            headers=_h(),
+        )
+        assert r.status_code == 400
+
+    def test_accepts_team_nested_layout(self, client, factory_dir):
+        # The other layout the spawner accepts: `team: {roles: {...}}`.
+        # Must save fine (research_team.yaml uses this shape).
+        new = (
+            "team:\n"
+            "  name: agile-team\n"
+            "  roles:\n"
+            "    pm:\n"
+            "      role_display: PM\n"
+        )
+        r = client.put(
+            "/api/team-templates/agile_team",
+            json={"content": new},
+            headers=_h(),
+        )
+        assert r.status_code == 200
+
+    def test_accepts_empty_role_config(self, client, factory_dir):
+        # An empty role dict is valid — the spawner falls back to defaults.
+        new = "name: agile-team\nroles:\n  pm: {}\n"
+        r = client.put(
+            "/api/team-templates/agile_team",
+            json={"content": new},
+            headers=_h(),
+        )
+        assert r.status_code == 200
+
     def test_dotfile_name_blocked(self, client, factory_dir):
         r = client.put(
             "/api/team-templates/.evil",

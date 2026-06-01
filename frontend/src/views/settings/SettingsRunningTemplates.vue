@@ -69,14 +69,27 @@ const dirty = computed(() => {
   if (!draft.value || !activeRole.value) return false
   const live = roles.value[activeRole.value]
   if (!live) return false
+  // Empty / whitespace server_overrides_text round-trips to `{}` (see
+  // _buildPatch). Avoid showing a UNSAVED pill in that no-op case.
+  const liveOverrides = JSON.stringify(live.server_overrides || {})
+  let draftOverrides
+  try {
+    draftOverrides = JSON.stringify(
+      draft.value.server_overrides_text.trim()
+        ? JSON.parse(draft.value.server_overrides_text)
+        : {},
+    )
+  } catch {
+    // Unparseable text is definitively dirty — Save will surface the error.
+    draftOverrides = draft.value.server_overrides_text
+  }
   return (
     draft.value.instruction !== (live.instruction || '') ||
     draft.value.role_display !== (live.role_display || '') ||
     draft.value.model !== (live.model || '') ||
     draft.value.servers_text !== (live.servers || []).join('\n') ||
     draft.value.skills_text !== (live.skills || []).join('\n') ||
-    draft.value.server_overrides_text !==
-      JSON.stringify(live.server_overrides || {}, null, 2)
+    draftOverrides !== liveOverrides
   )
 })
 
@@ -176,19 +189,26 @@ function _buildPatch() {
   if (JSON.stringify([...skills].sort()) !== JSON.stringify(liveSkills)) {
     patch.skills = skills
   }
-  if (draft.value.server_overrides_text.trim()) {
-    let parsed
+  // server_overrides has a "clear" intent that must round-trip — emptying
+  // the textarea should remove the overrides, not be a no-op. Treat empty
+  // or all-whitespace as `{}` so the same code path catches both "set to
+  // empty" and "edit a value".
+  const overridesText = draft.value.server_overrides_text.trim()
+  let parsedOverrides
+  if (overridesText) {
     try {
-      parsed = JSON.parse(draft.value.server_overrides_text)
+      parsedOverrides = JSON.parse(overridesText)
     } catch {
       throw new Error('server_overrides must be valid JSON')
     }
-    if (
-      JSON.stringify(parsed) !==
-      JSON.stringify(live.server_overrides || {})
-    ) {
-      patch.server_overrides = parsed
-    }
+  } else {
+    parsedOverrides = {}
+  }
+  if (
+    JSON.stringify(parsedOverrides) !==
+    JSON.stringify(live.server_overrides || {})
+  ) {
+    patch.server_overrides = parsedOverrides
   }
   return patch
 }

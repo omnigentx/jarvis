@@ -96,9 +96,15 @@ async def list_sessions():
     Used by the Settings → Running templates dropdown so the UI never has to
     pull the full template dict for every team just to render a selector.
     """
+    # Narrow the catch to ImportError so we degrade gracefully only when the
+    # fast_agent package is genuinely absent (e.g. a stripped test harness).
+    # Any runtime failure inside list_team_sessions() (DB down, corrupted
+    # row, etc.) must propagate as a 500 — silently returning an empty list
+    # would render the Settings dropdown blank with no signal that
+    # enumeration failed.
     try:
         from fast_agent.spawn.team_spawner import list_team_sessions
-    except Exception as exc:
+    except ImportError as exc:
         logger.warning("[team-template] team_spawner unavailable: %s", exc)
         return {"sessions": []}
     out = []
