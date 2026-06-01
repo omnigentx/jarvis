@@ -27,6 +27,7 @@
     "marked-highlight": "^2.2.4",
     "mermaid": "^11.15.0",
     "pinia": "^3.0.4",
+    "v-code-diff": "^1.13.1",
     "vue": "^3.5.34",
     "vue-codemirror": "^6.1.1",
     "vue-router": "^5.0.7",

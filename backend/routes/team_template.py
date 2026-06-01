@@ -86,6 +86,34 @@ class ResetBody(BaseModel):
 
 
 @router.get(
+    "",
+    dependencies=[Depends(verify_api_key)],
+)
+async def list_sessions():
+    """Lightweight enumeration of every team session.
+
+    Returns ``{"sessions": [{session_id, team_name, template_name, agents_count}]}``.
+    Used by the Settings → Running templates dropdown so the UI never has to
+    pull the full template dict for every team just to render a selector.
+    """
+    try:
+        from fast_agent.spawn.team_spawner import list_team_sessions
+    except Exception as exc:
+        logger.warning("[team-template] team_spawner unavailable: %s", exc)
+        return {"sessions": []}
+    out = []
+    for sess in list_team_sessions():
+        template = sess.get("template") or {}
+        out.append({
+            "session_id": sess.get("session_id"),
+            "team_name": sess.get("team_name"),
+            "template_name": template.get("name"),
+            "agents_count": len(sess.get("agents") or {}),
+        })
+    return {"sessions": out}
+
+
+@router.get(
     "/{session_id}/template",
     dependencies=[Depends(verify_api_key)],
 )
