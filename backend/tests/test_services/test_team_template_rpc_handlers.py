@@ -240,6 +240,110 @@ class TestRunningSurface:
         out = asyncio.run(_running_reload(session_id="ses-1", roles=[]))
         assert out["status"] == 400
 
+    def test_yaml_diff_path_traversal_blocked(
+        self, session_factory, fake_store, factory_dir
+    ):
+        # The template ``name`` is LLM-writable and NOT structurally validated.
+        # A traversal name must be refused (400), not used to open() a file
+        # outside team_templates/.
+        from services.team_template_rpc_handlers import _running_yaml_diff
+
+        fake_store["ses-1"]["template"]["name"] = "../../secrets"
+        out = _running_yaml_diff(session_id="ses-1")
+        assert out["status"] == 400
+
+    def test_reset_role_path_traversal_blocked(
+        self, session_factory, fake_store, factory_dir
+    ):
+        from services.team_template_rpc_handlers import _running_reset_role
+
+        fake_store["ses-1"]["template"]["name"] = "../../secrets"
+        out = _running_reset_role(session_id="ses-1", role="qe")
+        assert out["status"] == 400
+
+    def test_yaml_diff_non_dict_team_does_not_crash(
+        self, session_factory, fake_store, factory_dir
+    ):
+        # ``team:`` as a list used to crash with AttributeError → 500. It must
+        # now fall back to the top-level ``roles:`` and diff normally.
+        (factory_dir / "listy.yaml").write_text(
+            "team:\n  - pm\n  - dev\n"
+            "roles:\n"
+            "  qe:\n"
+            "    servers: [filesystem]\n",
+            encoding="utf-8",
+        )
+        fake_store["ses-1"]["template"]["name"] = "listy"
+        from services.team_template_rpc_handlers import _running_yaml_diff
+
+        out = _running_yaml_diff(session_id="ses-1")
+        assert "error" not in out
+        assert "qe" in out["per_role"]
+
+    def test_yaml_diff_top_level_list_yaml_400(
+        self, session_factory, fake_store, factory_dir
+    ):
+        # A top-level non-mapping yaml is rejected cleanly (400), not a 500.
+        (factory_dir / "scalar.yaml").write_text("- a\n- b\n", encoding="utf-8")
+        fake_store["ses-1"]["template"]["name"] = "scalar"
+        from services.team_template_rpc_handlers import _running_yaml_diff
+
+        out = _running_yaml_diff(session_id="ses-1")
+        assert out["status"] == 400
+
+
+# ── load_factory_roles helper (shared shape-guard, SSoT) ──────────────────
+
+
+class TestLoadFactoryRoles:
+    def test_top_level_roles(self, factory_dir):
+        from services.team_template_factory_service import load_factory_roles
+
+        roles = load_factory_roles(factory_dir / "agile_team.yaml")
+        assert "qe" in roles
+
+    def test_nested_team_roles(self, factory_dir):
+        from services.team_template_factory_service import load_factory_roles
+
+        (factory_dir / "nested.yaml").write_text(
+            "team:\n  name: nested\n  roles:\n    pm:\n      instruction: hi\n",
+            encoding="utf-8",
+        )
+        roles = load_factory_roles(factory_dir / "nested.yaml")
+        assert "pm" in roles
+
+    def test_empty_team_falls_back_to_top_level(self, factory_dir):
+        # An empty ``team: {}`` is unusable → must fall back to top-level
+        # ``roles:`` (not blank out the diff). Regression for the semantics
+        # gap flagged in PR #61 review.
+        from services.team_template_factory_service import load_factory_roles
+
+        (factory_dir / "emptyteam.yaml").write_text(
+            "team: {}\nroles:\n  qe:\n    instruction: top-level\n",
+            encoding="utf-8",
+        )
+        roles = load_factory_roles(factory_dir / "emptyteam.yaml")
+        assert "qe" in roles
+
+    def test_non_dict_team_falls_back_to_top_level(self, factory_dir):
+        from services.team_template_factory_service import load_factory_roles
+
+        (factory_dir / "listteam.yaml").write_text(
+            "team:\n  - pm\nroles:\n  qe: {}\n", encoding="utf-8",
+        )
+        roles = load_factory_roles(factory_dir / "listteam.yaml")
+        assert "qe" in roles
+
+    def test_top_level_list_raises_validation(self, factory_dir):
+        from services.team_template_factory_service import (
+            ValidationError,
+            load_factory_roles,
+        )
+
+        (factory_dir / "scalar.yaml").write_text("- a\n- b\n", encoding="utf-8")
+        with pytest.raises(ValidationError):
+            load_factory_roles(factory_dir / "scalar.yaml")
+
 
 # ── Registration ──────────────────────────────────────────────────────────
 

@@ -372,6 +372,16 @@ class TestYamlDiff:
         )
         assert r.status_code == 404
 
+    def test_path_traversal_name_400(self, client, fake_store):
+        # Real _resolve_yaml_for_session (NOT monkeypatched): a traversal
+        # template name must be refused at the HTTP layer with 400, never
+        # used to open() a file outside team_templates/.
+        fake_store["ses-1"]["template"]["name"] = "../../secrets"
+        r = client.get(
+            "/api/team-sessions/ses-1/template/yaml-diff", headers=_h(),
+        )
+        assert r.status_code == 400
+
 
 class TestResetRole:
     def test_reset_writes_audit_and_replaces_role(self, client, fake_store, tmp_path, monkeypatch):
@@ -404,3 +414,13 @@ class TestResetRole:
             "/api/team-sessions/ses-1/template/history?role=qe", headers=_h(),
         ).json()["rows"]
         assert any(row["source"] == "yaml-reset" for row in rows)
+
+    def test_path_traversal_name_400(self, client, fake_store):
+        # Reset must reject a traversal template name with 400 (same guard as
+        # yaml-diff) — the name is the only attacker-influenced input here.
+        fake_store["ses-1"]["template"]["name"] = "../../secrets"
+        r = client.post(
+            "/api/team-sessions/ses-1/template/reset/qe",
+            json={"comment": "x"}, headers=_h(),
+        )
+        assert r.status_code == 400

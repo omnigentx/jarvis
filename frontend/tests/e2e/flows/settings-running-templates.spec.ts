@@ -143,3 +143,43 @@ test('happy path: pick session → edit role → save → audit appears → roll
   // enforce strict consumption either.
   expect(backend.unexpected).toEqual([])
 })
+
+test('switching role with unsaved edits prompts to discard (bug_006)', async ({
+  page,
+}) => {
+  await seedApiKey(page)
+  await mockBackend(page, [NOISE, join(FIXTURES, 'settings_running_templates.yaml')])
+
+  await page.goto('/settings')
+  await page.getByRole('button', { name: 'Running Templates', exact: true }).click()
+  await expect(page.locator('.role-item.active').filter({ hasText: 'PM' })).toBeVisible()
+
+  const instructionEditor = page.locator(
+    'label:has(span.fl:text("Instruction")) textarea',
+  )
+  await expect(instructionEditor).toHaveValue('You are the orchestrator.')
+
+  // Make the role dirty, then try to switch to QE.
+  await instructionEditor.fill('half-typed edit, not saved')
+  await expect(page.locator('.pill.dirty')).toBeVisible()
+  await page.locator('.role-item').filter({ hasText: 'QE' }).click()
+
+  // A confirm dialog must appear — switching would otherwise silently
+  // discard the edit.
+  const modalCard = page.locator('.cm-card')
+  await expect(
+    modalCard.getByRole('heading', { name: /discard unsaved changes/i }),
+  ).toBeVisible()
+
+  // Cancel → stay on PM, edit + dirty pill preserved.
+  await modalCard.locator('.cm-btn-cancel').click()
+  await expect(page.locator('.role-item.active').filter({ hasText: 'PM' })).toBeVisible()
+  await expect(instructionEditor).toHaveValue('half-typed edit, not saved')
+  await expect(page.locator('.pill.dirty')).toBeVisible()
+
+  // Try again, this time confirm → switch to QE, edit discarded.
+  await page.locator('.role-item').filter({ hasText: 'QE' }).click()
+  await modalCard.getByRole('button', { name: /discard & switch/i }).click()
+  await expect(page.locator('.role-item.active').filter({ hasText: 'QE' })).toBeVisible()
+  await expect(instructionEditor).toHaveValue('You are QE.')
+})

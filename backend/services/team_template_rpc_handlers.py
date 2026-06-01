@@ -47,13 +47,13 @@ def _session_scope():
 def _factory_yaml_path_for(name: str) -> Path:
     """Resolve the yaml path the running template was instantiated from.
 
-    Mirrors ``_resolve_yaml_for_session`` in ``routes/team_template.py``: maps
-    e.g. ``agile-team`` → ``agile_team.yaml``. Caller is the reset/diff handler.
+    Delegates to ``factory_svc.resolve_factory_path`` so the path-traversal
+    guard applies — ``name`` comes from the (LLM-writable, unvalidated)
+    template ``name`` field, so raw interpolation here would let it escape
+    ``team_templates/``. Raises ``factory_svc.PathTraversalError`` on a bad
+    name; callers translate it to a 400.
     """
-    candidate = factory_svc.factory_dir() / f"{(name or 'agile-team').replace('-', '_')}.yaml"
-    if not candidate.exists():
-        candidate = factory_svc.factory_dir() / f"{name}.yaml"
-    return candidate
+    return factory_svc.resolve_factory_path(name)
 
 
 # ── factory yaml (file-level) ──────────────────────────────────────────────
@@ -180,7 +180,10 @@ def _running_reset_role(
         template = svc.get_template(session_id)
     except svc.NotFoundError as exc:
         return _err(str(exc), 404)
-    yaml_path = _factory_yaml_path_for(template.get("name") or "agile-team")
+    try:
+        yaml_path = _factory_yaml_path_for(template.get("name") or "agile-team")
+    except factory_svc.PathTraversalError as exc:
+        return _err(str(exc), 400)
     db = _session_scope()
     try:
         try:
@@ -207,21 +210,24 @@ def _running_reset_role(
 
 
 def _running_yaml_diff(*, session_id: str) -> dict:
-    import yaml as yaml_lib
-
     try:
         current_template = svc.get_template(session_id)
     except svc.NotFoundError as exc:
         return _err(str(exc), 404)
 
-    yaml_path = _factory_yaml_path_for(current_template.get("name") or "agile-team")
+    try:
+        yaml_path = _factory_yaml_path_for(current_template.get("name") or "agile-team")
+    except factory_svc.PathTraversalError as exc:
+        return _err(str(exc), 400)
     if not yaml_path.exists():
         return _err(f"factory yaml not found at {yaml_path}", 404)
 
-    with yaml_path.open(encoding="utf-8") as f:
-        yaml_doc = yaml_lib.safe_load(f) or {}
-    yaml_template = yaml_doc.get("team") or yaml_doc
-    yaml_roles = yaml_template.get("roles") or {}
+    # Open + unwrap roles via the shared helper so the shape-guard can't drift
+    # from the REST route's copy. ValidationError = non-mapping yaml → 400.
+    try:
+        yaml_roles = factory_svc.load_factory_roles(yaml_path)
+    except factory_svc.ValidationError as exc:
+        return _err(str(exc), 400)
     current_roles = current_template.get("roles") or {}
 
     per_role: dict[str, dict] = {}
