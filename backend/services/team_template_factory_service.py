@@ -85,6 +85,26 @@ def _resolve(name: str) -> Path:
     return candidate
 
 
+def resolve_factory_path(name: str) -> Path:
+    """Map a running template's ``name`` to its factory yaml path — GUARDED.
+
+    Tries the hyphen→underscore form first (``agile-team`` → ``agile_team.yaml``),
+    then the literal name. BOTH forms go through :func:`_resolve`, so a
+    malicious template name (e.g. ``../../secrets`` — the ``name`` field is
+    LLM-writable via ``team_template_write_factory`` and is NOT structurally
+    validated) is refused with ``PathTraversalError`` instead of being opened.
+
+    Returns the underscored candidate when it exists, else the literal-name
+    candidate (existence is the caller's concern). Raises ``PathTraversalError``
+    if neither form is a safe name.
+    """
+    underscored = (name or "agile-team").replace("-", "_")
+    candidate = _resolve(underscored)
+    if not candidate.exists() and name and name != underscored:
+        candidate = _resolve(name)
+    return candidate
+
+
 def list_factory_templates() -> list[dict[str, Any]]:
     """Return every yaml in ``team_templates/`` with size + parsed display name.
 

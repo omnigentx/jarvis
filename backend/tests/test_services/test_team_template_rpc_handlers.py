@@ -240,6 +240,57 @@ class TestRunningSurface:
         out = asyncio.run(_running_reload(session_id="ses-1", roles=[]))
         assert out["status"] == 400
 
+    def test_yaml_diff_path_traversal_blocked(
+        self, session_factory, fake_store, factory_dir
+    ):
+        # The template ``name`` is LLM-writable and NOT structurally validated.
+        # A traversal name must be refused (400), not used to open() a file
+        # outside team_templates/.
+        from services.team_template_rpc_handlers import _running_yaml_diff
+
+        fake_store["ses-1"]["template"]["name"] = "../../secrets"
+        out = _running_yaml_diff(session_id="ses-1")
+        assert out["status"] == 400
+
+    def test_reset_role_path_traversal_blocked(
+        self, session_factory, fake_store, factory_dir
+    ):
+        from services.team_template_rpc_handlers import _running_reset_role
+
+        fake_store["ses-1"]["template"]["name"] = "../../secrets"
+        out = _running_reset_role(session_id="ses-1", role="qe")
+        assert out["status"] == 400
+
+    def test_yaml_diff_non_dict_team_does_not_crash(
+        self, session_factory, fake_store, factory_dir
+    ):
+        # ``team:`` as a list used to crash with AttributeError → 500. It must
+        # now fall back to the top-level ``roles:`` and diff normally.
+        (factory_dir / "listy.yaml").write_text(
+            "team:\n  - pm\n  - dev\n"
+            "roles:\n"
+            "  qe:\n"
+            "    servers: [filesystem]\n",
+            encoding="utf-8",
+        )
+        fake_store["ses-1"]["template"]["name"] = "listy"
+        from services.team_template_rpc_handlers import _running_yaml_diff
+
+        out = _running_yaml_diff(session_id="ses-1")
+        assert "error" not in out
+        assert "qe" in out["per_role"]
+
+    def test_yaml_diff_top_level_list_yaml_400(
+        self, session_factory, fake_store, factory_dir
+    ):
+        # A top-level non-mapping yaml is rejected cleanly (400), not a 500.
+        (factory_dir / "scalar.yaml").write_text("- a\n- b\n", encoding="utf-8")
+        fake_store["ses-1"]["template"]["name"] = "scalar"
+        from services.team_template_rpc_handlers import _running_yaml_diff
+
+        out = _running_yaml_diff(session_id="ses-1")
+        assert out["status"] == 400
+
 
 # ── Registration ──────────────────────────────────────────────────────────
 

@@ -83,12 +83,22 @@ const dirty = computed(() => {
     // Unparseable text is definitively dirty — Save will surface the error.
     draftOverrides = draft.value.server_overrides_text
   }
+  // servers/skills are unordered sets server-side (compute_role_diff), and
+  // _buildPatch sorts before diffing — so a pure reorder produces an EMPTY
+  // patch. Mirror that normalization here, else the UNSAVED pill lights up on
+  // a reorder but Save reports "No changes" and the pill never clears (stuck).
+  const serversDirty =
+    JSON.stringify(_splitLines(draft.value.servers_text).sort()) !==
+    JSON.stringify([...(live.servers || [])].sort())
+  const skillsDirty =
+    JSON.stringify(_splitLines(draft.value.skills_text).sort()) !==
+    JSON.stringify([...(live.skills || [])].sort())
   return (
     draft.value.instruction !== (live.instruction || '') ||
     draft.value.role_display !== (live.role_display || '') ||
     draft.value.model !== (live.model || '') ||
-    draft.value.servers_text !== (live.servers || []).join('\n') ||
-    draft.value.skills_text !== (live.skills || []).join('\n') ||
+    serversDirty ||
+    skillsDirty ||
     draftOverrides !== liveOverrides
   )
 })
@@ -281,26 +291,43 @@ async function onResetModalConfirm(mode) {
   successMsg.value = ''
   try {
     const r = await _doResetCall()
+    // From here the DB write has landed. A reload failure below is a PARTIAL
+    // success — catch it locally so we still refetch and converge the UI to
+    // the new DB truth. If we let it bubble to the outer catch (old behaviour),
+    // the UI kept showing pre-reset values; the user would re-edit them and
+    // Save, silently overwriting the just-synced fields.
     let respawned = 0
+    let reloadError = null
     if (mode === 'sync-and-reload') {
       reloading.value = true
       try {
         const rl = await _doReloadCall()
         respawned = Object.values(rl.results || {}).flat().length
+      } catch (rlErr) {
+        reloadError = rlErr
       } finally {
         reloading.value = false
       }
     }
     const fields = r.audit_ids?.length || 0
-    successMsg.value =
-      mode === 'sync-and-reload'
-        ? `Reset · ${fields} field(s) synced from yaml · ${respawned} agent(s) respawned.`
-        : `Reset · ${fields} field(s) synced from yaml. Running agents will pick up the change on next restart — click "Force reload" to apply now.`
     resetModal.value = { visible: false, busy: false, mode: null }
     await loadTemplate(activeSessionId.value)
+    if (reloadError) {
+      error.value =
+        `Synced ${fields} field(s) to DB, but force-reload failed — agents are ` +
+        `still running the old template: ${_friendly(reloadError)}`
+    } else {
+      successMsg.value =
+        mode === 'sync-and-reload'
+          ? `Reset · ${fields} field(s) synced from yaml · ${respawned} agent(s) respawned.`
+          : `Reset · ${fields} field(s) synced from yaml. Running agents will pick up the change on next restart — click "Force reload" to apply now.`
+    }
   } catch (err) {
+    // Reset itself failed (or the refetch threw). Still refetch so the UI
+    // reflects whatever the DB actually holds rather than a stale draft.
     error.value = _friendly(err)
     resetModal.value = { ...resetModal.value, busy: false }
+    loadTemplate(activeSessionId.value).catch(() => {})
   } finally {
     resetting.value = false
   }
@@ -309,6 +336,40 @@ async function onResetModalConfirm(mode) {
 function onResetModalCancel() {
   if (resetModal.value.busy) return
   resetModal.value = { visible: false, busy: false, mode: null }
+}
+
+// Switching role/session or refreshing re-seeds the draft from live data,
+// silently discarding in-progress edits. Confirm first (mirrors
+// SettingsYaml.selectFile) so a glance at a sibling role can't lose work.
+async function _confirmDiscardIfDirty() {
+  if (!dirty.value) return true
+  return await confirm({
+    title: 'Discard unsaved changes',
+    message: `You have unsaved edits to "${activeRole.value}". Discard and switch?`,
+    confirmText: 'Discard & Switch',
+    variant: 'warning',
+  })
+}
+
+async function onSelectRole(role) {
+  if (role === activeRole.value) return
+  if (!(await _confirmDiscardIfDirty())) return
+  activeRole.value = role
+}
+
+async function onSelectSession(evt) {
+  const sid = evt.target.value
+  if (sid === activeSessionId.value) return
+  if (!(await _confirmDiscardIfDirty())) {
+    evt.target.value = activeSessionId.value // revert the <select> on cancel
+    return
+  }
+  activeSessionId.value = sid
+}
+
+async function onRefresh() {
+  if (!(await _confirmDiscardIfDirty())) return
+  loadTemplate(activeSessionId.value)
 }
 
 function onShowDiff() {
@@ -462,7 +523,7 @@ onMounted(() => loadSessions())
     <!-- Session selector -->
     <div class="session-bar">
       <label class="session-label">Team session</label>
-      <select v-model="activeSessionId" class="session-select" :disabled="!sessions.length">
+      <select :value="activeSessionId" @change="onSelectSession" class="session-select" :disabled="!sessions.length">
         <option v-if="!sessions.length" :value="null">No active team sessions</option>
         <option v-for="s in sessions" :key="s.session_id" :value="s.session_id">
           {{ s.team_name }} · {{ s.session_id.slice(0, 8) }} · {{ s.agents_count }} agent{{ s.agents_count === 1 ? '' : 's' }}
@@ -471,7 +532,7 @@ onMounted(() => loadSessions())
       <span v-if="yamlDiff" class="drift-pill" :class="{ insync: yamlDiff.in_sync }">
         {{ yamlDiff.in_sync ? '✓ in sync with yaml' : `△ ${yamlDiff.diverged_count} role(s) diverged from yaml` }}
       </span>
-      <button class="btn ghost" type="button" :disabled="loading" @click="loadTemplate(activeSessionId)">
+      <button class="btn ghost" type="button" :disabled="loading" @click="onRefresh">
         Refresh
       </button>
     </div>
@@ -486,7 +547,7 @@ onMounted(() => loadSessions())
           type="button"
           class="role-item"
           :class="{ active: activeRole === role }"
-          @click="activeRole = role"
+          @click="onSelectRole(role)"
         >
           <span class="role-name">{{ cfg.role_display || role }}</span>
           <span class="role-key"><code>{{ role }}</code></span>
@@ -704,7 +765,7 @@ onMounted(() => loadSessions())
             <h3 class="reset-title">Reset <code>{{ activeRole }}</code> to factory yaml?</h3>
             <p class="reset-body">
               Pulls every editable field of <strong>{{ activeRole }}</strong> from
-              <code>team_templates/{{ template?.name?.replace('-', '_') || 'agile_team' }}.yaml</code>
+              <code>team_templates/{{ template?.name?.replaceAll('-', '_') || 'agile_team' }}.yaml</code>
               into this team's DB. Other roles are untouched and audited.
             </p>
             <p class="reset-body muted">

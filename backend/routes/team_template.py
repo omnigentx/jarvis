@@ -31,6 +31,7 @@ from sqlalchemy.orm import Session
 
 from core.auth import verify_api_key
 from core.database import get_db
+from services import team_template_factory_service as factory_svc
 from services import team_template_service as svc
 from services.team_reload import reload_roles
 
@@ -38,23 +39,17 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/team-sessions", tags=["team-template"])
 
-# Yaml templates dir — used by /reset/{role} to look up the factory default.
-_YAML_DIR = Path(__file__).resolve().parent.parent / "team_templates"
-
 
 def _resolve_yaml_for_session(session_id: str) -> Path:
     """Locate the yaml template for a team session.
 
     Reads ``team_sessions.template.name`` to find which yaml the team was
-    created from (e.g. 'agile-team' → 'agile_team.yaml').
+    created from (e.g. 'agile-team' → 'agile_team.yaml'). Delegates to the
+    guarded ``factory_svc.resolve_factory_path`` so a malicious template name
+    can't escape ``team_templates/`` (raises ``PathTraversalError``).
     """
     template = svc.get_template(session_id)
-    name = template.get("name") or "agile-team"
-    candidate = _YAML_DIR / f"{name.replace('-', '_')}.yaml"
-    if not candidate.exists():
-        # Fallback: try literal name
-        candidate = _YAML_DIR / f"{name}.yaml"
-    return candidate
+    return factory_svc.resolve_factory_path(template.get("name") or "agile-team")
 
 
 class PatchRoleBody(BaseModel):
@@ -241,7 +236,10 @@ async def reset_role(
     Writes audit rows for every field that diverged. Other roles untouched.
     """
     edited_by = _principal(request)
-    yaml_path = _resolve_yaml_for_session(session_id)
+    try:
+        yaml_path = _resolve_yaml_for_session(session_id)
+    except factory_svc.PathTraversalError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     try:
         result = svc.reset_role_to_yaml(
             db,
@@ -284,7 +282,10 @@ async def yaml_diff(session_id: str):
     except svc.NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
-    yaml_path = _resolve_yaml_for_session(session_id)
+    try:
+        yaml_path = _resolve_yaml_for_session(session_id)
+    except factory_svc.PathTraversalError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     if not yaml_path.exists():
         raise HTTPException(
             status_code=404,
@@ -293,7 +294,16 @@ async def yaml_diff(session_id: str):
 
     with yaml_path.open(encoding="utf-8") as f:
         yaml_doc = yaml_lib.safe_load(f) or {}
-    yaml_template = yaml_doc.get("team") or yaml_doc
+    # Guard the shape before calling .get — a top-level list/scalar yaml, or a
+    # truthy non-dict ``team:`` (``team: [pm, dev]``), would otherwise raise
+    # AttributeError → unhandled 500.
+    if not isinstance(yaml_doc, dict):
+        raise HTTPException(
+            status_code=400,
+            detail=f"factory yaml at {yaml_path} is not a mapping",
+        )
+    team = yaml_doc.get("team")
+    yaml_template = team if isinstance(team, dict) else yaml_doc
     yaml_roles = yaml_template.get("roles") or {}
     current_roles = current_template.get("roles") or {}
 

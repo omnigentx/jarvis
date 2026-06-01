@@ -283,7 +283,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
           </svg>
           <code class="name">{{ f.filename }}</code>
           <span v-if="f.is_secret_file" class="lock-icon" title="Contains secrets">🔒</span>
-          <span v-if="activeName === f.name && dirty" class="dirty-dot">●</span>
+          <span v-if="activeName === f.name && activeKind === f.kind && dirty" class="dirty-dot">●</span>
           <span v-if="!f.exists" class="new-tag">NEW</span>
         </button>
       </template>
