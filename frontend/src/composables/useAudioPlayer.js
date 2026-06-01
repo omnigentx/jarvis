@@ -22,6 +22,10 @@ let _audio = null
 let _progressInterval = null
 let _broadcastChannel = null
 const BROADCAST_CHANNEL_NAME = 'jarvis-audio'
+// Network-error retry budget per playback. Reset on each successful play.
+// Without a cap, a permanently-failing URL retries every 2s forever.
+let _networkRetries = 0
+const MAX_NETWORK_RETRIES = 3
 
 export function useAudioPlayer() {
   const store = useAudioPlayerStore()
@@ -128,6 +132,7 @@ export function useAudioPlayer() {
     _audio.src = fullUrl
     _audio.playbackRate = store.playbackSpeed
     _audio.play().then(() => {
+      _networkRetries = 0 // fresh successful start → reset the retry budget
       store.setPlayingState(true)
       _setupMediaSession()
       _startProgressSaver()
@@ -140,6 +145,43 @@ export function useAudioPlayer() {
         store.isPaused = true
       }
     })
+  }
+
+  // Probe whether a story's TTS audio is still being generated server-side.
+  // A premature 'ended' on a live stream (buffer underrun) is NOT a real
+  // end-of-chapter — the backend signals in-progress generation via the
+  // X-TTS-Generating header on a HEAD. Returns true = still generating.
+  async function _isStillGenerating(url) {
+    try {
+      const res = await fetch(url, { method: 'HEAD', credentials: 'include', cache: 'no-store' })
+      return res.headers.get('X-TTS-Generating') === '1'
+    } catch (_) {
+      // Network blip — assume NOT generating so we don't loop forever; the
+      // 'ended' path's real-end branch will then advance/stop normally.
+      return false
+    }
+  }
+
+  // A live-stream chapter underran (played all bytes written so far, but the
+  // server is still generating). Resume from the current position once more
+  // bytes — eventually the full file — are available, WITHOUT replaying from
+  // the start. Re-probes until generation completes.
+  async function _resumeAfterUnderrun() {
+    const url = store.currentAudioUrl
+    const resumeAt = store.currentTime
+    store.setBuffering(true)
+    // Poll HEAD every 500ms until generation finishes (≈60s ceiling), letting
+    // the next chunks land before we reload.
+    for (let i = 0; i < 120; i++) {
+      await new Promise(r => setTimeout(r, 500))
+      if (store.currentAudioUrl !== url) return // user moved on (next/prev/close)
+      if (!(await _isStillGenerating(url))) break
+    }
+    if (store.currentAudioUrl !== url) return
+    // Reload the now-complete file and seek back to where we left off, so the
+    // user hears the continuation — not a replay from the start.
+    store.pendingSeekPosition = resumeAt
+    _playUrl(url)
   }
 
   // ─── Core: Play notifTts URL (shares _audio singleton, doesn't touch story store state) ───
@@ -222,6 +264,24 @@ export function useAudioPlayer() {
         store.onNotifTtsEnded()
         return
       }
+      // A story chapter can fire 'ended' prematurely while its TTS is still
+      // streaming live — the player simply ran out of buffered bytes (the
+      // ~11s "plays then jumps to next chapter" bug). Probe the server: if
+      // generation is still in progress, this is an underrun → resume from
+      // here, DON'T advance. Only a true end (generation finished) advances.
+      if (store.playbackType === 'story' && store.currentAudioUrl) {
+        _isStillGenerating(store.currentAudioUrl).then(generating => {
+          if (generating && store.currentAudioUrl) {
+            _resumeAfterUnderrun()
+          } else {
+            store.isPlaying = false
+            store.isPaused = false
+            store.saveProgress()
+            nextTick(() => store.nextChapter())
+          }
+        })
+        return
+      }
       store.isPlaying = false
       store.isPaused = false
       store.saveProgress()
@@ -239,13 +299,20 @@ export function useAudioPlayer() {
       const err = audio.error
       console.error('[AudioPlayer] Audio error:', err?.code, err?.message)
       store.setBuffering(false)
-      // Retry once after 2s for network errors
-      if (err?.code === MediaError.MEDIA_ERR_NETWORK) {
+      // Retry on network errors, but cap it — a permanently-broken URL must
+      // not retry every 2s forever. After the budget is spent, surface the
+      // failure (pause) instead of silently looping.
+      if (err?.code === MediaError.MEDIA_ERR_NETWORK && _networkRetries < MAX_NETWORK_RETRIES) {
+        _networkRetries++
         setTimeout(() => {
           if (store.currentAudioUrl) {
             _playUrl(store.currentAudioUrl)
           }
         }, 2000)
+      } else if (err?.code === MediaError.MEDIA_ERR_NETWORK) {
+        console.error('[AudioPlayer] Network retries exhausted — stopping playback')
+        store.isPlaying = false
+        store.isPaused = true
       }
     })
   }

@@ -10,7 +10,7 @@
  */
 import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
-import { apiFetch } from '../api'
+import { apiFetch } from '../api.js'
 
 const STORAGE_KEY = 'jarvis_audio_progress'
 const SPEED_STORAGE_KEY = 'jarvis_audio_speed'
@@ -137,6 +137,52 @@ export const useAudioPlayerStore = defineStore('audioPlayer', () => {
       isBuffering.value = false
       console.error('[AudioStore] playChapter error:', err)
       throw err
+    }
+  }
+
+  /**
+   * Play a one-off chat-TTS reply through the singleton element.
+   *
+   * Unlike playChapter this is ephemeral: no playlist, no chapter nav, and
+   * no progress persistence (currentRequestId stays null so the save timer
+   * is never armed and saveProgress() no-ops). It still funnels through the
+   * one audio element so a reply can never overlap a story.
+   *
+   * @param {string} audioUrl - /api/tts/{id} url from the chat 'done' event
+   */
+  function playChatTts(audioUrl) {
+    playbackType.value = 'chatTts'
+    currentStoryId.value = null
+    currentStoryTitle.value = 'Chat'
+    currentChapterFile.value = null
+    chapterFiles.value = []
+    currentIndex.value = -1
+    currentRequestId.value = null
+    currentTime.value = 0
+    duration.value = 0
+    isBuffering.value = true
+    isMiniPlayerVisible.value = true
+    // Setting the url triggers the useAudioPlayer watcher → playback.
+    currentAudioUrl.value = audioUrl
+  }
+
+  /**
+   * Single entry point for audio coming from a chat 'done' event — the one
+   * place that decides story vs plain reply, shared by every chat surface.
+   *
+   * Story replies (event.story present) become full story playback: the user
+   * explicitly asked to listen, so they play regardless of the read-aloud
+   * toggle. Plain replies are chat-TTS, gated by that toggle.
+   *
+   * @param {{audio?: string, story?: object}} event
+   * @param {boolean} ttsEnabled - user's "read replies aloud" preference
+   */
+  function playFromChat(event, ttsEnabled) {
+    const s = event?.story
+    if (s && s.story_id && s.chapter_file) {
+      playChapter(s.story_id, s.story_title || s.story_id, s.chapter_file, s.chapter_files || [])
+    } else if (ttsEnabled && event?.audio) {
+      playChatTts(event.audio)
     }
   }
 
@@ -268,7 +314,12 @@ export const useAudioPlayerStore = defineStore('audioPlayer', () => {
   function updateDuration(dur) {
     duration.value = dur
     isBuffering.value = false
-    generationStatus.value = { ...generationStatus.value, [currentChapterFile.value]: 'ready' }
+    // NOTE: do NOT mark the chapter 'ready' here. While a chapter streams
+    // live, the browser reports a duration from the bytes received so far —
+    // marking 'ready' on that would flip the chapter-list badge to green
+    // before generation actually finishes. The authoritative 'ready' signal
+    // is the pregen SSE 'chapter_ready' event (usePregenStream) / the play
+    // API's status:'ready'. Leave generationStatus untouched here.
   }
 
   function setPlayingState(playing) {
@@ -564,6 +615,8 @@ export const useAudioPlayerStore = defineStore('audioPlayer', () => {
 
     // Actions
     playChapter,
+    playChatTts,
+    playFromChat,
     nextChapter,
     prevChapter,
     togglePlayPause,

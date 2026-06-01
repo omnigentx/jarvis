@@ -1,6 +1,7 @@
 import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
 import { apiFetch } from '../api'
+import { useAudioPlayerStore } from './audioPlayer'
 
 const META_STORAGE_KEY = 'jarvis_chat_meta'
 const TTS_STORAGE_KEY = 'jarvis_tts_enabled'
@@ -13,8 +14,13 @@ export const useChatStore = defineStore('chat', () => {
   const isStreaming = ref(false)
   const isLoadingHistory = ref(false)
   const ttsEnabled = ref(localStorage.getItem(TTS_STORAGE_KEY) === 'true')
-  const ttsPlaying = ref(false)
-  const _ttsAudioRef = ref(null) // internal ref, set by ChatView
+  // Chat TTS plays through the singleton audio player (single source of
+  // truth) — ttsPlaying just mirrors it so chat UI reacts without owning
+  // an audio element of its own. See audioPlayer.playFromChat().
+  const ttsPlaying = computed(() => {
+    const audio = useAudioPlayerStore()
+    return audio.playbackType === 'chatTts' && audio.isPlaying
+  })
 
   // --- Computed ---
   const activeConversation = computed(() =>
@@ -147,10 +153,17 @@ export const useChatStore = defineStore('chat', () => {
   // --- Actions ---
   function createConversation(agentName) {
     const id = crypto.randomUUID()
+    // Resolve the agent ONCE, then make it the single source of truth for both
+    // the conversation record AND the active-agent header. Previously only
+    // conv.agentName got the 'Jarvis' fallback while activeAgentName was left
+    // as-is — so if you hit "+" before the agent roster finished loading
+    // (activeAgentName still null), the new conversation belonged to Jarvis but
+    // the header read the null activeAgentName and rendered "No Agent".
+    const resolvedAgent = agentName || activeAgentName.value || 'Jarvis'
     const conv = {
       id,
       title: 'New Conversation',
-      agentName: agentName || activeAgentName.value || 'Jarvis',
+      agentName: resolvedAgent,
       backendConversationId: null, // Set by backend on first response
       messages: [],
       createdAt: Date.now(),
@@ -158,6 +171,7 @@ export const useChatStore = defineStore('chat', () => {
     }
     conversations.value.unshift(conv)
     activeConversationId.value = id
+    activeAgentName.value = resolvedAgent
     _saveMeta()
     return conv
   }
@@ -190,7 +204,15 @@ export const useChatStore = defineStore('chat', () => {
 
     conversations.value = conversations.value.filter(c => c.id !== id)
     if (activeConversationId.value === id) {
-      activeConversationId.value = conversations.value[0]?.id || null
+      // Re-point to the next conversation AND sync the active agent to it.
+      // Previously only activeConversationId moved; activeAgentName kept the
+      // deleted conversation's agent (or went stale), so the two truths
+      // diverged — and deleting the LAST conversation left activeConversationId
+      // null while the header still read a now-orphaned agent. Keep both in
+      // lockstep: the next conversation's agent, or fall back to Jarvis.
+      const next = conversations.value[0] || null
+      activeConversationId.value = next?.id || null
+      activeAgentName.value = next?.agentName || 'Jarvis'
     }
     _saveMeta()
   }
@@ -213,15 +235,11 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function stopTts() {
-    if (_ttsAudioRef.value) {
-      _ttsAudioRef.value.pause()
-      _ttsAudioRef.value.currentTime = 0
+    // Chat TTS now plays through the singleton player; stop it there.
+    const audio = useAudioPlayerStore()
+    if (audio.playbackType === 'chatTts') {
+      audio.stopAndReset()
     }
-    ttsPlaying.value = false
-  }
-
-  function setTtsAudioRef(el) {
-    _ttsAudioRef.value = el
   }
 
   /**
@@ -386,7 +404,6 @@ export const useChatStore = defineStore('chat', () => {
     setActiveAgent,
     toggleTts,
     stopTts,
-    setTtsAudioRef,
     addUserMessage,
     addAgentMessagePlaceholder,
     pushToolCall,

@@ -8,7 +8,11 @@ import { computed } from 'vue'
 
 const props = defineProps({
   chapter: { type: Object, required: true },
+  // Actively playing (not paused) — drives the pause icon + eq animation.
   isPlaying: { type: Boolean, default: false },
+  // This chapter is the one loaded in the player (playing OR paused) — drives
+  // the row highlight so a paused chapter stays visually selected.
+  isCurrent: { type: Boolean, default: false },
   index: { type: Number, required: true },
   effectivePreload: { type: String, default: null },
   queuePosition: { type: Number, default: -1 },
@@ -29,7 +33,7 @@ const chapterTitle = computed(() => {
 })
 
 const statusType = computed(() => {
-  if (props.isPlaying) return 'playing'
+  if (props.isCurrent) return 'playing'
   return props.effectivePreload || props.chapter.preload || 'none'
 })
 </script>
@@ -37,7 +41,7 @@ const statusType = computed(() => {
 <template>
   <div
     class="ch-row"
-    :class="{ 'ch-row--playing': isPlaying }"
+    :class="{ 'ch-row--playing': isCurrent }"
     @click="emit('play', chapter.file)"
   >
     <span class="ch-row__num">Ch.{{ String(chapterNum).padStart(2, '0') }}</span>

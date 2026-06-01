@@ -57,6 +57,20 @@ def client() -> TestClient:
     async def oauth_callback() -> dict:
         return {"ok": True}
 
+    # Passkey AUTHENTICATE is a login flow → exempt. REGISTER is NOT (needs
+    # an authenticated session + real CSRF token).
+    @app.post("/api/auth/passkey/authenticate/begin")
+    async def passkey_auth_begin() -> dict:
+        return {"ok": True}
+
+    @app.post("/api/auth/passkey/authenticate/finish")
+    async def passkey_auth_finish() -> dict:
+        return {"ok": True}
+
+    @app.post("/api/auth/passkey/register/begin")
+    async def passkey_register_begin() -> dict:
+        return {"ok": True}
+
     # Non-API mutation — should never be guarded by us
     @app.post("/upload")
     async def upload_static() -> dict:
@@ -152,6 +166,48 @@ class TestExemptPaths:
         """Third-party redirects can't carry our header."""
         client.cookies.set(CSRF_COOKIE_NAME, "stale")
         resp = client.post("/api/oauth/google/callback")
+        assert resp.status_code == 200
+
+
+class TestPasskeyCsrfBoundary:
+    """Passkey AUTHENTICATE is a login flow — the user has no valid CSRF token
+    yet, and a STALE cookie from an expired session must not lock them out of
+    re-logging-in. WebAuthn's own challenge/signature is the CSRF defence here.
+    REGISTER must STAY protected: it requires an authenticated session, so a
+    missing/invalid token must 403 (don't let an attacker silently enrol a
+    passkey). Pins both halves of the security boundary.
+    """
+
+    def test_authenticate_begin_exempt_with_stale_cookie(self, client):
+        # Reproduces the reported bug: expired session left a stale CSRF cookie,
+        # login flow sends no header → must NOT 403.
+        client.cookies.set(CSRF_COOKIE_NAME, "stale-from-expired-session")
+        resp = client.post("/api/auth/passkey/authenticate/begin")
+        assert resp.status_code == 200
+
+    def test_authenticate_finish_exempt_with_stale_cookie(self, client):
+        client.cookies.set(CSRF_COOKIE_NAME, "stale-from-expired-session")
+        resp = client.post("/api/auth/passkey/authenticate/finish")
+        assert resp.status_code == 200
+
+    def test_authenticate_exempt_with_no_cookie(self, client):
+        # First-ever login: no cookie at all → also fine.
+        resp = client.post("/api/auth/passkey/authenticate/begin")
+        assert resp.status_code == 200
+
+    def test_register_still_protected(self, client):
+        # REGISTER must keep CSRF: cookie present + no header → 403.
+        client.cookies.set(CSRF_COOKIE_NAME, "abc123")
+        resp = client.post("/api/auth/passkey/register/begin")
+        assert resp.status_code == 403
+        assert resp.json()["error"] == "csrf_failed"
+
+    def test_register_passes_with_matching_header(self, client):
+        client.cookies.set(CSRF_COOKIE_NAME, "abc123")
+        resp = client.post(
+            "/api/auth/passkey/register/begin",
+            headers={"X-CSRF-Token": "abc123"},
+        )
         assert resp.status_code == 200
 
 

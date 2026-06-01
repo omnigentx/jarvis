@@ -17,6 +17,7 @@ the next ``final_transcript`` and reset.
 """
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, ClassVar
 
@@ -26,6 +27,14 @@ logger = logging.getLogger(__name__)
 
 SONIOX_STT_WS_URL = "wss://stt-rt.soniox.com/transcribe-websocket"
 ENDPOINT_TOKEN_TEXT = "<end>"
+
+# Error codes that mean "this request config will NEVER work" → stop the
+# reconnect loop. Everything else (timeouts, transient server errors) is
+# recoverable by opening a fresh request, per Soniox's error-handling guide
+# ("Immediately start a new request to continue streaming").
+#   401 unauthorized / 403 forbidden — bad or missing API key
+#   400 bad request — malformed config (wrong model, unsupported format)
+_SONIOX_FATAL_ERROR_CODES = frozenset({400, 401, 403})
 
 
 class SonioxSTTService(WSStreamingSTT):
@@ -83,13 +92,31 @@ class SonioxSTTService(WSStreamingSTT):
         self._provisional_tail = ""
         self._in_utterance = False
 
+    def _keepalive_message(self) -> str:
+        # Soniox closes the socket after >20s of no audio/keepalive (408).
+        # The base sender emits this every KEEPALIVE_INTERVAL during silence.
+        return json.dumps({"type": "keepalive"})
+
     def _handle_event(self, data: dict[str, Any]) -> None:
         err_code = data.get("error_code")
         if err_code:
             logger.error("[Soniox STT] error %s: %s", err_code, data.get("error_message"))
-            self._emit("error", {
-                "detail": data.get("error_message") or f"soniox error {err_code}",
-            })
+            # Transient errors (e.g. 408 idle timeout) are recoverable — the
+            # base loop reconnects. Only bad-key/bad-config codes are fatal.
+            try:
+                fatal = int(err_code) in _SONIOX_FATAL_ERROR_CODES
+            except (TypeError, ValueError):
+                fatal = False
+            if fatal:
+                self.mark_fatal()
+                self._emit("error", {
+                    "detail": data.get("error_message") or f"soniox error {err_code}",
+                })
+            else:
+                # Recoverable: log + let the socket close & reconnect. Don't
+                # emit a user-facing 'error' (that would flip the UI to a
+                # failed state for a blip the reconnect already heals).
+                logger.info("[Soniox STT] transient error %s — will reconnect", err_code)
             return
 
         # Soniox packs *all* current non-final tokens into every frame —

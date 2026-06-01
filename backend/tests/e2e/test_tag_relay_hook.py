@@ -73,8 +73,12 @@ async def test_tag_relay_hook_injects_reminder(seeded_stories):
         f"Hook fired too early — no tool result yet:\n{turn1_text}"
     )
 
-    # Turn 2: after find_story_chapter returned with [[[AUDIO_URL:...]]] tag
+    # Turn 2: after find_story_chapter returned with a [[[READ_LOCAL:...]]] tag
     # in its response field, the hook must have appended a SYSTEM reminder.
+    # (The tool now emits ONE canonical [[[READ_LOCAL]]] tag — the old extra
+    # [[[AUDIO_URL]]] was redundant and leaked into the chat bubble, so it was
+    # dropped. The hook is tag-agnostic; it relays whatever [[[TAG:value]]] the
+    # tool result carries.)
     assert len(llm.observed_messages) >= 2, (
         "Expected at least 2 LLM calls (initial + post-tool); "
         f"got {len(llm.observed_messages)}"
@@ -86,7 +90,7 @@ async def test_tag_relay_hook_injects_reminder(seeded_stories):
     )
     # The actual tag value should be present too — proves the regex extracted
     # the tag from the tool result's `response` field.
-    assert "[[[AUDIO_URL:" in turn2_text, (
+    assert "[[[READ_LOCAL:" in turn2_text, (
         "Hook injected reminder but tag value missing — regex may have "
         f"drifted from [[[TAG:value]]] pattern.\nTurn 2:\n{turn2_text}"
     )

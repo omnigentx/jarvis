@@ -21,6 +21,7 @@
  */
 import { ref, reactive, shallowRef, onScopeDispose } from 'vue'
 import { useChatStore } from '../stores/chat.js'
+import { useAudioPlayerStore } from '../stores/audioPlayer.js'
 import { EVENTS, on } from '../auth/bus.js'
 import { expandToolRequest, expandToolDone } from '../utils/toolEvents.js'
 
@@ -276,6 +277,14 @@ function _createVoiceSession() {
             const id = chatStore.addAgentMessagePlaceholder?.()
             if (id) chatStore.finalizeAgentMessage?.(id, text, meta)
           }
+          // Story playback by voice routes through the SAME singleton player as
+          // typed chat (mini-player, chapter nav, resume). The story plays via
+          // the audio player, NOT the voice TTS channel — the backend already
+          // suppressed speaking the announcement. Pass ttsEnabled=true because
+          // the user explicitly asked to listen (voice has no read-aloud toggle).
+          if (msg.story) {
+            useAudioPlayerStore().playFromChat({ story: msg.story }, true)
+          }
           pendingAgentMsgId = null
           wasInterrupted.value = false
           // Status will flip to 'speaking' when the next tts_start arrives;
@@ -342,6 +351,12 @@ function _createVoiceSession() {
         case 'error':
           _failPending(msg.detail || 'agent error')
           error.value = msg.detail || 'server error'
+          // Flip status to 'error' so the header/VoiceBar stop showing a green
+          // "connected" chip while STT is actually dead. Without this the chip
+          // stayed green on a Soniox 408 (transient errors no longer reach here
+          // — only fatal ones do — so this means STT genuinely failed). The
+          // user sees the mic is off and can re-toggle to reconnect.
+          status.value = 'error'
           break
       }
     } else if (ev.data instanceof Blob) {
@@ -404,7 +419,13 @@ function _createVoiceSession() {
   }
 
   async function start() {
-    if (status.value !== 'idle') return
+    // Allow (re)start from idle OR error — a failed session must be
+    // recoverable by re-toggling the mic. Any other state (connecting/
+    // listening/…) means a session is already live, so guard against re-entry.
+    if (status.value !== 'idle' && status.value !== 'error') return
+    // Clean up any half-torn-down previous session before opening a new one,
+    // so an errored session doesn't leak its old socket/mic/worklet.
+    if (status.value === 'error') await stop()
     error.value = ''
     status.value = 'connecting'
     torn = false

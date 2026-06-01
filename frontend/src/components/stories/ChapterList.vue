@@ -47,6 +47,16 @@ async function fetchChapters() {
 }
 
 async function handlePlay(filename) {
+  // If this chapter is already the one loaded in the player, the button acts
+  // as play/pause toggle instead of restarting from the top — clicking the
+  // pause icon while it's playing previously re-fired playChapter() and
+  // restarted the chapter from 0s. Only a different chapter starts fresh.
+  const isCurrent = audioStore.currentStoryId === props.storyId
+    && audioStore.currentChapterFile === filename
+  if (isCurrent) {
+    audioStore.togglePlayPause()
+    return
+  }
   try {
     await audioStore.playChapter(
       props.storyId,
@@ -66,10 +76,14 @@ function handleRead(filename) {
   })
 }
 
-function isChapterPlaying(filename) {
+function isChapterCurrent(filename) {
   return audioStore.currentStoryId === props.storyId
     && audioStore.currentChapterFile === filename
-    && (audioStore.isPlaying || audioStore.isPaused)
+}
+// Actively playing (not paused) — drives the pause icon. A paused current
+// chapter shows the play icon so the button reads "resume", not "restart".
+function isChapterPlaying(filename) {
+  return isChapterCurrent(filename) && audioStore.isPlaying
 }
 
 function chapterPreload(ch) {
@@ -137,6 +151,7 @@ watch(
           :chapter="ch"
           :index="idx"
           :is-playing="isChapterPlaying(ch.file)"
+          :is-current="isChapterCurrent(ch.file)"
           :effective-preload="chapterPreload(ch)"
           :queue-position="chapterQueuePos(ch.file)"
           @play="handlePlay"

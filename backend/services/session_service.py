@@ -682,10 +682,19 @@ class SessionService:
                 except Exception:
                     logger.debug("[SESSION] cancellation rollback: history pop failed", exc_info=True)
                 logger.info(
-                    f"[SESSION] turn cancelled — skipping save_history for "
-                    f"session={session_id} (rolled back agent.message_history)"
+                    f"[SESSION] turn cancelled for session={session_id} — "
+                    f"rolled back phantom turn, still stamping primary + saving "
+                    f"so the conversation stays visible in the list"
                 )
-                return response, session_id
+                # IMPORTANT: do NOT return early here. We still fall through to
+                # stamp the primary agent + save_history below. Returning early
+                # (the previous behaviour) skipped the primary-agent stamp, so a
+                # session whose FIRST turn was cancelled (e.g. user starts a long
+                # crawl turn then navigates away / hits Stop) was left with no
+                # primary_agent metadata → _resolve_primary_agent() returns None
+                # → list_sessions HIDES it → "the conversation disappeared" bug.
+                # History was already rolled back above, so the save below
+                # persists clean state (no phantom turn) + the metadata.
 
             # Stamp the primary agent on first send so list_sessions /
             # get_display_history can route follow-up reads without the caller

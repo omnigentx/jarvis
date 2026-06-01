@@ -81,6 +81,13 @@ class WSStreamingSTT:
     #: Override in subclass — logging tag, e.g. ``"Soniox STT"``.
     LOG_TAG: ClassVar[str] = "WS STT"
 
+    #: How often (seconds) to send a keepalive while no audio is flowing.
+    #: Cloud STT WebSockets drop the connection after an idle window (Soniox:
+    #: ">20s with no keepalive or audio" → 408 Request timeout). Sending under
+    #: that window keeps the session alive through user silence. 10s gives a
+    #: comfortable margin under the typical 20s server idle timeout.
+    KEEPALIVE_INTERVAL: ClassVar[float] = 10.0
+
     def __init__(self, *, sample_rate: int = 16000) -> None:
         if not self.WS_URL:
             raise NotImplementedError(f"{type(self).__name__} must set WS_URL")
@@ -89,6 +96,9 @@ class WSStreamingSTT:
         self._hook: Optional[EventHook] = None
         self._lock = threading.Lock()
         self._closed = False
+        # Set by a subclass on an unrecoverable error (bad API key, bad config)
+        # so the reconnect loop gives up instead of hammering a doomed endpoint.
+        self._fatal = False
 
         self._audio_queue: Optional[asyncio.Queue[bytes]] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
@@ -264,6 +274,18 @@ class WSStreamingSTT:
         (re)connect. Called once after the config message is sent.
         """
 
+    def _keepalive_message(self) -> Optional[str]:
+        """Return the keepalive frame to send during audio silence, or None
+        if this provider needs none. Sent every ``KEEPALIVE_INTERVAL`` seconds
+        while the audio queue is idle."""
+        return None
+
+    def mark_fatal(self) -> None:
+        """Subclasses call this from ``_handle_event`` when an inbound error is
+        unrecoverable (bad key / bad config) — stops the reconnect loop so we
+        don't spin against an endpoint that will reject us every time."""
+        self._fatal = True
+
     # ---- emit helpers (subclass convenience) -------------------------
 
     def _emit(self, event: str, payload: dict[str, Any]) -> None:
@@ -359,7 +381,7 @@ class WSStreamingSTT:
 
         backoff = BACKOFF_INITIAL
 
-        while not self._closed:
+        while not self._closed and not self._fatal:
             # ── Step 1: wait for mic-on (resume()) ──
             if not self._active_event.is_set():
                 # Only emit IDLE if we're transitioning back to it after a
@@ -438,7 +460,10 @@ class WSStreamingSTT:
                 # gather returned normally → server closed (idle timeout
                 # or pause() forced close). Outer while re-enters.
                 self._current_ws_holder["ws"] = None
-                if self._closed:
+                if self._closed or self._fatal:
+                    # _fatal: a subclass flagged an unrecoverable inbound error
+                    # (bad key/config) — stop the loop instead of reconnecting
+                    # into a guaranteed rejection.
                     return
                 if not self._active_event.is_set():
                     # pause() forced close — silent IDLE, no reconnect noise.
@@ -479,8 +504,25 @@ class WSStreamingSTT:
 
     async def _sender(self, ws) -> None:
         assert self._audio_queue is not None
+        keepalive = self._keepalive_message()
         while True:
-            chunk = await self._audio_queue.get()
+            # Wait for the next audio chunk, but wake up every KEEPALIVE_INTERVAL
+            # to send a keepalive when the user is silent. Cloud STT closes the
+            # socket after a short idle window (Soniox >20s → 408); a keepalive
+            # under that window holds the session open through silence.
+            try:
+                chunk = await asyncio.wait_for(
+                    self._audio_queue.get(), timeout=self.KEEPALIVE_INTERVAL,
+                )
+            except asyncio.TimeoutError:
+                if self._closed:
+                    return
+                if keepalive is not None:
+                    try:
+                        await ws.send(keepalive)
+                    except Exception:
+                        return
+                continue
             if self._closed or chunk == b"":
                 try:
                     await self._send_end_of_audio(ws)

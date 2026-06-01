@@ -2,7 +2,8 @@
 
 What this guards:
  * `find_story_chapter` keeps returning the `response` + `source` JSON shape
-   AudioReaderAgent depends on (tags like [[[AUDIO_URL:...]]] parsed by server.py).
+   AudioReaderAgent depends on (the [[[READ_LOCAL:title|file]]] tag parsed by
+   routes/chat.py + routes/ws_voice.py via check_pending_read / _process_response_tags).
  * Local-priority search (data/stories/{title}/{NNN}_{...}.txt) keeps working.
  * AudioReaderAgent still calls find_story_chapter with (story_name, chapter_number)
    — if any code change alters the LLM-facing tool contract, this fails.

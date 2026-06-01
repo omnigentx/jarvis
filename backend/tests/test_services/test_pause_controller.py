@@ -486,6 +486,101 @@ def test_after_llm_call_clears_task_ref_so_pause_during_tool_does_not_cancel():
         act.activity_stream_manager = original
 
 
+def test_interrupt_cancels_turn_even_mid_delegate():
+    """Regression: hard Stop while the agent is mid-tool/mid-delegate.
+
+    The deadlock this guards against: after_llm_call clears ``_current_tasks``
+    (Strategy B — don't cancel a running tool), so during a delegate to a
+    sub-agent there is NO entry in ``_current_tasks``. ``interrupt()`` used to
+    read only ``_current_tasks`` → found nothing → cancelled nothing → the turn
+    kept running and held ``session_service._agent_lock`` → every later chat
+    blocked forever (reload didn't help).
+
+    ``_turn_tasks`` tracks the WHOLE turn, so ``interrupt()`` must still cancel
+    the running turn task even though ``_current_tasks`` is empty.
+    """
+    from services.pause_controller import PauseController
+    import services.activity_stream as act
+
+    class FakeMgr:
+        def broadcast(self, p): pass
+
+    original = act.activity_stream_manager
+    act.activity_stream_manager = FakeMgr()
+
+    async def run():
+        ctrl = PauseController()
+        hooks = ctrl.create_pause_hooks("Delegator")
+
+        async def turn_task():
+            await asyncio.sleep(60)  # stands in for a long delegate/tool phase
+
+        task = asyncio.create_task(turn_task())
+        await asyncio.sleep(0)
+
+        # before_llm_call captured the task into BOTH refs.
+        ctrl._current_tasks["Delegator"] = task
+        ctrl._turn_tasks["Delegator"] = task
+        ctrl._active["Delegator"] = True
+
+        # LLM call finished, tool/delegate phase begins → after_llm_call clears
+        # _current_tasks but the turn task is still running.
+        await hooks.after_llm_call(runner=None, message=None)
+        assert "Delegator" not in ctrl._current_tasks
+        assert "Delegator" in ctrl._turn_tasks  # turn-level ref survives
+
+        # Hard Stop mid-delegate.
+        cancelled = ctrl.interrupt("Delegator")
+        assert cancelled == ["Delegator"], (
+            "interrupt() must cancel the turn even when _current_tasks is empty "
+            "(mid-delegate) — else the turn holds _agent_lock and freezes chat"
+        )
+
+        # The actual asyncio task must receive the cancellation.
+        try:
+            await task
+            was_cancelled = False
+        except asyncio.CancelledError:
+            was_cancelled = True
+        assert was_cancelled, "the running turn task must actually be cancelled"
+
+    try:
+        asyncio.run(run())
+    finally:
+        act.activity_stream_manager = original
+
+
+def test_after_turn_complete_clears_turn_task_ref():
+    """``_turn_tasks`` must be released at turn end so a later ``interrupt()``
+    can't cancel a stale/done task from a previous turn."""
+    from services.pause_controller import PauseController
+    import services.activity_stream as act
+
+    class FakeMgr:
+        def broadcast(self, p): pass
+
+    original = act.activity_stream_manager
+    act.activity_stream_manager = FakeMgr()
+
+    async def run():
+        ctrl = PauseController()
+        hooks = ctrl.create_pause_hooks("Finisher")
+        ctrl._turn_tasks["Finisher"] = asyncio.current_task()
+        ctrl._current_tasks["Finisher"] = asyncio.current_task()
+
+        await hooks.after_turn_complete(runner=None, message=None)
+
+        assert "Finisher" not in ctrl._turn_tasks
+        assert "Finisher" not in ctrl._current_tasks
+        # interrupt() on a finished turn cancels nothing.
+        assert ctrl.interrupt("Finisher") == []
+
+    try:
+        asyncio.run(run())
+    finally:
+        act.activity_stream_manager = original
+
+
 # ─── Phase 4: team-wide pause + scope resolution ────────────────────
 
 

@@ -406,7 +406,13 @@ async def play_local_chapter(story_id: str, filename: str, _=Depends(verify_api_
         else:
             if _state.bg_scheduler and _state.bg_scheduler.is_running():
                 _state.bg_scheduler.notify_tts_activity()
-                _state.bg_scheduler.request_cancel()
+                # Only cancel pre-gen if it's working a DIFFERENT chapter.
+                # Cancelling the chapter the user just clicked would delete its
+                # half-written mp3 + lock mid-stream → the live stream closes at
+                # ~11s and the player auto-advances. The .lock on this exact
+                # cache_path means pre-gen already owns it → hand over instead.
+                if not os.path.exists(cache_path + ".lock"):
+                    _state.bg_scheduler.request_cancel()
         
         return response
     except Exception as e:

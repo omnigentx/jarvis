@@ -337,8 +337,14 @@ function onKeydown(event) {
   inset: 0;
   z-index: 9999;
   display: flex;
+  /* Stack brand + card in one column with a real gap so the "Jarvis"
+     wordmark can never overlap the card's top edge. Previously the brand
+     was position:absolute (out of flow) while the card was flex-centered,
+     so on tall viewports the two collided. */
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 28px;
   background: radial-gradient(ellipse at center, var(--bg-1), var(--bg-0) 80%);
   font-family: var(--font-body);
   color: var(--text);
@@ -354,10 +360,8 @@ function onKeydown(event) {
 }
 
 .auth-gate-brand {
-  position: absolute;
-  top: 60px;
-  left: 50%;
-  transform: translateX(-50%);
+  position: relative;
+  z-index: 2;
   text-align: center;
 }
 .auth-gate-brand__mark {

@@ -60,14 +60,17 @@ async def cancel_tts(request_id: str, _=Depends(verify_api_key)):
 
 @router.api_route("/{request_id}", methods=["GET", "HEAD"])
 async def tts_endpoint(request_id: str, request: Request, _auth=Depends(verify_optional_api_key)):
-    # Notify scheduler: on-demand TTS activity
+    # Notify scheduler of on-demand activity. The cancel-vs-handover decision
+    # is DEFERRED until we've resolved cache_path + lock state below. The old
+    # is_generating(request_id) check never matched — pre-gen keys its tasks by
+    # {story_title, chapter_file}, never request_id — so it ALWAYS fell through
+    # to request_cancel(), cancelling the very chapter the user just asked for.
+    # That deleted the half-written mp3 + lock mid-stream → the live stream
+    # closed at ~11s → the browser fired 'ended' → auto-advanced. The lock file
+    # on THIS cache_path (computed below) is the real source of truth for
+    # "is this exact audio already being generated".
     if _state.bg_scheduler:
         _state.bg_scheduler.notify_tts_activity()
-        if _state.bg_scheduler.is_generating(request_id):
-            logger.debug(f"[KB1] Handover: pre-gen working on {request_id}, streaming in progress")
-        elif _state.bg_scheduler.is_running():
-            logger.debug(f"[KB2] Cancel pre-gen: user requested {request_id}")
-            _state.bg_scheduler.request_cancel()
     
     # Check if this request_id belongs to the Library
     book = library_manager.get_book(request_id)
@@ -139,15 +142,32 @@ async def tts_endpoint(request_id: str, request: Request, _auth=Depends(verify_o
         file_size = 0
         if mp3_exists:
              file_size = os.path.getsize(cache_path)
-        
+
         headers = {"Accept-Ranges": "bytes", "Content-Type": "audio/mpeg"}
         if file_size > 0:
             headers["Content-Length"] = str(file_size)
+        # Tell the player whether this audio is still being generated. The
+        # frontend uses this on a premature 'ended' to tell a live-stream
+        # buffer underrun (resume) apart from a real end-of-chapter (advance).
+        if os.path.exists(cache_path + ".lock"):
+            headers["X-TTS-Generating"] = "1"
         return Response(status_code=200, headers=headers)
 
     # Check/Start Background Generation
     lock_path = cache_path + ".lock"
-    meta_path = cache_path + ".part.json" 
+    meta_path = cache_path + ".part.json"
+
+    # Handover vs cancel (deferred from the top of the handler). The .lock on
+    # THIS cache_path is the single source of truth: if it exists, something is
+    # already generating this exact audio — hand over and stream its output. If
+    # not and the scheduler is busy, it's working a DIFFERENT chapter, so cancel
+    # it to free the Edge quota for this on-demand request.
+    if _state.bg_scheduler and _state.bg_scheduler.is_running():
+        if os.path.exists(lock_path):
+            logger.debug(f"[KB1] Handover: pre-gen owns {request_id}, streaming its output")
+        else:
+            logger.debug(f"[KB2] Cancel pre-gen (different chapter): user requested {request_id}")
+            _state.bg_scheduler.request_cancel()
     
     is_generating = False
     if os.path.exists(lock_path):

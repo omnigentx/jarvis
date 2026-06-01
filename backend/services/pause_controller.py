@@ -152,11 +152,19 @@ class PauseController:
         # needs to emit the terminal event itself (idle agent) or wait
         # for the hook to do it (active agent).
         self._active: dict[str, bool] = {}
-        # Task ref of the in-flight LLM call. Set by the ``before_llm_call``
-        # hook (captures ``asyncio.current_task()``), cleared by
-        # ``after_llm_call``. ``pause()`` cancels this task to interrupt
-        # long-running LLM streams — see module docstring "Instant pause".
+        # Task ref of the in-flight LLM call ONLY. Set by ``before_llm_call``,
+        # cleared by ``after_llm_call``. ``pause()`` uses this (cooperative:
+        # cancel mid-LLM, but let an in-flight TOOL call finish — strategy B).
         self._current_tasks: dict[str, asyncio.Task] = {}
+        # Task ref for the WHOLE turn (LLM + tool/delegate phases). Set on the
+        # first ``before_llm_call`` of a turn, cleared at ``after_turn_complete``
+        # (or on a genuine cancel). ``interrupt()`` (hard Stop) uses this so it
+        # can cancel even while the agent is mid-tool / delegating to a
+        # sub-agent — the previous bug: interrupt read ``_current_tasks`` which
+        # is empty during the tool phase, so "Stop" while delegating was a
+        # NO-OP, the turn kept running and held session_service._agent_lock,
+        # and every later chat message blocked forever (reload didn't help).
+        self._turn_tasks: dict[str, asyncio.Task] = {}
 
     def _get_event(self, agent_name: str) -> asyncio.Event:
         """Get or create an asyncio.Event for the given agent (default: set = not paused)."""
@@ -503,7 +511,12 @@ class PauseController:
             # than wrapping the LLM call) because hooks are already in
             # the call site and we don't have to touch tool_runner.
             try:
-                self._current_tasks[agent_name] = asyncio.current_task()
+                cur = asyncio.current_task()
+                self._current_tasks[agent_name] = cur
+                # Track the turn-level task too (first LLM call of the turn).
+                # interrupt() uses this so a hard Stop works during the tool/
+                # delegate phase, when _current_tasks is empty.
+                self._turn_tasks.setdefault(agent_name, cur)
             except RuntimeError:
                 pass  # not in a task context — skip cancel support
             if not event.is_set():
@@ -533,6 +546,7 @@ class PauseController:
         async def on_after_turn_complete(runner: Any, message: Any) -> None:
             self._active[agent_name] = False
             self._current_tasks.pop(agent_name, None)
+            self._turn_tasks.pop(agent_name, None)
 
         async def on_pause_cancel(runner: Any) -> bool:
             """Called by tool_runner when a CancelledError surfaces inside
@@ -638,6 +652,7 @@ class PauseController:
         if name:
             self._active.pop(name, None)
             self._current_tasks.pop(name, None)
+            self._turn_tasks.pop(name, None)
 
     def interrupt(self, scope: str) -> list[str]:
         """Soft interrupt: cancel in-flight LLM call WITHOUT entering paused state.
@@ -660,11 +675,15 @@ class PauseController:
         agents, _ = self._resolve_scope(scope)
         cancelled: list[str] = []
         for agent in agents:
-            task = self._current_tasks.get(agent)
+            # Use the TURN task (covers LLM + tool/delegate phases), not just
+            # the LLM-window task. Fall back to _current_tasks for safety.
+            task = self._turn_tasks.get(agent) or self._current_tasks.get(agent)
             if task is not None and not task.done():
                 task.cancel()
                 cancelled.append(agent)
-                logger.info("[INTERRUPT] Cancelled in-flight LLM task for %s", agent)
+                self._turn_tasks.pop(agent, None)
+                self._current_tasks.pop(agent, None)
+                logger.info("[INTERRUPT] Cancelled in-flight turn task for %s", agent)
         return cancelled
 
     def hard_kill(self, scope: str) -> dict:
@@ -700,14 +719,18 @@ class PauseController:
 
         Returns ``{cancelled_tasks: [name], killed_pids: [{name, pid}]}``.
         """
-        # 1. Cancel parent in-flight task (in-process Jarvis).
+        # 1. Cancel parent in-flight task (in-process Jarvis). Use the TURN
+        # task so a hard Stop works during the tool/delegate phase too (same
+        # fix as interrupt() — _current_tasks is empty mid-tool).
         agents, _ = self._resolve_scope(scope)
         cancelled: list[str] = []
         for agent in agents:
-            task = self._current_tasks.get(agent)
+            task = self._turn_tasks.get(agent) or self._current_tasks.get(agent)
             if task is not None and not task.done():
                 task.cancel()
                 cancelled.append(agent)
+                self._turn_tasks.pop(agent, None)
+                self._current_tasks.pop(agent, None)
 
         # 2. SIGTERM every running subprocess subagent.
         killed: list[dict] = []
