@@ -292,6 +292,59 @@ class TestRunningSurface:
         assert out["status"] == 400
 
 
+# ── load_factory_roles helper (shared shape-guard, SSoT) ──────────────────
+
+
+class TestLoadFactoryRoles:
+    def test_top_level_roles(self, factory_dir):
+        from services.team_template_factory_service import load_factory_roles
+
+        roles = load_factory_roles(factory_dir / "agile_team.yaml")
+        assert "qe" in roles
+
+    def test_nested_team_roles(self, factory_dir):
+        from services.team_template_factory_service import load_factory_roles
+
+        (factory_dir / "nested.yaml").write_text(
+            "team:\n  name: nested\n  roles:\n    pm:\n      instruction: hi\n",
+            encoding="utf-8",
+        )
+        roles = load_factory_roles(factory_dir / "nested.yaml")
+        assert "pm" in roles
+
+    def test_empty_team_falls_back_to_top_level(self, factory_dir):
+        # An empty ``team: {}`` is unusable → must fall back to top-level
+        # ``roles:`` (not blank out the diff). Regression for the semantics
+        # gap flagged in PR #61 review.
+        from services.team_template_factory_service import load_factory_roles
+
+        (factory_dir / "emptyteam.yaml").write_text(
+            "team: {}\nroles:\n  qe:\n    instruction: top-level\n",
+            encoding="utf-8",
+        )
+        roles = load_factory_roles(factory_dir / "emptyteam.yaml")
+        assert "qe" in roles
+
+    def test_non_dict_team_falls_back_to_top_level(self, factory_dir):
+        from services.team_template_factory_service import load_factory_roles
+
+        (factory_dir / "listteam.yaml").write_text(
+            "team:\n  - pm\nroles:\n  qe: {}\n", encoding="utf-8",
+        )
+        roles = load_factory_roles(factory_dir / "listteam.yaml")
+        assert "qe" in roles
+
+    def test_top_level_list_raises_validation(self, factory_dir):
+        from services.team_template_factory_service import (
+            ValidationError,
+            load_factory_roles,
+        )
+
+        (factory_dir / "scalar.yaml").write_text("- a\n- b\n", encoding="utf-8")
+        with pytest.raises(ValidationError):
+            load_factory_roles(factory_dir / "scalar.yaml")
+
+
 # ── Registration ──────────────────────────────────────────────────────────
 
 

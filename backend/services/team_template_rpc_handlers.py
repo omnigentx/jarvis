@@ -210,8 +210,6 @@ def _running_reset_role(
 
 
 def _running_yaml_diff(*, session_id: str) -> dict:
-    import yaml as yaml_lib
-
     try:
         current_template = svc.get_template(session_id)
     except svc.NotFoundError as exc:
@@ -224,16 +222,12 @@ def _running_yaml_diff(*, session_id: str) -> dict:
     if not yaml_path.exists():
         return _err(f"factory yaml not found at {yaml_path}", 404)
 
-    with yaml_path.open(encoding="utf-8") as f:
-        yaml_doc = yaml_lib.safe_load(f) or {}
-    # Guard the shape before calling .get — a top-level list/scalar yaml, or a
-    # truthy non-dict ``team:`` (``team: [pm, dev]``), would otherwise raise
-    # AttributeError → unhandled 500. Mirror list_factory_templates.
-    if not isinstance(yaml_doc, dict):
-        return _err(f"factory yaml at {yaml_path} is not a mapping", 400)
-    team = yaml_doc.get("team")
-    yaml_template = team if isinstance(team, dict) else yaml_doc
-    yaml_roles = yaml_template.get("roles") or {}
+    # Open + unwrap roles via the shared helper so the shape-guard can't drift
+    # from the REST route's copy. ValidationError = non-mapping yaml → 400.
+    try:
+        yaml_roles = factory_svc.load_factory_roles(yaml_path)
+    except factory_svc.ValidationError as exc:
+        return _err(str(exc), 400)
     current_roles = current_template.get("roles") or {}
 
     per_role: dict[str, dict] = {}

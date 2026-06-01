@@ -105,6 +105,32 @@ def resolve_factory_path(name: str) -> Path:
     return candidate
 
 
+def load_factory_roles(path: Path) -> dict[str, Any]:
+    """Read a factory yaml and return its ``roles`` mapping.
+
+    Single source for the "open + unwrap roles" step the yaml-diff callers
+    (REST route + RPC handler) both need — kept here so the shape-guard can't
+    drift between the two layers.
+
+    Accepts the two layouts the spawner supports: top-level ``roles:`` or
+    nested ``team.roles:``. Only a NON-EMPTY ``team:`` mapping overrides the
+    top level — an empty ``team: {}`` or a non-dict ``team: [..]`` falls back
+    to the top-level ``roles:`` (an unusable ``team`` should not blank out the
+    diff). Returns ``{}`` when no roles are defined.
+
+    Raises ``ValidationError`` if the file isn't a mapping at all (a top-level
+    list/scalar), which would otherwise crash the caller with AttributeError.
+    """
+    with path.open(encoding="utf-8") as f:
+        doc = yaml.safe_load(f) or {}
+    if not isinstance(doc, dict):
+        raise ValidationError(f"factory yaml at {path} is not a mapping")
+    team = doc.get("team")
+    container = team if (isinstance(team, dict) and team) else doc
+    roles = container.get("roles")
+    return roles if isinstance(roles, dict) else {}
+
+
 def list_factory_templates() -> list[dict[str, Any]]:
     """Return every yaml in ``team_templates/`` with size + parsed display name.
 
