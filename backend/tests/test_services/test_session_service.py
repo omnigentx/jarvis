@@ -91,14 +91,19 @@ class TestResumeAndSendCancellationRollback:
     """When a turn is cancelled mid-LLM, fast-agent's OpenAI provider
     catches CancelledError and returns an empty Prompt rather than
     re-raising. The agent has already pushed the user message + a
-    placeholder assistant message into ``message_history``; if we let
-    ``save_history`` run, the disk session ends up with a phantom
-    user/blank-assistant pair the next reload renders as a real
-    exchange. The rollback path must:
+    placeholder assistant message into ``message_history``; that phantom
+    pair must not survive. The rollback path must:
 
-      * skip ``save_history`` for the cancelled call
-      * pop the half-turn entries from ``agent.message_history`` so the
-        in-memory state matches what we'd want on disk
+      * POP the half-turn entries from ``agent.message_history`` BEFORE
+        saving, so neither the phantom user nor the blank assistant lands
+        on disk.
+      * STILL stamp ``primary_agent`` metadata + ``save_history`` — the
+        history is already clean (popped) so nothing phantom is persisted,
+        and the metadata is required for the session to remain VISIBLE in
+        list_sessions. (Regression 2026-06-01: returning early here skipped
+        the stamp, so a session whose first turn was cancelled — e.g. a long
+        crawl turn the user navigated away from — got no primary_agent and
+        was hidden → "conversation disappeared".)
     """
 
     @pytest.mark.asyncio
@@ -155,16 +160,22 @@ class TestResumeAndSendCancellationRollback:
             )
 
         assert response == ""
-        # The fix must have popped both stale entries:
+        # The fix must have popped both stale entries BEFORE save:
         assert fake_agent.message_history == [], (
             "agent.message_history retained the cancelled half-turn — "
             "the rollback should pop both the user and the empty "
             "assistant entries"
         )
-        # And save_history must NOT have been called for the cancelled
-        # turn — otherwise the phantom pair lands on disk.
-        assert save_history_calls == [], (
-            f"save_history was called {len(save_history_calls)} time(s) "
-            "for a cancelled turn — the on-disk session would surface a "
-            "ghost user/blank-assistant pair on reload"
+        # save_history IS called now — but on the already-cleaned history,
+        # so no phantom pair lands on disk. The call is what persists the
+        # primary_agent metadata that keeps the session visible.
+        assert len(save_history_calls) == 1, (
+            "save_history must run once on a cancelled first turn so the "
+            "primary_agent stamp is persisted (else the session is hidden "
+            "from list_sessions — the 'conversation disappeared' bug)"
+        )
+        # The stamp itself must be present.
+        assert fake_session.info.metadata.get("primary_agent") == "Jarvis", (
+            "primary_agent was not stamped on the cancelled turn — the "
+            "session would be hidden from the conversation list"
         )

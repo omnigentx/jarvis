@@ -19,10 +19,14 @@ import { ref, computed, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useChatStore } from '../../stores/chat.js'
 import { useChatStream } from '../../composables/useChatStream.js'
+import { useAudioPlayerStore } from '../../stores/audioPlayer.js'
+import { useCrawlStatus } from '../../composables/useCrawlStatus.js'
 import MarkdownRenderer from '../MarkdownRenderer.vue'
 
 const chatStore = useChatStore()
 const { send, isStreaming } = useChatStream()
+const audioStore = useAudioPlayerStore()
+const crawl = useCrawlStatus()
 const route = useRoute()
 const router = useRouter()
 
@@ -141,6 +145,13 @@ async function handleSend() {
             audio: event.audio,
             total_tokens: event.total_tokens,
           })
+          // Same unified playback path as ChatView — story replies become
+          // full story playback in the singleton player; plain replies are
+          // chat-TTS, gated by the read-aloud preference.
+          audioStore.playFromChat(event, chatStore.ttsEnabled)
+          // Track a crawl started from the dock so its progress shows when the
+          // user opens the full /chat view (shared singleton composable).
+          if (event.crawl_job_id) crawl.track(event.crawl_job_id)
           break
         case 'error':
           chatStore.setMessageError(msgId, event.message || 'Unknown error')

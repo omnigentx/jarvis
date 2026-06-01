@@ -13,7 +13,7 @@ from pydantic import BaseModel
 
 from core.auth import verify_api_key
 from helpers.text_processing import process_agent_response, clean_text_for_tts
-from helpers.story_reader import handle_read_local, check_pending_read
+from helpers.story_reader import handle_read_local, check_pending_read, build_story_meta
 from services.shared_state import (
     session_service, library_manager, tts_cache,
 )
@@ -111,11 +111,21 @@ class ChatResponse(BaseModel):
     playback_url: str | None = None
     user_text: str | None = None
     conversation_id: str | None = None
+    # Present when the reply is a local story chapter, so the frontend can
+    # route playback through the singleton story player (chapter nav, resume)
+    # instead of treating it as a one-off TTS clip.
+    story: dict | None = None
+    # Present when the reply started a web crawl, so the frontend can poll
+    # /api/stories/crawl/status/{id} for live progress + a cancel button.
+    crawl_job_id: str | None = None
 
 
-def _process_response_tags(response_text, tts_text, book_id):
-    """Process story/library/local tags in response text. Returns (response_text, tts_text, book_id)."""
-    
+def _process_response_tags(response_text, tts_text, book_id, story_meta=None):
+    """Process story/library/local tags in response text.
+
+    Returns ``(response_text, tts_text, book_id, story_meta)``.
+    """
+
     # Check READ_STORY tag
     if not book_id:
         match = re.search(r"\[\[\[READ_STORY: (.*?)\]\]\]", response_text)
@@ -180,12 +190,85 @@ def _process_response_tags(response_text, tts_text, book_id):
         if "error" not in result:
             book_id = result["book_id"]
             tts_text = result["tts_text"]
+            story_meta = build_story_meta(result.get("story_title"), result.get("chapter_file"))
             response_text = response_text.replace(match_local.group(0), "").strip()
         else:
             logger.warning(f"READ_LOCAL failed: {result['error']}")
             response_text += f"\n(Local read error: {result['error']})"
 
-    return response_text, tts_text, book_id
+    # Final sweep: strip EVERY backend marker tag so none reach the chat bubble
+    # as raw text. The per-tag branches above only strip on a successful match
+    # AND when book_id wasn't already set — but find_story_chapter sets book_id
+    # via the pending-read queue FIRST (check_pending_read runs before this), so
+    # those branches get skipped and the tag rendered verbatim (the READ_LOCAL
+    # leak, then CRAWL_STARTED, then whatever the next new tag is).
+    #
+    # Strip-all-except-PLAY instead of an allowlist: every [[[TAG: ...]]] is a
+    # backend/agent control marker the user must never see, EXCEPT [[[PLAY: id]]]
+    # which the frontend (utils/youtubeTags.js) parses for YouTube embeds. This
+    # is future-proof — a new backend tag is hidden by default, no code change.
+    response_text = re.sub(
+        r"\s*\[\[\[(?!PLAY[:\]])[A-Z_]+(?::.*?)?\]\]\]",
+        "", response_text,
+    ).strip()
+
+    return response_text, tts_text, book_id, story_meta
+
+
+def resolve_story_playback(raw_response):
+    """Single source of truth for turning a raw agent reply into playback.
+
+    Used by BOTH the typed-chat route and the voice WS route so a story plays
+    identically in either mode. Resolves the pending-read queue + any inline
+    story tags, then returns:
+
+      spoken_text  — the reply with all playback tags stripped. For a story
+                     this is just the announcement ("Đang phát ... chương 1");
+                     callers MUST NOT TTS-speak it when is_story is True (the
+                     story chapter itself is the audio).
+      tts_text     — the text to synthesise for the on-demand /api/tts audio
+                     (story chapter content, or the reply for a plain turn).
+      book_id      — TTS cache id for the chapter, or None for a plain reply.
+      story_meta   — playlist metadata for the singleton player, or None.
+      is_story     — True when this reply triggered story/library playback.
+      crawl_job_id — id of a crawl job the agent just started, or None. The
+                     [[[CRAWL_STARTED: id]]] tag is stripped from the bubble
+                     (machine noise), so we surface the id as structured data
+                     for the frontend to poll /api/stories/crawl/status/{id}.
+    """
+    response_text = process_agent_response(raw_response)
+    tts_text = response_text
+    book_id = None
+    story_meta = None
+
+    # Pull the crawl job id out of the tag BEFORE _process_response_tags strips
+    # every [[[...]]] marker. The tag is the agent's only structured handoff
+    # for "I started crawl job X"; without capturing it here the frontend has
+    # no reliable way to attach a progress poller (parsing the free-text
+    # "Job ID: ..." line is fragile).
+    crawl_job_id = None
+    _crawl_match = re.search(r"\[\[\[CRAWL_STARTED:\s*([^\]]+)\]\]\]", response_text)
+    if _crawl_match:
+        crawl_job_id = _crawl_match.group(1).strip()
+
+    pending = check_pending_read(library_manager, tts_cache, get_chapter_content)
+    if pending:
+        book_id = pending["book_id"]
+        tts_text = pending["tts_text"]
+        story_meta = build_story_meta(pending.get("story_title"), pending.get("chapter_file"))
+
+    response_text, tts_text, book_id, story_meta = _process_response_tags(
+        response_text, tts_text, book_id, story_meta
+    )
+
+    return {
+        "spoken_text": response_text,
+        "tts_text": tts_text,
+        "book_id": book_id,
+        "story_meta": story_meta,
+        "is_story": book_id is not None,
+        "crawl_job_id": crawl_job_id,
+    }
 
 
 def _prepare_audio_url(book_id, tts_text, base_url=""):
@@ -223,18 +306,14 @@ async def chat(request: ChatRequest, raw_request: Request = None, _=Depends(veri
         raw_response, cid = await session_service.resume_and_send(
             agent_app, request.message, request.conversation_id
         )
-        response_text = process_agent_response(raw_response)
-        tts_text = response_text
-        book_id = None
-
-        # Priority: Check pending read action
-        pending = check_pending_read(library_manager, tts_cache, get_chapter_content)
-        if pending:
-            book_id = pending["book_id"]
-            tts_text = pending["tts_text"]
-
-        # Process tags in response
-        response_text, tts_text, book_id = _process_response_tags(response_text, tts_text, book_id)
+        # Shared story/playback resolution (same path as voice — single source
+        # of truth). Strips tags, resolves pending-read, builds story metadata.
+        resolved = resolve_story_playback(raw_response)
+        response_text = resolved["spoken_text"]
+        tts_text = resolved["tts_text"]
+        book_id = resolved["book_id"]
+        story_meta = resolved["story_meta"]
+        crawl_job_id = resolved["crawl_job_id"]
 
         # Clean text for TTS
         if tts_text:
@@ -248,7 +327,7 @@ async def chat(request: ChatRequest, raw_request: Request = None, _=Depends(veri
 
         _duration = _time.time() - _t0
         logger.info(f"[RESPONSE] POST /chat cid={cid} duration={_duration:.1f}s status=ok")
-        return ChatResponse(response=str(response_text), audio=audio_url, playback_url=playback_url, conversation_id=cid)
+        return ChatResponse(response=str(response_text), audio=audio_url, playback_url=playback_url, conversation_id=cid, story=story_meta, crawl_job_id=crawl_job_id)
 
     except Exception as e:
         _duration = _time.time() - _t0
@@ -392,34 +471,36 @@ async def chat_stream(raw_request: Request, _=Depends(verify_api_key)):
                 )
                 _state.current_conversation_id = cid  # update with resolved cid
                 
-                # Save context window snapshot for the active agent
-                # Reuses the same centralized service as spawned agents
-                target_name = agent_name or "Jarvis"
+                # Save context window snapshots for EVERY agent that ran this
+                # turn — not just the primary one. Jarvis delegates to builtin
+                # sub-agents (e.g. AudioReaderAgent) via agent__ tool calls;
+                # those sub-agents run their own LLM turns in-process but were
+                # never snapshotted, so their "Context Window" tab stayed empty
+                # while "History" (per-agent progress hooks) showed their rows.
+                # save_agent_context() skips agents with empty message_history,
+                # so idle agents cost nothing — the message_history IS the
+                # single source of truth for "did this agent participate".
                 try:
                     from services.context_persistence import save_agent_context
-                    target_agent_obj = agent_app._agents.get(target_name)
-                    if target_agent_obj:
+                    for _name, _agent_obj in agent_app._agents.items():
                         await save_agent_context(
-                            target_agent_obj,
+                            _agent_obj,
                             request_id,
                             trigger="chat_complete",
-                            agent_name=target_name,
+                            agent_name=_name,
                             session_id=cid,
                         )
                 except Exception as _ctx_err:
                     logger.warning("[CONTEXT] Failed to save built-in agent context: %s", _ctx_err)
                 
-                response_text = process_agent_response(raw_response)
-                tts_text = response_text
-                book_id = None
-                
-                pending = check_pending_read(library_manager, tts_cache, get_chapter_content)
-                if pending:
-                    book_id = pending["book_id"]
-                    tts_text = pending["tts_text"]
-                
-                response_text, tts_text, book_id = _process_response_tags(response_text, tts_text, book_id)
-                
+                # Shared story/playback resolution (same path as voice).
+                resolved = resolve_story_playback(raw_response)
+                response_text = resolved["spoken_text"]
+                tts_text = resolved["tts_text"]
+                book_id = resolved["book_id"]
+                story_meta = resolved["story_meta"]
+                crawl_job_id = resolved["crawl_job_id"]
+
                 if tts_text:
                     tts_text = clean_text_for_tts(tts_text)
                     if _state.bg_scheduler and _state.bg_scheduler.is_running():
@@ -453,6 +534,8 @@ async def chat_stream(raw_request: Request, _=Depends(verify_api_key)):
                     "playback_url": playback_url,
                     "conversation_id": cid,
                     "total_tokens": total_tokens,
+                    "story": story_meta,
+                    "crawl_job_id": crawl_job_id,
                 })
                 
                 # Broadcast idle event to global activity stream

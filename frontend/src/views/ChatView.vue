@@ -14,9 +14,12 @@
  *       - ChatInput
  *       - hidden TTS audio element
  */
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useChatStore } from '../stores/chat'
+import { useAudioPlayerStore } from '../stores/audioPlayer'
 import { useAgentsStore } from '../stores/agents'
+import { useCrawlStatus } from '../composables/useCrawlStatus'
+import { EVENTS, on } from '../auth/bus.js'
 import { useChatStream } from '../composables/useChatStream'
 import { useConfirm } from '../composables/useConfirm'
 import { useToast } from '../composables/useToast'
@@ -36,25 +39,38 @@ const { isMobile } = useBreakpoint()
 const showMobileConversations = ref(false)
 
 const chatStore = useChatStore()
+const audioStore = useAudioPlayerStore()
 const agentsStore = useAgentsStore()
+const crawl = useCrawlStatus()
 const { isStreaming, send, cancel } = useChatStream()
 const { confirm } = useConfirm()
 const toast = useToast()
 const voice = useVoiceSession()
 
-const ttsAudio = ref(null)
+// Load the conversation list + agent roster. Both hit auth-gated APIs, so
+// they must (re-)run whenever auth becomes valid — not just on first mount.
+function loadWorkspace() {
+  chatStore.fetchConversations()
+  if (!agentsStore.agentsList.length) agentsStore.fetchAgents()
+}
 
-onMounted(async () => {
-  if (ttsAudio.value) {
-    chatStore.setTtsAudioRef(ttsAudio.value)
-    ttsAudio.value.addEventListener('play',  () => { chatStore.ttsPlaying = true })
-    ttsAudio.value.addEventListener('ended', () => { chatStore.ttsPlaying = false })
-    ttsAudio.value.addEventListener('pause', () => { chatStore.ttsPlaying = false })
-  }
-  await chatStore.fetchConversations()
+onMounted(() => {
+  loadWorkspace()
 })
 
-if (!agentsStore.agentsList.length) agentsStore.fetchAgents()
+// Post-passkey-login race: this view is kept-alive (AppLayout's
+// <keep-alive include="['Chat']">) and AuthGate is an overlay, NOT a route
+// guard — so ChatView mounts ONCE while still unauthenticated. Its onMounted
+// fetch 401s silently → empty list + "No Agent", and nothing remounts it
+// after login, so only a full page refresh recovered. The auth store emits
+// EVENTS.RESTORED the moment login succeeds (same signal SSE/meeting/pregen
+// streams already reconnect on) — re-fetch the workspace then.
+const offRestored = on(EVENTS.RESTORED, () => {
+  loadWorkspace()
+})
+onUnmounted(() => {
+  offRestored()
+})
 
 watch(
   () => agentsStore.agentsList,
@@ -157,10 +173,15 @@ async function handleSend(payload) {
             audio: event.audio,
             total_tokens: event.total_tokens,
           })
-          if (chatStore.ttsEnabled && event.audio && ttsAudio.value) {
-            ttsAudio.value.src = event.audio
-            ttsAudio.value.play().catch(err => console.warn('[TTS] Auto-play blocked:', err))
-          }
+          // Route playback through the singleton audio player (single source
+          // of truth) so it persists across navigation and shows in the
+          // global mini-player. Story replies become full story playback;
+          // plain replies are chat-TTS, gated by the read-aloud preference.
+          audioStore.playFromChat(event, chatStore.ttsEnabled)
+          // If the agent started a web crawl, attach the live-progress poller
+          // (the [[[CRAWL_STARTED]]] tag is stripped from the bubble — the id
+          // arrives here as structured data instead).
+          if (event.crawl_job_id) crawl.track(event.crawl_job_id)
           break
         case 'error':
           chatStore.setMessageError(msgId, event.message || 'Unknown error')
@@ -237,13 +258,47 @@ function handleSwitchAgent(name) {
         </button>
       </div>
 
+      <!-- Crawl progress strip — live chapter X/Y + cancel/dismiss -->
+      <div
+        v-if="crawl.jobId.value"
+        class="crawl-strip"
+        :class="{ done: !crawl.isActive.value, warn: crawl.needsAttention.value }"
+      >
+        <span class="crawl-spinner" v-if="crawl.isActive.value" />
+        <span class="crawl-label">
+          <template v-if="crawl.status.value === 'completed'">
+            ✓ Tải xong{{ crawl.storyTitle.value ? ` "${crawl.storyTitle.value}"` : '' }} — {{ crawl.current.value }}/{{ crawl.total.value }} chương
+          </template>
+          <template v-else-if="crawl.status.value === 'failed' || crawl.status.value === 'error'">
+            ⚠ Tải truyện thất bại{{ crawl.message.value ? `: ${crawl.message.value}` : '' }}
+          </template>
+          <template v-else-if="crawl.status.value === 'cancelled'">
+            Đã huỷ tải truyện
+          </template>
+          <template v-else-if="crawl.needsAttention.value">
+            ⚠ Crawl gặp vấn đề — Jarvis đang xử lý… {{ crawl.message.value ? `(${crawl.message.value})` : '' }}
+          </template>
+          <template v-else>
+            Đang tải{{ crawl.storyTitle.value ? ` "${crawl.storyTitle.value}"` : ' truyện' }}…
+            {{ crawl.current.value }}/{{ crawl.total.value || '?' }} chương
+            <span v-if="crawl.total.value" class="crawl-pct">{{ crawl.percent.value }}%</span>
+          </template>
+        </span>
+        <button v-if="crawl.isActive.value" class="crawl-btn" @click="crawl.cancel()">Huỷ</button>
+        <button v-else class="crawl-btn" @click="crawl.dismiss()">Ẩn</button>
+      </div>
+
+      <!-- Status footer (above input) -->
+      <div v-if="statusFooter" class="status-footer">
+        <span class="status-footer-dot" :class="{ pulse: statusFooterActive }" />
+        <span class="status-footer-text">{{ statusFooter }}</span>
+      </div>
+
       <ChatInput
         :isStreaming="isStreaming"
         @send="handleSend"
         @stop="handleStop"
       />
-
-      <audio ref="ttsAudio" style="display: none;" />
     </main>
   </div>
 </template>
@@ -299,6 +354,70 @@ function handleSwitchAgent(name) {
 .conv-overlay-enter-from, .conv-overlay-leave-to { opacity: 0; }
 .conv-overlay-enter-from .conv-slide-panel,
 .conv-overlay-leave-to .conv-slide-panel { transform: translateX(-100%); }
+
+/* Crawl progress strip */
+.crawl-strip {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 24px;
+  background: var(--primary-bg);
+  border-top: 1px solid var(--primary-bg-strong);
+  font-size: 12px;
+  color: var(--text);
+}
+.crawl-strip.done { background: var(--bg-2); border-top-color: var(--border); }
+.crawl-strip.warn { background: var(--warning-bg); border-top-color: rgba(245,158,11,0.30); }
+.crawl-label { flex: 1; }
+.crawl-pct { color: var(--primary-hover); font-weight: 600; margin-left: 4px; }
+.crawl-spinner {
+  width: 14px; height: 14px; flex-shrink: 0;
+  border: 2px solid var(--primary-bg-strong);
+  border-top-color: var(--primary-hover);
+  border-radius: 50%;
+  animation: crawl-spin 0.8s linear infinite;
+}
+@keyframes crawl-spin { to { transform: rotate(360deg); } }
+.crawl-btn {
+  flex-shrink: 0;
+  padding: 4px 12px;
+  background: var(--bg-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  color: var(--text-dim);
+  font-size: 11px;
+  cursor: pointer;
+}
+.crawl-btn:hover { color: var(--text); background: var(--bg-4); }
+
+/* Status footer */
+.status-footer {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 24px;
+  background: var(--bg-1);
+  border-top: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  letter-spacing: 0.08em;
+}
+.status-footer-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+.status-footer-dot.pulse {
+  background: var(--accent);
+  animation: status-pulse 1.2s ease-in-out infinite;
+}
+@keyframes status-pulse {
+  0%, 100% { opacity: 1;    transform: scale(1);    }
+  50%      { opacity: 0.45; transform: scale(1.4);  }
+}
 
 /* TTS Now Playing */
 .tts-now-playing {

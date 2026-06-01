@@ -724,27 +724,40 @@ async def voice_ws(ws: WebSocket) -> None:
             # context-history view ("context window was not being saved
             # to db after agent idle" bug). Best-effort — never
             # break the speak() path on a save failure.
+            # Snapshot EVERY agent that ran this turn, not just the primary —
+            # delegated builtin sub-agents (e.g. AudioReaderAgent) run their
+            # own in-process LLM turns and otherwise never get a Context Window
+            # snapshot. save_agent_context() skips empty histories, so idle
+            # agents are free. (Mirrors the chat-stream fix.)
             try:
                 from services.context_persistence import save_agent_context
-                target_name = agent_name or "Jarvis"
-                target_agent_obj = state.agent_app._agents.get(target_name)
-                if target_agent_obj:
+                for _name, _agent_obj in state.agent_app._agents.items():
                     await save_agent_context(
-                        target_agent_obj,
+                        _agent_obj,
                         req_id,
                         trigger="voice_turn_complete",
-                        agent_name=target_name,
+                        agent_name=_name,
                         session_id=session_id,
                     )
             except Exception:
                 logger.warning("[CONTEXT] voice turn save failed", exc_info=True)
 
-            response = (response or "").strip()
+            # Resolve story playback through the SAME path as typed chat
+            # (single source of truth): strips playback tags, runs the
+            # pending-read queue, builds story metadata. This is what makes
+            # "play a story by voice" behave like the typed flow instead of
+            # the bot reading the "[[[READ_LOCAL: ...]]]" announcement aloud.
+            from routes.chat import resolve_story_playback
+            resolved = resolve_story_playback(response)
+            spoken = (resolved["spoken_text"] or "").strip()
+            is_story = resolved["is_story"]
+            story_meta = resolved["story_meta"]
+
             logger.info(
-                "[ws_voice] turn done req=%s response_len=%d empty=%s",
-                req_id, len(response), not response,
+                "[ws_voice] turn done req=%s spoken_len=%d is_story=%s",
+                req_id, len(spoken), is_story,
             )
-            if not response:
+            if not spoken and not is_story:
                 # Empty reply — finalize placeholder with a clear message so
                 # the UI doesn't sit on an invisible streaming bubble.
                 await out_queue.put({
@@ -754,12 +767,21 @@ async def voice_ws(ws: WebSocket) -> None:
                     "empty": True,
                 })
                 return
+            # Send the (tag-stripped) announcement to the chat bubble, plus the
+            # story metadata so the frontend routes playback through the
+            # singleton player (mini-player, chapter nav, resume).
             await out_queue.put({
                 "type": "assistant_message",
-                "text": response,
+                "text": spoken,
                 "session_id": session_id,
+                "story": story_meta,
             })
-            tts_task = asyncio.create_task(speak(response))
+            if is_story:
+                # A story plays through the singleton audio player, NOT the
+                # voice TTS channel. Speaking the announcement here would talk
+                # over the chapter — so we deliberately do NOT call speak().
+                return
+            tts_task = asyncio.create_task(speak(spoken))
             try:
                 await tts_task
             except asyncio.CancelledError:
