@@ -12,7 +12,7 @@
  * Pyramid placement: the Python ceremony verification + DB persistence
  * are covered by `backend/tests/test_routes/test_passkey_routes.py`.
  * The wrapper-only / mocked-fetch contract is covered by
- * `dashboard/src/services/passkey.test.js`. This file fills the gap
+ * `frontend/src/services/passkey.test.js`. This file fills the gap
  * those two layers can't see: Vue components + real browser
  * `navigator.credentials` plumbed end-to-end.
  */
