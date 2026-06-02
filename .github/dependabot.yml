@@ -12,9 +12,9 @@ updates:
           - minor
           - patch
 
-  # Vue/Vite dashboard
+  # Vue/Vite frontend
   - package-ecosystem: npm
-    directory: /dashboard
+    directory: /frontend
     schedule:
       interval: weekly
     open-pull-requests-limit: 5

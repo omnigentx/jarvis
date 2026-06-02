@@ -37,11 +37,11 @@ jobs:
       - name: Run tests
         run: uv run pytest tests/ -v --tb=short
 
-  build-dashboard:
+  build-frontend:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: ./dashboard
+        working-directory: ./frontend
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -51,7 +51,7 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
-          cache-dependency-path: dashboard/package-lock.json
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
         run: npm ci
@@ -59,11 +59,11 @@ jobs:
       - name: Build (verify compilation)
         run: npm run build
 
-  e2e-dashboard:
+  e2e-frontend:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: ./dashboard
+        working-directory: ./frontend
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -73,14 +73,14 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
-          cache-dependency-path: dashboard/package-lock.json
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
         run: npm ci
 
       - name: Resolve Playwright version for cache key
         id: pw-version
-        working-directory: ./dashboard
+        working-directory: ./frontend
         run: |
           v=$(node -p "require('@playwright/test/package.json').version")
           echo "version=$v" >> "$GITHUB_OUTPUT"
@@ -100,7 +100,7 @@ jobs:
         if: steps.pw-cache.outputs.cache-hit == 'true'
         run: npx playwright install-deps chromium
 
-      - name: Build dashboard
+      - name: Build frontend
         run: npm run build
 
       - name: Run Playwright E2E tests
@@ -112,6 +112,6 @@ jobs:
         with:
           name: playwright-trace-${{ github.run_id }}
           path: |
-            dashboard/playwright-report/
-            dashboard/test-results/
+            frontend/playwright-report/
+            frontend/test-results/
           retention-days: 14

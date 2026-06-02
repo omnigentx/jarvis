@@ -45,7 +45,7 @@ body:
       multiple: true
       options:
         - backend (FastAPI / fast-agent)
-        - dashboard (Flutter web)
+        - frontend (Vue 3 / Vite)
         - MCP server (built-in)
         - team templates / orchestrator
         - voice (TTS / STT / wake-word)

@@ -8,7 +8,7 @@ What's covered here vs elsewhere
   options shape).
 * Real cryptographic round-trip — the authenticator actually signing
   an attestation/assertion — is covered by the Playwright virtual
-  authenticator E2E in ``dashboard/tests/e2e/flows/``.
+  authenticator E2E in ``frontend/tests/e2e/flows/``.
 * THIS file covers the HTTP-layer plumbing: route auth gates, DB
   persistence, RP-ID scoping, error-mapping, idempotency. The
   cryptographic verify call is mocked because we exercise it

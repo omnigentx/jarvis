@@ -54,7 +54,7 @@ jarvis/
 │   ├── mcp-atlassian/          Submodule — Atlassian MCP server
 │   ├── realtimestt_src/        Submodule — fork of KoljaB/RealtimeSTT (hands-free STT)
 │   └── realtimetts_src/        Submodule — fork of KoljaB/RealtimeTTS (streaming TTS)
-├── dashboard/                  Vue 3 + Vite web UI (the active frontend)
+├── frontend/                   Vue 3 + Vite web UI (the active frontend)
 ├── xiaozhi_integration/        🧪 Experimental — bridges a Xiaozhi ESP32 device to the backend over MCP
 ├── docs/                       Self-hosting and architecture docs
 └── docker-compose.yaml         Top-level stack (backend + web)

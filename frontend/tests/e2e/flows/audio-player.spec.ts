@@ -41,18 +41,23 @@ test('stories library renders fixture stories and navigates to chapter list', as
 
   await page.goto('/stories')
 
-  // All three stories from the fixture render as heading elements.
-  await expect(page.getByRole('heading', { name: 'Alpha Story' })).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Beta Tale' })).toBeVisible()
+  // All three stories from the fixture render as title spans in StoryCard.vue
+  // (.story-card__title), not heading elements.
   await expect(
-    page.getByRole('heading', { name: 'Gamma Chronicles' })
+    page.locator('.story-card__title', { hasText: 'Alpha Story' })
+  ).toBeVisible()
+  await expect(
+    page.locator('.story-card__title', { hasText: 'Beta Tale' })
+  ).toBeVisible()
+  await expect(
+    page.locator('.story-card__title', { hasText: 'Gamma Chronicles' })
   ).toBeVisible()
 
   // Boot contract: /stories mounts → GET /api/stories.
   recorder.assertContains('GET', '/api/stories')
 
-  // Click the first story — card @click bubbles from the heading.
-  await page.getByRole('heading', { name: 'Alpha Story' }).click()
+  // Click the first story — card @click bubbles from the title.
+  await page.locator('.story-card__title', { hasText: 'Alpha Story' }).click()
 
   await expect(page).toHaveURL(/\/stories\/alpha_story$/)
 

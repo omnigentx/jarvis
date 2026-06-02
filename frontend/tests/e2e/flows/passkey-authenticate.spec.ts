@@ -12,7 +12,7 @@
  * Pyramid placement: the Python ceremony verification + DB persistence
  * are covered by `backend/tests/test_routes/test_passkey_routes.py`.
  * The wrapper-only / mocked-fetch contract is covered by
- * `dashboard/src/services/passkey.test.js`. This file fills the gap
+ * `frontend/src/services/passkey.test.js`. This file fills the gap
  * those two layers can't see: Vue components + real browser
  * `navigator.credentials` plumbed end-to-end.
  */
@@ -151,7 +151,7 @@ test('has-any → true and user can still fall back to API key via the link',
     const input = page.locator('#auth-gate-key')
     await expect(input).toBeVisible()
     await input.fill('test-api-key-e2e')
-    await page.getByRole('button', { name: /^sign in$/i }).click()
+    await page.getByRole('button', { name: /^continue$/i }).click()
 
     await expect(modal).toBeHidden({ timeout: 3000 })
   })

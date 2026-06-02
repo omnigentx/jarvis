@@ -63,7 +63,7 @@ jarvis/
 │       ├── agent_cards/        ← Dynamic agent card definitions
 │       └── sessions/           ← Session history files
 │
-├── dashboard/                  ← Vue 3 + Vite Ops Dashboard
+├── frontend/                  ← Vue 3 + Vite Ops Dashboard
 │   └── src/
 │       ├── views/              ← Page components
 │       ├── components/         ← Reusable UI components

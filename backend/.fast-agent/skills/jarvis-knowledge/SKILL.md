@@ -30,7 +30,7 @@ jarvis/
 │   ├── fast-agent/       ← Framework submodule (spawn system)
 │   ├── team_templates/   ← Team definitions (agile_team.yaml)
 │   └── .fast-agent/      ← Skills, agent cards, sessions
-├── dashboard/            ← Vue 3 + Vite + Tailwind v4
+├── frontend/            ← Vue 3 + Vite + Tailwind v4
 └── .github/workflows/    ← CI/CD
 ```
 

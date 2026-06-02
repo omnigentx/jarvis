@@ -1,6 +1,6 @@
 # Self-Hosting Jarvis trên Ubuntu Server
 
-Hướng dẫn deploy Jarvis (Backend + Flutter Web) trên Ubuntu server sử dụng Docker + GitHub Actions CD.
+Hướng dẫn deploy Jarvis (Backend + Vue Web) trên Ubuntu server sử dụng Docker + GitHub Actions CD.
 
 ## Yêu cầu
 

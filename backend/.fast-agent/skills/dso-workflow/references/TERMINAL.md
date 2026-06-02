@@ -13,8 +13,8 @@ Guide for using the `execute` tool to run shell commands safely and efficiently.
 ## When to Use Terminal
 
 ✅ **USE when:**
-- Build/compile code (`uv run`, `npm run build`, `flutter build`)
-- Run tests (`pytest`, `npm test`, `flutter test`)
+- Build/compile code (`uv run`, `npm run build`)
+- Run tests (`pytest`, `npm run test:unit`)
 - Check system status (`docker ps`, `systemctl status`)
 - Install dependencies (`pip install`, `npm install`, `apt-get`)
 - Quick file/folder checks (`ls`, `find`, `grep`, `cat`)
@@ -68,7 +68,7 @@ find . -name "*.py" | wc -l                      # Count files
 ### Build & Test
 ```bash
 cd backend && uv run pytest --tb=short -q 2>&1 | tail -20
-cd frontend && flutter test --reporter compact 2>&1 | tail -20
+cd frontend && npm run test:unit 2>&1 | tail -20
 docker compose -f docker-compose.yaml build --no-cache 2>&1 | tail -30
 ```
 

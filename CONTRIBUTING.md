@@ -30,8 +30,8 @@ docker compose up -d --build
 # Run backend tests
 cd backend && uv run pytest
 
-# Run dashboard tests (one-time: `npx playwright install chromium` for E2E)
-cd ../dashboard && npm run test:unit && npm run test:e2e
+# Run frontend tests (one-time: `npx playwright install chromium` for E2E)
+cd ../frontend && npm run test:unit && npm run test:e2e
 ```
 
 ### Native dev (no Docker)
@@ -44,14 +44,14 @@ cd backend
 uv sync                                      # one-time + after submodule changes
 uv run uvicorn server:app --reload --port 8000
 
-# Terminal 2 — dashboard
-cd dashboard
+# Terminal 2 — frontend
+cd frontend
 npm install                                  # one-time
 npm run dev                                  # → http://localhost:3000
 ```
 
 - Backend reads `backend/.env`, DB, and the submodule paths in `pyproject.toml`'s `[tool.uv.sources]` (editable installs of `fast-agent`, `realtimestt_src`, `realtimetts_src`).
-- The dashboard auto-reads `VITE_JARVIS_API_KEY` from `dashboard/.env` if present (sets `localStorage.jarvis_api_key` for you on first load); otherwise the Setup Wizard captures it interactively.
+- The frontend auto-reads `VITE_JARVIS_API_KEY` from `frontend/.env` if present (sets `localStorage.jarvis_api_key` for you on first load); otherwise the Setup Wizard captures it interactively.
 - VoiceBar (`/ws/voice`) needs the `/ws` Vite proxy entry (already in `vite.config.js`). Browsers treat `http://localhost` as a secure context so `getUserMedia` works without HTTPS.
 - After pulling in submodule updates: `git submodule update --init --recursive && (cd backend && uv sync)`.
 
@@ -64,13 +64,13 @@ npm run dev                                  # → http://localhost:3000
 ## Code style
 
 - **Python**: follow surrounding style. The repo uses `ruff` and type hints where present — match what you see in the file.
-- **TypeScript / Vue**: keep dashboard components small; prefer composition API.
+- **TypeScript / Vue**: keep frontend components small; prefer composition API.
 
 ## Pull request checklist
 
 Before requesting review:
 
-- [ ] Tests pass locally (`uv run pytest` for backend, `npm run test:unit && npm run test:e2e` for dashboard)
+- [ ] Tests pass locally (`uv run pytest` for backend, `npm run test:unit && npm run test:e2e` for frontend)
 - [ ] No secrets, hardcoded paths, or personal info introduced
 - [ ] Updated docs / SKILL.md / `.env.example` if behavior or config changed
 - [ ] PR description explains *why*, not just *what*

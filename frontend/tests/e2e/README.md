@@ -25,7 +25,7 @@ Trace on failure: `npx playwright show-trace playwright-report/trace.zip`.
 ```yaml
 backend_source:          # REQUIRED — citations proving fidelity
   - "backend/routes/setup.py::get_setup_status"
-  - "dashboard/src/stores/setup.js::fetchStatus"
+  - "frontend/src/stores/setup.js::fetchStatus"
 
 notes: "free-form reviewer notes (optional)"
 
