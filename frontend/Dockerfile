@@ -1,16 +1,19 @@
 # Stage 1: Build Vue frontend
-# Minor-pin so a rebuild a month from now picks up the same Node line.
-# Bump manually when upstream issues a new LTS minor.
+# Track the active LTS line (22.x) on glibc — NOT a frozen minor and NOT
+# alpine. Major-pin (not minor-pin) so the build stage keeps receiving
+# 22.x security patches automatically; Node 20 went EOL ~2026-04.
 #
-# MUST be glibc (slim) + Node >= 20.19, NOT alpine and NOT 20.18:
-# Vite 8 bundles with rolldown, whose native binding is an optional,
-# platform-specific dep (@rolldown/binding-linux-*). `npm ci` fails to
-# install that binding on (a) alpine/musl (any npm) and (b) Node 20.18
-# even on glibc, so `npm run build` dies with
-# `MODULE_NOT_FOUND ... rolldown/dist/shared/binding-*.mjs`. Node 20.19
-# (which enables require(esm)) on glibc resolves it. Verified by building
-# the real context locally across alpine/slim × node 20.18/20.19/20.20.
-FROM node:20.19-slim AS build
+# MUST be glibc (slim) + Node 22, for two reasons:
+#  1. Vite 8 bundles with rolldown, whose native binding is an optional,
+#     platform-specific dep (@rolldown/binding-linux-*). `npm ci` fails to
+#     install it on alpine/musl (any npm) -> `npm run build` dies with
+#     `MODULE_NOT_FOUND ... rolldown/dist/shared/binding-*.mjs`. glibc fixes it.
+#  2. vite + rolldown need Node >= 20.19; @babel/generator (via
+#     @vitejs/plugin-vue) wants >= 22.18 — Node 22 satisfies all three with
+#     no EBADENGINE warnings, where 20.19 only just cleared the binding.
+# Verified by building the real context locally (linux/amd64) across
+# alpine/slim x node 20.18/20.19/20.20/22.
+FROM node:22-slim AS build
 
 WORKDIR /app
 
