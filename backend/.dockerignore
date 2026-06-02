@@ -1,11 +1,113 @@
-# Docker build context ignore rules
-# Note: fast-agent/ is in .gitignore but must be in Docker context
-.venv/
-__pycache__/
-*.pyc
+# ============================================================================
+# Docker build context ignore rules  (context = ./backend, Dockerfile: COPY . .)
+# ----------------------------------------------------------------------------
+# WHY THIS FILE MATTERS: the final stage does `COPY . .`, so anything NOT listed
+# here gets baked into the image. The image may be pushed to a registry, so a
+# baked secret = public leak, and baked runtime state = user-data leak.
+#
+# Runtime note: production mounts host `./backend:/app` + named volumes
+# (jarvis-data, jarvis-runtime, jarvis-sessions, jarvis-logs) over the baked
+# paths, and regenerates git creds from the DB at boot. So excluding the items
+# below does NOT break runtime — they are provided by volumes / regenerated.
+#
+# KEEP IN IMAGE (do NOT add here): source code (core/ routes/ services/ tools/
+# helpers/ middleware/ team_templates/ resources/ agent.py server.py),
+# fastagent.config.yaml, pyproject.toml, uv.lock, fast-agent/ source,
+# realtimetts_src/ + realtimestt_src/ source, mcp-atlassian/src, figma-ui-mcp
+# (incl. dist/ + assets/), config/ (minus credentials/).
+# ============================================================================
+
+# ─── SECRETS — never bake (leak surface) ────────────────────────────────────
 .env
-.git/
+.env.*
+!.env.example
+**/*secret*.yaml
+**/*secret*.yml
+git-credentials
+gitconfig
+.gh-config/
 config/credentials/
-*.db
-*.sqlite
-*.sqlite3
+.netrc
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+# re-allow doc/template files that merely contain the word "secret"/"env"
+!**/*.example
+!**/*.sample
+
+# ─── USER DATA / AGENT MEMORY / RUNTIME STATE — never bake (privacy leak) ────
+data/
+.runtime/
+.fast-agent/sessions/
+.fast-agent/mcp_workspace/
+.tool-outputs/
+**/*.db
+**/*.db-shm
+**/*.db-wal
+**/*.sqlite
+**/*.sqlite3
+
+# ─── LOGS (may contain queries, tokens, traces) ─────────────────────────────
+logs/
+core/logs/
+**/*.log
+fastagent.jsonl
+
+# ─── PYTHON / BUILD CACHES & VIRTUALENVS (bloat) ────────────────────────────
+**/.venv/
+.venv/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+**/*.egg-info/
+.pytest_cache/
+**/.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# ─── VCS / IDE / CI metadata ────────────────────────────────────────────────
+.git/
+**/.git
+**/.github/
+.gitignore
+.pre-commit-config.yaml
+.vscode/
+**/.vscode/
+.idea/
+.DS_Store
+
+# ─── TEST CODE & ARTIFACTS (not needed in runtime image) ────────────────────
+tests/
+fast-agent/tests/
+mcp-atlassian/tests/
+realtimetts_src/tests/
+realtimestt_src/tests/
+test-results/
+
+# ─── DOCS / EXAMPLES / DEV-ONLY (bloat, not imported at runtime) ────────────
+docs/
+fast-agent/docs/
+fast-agent/docs-internal/
+fast-agent/examples/
+fast-agent/plan/
+fast-agent/publish/
+mcp-atlassian/docs/
+realtimetts_src/docs/
+realtimetts_src/example_rvc/
+realtimetts_src/example_fast_api/
+
+# ─── PLATFORM-INCOMPATIBLE / HEAVY VENDORED ASSETS ──────────────────────────
+# Windows-only CUDA wheels — useless in a Linux container (~49M)
+realtimetts_src/deepspeed/
+
+# ─── BUILD FILES (not needed inside the image) ──────────────────────────────
+Dockerfile
+Dockerfile.*
+docker-compose*.yml
+docker-compose*.yaml
+.dockerignore
