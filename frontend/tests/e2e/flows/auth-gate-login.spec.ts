@@ -32,7 +32,7 @@ test('typing the right key dismisses the modal', async ({ page }) => {
   await expect(modal).toBeVisible()
 
   await page.locator('#auth-gate-key').fill('test-api-key-e2e')
-  await page.getByRole('button', { name: /sign in/i }).click()
+  await page.getByRole('button', { name: /continue/i }).click()
 
   // Modal should disappear once the login response sets store status.
   await expect(modal).toBeHidden({ timeout: 3000 })
@@ -53,7 +53,7 @@ test('login attaches X-CSRF-Token to subsequent mutations', async ({ page }) => 
 
   await page.goto('/')
   await page.locator('#auth-gate-key').fill('test-api-key-e2e')
-  await page.getByRole('button', { name: /sign in/i }).click()
+  await page.getByRole('button', { name: /continue/i }).click()
   await expect(
     page.getByRole('dialog', { name: /authentication required/i }),
   ).toBeHidden()
@@ -103,7 +103,7 @@ test('wrong key surfaces error inline (modal stays open)', async ({ page }) => {
 
   await page.goto('/')
   await page.locator('#auth-gate-key').fill('totally-wrong-key')
-  await page.getByRole('button', { name: /sign in/i }).click()
+  await page.getByRole('button', { name: /continue/i }).click()
 
   await expect(page.getByText(/wrong api key/i)).toBeVisible()
   await expect(

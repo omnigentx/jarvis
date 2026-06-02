@@ -25,21 +25,21 @@ test('MCP — list shows built-in + user servers with status indicators', async 
   await page.goto('/mcp-servers')
 
   // Two server rows.
-  await expect(page.locator('.server-row')).toHaveCount(2)
+  await expect(page.locator('.mcp-row')).toHaveCount(2)
 
-  const githubRow = page.locator('.server-row').filter({ hasText: 'github' })
-  const userRow = page.locator('.server-row').filter({ hasText: 'my-tool' })
+  const githubRow = page.locator('.mcp-row').filter({ hasText: 'github' })
+  const userRow = page.locator('.mcp-row').filter({ hasText: 'my-tool' })
 
   await expect(githubRow).toBeVisible()
   await expect(userRow).toBeVisible()
 
-  // Built-in badge only on github.
-  await expect(githubRow.locator('.badge-builtin')).toBeVisible()
-  await expect(userRow.locator('.badge-builtin')).toHaveCount(0)
+  // Built-in lock indicator only on github.
+  await expect(githubRow.locator('.mcp-row__lock')).toBeVisible()
+  await expect(userRow.locator('.mcp-row__lock')).toHaveCount(0)
 
   // Status dots differ.
-  await expect(githubRow.locator('.status-dot--running')).toBeVisible()
-  await expect(userRow.locator('.status-dot--stopped')).toBeVisible()
+  await expect(githubRow.locator('.mcp-row__dot--running')).toBeVisible()
+  await expect(userRow.locator('.mcp-row__dot--stopped')).toBeVisible()
 })
 
 test('MCP — secret env values are masked in detail panel', async ({ page }) => {
@@ -48,10 +48,10 @@ test('MCP — secret env values are masked in detail panel', async ({ page }) =>
 
   await page.goto('/mcp-servers')
 
-  await page.locator('.server-row').filter({ hasText: 'github' }).click()
+  await page.locator('.mcp-row').filter({ hasText: 'github' }).click()
 
   // The masked value is rendered as ••••.
-  const envBlock = page.locator('.env-list')
+  const envBlock = page.locator('.mcp-config__body')
   await expect(envBlock).toContainText('GITHUB_PERSONAL_ACCESS_TOKEN')
   await expect(envBlock).toContainText('••••')
 })
@@ -69,11 +69,11 @@ test('MCP — selecting a server lazy-loads tools from detail endpoint', async (
         r.request().method() === 'GET' &&
         new URL(r.url()).pathname === '/api/mcp/servers/github',
     ),
-    page.locator('.server-row').filter({ hasText: 'github' }).click(),
+    page.locator('.mcp-row').filter({ hasText: 'github' }).click(),
   ])
   expect(detailResp.status()).toBe(200)
 
-  const toolList = page.locator('.tool-list')
+  const toolList = page.locator('.mcp-tool-list')
   await expect(toolList).toContainText('github-create_issue')
   await expect(toolList).toContainText('github-list_issues')
 })
@@ -84,9 +84,9 @@ test('MCP — Delete is disabled for built-in server', async ({ page }) => {
 
   await page.goto('/mcp-servers')
 
-  await page.locator('.server-row').filter({ hasText: 'github' }).click()
+  await page.locator('.mcp-row').filter({ hasText: 'github' }).click()
 
-  const deleteBtn = page.locator('.detail__actions').getByRole('button', { name: 'Delete' })
+  const deleteBtn = page.locator('.mcp-detail__actions .mcp-detail__delete')
   await expect(deleteBtn).toBeDisabled()
 })
 
@@ -96,17 +96,17 @@ test('MCP — Attach to agent via dropdown fires POST', async ({ page }) => {
 
   await page.goto('/mcp-servers')
 
-  await page.locator('.server-row').filter({ hasText: 'github' }).click()
-  await page.locator('.tabs').getByRole('button', { name: /Agents/ }).click()
+  await page.locator('.mcp-row').filter({ hasText: 'github' }).click()
+  await page.locator('.mcp-tabs').getByRole('button', { name: /Agents/ }).click()
 
-  // PersonalAgent is already attached → shown as detach pill.
+  // PersonalAgent is already attached → shown as detach chip.
   await expect(
-    page.locator('.attached-row .link-detach').filter({ hasText: 'PersonalAgent' }),
+    page.locator('.mcp-attached .mcp-agent-chip').filter({ hasText: 'PersonalAgent' }),
   ).toBeVisible()
 
   // Open the "Attach to…" dropdown — only FinanceAgent should appear (PersonalAgent already attached).
-  await page.getByRole('button', { name: 'Attach to…' }).click()
-  const financeChoice = page.locator('.attach-item').filter({ hasText: 'FinanceAgent' })
+  await page.getByRole('button', { name: /Attach to/ }).click()
+  const financeChoice = page.locator('.mcp-attach-menu__item').filter({ hasText: 'FinanceAgent' })
   await expect(financeChoice).toBeVisible()
 
   const [postResp] = await Promise.all([
@@ -126,10 +126,12 @@ test('MCP — Detach pill on attached agent fires DELETE', async ({ page }) => {
 
   await page.goto('/mcp-servers')
 
-  await page.locator('.server-row').filter({ hasText: 'github' }).click()
-  await page.locator('.tabs').getByRole('button', { name: /Agents/ }).click()
+  await page.locator('.mcp-row').filter({ hasText: 'github' }).click()
+  await page.locator('.mcp-tabs').getByRole('button', { name: /Agents/ }).click()
 
-  const detachPill = page.locator('.attached-row .link-detach').filter({ hasText: 'PersonalAgent' })
+  const detachPill = page.locator('.mcp-attached .mcp-agent-chip')
+    .filter({ hasText: 'PersonalAgent' })
+    .locator('.mcp-agent-chip__detach')
 
   const [delResp] = await Promise.all([
     page.waitForResponse(

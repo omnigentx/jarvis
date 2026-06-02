@@ -151,7 +151,7 @@ test('has-any → true and user can still fall back to API key via the link',
     const input = page.locator('#auth-gate-key')
     await expect(input).toBeVisible()
     await input.fill('test-api-key-e2e')
-    await page.getByRole('button', { name: /^sign in$/i }).click()
+    await page.getByRole('button', { name: /^continue$/i }).click()
 
     await expect(modal).toBeHidden({ timeout: 3000 })
   })

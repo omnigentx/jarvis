@@ -153,6 +153,20 @@ responses:
         params: { model: "base", language: "auto" }
         wake_word: { backend: "off", params: {} }
 
+  # ── Feature-flag allowlist (drives provider-card rendering) ─────────
+  # SettingsVoice.vue gates each provider card on isTtsEngineEnabled /
+  # isSttBackendEnabled, which read this allowlist. Without it, NO cards
+  # render. enabled == known so no "hidden by flag" hint appears.
+  "GET /api/voice/backends":
+    status: 200
+    json:
+      tts:
+        enabled: ["edge", "soniox"]
+        known: ["edge", "soniox"]
+      stt:
+        enabled: ["faster_whisper", "soniox"]
+        known: ["faster_whisper", "soniox"]
+
   # ── Secrets status — flips after the user saves a key ───────────────
   "GET /api/voice/secrets":
     - status: 200

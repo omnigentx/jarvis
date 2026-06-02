@@ -37,19 +37,19 @@ test('Library — lists all skills with badges and used-by chips', async ({ page
 
   // Built-in badge only on built-in skills.
   await expect(
-    page.locator('.skill-row').filter({ hasText: 'user-context' }).locator('.badge-builtin')
+    page.locator('.skill-row').filter({ hasText: 'user-context' }).locator('.skill-row__pill--muted')
   ).toBeVisible()
   await expect(
-    page.locator('.skill-row').filter({ hasText: 'orphan-skill' }).locator('.badge-builtin')
+    page.locator('.skill-row').filter({ hasText: 'orphan-skill' }).locator('.skill-row__pill--muted')
   ).toHaveCount(0)
 
   // Used-by text on the attached skills.
   await expect(
-    page.locator('.skill-row').filter({ hasText: 'my-attached' }).locator('.used-by')
+    page.locator('.skill-row').filter({ hasText: 'my-attached' }).locator('.skill-row__used-list')
   ).toContainText('FinanceAgent')
   await expect(
-    page.locator('.skill-row').filter({ hasText: 'orphan-skill' }).locator('.used-by')
-  ).toContainText('Not attached')
+    page.locator('.skill-row').filter({ hasText: 'orphan-skill' }).locator('.skill-row__used-warn')
+  ).toContainText('no agents')
 })
 
 test('Library — Orphan filter shows only unattached skills', async ({ page }) => {
@@ -75,8 +75,8 @@ test('Library — Delete button disabled for built-in skills', async ({ page }) 
   const userRow = page.locator('.skill-row').filter({ hasText: 'orphan-skill' })
 
   // Delete is the second icon button per row (Edit then Delete).
-  await expect(builtinRow.locator('.icon-btn-danger')).toBeDisabled()
-  await expect(userRow.locator('.icon-btn-danger')).toBeEnabled()
+  await expect(builtinRow.locator('.skill-row__delete')).toBeDisabled()
+  await expect(userRow.locator('.skill-row__delete')).toBeEnabled()
 })
 
 test('Library — attach orphan to card-based agent fires PUT and refreshes', async ({ page }) => {
@@ -86,12 +86,12 @@ test('Library — attach orphan to card-based agent fires PUT and refreshes', as
   await page.goto('/skills')
 
   const orphanRow = page.locator('.skill-row').filter({ hasText: 'orphan-skill' })
-  await orphanRow.getByRole('button', { name: 'Attach to…' }).click()
+  await orphanRow.getByRole('button', { name: '+ Attach…' }).click()
 
   // FinanceAgent is card-based — no "runtime only" pill on the row.
-  const financeChoice = page.locator('.attach-item').filter({ hasText: 'FinanceAgent' })
+  const financeChoice = page.locator('.skill-row__attach-item').filter({ hasText: 'FinanceAgent' })
   await expect(financeChoice).toBeVisible()
-  await expect(financeChoice.locator('.attach-warn-pill')).toHaveCount(0)
+  await expect(financeChoice.locator('.skill-row__attach-warn')).toHaveCount(0)
 
   const [putResp] = await Promise.all([
     page.waitForResponse(
@@ -105,7 +105,7 @@ test('Library — attach orphan to card-based agent fires PUT and refreshes', as
   // No body required for attach; just the URL identifies the relationship.
 
   // Toast says attached — and "runtime only" hint is NOT in the message.
-  const toast = page.locator('.toast')
+  const toast = page.locator('.skills__toast')
   await expect(toast).toBeVisible()
   await expect(toast).not.toContainText(/runtime only/i)
 })
@@ -119,12 +119,12 @@ test('Library — attach to code-based agent shows runtime-only warning + confir
   await page.goto('/skills')
 
   const orphanRow = page.locator('.skill-row').filter({ hasText: 'orphan-skill' })
-  await orphanRow.getByRole('button', { name: 'Attach to…' }).click()
+  await orphanRow.getByRole('button', { name: '+ Attach…' }).click()
 
   // Jarvis is code-based — must carry the "runtime only" pill in the menu.
-  const jarvisChoice = page.locator('.attach-item').filter({ hasText: 'Jarvis' })
+  const jarvisChoice = page.locator('.skill-row__attach-item').filter({ hasText: 'Jarvis' })
   await expect(jarvisChoice).toBeVisible()
-  await expect(jarvisChoice.locator('.attach-warn-pill')).toBeVisible()
+  await expect(jarvisChoice.locator('.skill-row__attach-warn')).toBeVisible()
 
   await jarvisChoice.click()
 
@@ -148,7 +148,7 @@ test('Library — attach to code-based agent shows runtime-only warning + confir
 
   // Toast surfaces persistence state — backend returned persisted=false, so
   // the user-facing message says "runtime only".
-  await expect(page.locator('.toast')).toContainText(/runtime only/i)
+  await expect(page.locator('.skills__toast')).toContainText(/runtime only/i)
 })
 
 test('Library — detach via the per-agent chip on the skill row', async ({ page }) => {
