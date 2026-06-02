@@ -149,7 +149,6 @@ jarvis/
 │
 ├── build/                      # CI/CD scripts
 ├── .github/workflows/          # GitHub Actions
-├── .agents/skills/             # AI agent skills (for agents working ON this repo)
 ├── docker-compose.yaml         # Production deployment (backend + web)
 └── Makefile                    # Deploy shortcuts
 ```
