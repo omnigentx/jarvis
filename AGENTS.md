@@ -111,7 +111,7 @@ jarvis/
 │   ├── realtimestt_src/        # Git submodule → omnigentx/RealtimeSTT (hands-free STT)
 │   └── realtimetts_src/        # Git submodule → omnigentx/RealtimeTTS (streaming TTS)
 │
-├── dashboard/                  # Ops Dashboard (Vue 3 + Vite + Tailwind v4)
+├── frontend/                   # Ops Dashboard (Vue 3 + Vite + Tailwind v4)
 │   └── src/
 │       ├── views/              # Page components
 │       │   ├── TeamMonitor.vue     # Multi-agent team monitoring + inject
@@ -178,7 +178,7 @@ uv run pytest tests/              # Run tests
 
 ### Dashboard
 ```bash
-cd dashboard
+cd frontend
 npm install                       # Install deps
 npm run dev -- --port 3000        # Dev server (proxies /api → backend:8000)
 npm run build                     # Production build
@@ -370,7 +370,7 @@ Key module: `services/context_persistence.py` — uses `SPAWN_REGISTRY_DB` env v
 | `SPAWN_PROJECT_DIR` | Absolute path to project dir for MCP subprocess env |
 | `SPAWN_EVENT_SOCKET` | Unix socket path for subprocess event bridge |
 
-### Dashboard (`dashboard/.env`)
+### Dashboard (`frontend/.env`)
 | Variable | Description |
 |----------|-------------|
 | `VITE_JARVIS_API_KEY` | Auto-injected API key for dev convenience |
@@ -412,7 +412,7 @@ Reference: [fast-agent Tool Runner docs](https://fast-agent.ai/agents/tool_runne
 ## After Code Changes
 
 - After modifying backend code: restart the backend process so changes take effect.
-- After modifying dashboard code: Vite HMR handles most changes automatically.
+- After modifying frontend code: Vite HMR handles most changes automatically.
 - After modifying `fastagent.config.yaml`: full backend restart required.
 - After mutating dynamic agents (via `/api/agents` or `spawn_agent` MCP tool) or editing skills: agents reload dynamically (no restart needed). The reload poll loop runs every ~2s on the `agent_definitions_meta.rev` counter.
 

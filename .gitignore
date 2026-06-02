@@ -84,9 +84,7 @@ backend/core/logs/
 # ─── Onboarding snapshots (contain secrets) ──────
 .onboard-backups/
 
-# ─── Playwright E2E (dashboard) ──────────────────
-dashboard/playwright-report/
-dashboard/test-results/
+# ─── Playwright E2E (backend) ────────────────────
 backend/test-results/
 
 # ─── Frontend Playwright E2E + Vite cache ────────

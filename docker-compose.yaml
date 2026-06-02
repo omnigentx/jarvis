@@ -45,7 +45,7 @@ services:
       - "host.docker.internal:host-gateway"
 
   jarvis-web:
-    build: ./dashboard
+    build: ./frontend
     image: omnigentx/jarvis-web:latest
     container_name: jarvis_web
     ports:
