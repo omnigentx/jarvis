@@ -98,12 +98,12 @@ jarvis/
 │   ├── Dockerfile              ← Backend container
 │   └── docker-compose.yaml     ← Backend services
 │
-├── frontend/                   ← Flutter web app
-│   └── lib/
-│       ├── screens/            ← UI screens (chat, agents, timeline, settings)
-│       ├── services/           ← API clients
-│       ├── models/             ← Data models
-│       └── widgets/            ← Reusable components
+├── frontend/                   ← Vue 3 + Vite web app
+│   └── src/
+│       ├── views/              ← Page components (chat, agents, timeline, settings)
+│       ├── components/         ← Reusable UI components
+│       ├── composables/        ← Vue composables (SSE streams, etc.)
+│       └── stores/             ← Pinia stores
 │
 └── .github/workflows/          ← CI/CD (deploy.yml)
 ```
@@ -146,7 +146,7 @@ See [spawn-event-pipeline.md](references/spawn-event-pipeline.md) for full archi
 
 ## Tech Stack
 - **Backend**: Python, FastAPI, fast-agent framework, SQLAlchemy, SQLite
-- **Frontend**: Flutter (Dart), Material Design 3
+- **Frontend**: Vue 3, Vite, Tailwind v4, Pinia
 - **Deploy**: Docker Compose, GitHub Actions CI/CD
 - **LLM**: Anthropic Claude (primary), OpenAI (fallback) via fast-agent
 - **MCP**: Model Context Protocol — all tools are MCP servers

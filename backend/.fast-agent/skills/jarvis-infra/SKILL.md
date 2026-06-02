@@ -24,9 +24,9 @@ description: >
 │  │   Port: 8000                              │
 │  │   Volumes: ./backend → /app               │
 │  │   Runtime: spawn dirs, JSONL, SQLite      │
-│  └── jarvis-web (Flutter → Nginx)            │
+│  └── jarvis-web (Vue/Vite → Nginx)           │
 │      Port: 80                                │
-│      Build: multi-stage (Flutter + Nginx)    │
+│      Build: multi-stage (Vite + Nginx)       │
 └──────────────────────────────────────────────┘
 ```
 
