@@ -153,3 +153,31 @@ jobs:
           echo "### 🚀 Deployed on self-hosted runner" >> $GITHUB_STEP_SUMMARY
           echo "- Commit: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Time: \`$(date)\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Reclaim disk after deploy
+        if: always()
+        run: |
+          # WHY: each `docker compose build` produces a NEW image, so the
+          # previous :latest becomes a dangling <none> image; the BuildKit
+          # cache grows; and `up --force-recreate -V` above renews the
+          # anonymous /app/.venv volume, orphaning the old one (~6GB each).
+          # Left unpruned these accumulate every CD run until the box fills
+          # (root hit 92% / 7.9G free on 2026-06-02). This step returns disk
+          # to baseline after EVERY deploy (if: always() → runs even on a
+          # failed build/health-check).
+          #
+          # Safe on this shared self-hosted daemon (also hosts jarvis-landing
+          # / openai-proxy): all three prunes touch only UNREFERENCED objects.
+          # On Docker >= 23 (runner is 29.x) `volume prune` without -a removes
+          # ANONYMOUS volumes only — it reclaims the orphaned /app/.venv
+          # volumes (the big per-deploy leak) and never touches a named data
+          # volume of ANY project (jarvis_*, jarvis-landing, etc.). Old named
+          # jarvis-v3_* junk from a retired pipeline is NOT removed here —
+          # clean those once by hand (`docker volume rm`).
+          docker image prune -f
+          # --max-used-space caps total build cache (replaces deprecated
+          # --keep-storage on Docker 28+); keeps disk flat across rebuilds.
+          docker builder prune -f --max-used-space 10GB
+          docker volume prune -f
+          echo "--- disk after cleanup ---"
+          df -h / | tail -1
