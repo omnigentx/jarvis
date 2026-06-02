@@ -166,13 +166,18 @@ jobs:
           # to baseline after EVERY deploy (if: always() → runs even on a
           # failed build/health-check).
           #
-          # All three prunes only remove UNREFERENCED objects — the stack we
-          # just brought up holds its image, cache and named data volumes
-          # (jarvis-data/-sessions/-runtime/-logs), so they are NOT touched.
-          # `volume prune` reclaims the orphaned anonymous venv volumes (the
-          # biggest per-deploy leak) plus any abandoned detached volumes.
+          # Safe on this shared self-hosted daemon (also hosts jarvis-landing
+          # / openai-proxy): all three prunes touch only UNREFERENCED objects.
+          # On Docker >= 23 (runner is 29.x) `volume prune` without -a removes
+          # ANONYMOUS volumes only — it reclaims the orphaned /app/.venv
+          # volumes (the big per-deploy leak) and never touches a named data
+          # volume of ANY project (jarvis_*, jarvis-landing, etc.). Old named
+          # jarvis-v3_* junk from a retired pipeline is NOT removed here —
+          # clean those once by hand (`docker volume rm`).
           docker image prune -f
-          docker builder prune -f --keep-storage 10GB
+          # --max-used-space caps total build cache (replaces deprecated
+          # --keep-storage on Docker 28+); keeps disk flat across rebuilds.
+          docker builder prune -f --max-used-space 10GB
           docker volume prune -f
           echo "--- disk after cleanup ---"
           df -h / | tail -1
