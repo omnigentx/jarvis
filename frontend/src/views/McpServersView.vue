@@ -1422,9 +1422,11 @@ function fmtTime(ts) {
   .mcp__layout--mobile-list .mcp__detail { display: none; }
 
   /* Detail actions row was overflowing on <380px (3 buttons +
-     2 gaps + delete icon > 320px). Wrap so the row degrades to two
-     lines gracefully. */
-  .mcp-detail__actions { flex-wrap: wrap; gap: 6px; }
+     2 gaps + delete icon > 320px). The head's flex-shrink:0 kept the
+     actions group at its single-line max-content width even after
+     wrapping to its own line, so it spilled past the right edge. Give
+     it the full row width so its own flex-wrap can actually engage. */
+  .mcp-detail__actions { flex-basis: 100%; flex-wrap: wrap; gap: 6px; }
 
   /* Env row: 4 columns × 90px is unreadable on a 360px viewport.
      Stack: key/value share row 1 (key 1fr, remove auto), value
