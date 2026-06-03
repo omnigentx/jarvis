@@ -228,6 +228,10 @@ function onOverlayClick(e) {
 
 .cmdk-input {
   flex: 1;
+  /* Without min-width:0 the input refuses to shrink below its intrinsic
+     width, pushing the ESC kbd past the panel's clipped right edge on
+     narrow phones. */
+  min-width: 0;
   background: transparent;
   border: 0;
   outline: 0;
@@ -238,6 +242,7 @@ function onOverlayClick(e) {
 .cmdk-input::placeholder { color: var(--text-muted); }
 
 .cmdk-kbd {
+  flex-shrink: 0;
   padding: 2px 6px;
   border-radius: 5px;
   background: var(--bg-3);

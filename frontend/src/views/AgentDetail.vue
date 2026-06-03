@@ -2095,11 +2095,21 @@ function historyBadgeLabel(type) {
   /* Hide restart/inject buttons on mobile — use Inject tab instead */
   .header-actions { display: none; }
 
-  /* ── Tabs bar: horizontal scroll ── */
+  /* ── Tabs bar: flat horizontal-scroll strip ──
+     The desktop "pill" (fit-content + border + bg + radius) gets clipped
+     mid-tab at the screen edge with 6 tabs, reading as broken. On mobile
+     drop the pill chrome: a flat full-width strip with a bottom border
+     scrolls cleanly and the active tab's own highlight marks selection. */
   .tabs-bar {
+    display: flex;
+    width: auto;
     overflow-x: auto;
     scrollbar-width: none;
     margin-bottom: 0;
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: 0;
     border-bottom: 1px solid var(--color-border, var(--border));
     -webkit-overflow-scrolling: touch;
   }

@@ -887,6 +887,15 @@ watch(
   .sk-footer { flex-direction: column-reverse; align-items: stretch; }
   .sk-footer-actions { width: 100%; }
   .sk-footer-actions .sk-btn { flex: 1; justify-content: center; }
+
+  /* Header: title + subtitle + view-toggle + close on one row overflowed
+     on phones — the toggle landed on top of the subtitle and the × got
+     clipped off the right edge. Stack into two rows: title (full width,
+     subtitle truncates) on top, then the toggle + close on their own row
+     with the close pinned right so it's always reachable. */
+  .sk-header { flex-wrap: wrap; row-gap: 10px; }
+  .sk-title-wrap { flex: 1 1 100%; }
+  .sk-header-actions { flex: 1 1 100%; justify-content: space-between; }
 }
 
 /* Transition */

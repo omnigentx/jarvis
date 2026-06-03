@@ -6,7 +6,7 @@
  * from chat behaves like one started from the library, and a plain TTS reply
  * can never overlap a story (only one audio element exists).
  */
-import { test, beforeEach } from 'node:test'
+import { test, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { createPinia, setActivePinia } from 'pinia'
 
@@ -30,6 +30,17 @@ const { useAudioPlayerStore } = await import('./audioPlayer.js')
 
 beforeEach(() => {
   setActivePinia(createPinia())
+})
+
+// The story branch starts a 15s API-save setInterval (audioPlayer.js
+// _startApiSaveTimer), fired *after* playChapter's awaited fetch resolves —
+// i.e. after the synchronous test body returns. Left running, it keeps Node's
+// event loop alive and `node --test` never exits. Flush the pending play
+// promise, then stopAndReset() (which clears the timer) on the same store
+// instance — Pinia returns the singleton for the still-active pinia.
+afterEach(async () => {
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  useAudioPlayerStore().stopAndReset()
 })
 
 // A story reply must become full story playback — and play even when the
