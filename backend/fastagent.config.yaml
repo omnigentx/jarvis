@@ -180,9 +180,6 @@ mcp:
       args: ["-m", "fast_agent.spawn.servers.email_server"]
       env:
          PYTHONUNBUFFERED: "1"
-    git:
-      command: "uvx"
-      args: ["mcp-server-git", "--repository", ".."]
     # GitNexus — code-graph intelligence (impact analysis, call graph, rename).
     # Server reads registered repos from ~/.gitnexus/registry.json (populated
     # by `gitnexus analyze` in each target repo). Docker image pre-installs

@@ -296,7 +296,6 @@ roles:
         meeting_room,
         email,
         github,
-        git,
         gitnexus,
         mcp-atlassian,
         scrapling-server,
@@ -312,8 +311,6 @@ roles:
             "{workspace_dir}",
             "{project_dir}/.fast-agent/skills",
           ]
-      git:
-        args: ["mcp-server-git", "--repository", "{workspace_dir}"]
 
     model: ""
 
@@ -458,7 +455,6 @@ roles:
         meeting_room,
         email,
         github,
-        git,
         mcp-atlassian,
         scrapling-server,
       ]
@@ -471,6 +467,4 @@ roles:
             "{workspace_dir}",
             "{project_dir}/.fast-agent/skills",
           ]
-      git:
-        args: ["mcp-server-git", "--repository", "{workspace_dir}"]
     model: ""
