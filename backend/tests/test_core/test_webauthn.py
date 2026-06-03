@@ -115,6 +115,22 @@ class TestOriginFromRequest:
         )
         assert wa.origin_from_request(req) == "https://jarvis.alice.com"
 
+    def test_https_inferred_for_public_host_with_no_proto_hint(self):
+        # Regression: Cloudflare tunnel → nginx → app terminates TLS upstream
+        # and speaks plain http internally, so both request.url.scheme AND the
+        # forwarded proto arrive as http. A public host is still https in the
+        # browser, so we must infer https from the host, not trust the proxy —
+        # otherwise verify_registration_response raised InvalidRegistrationResponse
+        # ("Attestation rejected") on app.omnigentx.com.
+        req = _make_request(host="app.omnigentx.com", scheme="http")
+        assert wa.origin_from_request(req) == "https://app.omnigentx.com"
+
+    def test_loopback_stays_http_for_dev(self):
+        # The one plaintext exception WebAuthn allows: loopback dev keeps http.
+        for h in ("localhost:3001", "127.0.0.1:8001", "[::1]:8000"):
+            req = _make_request(host=h, scheme="http")
+            assert wa.origin_from_request(req).startswith("http://")
+
 
 # ---- Ceremony store --------------------------------------------------------
 
