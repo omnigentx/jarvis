@@ -107,9 +107,9 @@ inbox)?
 
 | Class | Definition | Examples |
 |---|---|---|
-| **READ** | Returns data, no side effect | `*__list_*`, `*__get_*`, `*__search_*`, `*__read_*`, `*__status`, `*_info`, `git_log`, `git_diff`, `jira_get_issue`, `confluence_search`, `github__list_commits` |
+| **READ** | Returns data, no side effect | `*__list_*`, `*__get_*`, `*__search_*`, `*__read_*`, `*__status`, `*_info`, `execute(git log/status/diff)`, `execute(gh pr view/list)`, `jira_get_issue`, `confluence_search`, `github__list_commits` |
 | **WRITE** | Creates/modifies state | `*__create_*`, `*__update_*`, `*__edit_*`, `*__write_*`, `*__send_*`, `jira_transition_issue`, `github__create_pull_request` |
-| **DESTRUCTIVE** | Deletes or otherwise non-reversible | `*__delete_*`, `git_reset --hard`, `execute(rm ...)`, `jira_delete_issue` |
+| **DESTRUCTIVE** | Deletes or otherwise non-reversible | `*__delete_*`, `execute(git reset --hard)`, `execute(rm ...)`, `jira_delete_issue` |
 
 If the schema description is ambiguous, default to **WRITE** (safer).
 Tools named `get_*` / `list_*` / `status` are strong READ signals even
