@@ -54,6 +54,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from core.session import SESSION_COOKIE_NAME, SessionVerifyError, verify_session_token
+from core.webauthn import _is_loopback_host
 from services import shared_state as state
 from services.sse_progress import (
     create_progress_hooks,
@@ -94,11 +95,27 @@ def _expected_ws_origin(ws: WebSocket) -> str:
         forwarded_host.split(",")[0].strip() if forwarded_host else ""
     ) or ws.headers.get("host", "")
 
-    forwarded_proto = ws.headers.get("x-forwarded-proto", "")
-    if "https" in forwarded_proto.lower() or ws.url.scheme in ("wss", "https"):
-        scheme = "https"
+    # hostname only (strip port / IPv6 brackets) for the loopback check
+    if host.startswith("[") and "]" in host:
+        hostname = host[1 : host.find("]")]
+    elif ":" in host:
+        hostname = host.rsplit(":", 1)[0]
     else:
-        scheme = "http"
+        hostname = host
+
+    # Scheme inferred from the host, not trusted from the proxy — same rule
+    # as core.webauthn.origin_from_request (loopback may be plaintext dev;
+    # every other host is https in a browser). Keeps this mirror honest so a
+    # TLS-terminating proxy (Cloudflare tunnel → nginx → app) doesn't make us
+    # expect http:// while the browser declares https:// and the WS is rejected.
+    if _is_loopback_host(hostname):
+        forwarded_proto = ws.headers.get("x-forwarded-proto", "")
+        if "https" in forwarded_proto.lower() or ws.url.scheme in ("wss", "https"):
+            scheme = "https"
+        else:
+            scheme = "http"
+    else:
+        scheme = "https"
     return f"{scheme}://{host}"
 
 

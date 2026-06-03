@@ -117,10 +117,35 @@ def rp_id_from_request(request: Request) -> str:
     return host
 
 
+# Hosts the WebAuthn spec allows to run over plaintext http (the secure-
+# context dev exception). Every other host is necessarily https in a browser.
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def _is_loopback_host(rp_id: str) -> bool:
+    """True for the hosts a browser will run WebAuthn on over plain http."""
+    return rp_id in _LOOPBACK_HOSTS
+
+
 def origin_from_request(request: Request) -> str:
-    """Origin = full scheme + host + port, used to verify the
-    ``clientDataJSON.origin`` field the authenticator signs."""
-    return f"{_request_scheme(request)}://{_request_host(request)}"
+    """Origin = scheme://host, used to verify the ``clientDataJSON.origin``
+    field the authenticator signs.
+
+    The scheme is INFERRED from the host, not trusted from the proxy.
+    WebAuthn only runs in a secure context, so the browser-signed origin is
+    ``https`` for every host except loopback (localhost/127.0.0.1/::1 — the
+    spec's one plaintext dev exception). A reverse-proxy chain that
+    terminates TLS upstream and speaks plain http internally (Cloudflare
+    tunnel → nginx → app) reports scheme=http / X-Forwarded-Proto=http;
+    trusting that builds ``http://<domain>`` and fails verification with
+    InvalidRegistrationResponse. Host-based inference is proxy-independent,
+    so passkeys work on any domain with zero proxy config — the user never
+    configures an RP ID, origin, or X-Forwarded-* header.
+    """
+    host = _request_host(request)
+    if _is_loopback_host(rp_id_from_request(request)):
+        return f"{_request_scheme(request)}://{host}"
+    return f"https://{host}"
 
 
 # ---- Ceremony storage (in-process, TTL-bounded) ----------------------------
