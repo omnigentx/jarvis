@@ -37,6 +37,18 @@ def _assert_rejected(client: TestClient, **connect_kwargs) -> None:
         assert exc_info.value.code == 4401
 
 
+def _assert_accepted(client: TestClient, **connect_kwargs) -> None:
+    """Open the WS and *receive* — an accepted socket emits a real event
+    (the STT pipeline's ``stt_loading`` status fires on connect), while a
+    rejected one closes 4401 which surfaces as ``WebSocketDisconnect`` on
+    the first receive. Receiving (not just ``send_json``) is what makes
+    this assertion "feel pain": a regression that flips accept→reject
+    turns into a 4401 disconnect here instead of passing silently."""
+    with client.websocket_connect("/ws/voice", **connect_kwargs) as ws:
+        msg = ws.receive_json()  # raises WebSocketDisconnect(4401) if rejected
+        assert msg.get("type"), f"expected a status event on accept, got {msg!r}"
+
+
 @pytest.fixture(autouse=True)
 def _stable_secrets(monkeypatch):
     monkeypatch.setenv("JWT_SECRET", "test-jwt-secret-xxxxxxxxxxxxxxxxxxxx")
@@ -90,14 +102,27 @@ class TestWsVoiceAuth:
     def test_session_cookie_accepted_with_matching_origin(self, client):
         """Cookie path requires Origin to match the deployment (CSWSH
         defence — see H2). Browser-issued WS upgrades carry Origin;
-        the TestClient simulates one explicitly."""
+        the TestClient simulates one explicitly.
+
+        The expected origin is ``https://testserver`` because
+        ``_expected_ws_origin`` infers https for any non-loopback host
+        (it no longer trusts the proxy's X-Forwarded-Proto). A plain
+        ``http://testserver`` Origin is now (correctly) rejected — see
+        ``test_session_cookie_http_origin_rejected_on_public_host``."""
         session_token, _payload = create_session_token()
         client.cookies.set(SESSION_COOKIE_NAME, session_token)
-        with client.websocket_connect(
-            "/ws/voice",
-            headers={"Origin": "http://testserver"},
-        ) as ws:
-            ws.send_json({"type": "noop"})
+        _assert_accepted(client, headers={"Origin": "https://testserver"})
+
+    def test_session_cookie_http_origin_rejected_on_public_host(self, client):
+        """The flip side of the matching-origin test: a cookie-auth WS
+        whose Origin is plain ``http://`` on a public host is rejected,
+        because the browser would have signed ``https://`` there. This
+        is the regression the matching-origin test was silently masking
+        before it learned to ``receive`` (it sent http and never noticed
+        the 4401 close)."""
+        session_token, _payload = create_session_token()
+        client.cookies.set(SESSION_COOKIE_NAME, session_token)
+        _assert_rejected(client, headers={"Origin": "http://testserver"})
 
     def test_session_cookie_with_missing_origin_falls_through(self, client):
         """No Origin header on the cookie path → rejection. Falls
@@ -195,3 +220,52 @@ class TestWsVoiceAuth:
         # No credentials supplied → still gets through.
         with client.websocket_connect("/ws/voice") as ws:
             ws.send_json({"type": "noop"})
+
+
+# ---- _expected_ws_origin (host-based https inference) ----------------------
+
+
+def _make_ws(*, host: str = "", forwarded_host: str = "", scheme: str = "http"):
+    """Stub matching the ``WebSocket`` surface ``_expected_ws_origin``
+    touches: ``.headers.get(...)`` and ``.url.scheme``. Mirrors the
+    ``_make_request`` stub in ``test_core/test_webauthn.py`` so the two
+    origin derivations are tested with the same shapes."""
+    from types import SimpleNamespace
+
+    headers = {}
+    if host:
+        headers["host"] = host
+    if forwarded_host:
+        headers["x-forwarded-host"] = forwarded_host
+    return SimpleNamespace(headers=headers, url=SimpleNamespace(scheme=scheme))
+
+
+class TestExpectedWsOrigin:
+    """Locks the http→https inference for the WS path — the mirror of
+    ``core.webauthn.origin_from_request``. Before this was tested, the
+    only coverage was the integration test above, which masked a 4401
+    because it never received."""
+
+    def test_loopback_stays_http_for_dev(self):
+        from routes.ws_voice import _expected_ws_origin
+
+        ws = _make_ws(host="localhost:3001", scheme="http")
+        assert _expected_ws_origin(ws) == "http://localhost:3001"
+
+    def test_https_inferred_for_public_host_despite_plaintext_backend(self):
+        from routes.ws_voice import _expected_ws_origin
+
+        # Proxy terminates TLS and talks http to the app, but the browser
+        # signed https — so we must expect https, not the backend's scheme.
+        ws = _make_ws(host="app.omnigentx.com", scheme="http")
+        assert _expected_ws_origin(ws) == "https://app.omnigentx.com"
+
+    def test_forwarded_host_drives_origin_with_https(self):
+        from routes.ws_voice import _expected_ws_origin
+
+        ws = _make_ws(
+            host="localhost:8001",
+            forwarded_host="app.omnigentx.com",
+            scheme="http",
+        )
+        assert _expected_ws_origin(ws) == "https://app.omnigentx.com"
