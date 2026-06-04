@@ -324,6 +324,11 @@ onMounted(() => {
 
 .md-content pre {
   background: #0A0C12;
+  /* The code window is always dark in BOTH themes, so its text must be a
+     fixed light colour — not var(--text), which is near-black in light
+     theme and rendered untokenised code (lang "text") invisible on the
+     dark window. hljs token colours below already assume a dark bg. */
+  color: #e3e6ef;
   border: 0;
   border-radius: 0;
   padding: 14px 16px;

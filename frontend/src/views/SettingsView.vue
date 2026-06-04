@@ -224,11 +224,18 @@ function labelFor(id) {
   .nav-item {
     border-left: none;
     border-bottom: 2px solid transparent;
+    border-radius: 0;
     padding: 8px 12px;
   }
+  /* Flat strip on mobile: the desktop active state is a rounded lavender
+     pill, which collided with the horizontal-scroll clipping and read as
+     "broken". Drop the pill fill — a bottom-border + tinted text is the
+     correct tab-strip affordance here. */
   .nav-item.active {
+    background: transparent;
     border-left-color: transparent;
     border-bottom-color: var(--primary);
+    color: var(--primary-hover);
   }
   .page-header { padding: 20px 18px 14px; }
   .panel { padding: 18px; }

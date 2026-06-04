@@ -69,7 +69,7 @@ function _friendly(err) {
 <template>
   <Teleport to="body">
     <Transition name="sd-modal">
-      <div v-if="visible" class="sd-overlay" @click.self="emit('close')">
+      <div v-if="visible" class="sd-overlay jv" @click.self="emit('close')">
         <div class="sd-card">
           <div class="sd-icon-wrap">
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -129,10 +129,15 @@ function _friendly(err) {
   justify-content: center;
   background: rgba(0, 0, 0, 0.6);
   backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  font-family: var(--font-body);
+  color: var(--text);
 }
 .sd-card {
-  background: #0c0e15;
-  border: 1px solid #1a1d2e;
+  /* Theme tokens, not hardcoded dark — this modal rendered black in
+     light theme because every colour below was a literal hex. */
+  background: var(--bg-2);
+  border: 1px solid var(--border-bright);
   border-radius: 16px;
   padding: 28px;
   width: 440px;
@@ -143,7 +148,7 @@ function _friendly(err) {
   max-height: calc(100dvh - 32px);
   overflow-y: auto;
   text-align: center;
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-lg);
 }
 .sd-icon-wrap {
   width: 52px; height: 52px;
@@ -157,59 +162,59 @@ function _friendly(err) {
   margin: 0 0 8px;
   font-size: 18px;
   font-weight: 600;
-  color: #f0f2f5;
+  color: var(--text);
 }
 .sd-desc {
   margin: 0 0 12px;
   font-size: 13px;
-  color: #8b8fa3;
+  color: var(--text-dim);
 }
-.sd-desc strong { color: #f0f2f5; font-family: ui-monospace, monospace; }
+.sd-desc strong { color: var(--text); font-family: ui-monospace, monospace; }
 .sd-warn {
   margin: 0 0 16px;
   font-size: 12px;
-  color: #fbbf24;
-  background: rgba(245, 158, 11, 0.08);
+  color: var(--warning);
+  background: var(--warning-bg);
   border: 1px solid rgba(245, 158, 11, 0.2);
   border-radius: 8px;
   padding: 10px 12px;
   text-align: left;
 }
-.sd-warn strong { color: #fbbf24; }
+.sd-warn strong { color: var(--warning); }
 .sd-label {
   display: block;
   margin: 16px 0 6px;
   font-size: 12px;
-  color: #8b8fa3;
+  color: var(--text-muted);
   text-align: left;
 }
 .sd-label code {
-  background: #111318;
-  border: 1px solid #1e2030;
+  background: var(--bg-3);
+  border: 1px solid var(--border-strong);
   padding: 1px 6px;
   border-radius: 4px;
-  color: #f0f2f5;
+  color: var(--text);
   font-family: ui-monospace, monospace;
 }
 .sd-input {
   width: 100%;
   margin-top: 6px;
-  background: #111318;
-  border: 1px solid #1e2030;
+  background: var(--bg-3);
+  border: 1px solid var(--border-strong);
   border-radius: 8px;
   padding: 10px 12px;
-  color: #f0f2f5;
+  color: var(--text);
   font-family: ui-monospace, monospace;
   font-size: 13px;
 }
 .sd-input:focus {
   outline: none;
-  border-color: #ef4444;
+  border-color: var(--danger);
   box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.15);
 }
 .sd-error {
   margin: 12px 0 0;
-  color: #f87171;
+  color: var(--danger);
   font-size: 12px;
   text-align: left;
 }
@@ -229,15 +234,15 @@ function _friendly(err) {
 }
 .sd-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .sd-btn-cancel {
-  background: #111318;
-  border-color: #1a1d2e;
-  color: #c4c8d4;
+  background: transparent;
+  border-color: var(--border-strong);
+  color: var(--text-dim);
 }
-.sd-btn-cancel:hover:not(:disabled) { background: #1e2233; }
+.sd-btn-cancel:hover:not(:disabled) { background: var(--bg-3); color: var(--text); }
 .sd-btn-delete {
-  background: rgba(239, 68, 68, 0.15);
+  background: var(--danger-bg);
   border-color: rgba(239, 68, 68, 0.3);
-  color: #f87171;
+  color: var(--danger);
   display: inline-flex;
   align-items: center;
   justify-content: center;

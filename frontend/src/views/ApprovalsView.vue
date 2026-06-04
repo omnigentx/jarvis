@@ -1124,5 +1124,10 @@ const knownTypes = [
      the push on mobile so status sits inline with buttons or wraps
      naturally below them. */
   .approvals__resolve-status { margin-left: 0; width: 100%; }
+
+  /* Long button labels ("✓ Approve · agent continues") overflowed the
+     card on narrow phones. Stack full-width so neither button clips. */
+  .approvals__resolve-actions { flex-direction: column; align-items: stretch; }
+  .approvals__resolve-actions .btn { width: 100%; }
 }
 </style>

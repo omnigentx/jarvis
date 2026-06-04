@@ -86,16 +86,37 @@ function unattachedAgents(server) {
 }
 
 const attachOpen = ref(false)
-const attachMenuPos = ref({ top: 0, left: 0, width: 240 })
+const attachMenuPos = ref({ top: null, bottom: null, left: 0, width: 240, maxHeight: 320 })
 const attachTriggerRef = ref(null)
 function _measureAttachAnchor() {
   const el = attachTriggerRef.value
   if (!el) return
   const r = el.getBoundingClientRect()
-  attachMenuPos.value = {
-    top: r.bottom + 4,
-    left: r.left,
-    width: Math.max(r.width, 240),
+  const vw = window.innerWidth
+  const vh = window.innerHeight
+  const GAP = 4
+  // Reserve room for the mobile bottom tab bar / mini player so the menu
+  // never opens behind them (the "+ Attach to…" trigger sits low in the
+  // detail pane → downward menu was clipped off-screen).
+  const BOTTOM_RESERVE = 88
+  const DESIRED = 320
+  const width = Math.max(r.width, 240)
+  const left = Math.max(8, Math.min(r.left, vw - width - 8))
+  const spaceBelow = vh - r.bottom - GAP - BOTTOM_RESERVE
+  const spaceAbove = r.top - GAP
+  if (spaceBelow >= 160 || spaceBelow >= spaceAbove) {
+    // Open downward, capped to the space above the reserved bottom area.
+    attachMenuPos.value = {
+      top: r.bottom + GAP, bottom: null, left, width,
+      maxHeight: Math.max(140, Math.min(DESIRED, spaceBelow)),
+    }
+  } else {
+    // Not enough room below — flip up, anchoring the menu's bottom just
+    // above the trigger.
+    attachMenuPos.value = {
+      top: null, bottom: vh - r.top + GAP, left, width,
+      maxHeight: Math.max(140, Math.min(DESIRED, spaceAbove)),
+    }
   }
 }
 function toggleAttachMenu() {
@@ -667,7 +688,13 @@ function fmtTime(ts) {
           <div
             v-if="attachOpen && tab === 'agents'"
             class="mcp-attach-menu jv"
-            :style="{ top: attachMenuPos.top + 'px', left: attachMenuPos.left + 'px', minWidth: attachMenuPos.width + 'px' }"
+            :style="{
+              top: attachMenuPos.top != null ? attachMenuPos.top + 'px' : undefined,
+              bottom: attachMenuPos.bottom != null ? attachMenuPos.bottom + 'px' : undefined,
+              left: attachMenuPos.left + 'px',
+              minWidth: attachMenuPos.width + 'px',
+              maxHeight: attachMenuPos.maxHeight + 'px',
+            }"
             @click.stop
           >
             <div v-if="!unattachedAgents(selected).length" class="mcp-attach-menu__empty">
@@ -1427,6 +1454,12 @@ function fmtTime(ts) {
      wrapping to its own line, so it spilled past the right edge. Give
      it the full row width so its own flex-wrap can actually engage. */
   .mcp-detail__actions { flex-basis: 100%; flex-wrap: wrap; gap: 6px; }
+
+  /* Tool rows: the 200px-min name column + center alignment left the
+     name floating in a tall empty column while the description wrapped
+     into a sliver beside it. Stack name over full-width description. */
+  .mcp-tool { flex-direction: column; align-items: flex-start; gap: 2px; }
+  .mcp-tool__name { min-width: 0; }
 
   /* Env row: 4 columns × 90px is unreadable on a 360px viewport.
      Stack: key/value share row 1 (key 1fr, remove auto), value
