@@ -24,6 +24,7 @@ import { useChatStore } from '../stores/chat.js'
 import { useAudioPlayerStore } from '../stores/audioPlayer.js'
 import { EVENTS, on } from '../auth/bus.js'
 import { expandToolRequest, expandToolDone } from '../utils/toolEvents.js'
+import { createPlaybackDoneTracker } from './playbackDoneTracker.js'
 
 const PCM_PLAYBACK_RATE = 24000  // RealtimeTTS engines emit 24 kHz mono
 
@@ -82,6 +83,16 @@ function _createVoiceSession() {
   // bug). Reset on each successful ``start()``.
   let torn = false
 
+  // Barge-in SSoT: the server keeps ``bot_speaking`` True until WE report that
+  // the buffered TTS audio has finished playing. The tracker decides when —
+  // after tts_end AND the playback queue drains — and we do the actual WS send.
+  // (Timing logic lives in playbackDoneTracker.js so it's unit-testable.)
+  const playbackTracker = createPlaybackDoneTracker(() => {
+    if (ws.value?.readyState === 1) {
+      ws.value.send(JSON.stringify({ type: 'playback_done' }))
+    }
+  })
+
   const ws = shallowRef(null)
   const stream = shallowRef(null)
   const audioContext = shallowRef(null)
@@ -128,6 +139,10 @@ function _createVoiceSession() {
   }
 
   function _flushPlaybackQueue() {
+    // A barge-in already told the server to stop (it lowers bot_speaking on
+    // the cancel), so suppress the drain-triggered playback_done that the
+    // src.stop() ``onended`` callbacks below would otherwise fire.
+    playbackTracker.flush()
     for (const src of playbackSources) {
       try { src.stop() } catch {}
     }
@@ -305,8 +320,16 @@ function _createVoiceSession() {
           // turn boundary signal we already handle above.
           break
         case 'wake_word': wakeWordHits.value++; break
-        case 'tts_start': status.value = 'speaking'; wasInterrupted.value = false; break
+        case 'tts_start':
+          status.value = 'speaking'
+          wasInterrupted.value = false
+          playbackTracker.ttsStart()   // re-arm playback_done for this turn
+          break
         case 'tts_end':
+          // Server finished synthesising. Playback usually continues a few more
+          // seconds; the tracker fires playback_done once the queue drains (or
+          // right now if a very short reply already drained before tts_end).
+          playbackTracker.ttsEnd(playbackSources.size)
           status.value = ws.value?.readyState === 1 ? 'listening' : 'idle'
           break
         case 'barge_in_ack':
@@ -402,7 +425,12 @@ function _createVoiceSession() {
       // Track for barge-in flush; auto-untrack when the chunk finishes
       // playing on its own to keep the set bounded.
       playbackSources.add(src)
-      src.onended = () => playbackSources.delete(src)
+      src.onended = () => {
+        playbackSources.delete(src)
+        // When the LAST buffered chunk finishes (and the server already sent
+        // tts_end), the user has stopped hearing the bot → report playback_done.
+        playbackTracker.chunkEnded(playbackSources.size)
+      }
       playbackTime.value = startAt + audioBuffer.duration
     } catch (e) {
       console.warn('[voice] audio enqueue failed', e)
