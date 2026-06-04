@@ -229,13 +229,14 @@ function labelFor(id) {
   }
   /* Flat strip on mobile: the desktop active state is a rounded lavender
      pill, which collided with the horizontal-scroll clipping and read as
-     "broken". Drop the pill fill — a bottom-border + tinted text is the
-     correct tab-strip affordance here. */
+     "broken". Drop the pill fill — the bottom-border alone marks active.
+     Keep the inherited var(--text) label (not --primary-hover, a light
+     lavender ~2.7:1 on the white light-theme strip, below WCAG AA); the
+     border carries the accent, the text stays high-contrast. */
   .nav-item.active {
     background: transparent;
     border-left-color: transparent;
     border-bottom-color: var(--primary);
-    color: var(--primary-hover);
   }
   .page-header { padding: 20px 18px 14px; }
   .panel { padding: 18px; }
