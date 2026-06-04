@@ -1291,5 +1291,12 @@ onMounted(() => loadSessions())
 }
 @media (max-width: 720px) {
   .diff-grid { grid-template-columns: 1fr; }
+
+  /* The 3-column ROLES | editor | HISTORY layout (200px + 1fr + 320px)
+     overflowed the viewport on phones — HISTORY was clipped off the
+     right edge and the middle editor squeezed to a sliver. Stack into a
+     single column so each pane gets full width. */
+  .layout { grid-template-columns: 1fr; }
+  .role-list, .history-rail { max-height: 240px; }
 }
 </style>
