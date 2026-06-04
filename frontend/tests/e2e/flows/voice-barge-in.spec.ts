@@ -38,6 +38,13 @@ const NOISE = join(FIXTURES, '_app_boot_noise.yaml')
  * the client's drain detection (and barge-in flush) exercise their real paths.
  */
 async function stubVoiceAudio(page: Page) {
+  // These specs exercise the WS audio path (playback_done / barge-in flush),
+  // so opt into it explicitly. WebRTC is the default + required transport now
+  // (no silent fallback); the stubbed mic here isn't a real track, so forcing
+  // WS keeps this suite focused on the WS-path SSoT logic.
+  await page.addInitScript(() => {
+    try { localStorage.setItem('voice_transport', 'ws') } catch { /* ignore */ }
+  })
   await page.addInitScript(() => {
     const fakeTrack = { stop() {}, getSettings: () => ({}), getCapabilities: () => ({}) }
     const fakeStream = { getAudioTracks: () => [fakeTrack], getTracks: () => [fakeTrack] }

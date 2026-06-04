@@ -341,10 +341,11 @@ function _createVoiceSession() {
           }
           break
         case 'webrtc_error':
-          // Server couldn't set up WebRTC. We've already sent {type:start};
-          // surface it — audio won't flow, the user can re-toggle. (Rare; mostly
-          // a server misconfig.)
+          // Server couldn't set up WebRTC — fail loud, no fallback. The user
+          // can re-toggle the mic; this is usually a server-side misconfig.
           console.warn('[voice] server webrtc_error', msg.detail)
+          error.value = `Voice transport failed on the server: ${msg.detail || 'unknown error'}`
+          status.value = 'error'
           break
         case 'tts_start':
           status.value = 'speaking'
@@ -505,7 +506,15 @@ function _createVoiceSession() {
       audioEl.play?.().catch(() => {})
     })
     peer.addEventListener('connectionstatechange', () => {
-      console.debug('[voice] webrtc connectionState', peer.connectionState)
+      const st = peer.connectionState
+      console.debug('[voice] webrtc connectionState', st)
+      // Fail loud: if the peer connection can't form (ICE/DTLS failed), surface
+      // it rather than sitting silently with no audio. No fallback — the user
+      // re-toggles, or sets a TURN server (see docs/VOICE_WEBRTC_TESTING.md).
+      if (st === 'failed') {
+        error.value = 'Voice connection failed — WebRTC could not connect (NAT/firewall?).'
+        status.value = 'error'
+      }
     })
 
     for (const track of ms.getAudioTracks()) peer.addTrack(track, ms)
@@ -623,33 +632,21 @@ function _createVoiceSession() {
         console.warn('[voice diag] track inspect failed', e)
       }
 
-      // Escape hatch for debugging / A-B testing: set
-      // localStorage.voice_transport = 'ws' to force the legacy WS audio path.
+      // Audio transport. WebRTC is REQUIRED — it's the only path with browser
+      // AEC (the iOS echo fix). We do NOT silently fall back to the WS audio
+      // path on failure: a broken transport must surface loudly, not degrade to
+      // the echo-prone path behind the user's back. The legacy WS path is only
+      // reachable by an EXPLICIT opt-in (localStorage.voice_transport='ws') for
+      // debugging / A-B testing — a deliberate choice, not a fallback.
       let _forceWs = false
       try { _forceWs = localStorage.getItem('voice_transport') === 'ws' } catch { /* ignore */ }
-      if (_webrtcSupported() && !_forceWs) {
-        // Preferred: audio over WebRTC so the browser AEC kills the echo (iOS).
-        // Mic + TTS ride the RTCPeerConnection; the WS carries only control.
-        try {
-          await _startWebRtc(sock, ms)
-        } catch (e) {
-          // Negotiation set-up failed before it even started — fall back to the
-          // WS audio path so voice still works (minus the iOS AEC benefit).
-          console.warn('[voice] WebRTC setup failed, falling back to WS audio', e)
-          _teardownWebRtc()
-        }
-      }
-      if (!webrtcMode) {
-        // Legacy WS audio path: capture mic via an AudioWorklet, stream 16 kHz
-        // PCM frames over the WS; TTS arrives as binary frames (_enqueueAudio).
+      if (_forceWs) {
+        // Explicit WS audio path: AudioWorklet captures mic → 16 kHz PCM over
+        // the WS; TTS arrives as binary frames (_enqueueAudio).
         const ac = new (window.AudioContext || window.webkitAudioContext)()
         console.log('[voice diag] AudioContext sampleRate', ac.sampleRate)
         try {
-          sock.send(JSON.stringify({
-            type: 'diag',
-            stage: 'audio_context',
-            sampleRate: ac.sampleRate,
-          }))
+          sock.send(JSON.stringify({ type: 'diag', stage: 'audio_context', sampleRate: ac.sampleRate }))
         } catch (e) { /* noop */ }
         audioContext.value = ac
         await ac.audioWorklet.addModule('/voice-worklet.js')
@@ -661,6 +658,13 @@ function _createVoiceSession() {
         node.port.onmessage = (e) => {
           if (sock.readyState === 1) sock.send(e.data)
         }
+      } else {
+        if (!_webrtcSupported()) {
+          // Fail loud rather than degrade — every target browser supports WebRTC.
+          throw new Error('This browser does not support WebRTC, which voice mode requires.')
+        }
+        // Throws on setup failure → caught by start()'s handler → status 'error'.
+        await _startWebRtc(sock, ms)
       }
       sock.send(JSON.stringify({ type: 'start' }))
       // Tell the server which agent + conversation the dashboard has
