@@ -24,6 +24,7 @@ import { useChatStore } from '../stores/chat.js'
 import { useAudioPlayerStore } from '../stores/audioPlayer.js'
 import { EVENTS, on } from '../auth/bus.js'
 import { expandToolRequest, expandToolDone } from '../utils/toolEvents.js'
+import { createPlaybackDoneTracker } from './playbackDoneTracker.js'
 
 const PCM_PLAYBACK_RATE = 24000  // RealtimeTTS engines emit 24 kHz mono
 
@@ -82,6 +83,16 @@ function _createVoiceSession() {
   // bug). Reset on each successful ``start()``.
   let torn = false
 
+  // Barge-in SSoT: the server keeps ``bot_speaking`` True until WE report that
+  // the buffered TTS audio has finished playing. The tracker decides when —
+  // after tts_end AND the playback queue drains — and we do the actual WS send.
+  // (Timing logic lives in playbackDoneTracker.js so it's unit-testable.)
+  const playbackTracker = createPlaybackDoneTracker(() => {
+    if (ws.value?.readyState === 1) {
+      ws.value.send(JSON.stringify({ type: 'playback_done' }))
+    }
+  })
+
   const ws = shallowRef(null)
   const stream = shallowRef(null)
   const audioContext = shallowRef(null)
@@ -95,6 +106,16 @@ function _createVoiceSession() {
   // more seconds of bot voice after they tried to talk over it (the
   // "TTS doesn't stop when user barges in" bug).
   const playbackSources = new Set()
+
+  // WebRTC audio transport (preferred). Routing mic + TTS over an
+  // RTCPeerConnection lets the browser's AEC scrub the bot's voice out of the
+  // mic — the only reliable fix for the iOS Safari echo/feedback loop (Web Audio
+  // API playback bypasses AEC on Safari; a WebRTC <audio> track does not). When
+  // active, the WS audio paths (worklet mic-send + _enqueueAudio) are bypassed;
+  // we fall back to them only if RTCPeerConnection is unavailable.
+  const pc = shallowRef(null)
+  const remoteAudioEl = shallowRef(null)
+  let webrtcMode = false
 
   function _ensureActiveConversation() {
     if (chatStore.activeConversation) return
@@ -128,6 +149,10 @@ function _createVoiceSession() {
   }
 
   function _flushPlaybackQueue() {
+    // A barge-in already told the server to stop (it lowers bot_speaking on
+    // the cancel), so suppress the drain-triggered playback_done that the
+    // src.stop() ``onended`` callbacks below would otherwise fire.
+    playbackTracker.flush()
     for (const src of playbackSources) {
       try { src.stop() } catch {}
     }
@@ -305,8 +330,43 @@ function _createVoiceSession() {
           // turn boundary signal we already handle above.
           break
         case 'wake_word': wakeWordHits.value++; break
-        case 'tts_start': status.value = 'speaking'; wasInterrupted.value = false; break
+        case 'webrtc_answer':
+          // Server accepted the WebRTC offer — complete the handshake; the
+          // connection forms once ICE finishes and audio starts flowing on the
+          // media track (mic out, TTS in).
+          if (pc.value && msg.sdp) {
+            pc.value
+              .setRemoteDescription({ type: msg.sdp_type || 'answer', sdp: msg.sdp })
+              .catch((e) => console.warn('[voice] setRemoteDescription failed', e))
+          }
+          break
+        case 'webrtc_error':
+          // Server couldn't set up WebRTC — fail loud, no fallback. The user
+          // can re-toggle the mic; this is usually a server-side misconfig.
+          console.warn('[voice] server webrtc_error', msg.detail)
+          error.value = `Voice transport failed on the server: ${msg.detail || 'unknown error'}`
+          status.value = 'error'
+          _teardownWebRtc()   // drop the half-open PC + hidden <audio>
+          break
+        case 'tts_start':
+          status.value = 'speaking'
+          wasInterrupted.value = false
+          // WS path only: re-arm playback_done tracking. In WebRTC mode the
+          // server owns the drain edge (see tts_end), so the tracker is unused.
+          if (!webrtcMode) playbackTracker.ttsStart()
+          break
         case 'tts_end':
+          // WS path: playback continues a few seconds; the tracker fires
+          // playback_done once the queue drains.
+          //
+          // WebRTC path: the client has NO local audio buffer (TTS plays on the
+          // media track), so playbackSources is always empty here — calling the
+          // tracker would fire playback_done *immediately*, clearing the server's
+          // bot_speaking while its real-time track is still playing, which kills
+          // onset barge-in during the tail (the exact bug this work fixes). The
+          // server's wait_drained() is the SSoT for "done playing" in WebRTC
+          // mode, so the client must NOT send playback_done.
+          if (!webrtcMode) playbackTracker.ttsEnd(playbackSources.size)
           status.value = ws.value?.readyState === 1 ? 'listening' : 'idle'
           break
         case 'barge_in_ack':
@@ -359,9 +419,10 @@ function _createVoiceSession() {
           status.value = 'error'
           break
       }
-    } else if (ev.data instanceof Blob) {
+    } else if (!webrtcMode && ev.data instanceof Blob) {
+      // WS audio path only — in WebRTC mode TTS arrives on the media track.
       _enqueueAudio(ev.data)
-    } else if (ev.data instanceof ArrayBuffer) {
+    } else if (!webrtcMode && ev.data instanceof ArrayBuffer) {
       _enqueueAudio(new Blob([ev.data]))
     }
   }
@@ -402,11 +463,108 @@ function _createVoiceSession() {
       // Track for barge-in flush; auto-untrack when the chunk finishes
       // playing on its own to keep the set bounded.
       playbackSources.add(src)
-      src.onended = () => playbackSources.delete(src)
+      src.onended = () => {
+        playbackSources.delete(src)
+        // When the LAST buffered chunk finishes (and the server already sent
+        // tts_end), the user has stopped hearing the bot → report playback_done.
+        playbackTracker.chunkEnded(playbackSources.size)
+      }
       playbackTime.value = startAt + audioBuffer.duration
     } catch (e) {
       console.warn('[voice] audio enqueue failed', e)
     }
+  }
+
+  const _webrtcSupported = () =>
+    typeof RTCPeerConnection !== 'undefined' && typeof MediaStream !== 'undefined'
+
+  // Wait for ICE gathering to finish (non-trickle) so the offer SDP carries all
+  // candidates — simplest signalling over our WS. Cap the wait so a browser that
+  // never reports 'complete' still sends the offer with whatever it gathered.
+  function _iceGatheringComplete(peer, timeoutMs = 2500) {
+    if (peer.iceGatheringState === 'complete') return Promise.resolve()
+    return new Promise((resolve) => {
+      let timer = null
+      const done = () => {
+        if (timer) { clearTimeout(timer); timer = null }
+        peer.removeEventListener('icegatheringstatechange', check)
+        resolve()
+      }
+      const check = () => { if (peer.iceGatheringState === 'complete') done() }
+      peer.addEventListener('icegatheringstatechange', check)
+      timer = setTimeout(done, timeoutMs)
+    })
+  }
+
+  /**
+   * Negotiate WebRTC audio over the already-open WS. Mic goes out as a track;
+   * the bot's TTS comes back as a track we play through a hidden <audio
+   * playsinline> — which is what engages the browser AEC (incl. iOS Safari).
+   * On any failure we leave webrtcMode false so start() uses the WS audio path.
+   */
+  async function _iceServers() {
+    // Sourced from the backend (JARVIS_WEBRTC_ICE) so adding a TURN server for
+    // prod/iPhone is an env change, not a code change. Fall back to public STUN.
+    try {
+      const res = await fetch('/api/voice/ice', { credentials: 'same-origin' })
+      if (res.ok) {
+        const data = await res.json()
+        if (Array.isArray(data?.iceServers) && data.iceServers.length) return data.iceServers
+      }
+    } catch { /* fall through to default */ }
+    return [{ urls: 'stun:stun.l.google.com:19302' }]
+  }
+
+  async function _startWebRtc(sock, ms) {
+    const peer = new RTCPeerConnection({ iceServers: await _iceServers() })
+    pc.value = peer
+
+    const audioEl = document.createElement('audio')
+    audioEl.autoplay = true
+    audioEl.setAttribute('playsinline', '')   // iOS: play inline, not fullscreen
+    audioEl.style.display = 'none'
+    document.body.appendChild(audioEl)
+    remoteAudioEl.value = audioEl
+    peer.addEventListener('track', (ev) => {
+      audioEl.srcObject = ev.streams[0] || new MediaStream([ev.track])
+      // play() may reject if autoplay is gated; the mic click is a user gesture
+      // so it normally succeeds — swallow the rejection either way.
+      audioEl.play?.().catch(() => {})
+    })
+    peer.addEventListener('connectionstatechange', () => {
+      const st = peer.connectionState
+      console.debug('[voice] webrtc connectionState', st)
+      // Fail loud: if the peer connection can't form (ICE/DTLS failed), surface
+      // it rather than sitting silently with no audio. No fallback — the user
+      // re-toggles, or sets a TURN server (see docs/VOICE_WEBRTC_TESTING.md).
+      if (st === 'failed') {
+        error.value = 'Voice connection failed — WebRTC could not connect (NAT/firewall?).'
+        status.value = 'error'
+        _teardownWebRtc()   // drop the dead PC + hidden <audio> now, not next toggle
+      }
+    })
+
+    for (const track of ms.getAudioTracks()) peer.addTrack(track, ms)
+
+    await peer.setLocalDescription(await peer.createOffer())
+    await _iceGatheringComplete(peer)
+    sock.send(JSON.stringify({
+      type: 'webrtc_offer',
+      sdp: peer.localDescription.sdp,
+      sdp_type: peer.localDescription.type,
+    }))
+    webrtcMode = true
+  }
+
+  function _teardownWebRtc() {
+    webrtcMode = false
+    try { pc.value?.close() } catch {}
+    pc.value = null
+    const el = remoteAudioEl.value
+    if (el) {
+      try { el.srcObject = null; el.remove() } catch {}
+    }
+    remoteAudioEl.value = null
   }
 
   function _wsUrl() {
@@ -501,24 +659,39 @@ function _createVoiceSession() {
         console.warn('[voice diag] track inspect failed', e)
       }
 
-      const ac = new (window.AudioContext || window.webkitAudioContext)()
-      console.log('[voice diag] AudioContext sampleRate', ac.sampleRate)
-      try {
-        sock.send(JSON.stringify({
-          type: 'diag',
-          stage: 'audio_context',
-          sampleRate: ac.sampleRate,
-        }))
-      } catch (e) { /* noop */ }
-      audioContext.value = ac
-      await ac.audioWorklet.addModule('/voice-worklet.js')
-      const node = new AudioWorkletNode(ac, 'pcm16-resampler', { processorOptions: { targetRate: 16000, frameMs: 100 } })
-      workletNode.value = node
-      const micSource = ac.createMediaStreamSource(ms)
-      micSource.connect(node)
-      // Don't connect to destination — we don't want the user to hear themselves.
-      node.port.onmessage = (e) => {
-        if (sock.readyState === 1) sock.send(e.data)
+      // Audio transport. WebRTC is REQUIRED — it's the only path with browser
+      // AEC (the iOS echo fix). We do NOT silently fall back to the WS audio
+      // path on failure: a broken transport must surface loudly, not degrade to
+      // the echo-prone path behind the user's back. The legacy WS path is only
+      // reachable by an EXPLICIT opt-in (localStorage.voice_transport='ws') for
+      // debugging / A-B testing — a deliberate choice, not a fallback.
+      let _forceWs = false
+      try { _forceWs = localStorage.getItem('voice_transport') === 'ws' } catch { /* ignore */ }
+      if (_forceWs) {
+        // Explicit WS audio path: AudioWorklet captures mic → 16 kHz PCM over
+        // the WS; TTS arrives as binary frames (_enqueueAudio).
+        const ac = new (window.AudioContext || window.webkitAudioContext)()
+        console.log('[voice diag] AudioContext sampleRate', ac.sampleRate)
+        try {
+          sock.send(JSON.stringify({ type: 'diag', stage: 'audio_context', sampleRate: ac.sampleRate }))
+        } catch (e) { /* noop */ }
+        audioContext.value = ac
+        await ac.audioWorklet.addModule('/voice-worklet.js')
+        const node = new AudioWorkletNode(ac, 'pcm16-resampler', { processorOptions: { targetRate: 16000, frameMs: 100 } })
+        workletNode.value = node
+        const micSource = ac.createMediaStreamSource(ms)
+        micSource.connect(node)
+        // Don't connect to destination — we don't want the user to hear themselves.
+        node.port.onmessage = (e) => {
+          if (sock.readyState === 1) sock.send(e.data)
+        }
+      } else {
+        if (!_webrtcSupported()) {
+          // Fail loud rather than degrade — every target browser supports WebRTC.
+          throw new Error('This browser does not support WebRTC, which voice mode requires.')
+        }
+        // Throws on setup failure → caught by start()'s handler → status 'error'.
+        await _startWebRtc(sock, ms)
       }
       sock.send(JSON.stringify({ type: 'start' }))
       // Tell the server which agent + conversation the dashboard has
@@ -568,6 +741,7 @@ function _createVoiceSession() {
     }
     workletNode.value?.disconnect()
     workletNode.value = null
+    _teardownWebRtc()
     if (stream.value) {
       stream.value.getTracks().forEach(t => t.stop())
       stream.value = null

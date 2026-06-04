@@ -720,3 +720,115 @@ def test_barge_in_keeps_socket_alive_for_further_events(ws_client):
         evt = _drain_until(ws, "partial_transcript")
         assert evt["text"] == "after"
         ws.close()
+
+
+def _collect_until_sentinel(ws, sentinel_text, *, max_msgs: int = 12):
+    """Drain JSON frames until a ``partial_transcript`` carrying ``sentinel_text``.
+
+    Returns the list of event ``type``s seen up to and including the sentinel.
+    Lets a test assert that some event (e.g. ``tts_interruption``) did or did
+    NOT appear before a known marker, without depending on exact ordering.
+    """
+    types: list[str] = []
+    for _ in range(max_msgs):
+        msg = ws.receive()
+        if msg.get("type") == "websocket.disconnect":
+            break
+        if msg.get("text"):
+            evt = json.loads(msg["text"])
+            types.append(evt.get("type"))
+            if evt.get("type") == "partial_transcript" and evt.get("text") == sentinel_text:
+                return types
+    raise AssertionError(f"never saw sentinel {sentinel_text!r}; saw {types}")
+
+
+def test_recording_start_during_bot_speaking_cancels_tts(ws_client):
+    """Onset barge-in (case 2): ``recording_start`` while the user is still
+    hearing the bot must emit ``tts_interruption`` — EVEN in the playback tail
+    where synthesis already finished (tts_end fired) but ``bot_speaking`` is
+    still True because the client hasn't sent ``playback_done`` yet.
+
+    This is the regression that previously slipped through: barge-in only
+    fired on ``final_transcript`` (after the user stopped talking), never on
+    speech onset. The onset trigger had no direct test.
+    """
+    client, fake_stt = ws_client
+    with client.websocket_connect("/ws/voice") as ws:
+        ws.send_text(json.dumps({"type": "speak", "text": "a long reply"}))
+        _drain_until(ws, "tts_end")  # synthesis done; bot_speaking stays True
+        # User starts talking over the still-playing buffered audio.
+        fake_stt.emit("recording_start", {})
+        evt = _drain_until(ws, "tts_interruption")
+        assert evt["reason"] == "user_resumed"
+        ws.close()
+
+
+def test_playback_done_clears_bot_speaking_so_no_barge_in(ws_client):
+    """Once the client reports ``playback_done`` (its buffer drained), the user
+    is no longer hearing the bot, so a subsequent interrupt must be a no-op —
+    no ``tts_interruption``. Locks in the SSoT: bot_speaking tracks real client
+    playback, and ``playback_done`` lowers it.
+
+    Ordering is deterministic: ``playback_done`` and ``barge_in`` are both WS
+    control frames drained by the receive loop in FIFO order, so by the time
+    barge_in runs, playback_done has already cleared bot_speaking.
+    """
+    client, fake_stt = ws_client
+    with client.websocket_connect("/ws/voice") as ws:
+        ws.send_text(json.dumps({"type": "speak", "text": "x"}))
+        _drain_until(ws, "tts_end")
+        ws.send_text(json.dumps({"type": "playback_done"}))  # buffer drained
+        ws.send_text(json.dumps({"type": "barge_in"}))       # nothing to flush
+        fake_stt.emit("partial_transcript", {"text": "__DONE__"})
+        seen = _collect_until_sentinel(ws, "__DONE__")
+        assert "tts_interruption" not in seen, f"unexpected barge-in after playback_done: {seen}"
+        ws.close()
+
+
+def test_barge_in_during_playback_tail_flushes_with_no_active_task(ws_client):
+    """Explicit barge_in during the playback tail (synthesis done, tts_task
+    finished) must still emit ``tts_interruption`` so the client flushes its
+    queued audio. Before the fix this was a silent no-op because there was no
+    task left to cancel.
+    """
+    client, fake_stt = ws_client
+    with client.websocket_connect("/ws/voice") as ws:
+        ws.send_text(json.dumps({"type": "speak", "text": "x"}))
+        _drain_until(ws, "tts_end")            # tts_task now done
+        ws.send_text(json.dumps({"type": "barge_in"}))
+        evt = _drain_until(ws, "tts_interruption")
+        assert evt["reason"] == "client_barge_in"
+        ws.close()
+
+
+def test_webrtc_offer_is_answered_over_ws(ws_client, monkeypatch):
+    """A ``webrtc_offer`` control frame must be answered with a ``webrtc_answer``
+    carrying a valid SDP — proving the WS handler wires the offer into a real
+    WebRtcVoiceSession and routes the answer back. (Media itself is covered by
+    the aiortc loopback in test_services/test_webrtc_voice.py.)
+    """
+    import asyncio as _asyncio
+
+    from aiortc import RTCPeerConnection
+
+    # Host-only ICE on both ends so neither side blocks on a STUN round-trip.
+    monkeypatch.setenv("JARVIS_WEBRTC_ICE", "")
+
+    async def _make_offer_sdp() -> str:
+        pc = RTCPeerConnection()
+        pc.addTransceiver("audio", direction="sendrecv")
+        await pc.setLocalDescription(await pc.createOffer())
+        sdp = pc.localDescription.sdp
+        await pc.close()
+        return sdp
+
+    offer_sdp = _asyncio.run(_make_offer_sdp())
+
+    client, _ = ws_client
+    with client.websocket_connect("/ws/voice") as ws:
+        ws.send_text(json.dumps({"type": "webrtc_offer", "sdp": offer_sdp, "sdp_type": "offer"}))
+        evt = _drain_until(ws, "webrtc_answer")
+        assert evt.get("sdp_type") == "answer"
+        assert "v=0" in (evt.get("sdp") or "")
+        assert "m=audio" in evt["sdp"]
+        ws.close()

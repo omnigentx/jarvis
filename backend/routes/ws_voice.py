@@ -61,6 +61,7 @@ from services.sse_progress import (
     merge_hooks,
     progress_manager,
 )
+from services.webrtc_voice import WebRtcVoiceSession, parse_ice_servers
 
 
 def _chunk_rms_peak(pcm_chunk: bytes) -> tuple[int, int]:
@@ -76,6 +77,18 @@ def _chunk_rms_peak(pcm_chunk: bytes) -> tuple[int, int]:
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["voice-ws"])
+
+
+@router.get("/api/voice/ice")
+def voice_ice_config() -> dict:
+    """ICE servers (STUN/TURN) for the browser's RTCPeerConnection.
+
+    Sourced from ``JARVIS_WEBRTC_ICE`` so a TURN deployment (needed for
+    symmetric-NAT / iPhone-on-cellular) is an env change, not a code change —
+    the frontend fetches this before negotiating. Not secret (TURN creds here
+    are the short-lived/shared kind); behind the same auth as the app.
+    """
+    return {"iceServers": parse_ice_servers()}
 
 
 # ─── Auth helpers (cookie / Bearer / query — with CSWSH defence) ────────────
@@ -301,7 +314,14 @@ async def voice_ws(ws: WebSocket) -> None:
     agent_task: Optional[asyncio.Task] = None
     tts_task: Optional[asyncio.Task] = None
     user_query_pending = False  # set when STT finalises text but agent task hasn't started yet
-    bot_speaking = False        # True from tts_start to tts_end / interruption
+    bot_speaking = False        # True from tts_start until client playback_done / barge-in
+    # WebRTC audio transport. When the client negotiates it (``webrtc_offer``),
+    # mic audio arrives on the RTCPeerConnection track (→ feed_audio) and TTS
+    # goes out the same connection — so the browser's AEC scrubs the bot's voice
+    # out of the mic (the iOS Safari echo fix). Signalling/control/STT/barge-in
+    # stay on this WS. Falls back to the WS audio path when not negotiated.
+    webrtc_session = None
+    webrtc_active = False
     # Dictation mode: client picked the bottom mic in ChatInput (press-to-talk
     # transcription) instead of the top hands-free button. In this mode the
     # STT pipeline runs as usual but ``final_transcript`` does NOT trigger
@@ -328,7 +348,7 @@ async def voice_ws(ws: WebSocket) -> None:
 
     def _cancel_inflight(reason: str) -> None:
         """Abort agent generation + TTS playback. Idempotent."""
-        nonlocal agent_task, tts_task
+        nonlocal agent_task, tts_task, bot_speaking
         cancelled = []
         if agent_task is not None and not agent_task.done():
             agent_task.cancel()
@@ -336,8 +356,26 @@ async def voice_ws(ws: WebSocket) -> None:
         if tts_task is not None and not tts_task.done():
             tts_task.cancel()
             cancelled.append("tts")
-        if cancelled:
-            logger.info("[ws_voice] barge-in (%s) cancelled %s", reason, ",".join(cancelled))
+        # Emit the interruption if we cancelled an in-flight task OR the client
+        # is still PLAYING buffered TTS audio. ``bot_speaking`` now stays True
+        # from tts_start until the client sends ``playback_done`` (queue
+        # drained) — see speak() + the playback_done handler. During that
+        # playback tail the server's tts_task has already finished synthesising
+        # (nothing to cancel), but the user is still HEARING the bot and the
+        # frontend must flush its queue. Without this branch a barge-in during
+        # the tail was a silent no-op — the root cause of "TTS keeps playing
+        # until I stop talking and the transcript submits".
+        if cancelled or bot_speaking:
+            bot_speaking = False
+            # WebRTC: also drop any TTS audio still queued on the outbound track
+            # so the bot goes silent immediately (cancelling the task stops
+            # *producing* audio, but already-queued frames would keep playing).
+            if webrtc_session is not None:
+                webrtc_session.tts_track.flush()
+            logger.info(
+                "[ws_voice] barge-in (%s) cancelled %s",
+                reason, ",".join(cancelled) or "playback-only",
+            )
             try:
                 out_queue.put_nowait({"type": "tts_interruption", "reason": reason})
             except Exception:
@@ -412,8 +450,11 @@ async def voice_ws(ws: WebSocket) -> None:
             logger.info("[ws_voice] _dispatch_user_turn skipped (dictation mode)")
             return
         # Cancel any previous in-flight agent/tts so a barge-in mid-turn
-        # cleanly resets to the new user input.
-        if (agent_task is not None and not agent_task.done()) or (
+        # cleanly resets to the new user input. ``bot_speaking`` covers the
+        # playback-tail case where synthesis already finished but the client
+        # is still playing buffered audio — flush it so the previous reply's
+        # audio doesn't bleed past the new turn.
+        if bot_speaking or (agent_task is not None and not agent_task.done()) or (
             tts_task is not None and not tts_task.done()
         ):
             _cancel_inflight("new_user_turn")
@@ -524,30 +565,55 @@ async def voice_ws(ws: WebSocket) -> None:
         await out_queue.put({"type": "tts_start"})
         bytes_sent = 0
         chunks_sent = 0
+        # Route audio over WebRTC when the client negotiated it (the browser
+        # plays the TTS track via <audio>, which is what lets its AEC scrub the
+        # echo on iOS). Otherwise the WS binary path. tts_start/tts_end JSON
+        # still go over the WS either way so the UI updates the same.
+        use_webrtc = webrtc_active and webrtc_session is not None
+
+        async def _emit(pcm: bytes) -> None:
+            nonlocal bytes_sent, chunks_sent
+            bytes_sent += len(pcm)
+            chunks_sent += 1
+            if use_webrtc:
+                webrtc_session.send_pcm(pcm)
+            else:
+                await out_queue.put(pcm)
+
         logger.info(
-            "[ws_voice] speak() start: provider=%s path=%s text_len=%d",
-            type(provider).__name__, path, len(text),
+            "[ws_voice] speak() start: provider=%s path=%s text_len=%d transport=%s",
+            type(provider).__name__, path, len(text), "webrtc" if use_webrtc else "ws",
         )
         try:
             if stream_pcm is not None:
                 async for pcm in stream_pcm(text):
-                    bytes_sent += len(pcm)
-                    chunks_sent += 1
-                    await out_queue.put(pcm)
+                    await _emit(pcm)
             else:
                 async for pcm in _mp3_stream_to_pcm(provider.stream_audio(text)):
-                    bytes_sent += len(pcm)
-                    chunks_sent += 1
-                    await out_queue.put(pcm)
+                    await _emit(pcm)
             logger.info(
                 "[ws_voice] speak() done: chunks=%d bytes=%d",
                 chunks_sent, bytes_sent,
             )
+            if use_webrtc:
+                # WebRTC: the server paces the track, so we know exactly when the
+                # user stops hearing the bot — wait for the track to drain, then
+                # drop bot_speaking. This is the WebRTC analogue of the WS path's
+                # client ``playback_done``. tts_task stays alive for the whole
+                # playback, so an onset barge-in cancels it mid-tail for free.
+                await webrtc_session.tts_track.wait_drained()
+                bot_speaking = False
         except asyncio.CancelledError:
             await out_queue.put({"type": "barge_in_ack"})
             raise
         finally:
-            bot_speaking = False
+            # bot_speaking is intentionally NOT reset here. It now tracks actual
+            # CLIENT PLAYBACK, not server synthesis: it stays True from tts_start
+            # until the client sends ``playback_done`` (its buffer drained) or a
+            # barge-in clears it via _cancel_inflight. Synthesis finishing is not
+            # the same as the user no longer hearing the bot — the client buffers
+            # several seconds of audio ahead, and barge-in must still work during
+            # that tail.
             # Dump the mic PCM captured during this TTS turn to /data/voice_diag
             # so we can listen to what the server saw + compare RMS vs the
             # silent baseline. This is the ground truth for "is AEC working".
@@ -826,6 +892,12 @@ async def voice_ws(ws: WebSocket) -> None:
             if msg["type"] == "websocket.disconnect":
                 return
             if "bytes" in msg and msg["bytes"] is not None:
+                # When WebRTC is negotiated the mic arrives on the RTCPeerConnection
+                # track (pumped into feed_audio there), so ignore any WS PCM frames
+                # to avoid feeding STT twice. The client stops sending them, but
+                # guard server-side too.
+                if webrtc_active:
+                    continue
                 # Diagnostic: classify each frame as "during bot" vs "silent
                 # baseline" so we can compare RMS distributions and confirm
                 # whether browser AEC is actually scrubbing the bot's voice
@@ -855,8 +927,58 @@ async def voice_ws(ws: WebSocket) -> None:
                     if tts_task is not None and not tts_task.done():
                         tts_task.cancel()
                     tts_task = asyncio.create_task(speak(text))
+                elif kind == "webrtc_offer":
+                    # Client wants to move audio onto a WebRTC connection (so the
+                    # browser AEC can scrub the bot's TTS — the iOS echo fix).
+                    # Answer the offer; from now on mic + TTS go over WebRTC.
+                    sdp = payload.get("sdp") or ""
+                    if not sdp:
+                        await out_queue.put({"type": "webrtc_error", "detail": "missing sdp"})
+                        continue
+                    try:
+                        if webrtc_session is not None:
+                            await webrtc_session.close()
+
+                        def _feed_webrtc(pcm: bytes) -> None:
+                            if stt_service is not None:
+                                stt_service.feed_audio(pcm)
+
+                        webrtc_session = WebRtcVoiceSession(_feed_webrtc)
+                        answer = await webrtc_session.handle_offer(
+                            sdp, payload.get("sdp_type") or "offer"
+                        )
+                        webrtc_active = True
+                        await out_queue.put({
+                            "type": "webrtc_answer",
+                            "sdp": answer["sdp"],
+                            "sdp_type": answer["type"],
+                        })
+                        logger.info("[ws_voice] WebRTC negotiated — audio over RTCPeerConnection")
+                    except Exception as exc:
+                        logger.exception("[ws_voice] webrtc_offer failed")
+                        webrtc_active = False
+                        if webrtc_session is not None:
+                            await webrtc_session.close()
+                            webrtc_session = None
+                        await out_queue.put({"type": "webrtc_error", "detail": str(exc)})
                 elif kind == "barge_in":
                     _cancel_inflight("client_barge_in")
+                elif kind == "playback_done":
+                    # Authoritative "the user has stopped hearing the bot"
+                    # signal on the WS audio path: the client finished playing
+                    # every buffered TTS chunk. Until this lands, bot_speaking
+                    # stays True (set at tts_start, kept past synthesis end) so a
+                    # barge-in during the playback tail still flushes the client
+                    # queue. SSoT: server bot_speaking mirrors real client
+                    # playback instead of server-side synthesis state.
+                    #
+                    # In WebRTC mode the server PACES the track itself, so
+                    # speak()'s wait_drained() is the authority for the drain
+                    # edge — ignore any client playback_done (a correct client
+                    # won't send one, but guard defensively so a stale/foreign
+                    # client can't clear bot_speaking mid-playback).
+                    if not webrtc_active:
+                        bot_speaking = False
                 elif kind == "set_session":
                     session_id = payload.get("id") or session_id
                 elif kind == "set_agent":
@@ -900,6 +1022,12 @@ async def voice_ws(ws: WebSocket) -> None:
         for t in (agent_task, tts_task):
             if t is not None and not t.done():
                 t.cancel()
+        if webrtc_session is not None:
+            # Tear down the RTCPeerConnection + inbound pump task.
+            try:
+                await webrtc_session.close()
+            except Exception:
+                logger.exception("[ws_voice] webrtc close failed")
         await out_queue.put(None)
         writer_task.cancel()
         try:
