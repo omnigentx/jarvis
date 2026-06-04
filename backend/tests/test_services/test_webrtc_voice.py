@@ -20,7 +20,7 @@ from fractions import Fraction
 import av
 from aiortc import MediaStreamTrack, RTCPeerConnection, RTCSessionDescription
 
-from services.webrtc_voice import WebRtcVoiceSession
+from services.webrtc_voice import WebRtcVoiceSession, parse_ice_servers
 
 
 class _ToneTrack(MediaStreamTrack):
@@ -87,6 +87,33 @@ async def _run_loopback():
     await session.close()
     await browser.close()
     return fed, out_frames
+
+
+def test_parse_ice_servers_stun_and_turn(monkeypatch):
+    """JARVIS_WEBRTC_ICE → browser-shaped iceServers, incl. TURN credentials.
+
+    The /api/voice/ice endpoint + the aiortc session both consume this, so a
+    mis-parse (esp. TURN user:pass) would silently break NAT traversal on prod.
+    """
+    monkeypatch.setenv(
+        "JARVIS_WEBRTC_ICE",
+        "stun:stun.l.google.com:19302, turn:alice:s3cr3t@turn.example.com:3478",
+    )
+    servers = parse_ice_servers()
+    assert servers[0] == {"urls": "stun:stun.l.google.com:19302"}
+    assert servers[1] == {
+        "urls": "turn:turn.example.com:3478",
+        "username": "alice",
+        "credential": "s3cr3t",
+    }
+
+    # Default (env unset) is a public STUN server, never empty.
+    monkeypatch.delenv("JARVIS_WEBRTC_ICE", raising=False)
+    assert parse_ice_servers() == [{"urls": "stun:stun.l.google.com:19302"}]
+
+    # A colon in the TURN password survives.
+    monkeypatch.setenv("JARVIS_WEBRTC_ICE", "turn:u:p:a:ss@h:3478")
+    assert parse_ice_servers()[0]["credential"] == "p:a:ss"
 
 
 def test_webrtc_loopback_bridges_audio_both_directions():

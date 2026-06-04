@@ -13,7 +13,7 @@
  * negotiation initiates correctly from production code.
  */
 
-import type { Page } from '@playwright/test'
+import type { Page, WebSocketRoute } from '@playwright/test'
 import { expect, test } from '@playwright/test'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -51,7 +51,9 @@ test('mic toggle → client sends a valid webrtc_offer (audio over WebRTC)', asy
   await mockBackend(page, [NOISE])
 
   const inbound: string[] = []
+  let routed: WebSocketRoute | null = null
   await page.routeWebSocket(/\/ws\/voice$/, (ws) => {
+    routed = ws
     ws.onMessage((data) => {
       const s = typeof data === 'string' ? data : '<binary>'
       inbound.push(s)
@@ -78,4 +80,15 @@ test('mic toggle → client sends a valid webrtc_offer (audio over WebRTC)', asy
   // And it must NOT stream mic PCM over the WS in WebRTC mode (audio rides the
   // peer connection). Allow control frames; reject binary.
   expect(inbound.some((m) => m === '<binary>')).toBe(false)
+
+  // Regression guard for the WebRTC bot_speaking SSoT: in WebRTC mode the SERVER
+  // owns the drain edge (its real-time track pacing), so the client must NOT
+  // send playback_done. If it did, the server would clear bot_speaking at
+  // tts_end — while the track is still playing — and kill onset barge-in during
+  // the tail. Drive a full TTS turn and assert no playback_done is ever sent.
+  expect(routed).not.toBeNull()
+  await routed!.send(JSON.stringify({ type: 'tts_start' }))
+  await routed!.send(JSON.stringify({ type: 'tts_end' }))
+  await page.waitForTimeout(300)
+  expect(inbound.some((m) => m.includes('"type":"playback_done"'))).toBe(false)
 })

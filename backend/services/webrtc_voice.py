@@ -47,8 +47,38 @@ logger = logging.getLogger(__name__)
 # Public STUN so each peer can discover its server-reflexive (NAT) candidate —
 # needed for the browser↔server connection to form over the internet (iPhone on
 # cellular/Wi-Fi behind NAT). If a deployment is behind symmetric NAT on both
-# ends a TURN relay would also be required; configure via JARVIS_WEBRTC_ICE.
+# ends a TURN relay is also required; configure via JARVIS_WEBRTC_ICE as a
+# comma-separated list, e.g.:
+#   JARVIS_WEBRTC_ICE="stun:stun.l.google.com:19302,turn:user:pass@turn.example.com:3478"
 _DEFAULT_STUN = "stun:stun.l.google.com:19302"
+
+
+def parse_ice_servers() -> list[dict]:
+    """Parse JARVIS_WEBRTC_ICE into browser-shaped iceServers dicts.
+
+    Accepts ``stun:host:port`` and ``turn[s]:user:pass@host:port`` entries.
+    Returned shape ({urls, username?, credential?}) is what an RTCConfiguration
+    expects in the browser AND maps cleanly to aiortc's RTCIceServer — so the
+    frontend (via the /ice endpoint) and the server use one source of truth.
+    """
+    raw = os.environ.get("JARVIS_WEBRTC_ICE", _DEFAULT_STUN)
+    servers: list[dict] = []
+    for entry in raw.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        if "@" in entry:
+            scheme_creds, host = entry.split("@", 1)
+            parts = scheme_creds.split(":")  # e.g. ["turn", "user", "pass"]
+            server: dict = {"urls": f"{parts[0]}:{host}"}
+            if len(parts) > 1:
+                server["username"] = parts[1]
+            if len(parts) > 2:
+                server["credential"] = ":".join(parts[2:])  # pass may contain ':'
+            servers.append(server)
+        else:
+            servers.append({"urls": entry})
+    return servers
 
 STT_RATE = 16000      # feed_audio() input rate (mono s16)
 TTS_RATE = 24000      # RealtimeTTS / Edge PCM rate (mono s16)
@@ -185,12 +215,15 @@ class WebRtcVoiceSession:
     ):
         self._feed_audio = feed_audio
         self._on_connection_lost = on_connection_lost
-        # Default to STUN from env (prod NAT traversal); tests pass [] for a
-        # fast host-only localhost loopback that doesn't hit the network.
-        urls = ice_servers if ice_servers is not None else [
-            u for u in os.environ.get("JARVIS_WEBRTC_ICE", _DEFAULT_STUN).split(",") if u.strip()
-        ]
-        ice = [RTCIceServer(urls=u) for u in urls]
+        # Default to ICE from env (prod NAT traversal, incl. TURN creds); tests
+        # pass ice_servers=[] for a fast host-only localhost loopback.
+        if ice_servers is not None:
+            ice = [RTCIceServer(urls=u) for u in ice_servers]
+        else:
+            ice = [
+                RTCIceServer(urls=s["urls"], username=s.get("username"), credential=s.get("credential"))
+                for s in parse_ice_servers()
+            ]
         self.pc = RTCPeerConnection(configuration=RTCConfiguration(iceServers=ice))
         self.tts_track = TtsAudioTrack()
         self._inbound_task: Optional[asyncio.Task] = None

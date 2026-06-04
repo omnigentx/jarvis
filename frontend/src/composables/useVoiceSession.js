@@ -346,17 +346,27 @@ function _createVoiceSession() {
           console.warn('[voice] server webrtc_error', msg.detail)
           error.value = `Voice transport failed on the server: ${msg.detail || 'unknown error'}`
           status.value = 'error'
+          _teardownWebRtc()   // drop the half-open PC + hidden <audio>
           break
         case 'tts_start':
           status.value = 'speaking'
           wasInterrupted.value = false
-          playbackTracker.ttsStart()   // re-arm playback_done for this turn
+          // WS path only: re-arm playback_done tracking. In WebRTC mode the
+          // server owns the drain edge (see tts_end), so the tracker is unused.
+          if (!webrtcMode) playbackTracker.ttsStart()
           break
         case 'tts_end':
-          // Server finished synthesising. Playback usually continues a few more
-          // seconds; the tracker fires playback_done once the queue drains (or
-          // right now if a very short reply already drained before tts_end).
-          playbackTracker.ttsEnd(playbackSources.size)
+          // WS path: playback continues a few seconds; the tracker fires
+          // playback_done once the queue drains.
+          //
+          // WebRTC path: the client has NO local audio buffer (TTS plays on the
+          // media track), so playbackSources is always empty here — calling the
+          // tracker would fire playback_done *immediately*, clearing the server's
+          // bot_speaking while its real-time track is still playing, which kills
+          // onset barge-in during the tail (the exact bug this work fixes). The
+          // server's wait_drained() is the SSoT for "done playing" in WebRTC
+          // mode, so the client must NOT send playback_done.
+          if (!webrtcMode) playbackTracker.ttsEnd(playbackSources.size)
           status.value = ws.value?.readyState === 1 ? 'listening' : 'idle'
           break
         case 'barge_in_ack':
@@ -474,10 +484,15 @@ function _createVoiceSession() {
   function _iceGatheringComplete(peer, timeoutMs = 2500) {
     if (peer.iceGatheringState === 'complete') return Promise.resolve()
     return new Promise((resolve) => {
-      const done = () => { peer.removeEventListener('icegatheringstatechange', check); resolve() }
+      let timer = null
+      const done = () => {
+        if (timer) { clearTimeout(timer); timer = null }
+        peer.removeEventListener('icegatheringstatechange', check)
+        resolve()
+      }
       const check = () => { if (peer.iceGatheringState === 'complete') done() }
       peer.addEventListener('icegatheringstatechange', check)
-      setTimeout(done, timeoutMs)
+      timer = setTimeout(done, timeoutMs)
     })
   }
 
@@ -487,10 +502,21 @@ function _createVoiceSession() {
    * playsinline> — which is what engages the browser AEC (incl. iOS Safari).
    * On any failure we leave webrtcMode false so start() uses the WS audio path.
    */
+  async function _iceServers() {
+    // Sourced from the backend (JARVIS_WEBRTC_ICE) so adding a TURN server for
+    // prod/iPhone is an env change, not a code change. Fall back to public STUN.
+    try {
+      const res = await fetch('/api/voice/ice', { credentials: 'same-origin' })
+      if (res.ok) {
+        const data = await res.json()
+        if (Array.isArray(data?.iceServers) && data.iceServers.length) return data.iceServers
+      }
+    } catch { /* fall through to default */ }
+    return [{ urls: 'stun:stun.l.google.com:19302' }]
+  }
+
   async function _startWebRtc(sock, ms) {
-    const peer = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
-    })
+    const peer = new RTCPeerConnection({ iceServers: await _iceServers() })
     pc.value = peer
 
     const audioEl = document.createElement('audio')
@@ -514,6 +540,7 @@ function _createVoiceSession() {
       if (st === 'failed') {
         error.value = 'Voice connection failed — WebRTC could not connect (NAT/firewall?).'
         status.value = 'error'
+        _teardownWebRtc()   // drop the dead PC + hidden <audio> now, not next toggle
       }
     })
 

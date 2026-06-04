@@ -61,7 +61,7 @@ from services.sse_progress import (
     merge_hooks,
     progress_manager,
 )
-from services.webrtc_voice import WebRtcVoiceSession
+from services.webrtc_voice import WebRtcVoiceSession, parse_ice_servers
 
 
 def _chunk_rms_peak(pcm_chunk: bytes) -> tuple[int, int]:
@@ -77,6 +77,18 @@ def _chunk_rms_peak(pcm_chunk: bytes) -> tuple[int, int]:
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["voice-ws"])
+
+
+@router.get("/api/voice/ice")
+def voice_ice_config() -> dict:
+    """ICE servers (STUN/TURN) for the browser's RTCPeerConnection.
+
+    Sourced from ``JARVIS_WEBRTC_ICE`` so a TURN deployment (needed for
+    symmetric-NAT / iPhone-on-cellular) is an env change, not a code change —
+    the frontend fetches this before negotiating. Not secret (TURN creds here
+    are the short-lived/shared kind); behind the same auth as the app.
+    """
+    return {"iceServers": parse_ice_servers()}
 
 
 # ─── Auth helpers (cookie / Bearer / query — with CSWSH defence) ────────────
@@ -953,13 +965,20 @@ async def voice_ws(ws: WebSocket) -> None:
                     _cancel_inflight("client_barge_in")
                 elif kind == "playback_done":
                     # Authoritative "the user has stopped hearing the bot"
-                    # signal: the client finished playing every buffered TTS
-                    # chunk. Until this lands, bot_speaking stays True (set at
-                    # tts_start, kept past synthesis end) so a barge-in during
-                    # the playback tail still flushes the client queue. This is
-                    # the SSoT fix: server ``bot_speaking`` mirrors real client
+                    # signal on the WS audio path: the client finished playing
+                    # every buffered TTS chunk. Until this lands, bot_speaking
+                    # stays True (set at tts_start, kept past synthesis end) so a
+                    # barge-in during the playback tail still flushes the client
+                    # queue. SSoT: server bot_speaking mirrors real client
                     # playback instead of server-side synthesis state.
-                    bot_speaking = False
+                    #
+                    # In WebRTC mode the server PACES the track itself, so
+                    # speak()'s wait_drained() is the authority for the drain
+                    # edge — ignore any client playback_done (a correct client
+                    # won't send one, but guard defensively so a stale/foreign
+                    # client can't clear bot_speaking mid-playback).
+                    if not webrtc_active:
+                        bot_speaking = False
                 elif kind == "set_session":
                     session_id = payload.get("id") or session_id
                 elif kind == "set_agent":
