@@ -52,7 +52,8 @@ class _ToneTrack(MediaStreamTrack):
 
 async def _run_loopback():
     fed: list[bytes] = []
-    session = WebRtcVoiceSession(lambda pcm: fed.append(pcm))
+    # No STUN — host-only candidates keep the loopback fast and offline.
+    session = WebRtcVoiceSession(lambda pcm: fed.append(pcm), ice_servers=[])
 
     browser = RTCPeerConnection()
     browser.addTrack(_ToneTrack())

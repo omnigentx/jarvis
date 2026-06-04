@@ -28,14 +28,27 @@ from __future__ import annotations
 import asyncio
 import fractions
 import logging
+import os
 import time
-from typing import Awaitable, Callable, Optional
+from typing import Callable, Optional
 
 import av
-from aiortc import MediaStreamTrack, RTCPeerConnection, RTCSessionDescription
+from aiortc import (
+    MediaStreamTrack,
+    RTCConfiguration,
+    RTCIceServer,
+    RTCPeerConnection,
+    RTCSessionDescription,
+)
 from aiortc.mediastreams import MediaStreamError
 
 logger = logging.getLogger(__name__)
+
+# Public STUN so each peer can discover its server-reflexive (NAT) candidate —
+# needed for the browser↔server connection to form over the internet (iPhone on
+# cellular/Wi-Fi behind NAT). If a deployment is behind symmetric NAT on both
+# ends a TURN relay would also be required; configure via JARVIS_WEBRTC_ICE.
+_DEFAULT_STUN = "stun:stun.l.google.com:19302"
 
 STT_RATE = 16000      # feed_audio() input rate (mono s16)
 TTS_RATE = 24000      # RealtimeTTS / Edge PCM rate (mono s16)
@@ -68,6 +81,29 @@ class TtsAudioTrack(MediaStreamTrack):
         """Queue a chunk of 24 kHz mono s16 PCM for playback."""
         if pcm24k:
             self._queue.put_nowait(pcm24k)
+
+    def pending(self) -> bool:
+        """True while there's still TTS audio queued or buffered to play."""
+        return not self._queue.empty() or len(self._buf) >= 2
+
+    async def wait_drained(self) -> None:
+        """Block until every pushed chunk has been emitted as a frame.
+
+        With WebRTC the server paces playback, so this is the authoritative
+        'the user has stopped hearing the bot' edge — the WebRTC analogue of the
+        WS path's client ``playback_done``.
+        """
+        while self.pending():
+            await asyncio.sleep(0.02)
+
+    def flush(self) -> None:
+        """Drop all queued + buffered TTS audio (barge-in — stop playback now)."""
+        while not self._queue.empty():
+            try:
+                self._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+        self._buf.clear()
 
     def _resample_into_buf(self, pcm24k: bytes) -> None:
         in_frame = av.AudioFrame(format="s16", layout="mono", samples=len(pcm24k) // 2)
@@ -140,10 +176,22 @@ class WebRtcVoiceSession:
     ``feed_audio`` callback (the same one the WS binary path used).
     """
 
-    def __init__(self, feed_audio: FeedAudio, *, on_connection_lost: Optional[Callable[[], None]] = None):
+    def __init__(
+        self,
+        feed_audio: FeedAudio,
+        *,
+        on_connection_lost: Optional[Callable[[], None]] = None,
+        ice_servers: Optional[list[str]] = None,
+    ):
         self._feed_audio = feed_audio
         self._on_connection_lost = on_connection_lost
-        self.pc = RTCPeerConnection()
+        # Default to STUN from env (prod NAT traversal); tests pass [] for a
+        # fast host-only localhost loopback that doesn't hit the network.
+        urls = ice_servers if ice_servers is not None else [
+            u for u in os.environ.get("JARVIS_WEBRTC_ICE", _DEFAULT_STUN).split(",") if u.strip()
+        ]
+        ice = [RTCIceServer(urls=u) for u in urls]
+        self.pc = RTCPeerConnection(configuration=RTCConfiguration(iceServers=ice))
         self.tts_track = TtsAudioTrack()
         self._inbound_task: Optional[asyncio.Task] = None
         self.pc.addTrack(self.tts_track)

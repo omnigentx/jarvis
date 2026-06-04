@@ -799,3 +799,36 @@ def test_barge_in_during_playback_tail_flushes_with_no_active_task(ws_client):
         evt = _drain_until(ws, "tts_interruption")
         assert evt["reason"] == "client_barge_in"
         ws.close()
+
+
+def test_webrtc_offer_is_answered_over_ws(ws_client, monkeypatch):
+    """A ``webrtc_offer`` control frame must be answered with a ``webrtc_answer``
+    carrying a valid SDP — proving the WS handler wires the offer into a real
+    WebRtcVoiceSession and routes the answer back. (Media itself is covered by
+    the aiortc loopback in test_services/test_webrtc_voice.py.)
+    """
+    import asyncio as _asyncio
+
+    from aiortc import RTCPeerConnection
+
+    # Host-only ICE on both ends so neither side blocks on a STUN round-trip.
+    monkeypatch.setenv("JARVIS_WEBRTC_ICE", "")
+
+    async def _make_offer_sdp() -> str:
+        pc = RTCPeerConnection()
+        pc.addTransceiver("audio", direction="sendrecv")
+        await pc.setLocalDescription(await pc.createOffer())
+        sdp = pc.localDescription.sdp
+        await pc.close()
+        return sdp
+
+    offer_sdp = _asyncio.run(_make_offer_sdp())
+
+    client, _ = ws_client
+    with client.websocket_connect("/ws/voice") as ws:
+        ws.send_text(json.dumps({"type": "webrtc_offer", "sdp": offer_sdp, "sdp_type": "offer"}))
+        evt = _drain_until(ws, "webrtc_answer")
+        assert evt.get("sdp_type") == "answer"
+        assert "v=0" in (evt.get("sdp") or "")
+        assert "m=audio" in evt["sdp"]
+        ws.close()

@@ -107,6 +107,16 @@ function _createVoiceSession() {
   // "TTS doesn't stop when user barges in" bug).
   const playbackSources = new Set()
 
+  // WebRTC audio transport (preferred). Routing mic + TTS over an
+  // RTCPeerConnection lets the browser's AEC scrub the bot's voice out of the
+  // mic — the only reliable fix for the iOS Safari echo/feedback loop (Web Audio
+  // API playback bypasses AEC on Safari; a WebRTC <audio> track does not). When
+  // active, the WS audio paths (worklet mic-send + _enqueueAudio) are bypassed;
+  // we fall back to them only if RTCPeerConnection is unavailable.
+  const pc = shallowRef(null)
+  const remoteAudioEl = shallowRef(null)
+  let webrtcMode = false
+
   function _ensureActiveConversation() {
     if (chatStore.activeConversation) return
     // First voice turn with no chat session active — create a local conv.
@@ -320,6 +330,22 @@ function _createVoiceSession() {
           // turn boundary signal we already handle above.
           break
         case 'wake_word': wakeWordHits.value++; break
+        case 'webrtc_answer':
+          // Server accepted the WebRTC offer — complete the handshake; the
+          // connection forms once ICE finishes and audio starts flowing on the
+          // media track (mic out, TTS in).
+          if (pc.value && msg.sdp) {
+            pc.value
+              .setRemoteDescription({ type: msg.sdp_type || 'answer', sdp: msg.sdp })
+              .catch((e) => console.warn('[voice] setRemoteDescription failed', e))
+          }
+          break
+        case 'webrtc_error':
+          // Server couldn't set up WebRTC. We've already sent {type:start};
+          // surface it — audio won't flow, the user can re-toggle. (Rare; mostly
+          // a server misconfig.)
+          console.warn('[voice] server webrtc_error', msg.detail)
+          break
         case 'tts_start':
           status.value = 'speaking'
           wasInterrupted.value = false
@@ -382,9 +408,10 @@ function _createVoiceSession() {
           status.value = 'error'
           break
       }
-    } else if (ev.data instanceof Blob) {
+    } else if (!webrtcMode && ev.data instanceof Blob) {
+      // WS audio path only — in WebRTC mode TTS arrives on the media track.
       _enqueueAudio(ev.data)
-    } else if (ev.data instanceof ArrayBuffer) {
+    } else if (!webrtcMode && ev.data instanceof ArrayBuffer) {
       _enqueueAudio(new Blob([ev.data]))
     }
   }
@@ -435,6 +462,73 @@ function _createVoiceSession() {
     } catch (e) {
       console.warn('[voice] audio enqueue failed', e)
     }
+  }
+
+  const _webrtcSupported = () =>
+    typeof RTCPeerConnection !== 'undefined' && typeof MediaStream !== 'undefined'
+
+  // Wait for ICE gathering to finish (non-trickle) so the offer SDP carries all
+  // candidates — simplest signalling over our WS. Cap the wait so a browser that
+  // never reports 'complete' still sends the offer with whatever it gathered.
+  function _iceGatheringComplete(peer, timeoutMs = 2500) {
+    if (peer.iceGatheringState === 'complete') return Promise.resolve()
+    return new Promise((resolve) => {
+      const done = () => { peer.removeEventListener('icegatheringstatechange', check); resolve() }
+      const check = () => { if (peer.iceGatheringState === 'complete') done() }
+      peer.addEventListener('icegatheringstatechange', check)
+      setTimeout(done, timeoutMs)
+    })
+  }
+
+  /**
+   * Negotiate WebRTC audio over the already-open WS. Mic goes out as a track;
+   * the bot's TTS comes back as a track we play through a hidden <audio
+   * playsinline> — which is what engages the browser AEC (incl. iOS Safari).
+   * On any failure we leave webrtcMode false so start() uses the WS audio path.
+   */
+  async function _startWebRtc(sock, ms) {
+    const peer = new RTCPeerConnection({
+      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+    })
+    pc.value = peer
+
+    const audioEl = document.createElement('audio')
+    audioEl.autoplay = true
+    audioEl.setAttribute('playsinline', '')   // iOS: play inline, not fullscreen
+    audioEl.style.display = 'none'
+    document.body.appendChild(audioEl)
+    remoteAudioEl.value = audioEl
+    peer.addEventListener('track', (ev) => {
+      audioEl.srcObject = ev.streams[0] || new MediaStream([ev.track])
+      // play() may reject if autoplay is gated; the mic click is a user gesture
+      // so it normally succeeds — swallow the rejection either way.
+      audioEl.play?.().catch(() => {})
+    })
+    peer.addEventListener('connectionstatechange', () => {
+      console.debug('[voice] webrtc connectionState', peer.connectionState)
+    })
+
+    for (const track of ms.getAudioTracks()) peer.addTrack(track, ms)
+
+    await peer.setLocalDescription(await peer.createOffer())
+    await _iceGatheringComplete(peer)
+    sock.send(JSON.stringify({
+      type: 'webrtc_offer',
+      sdp: peer.localDescription.sdp,
+      sdp_type: peer.localDescription.type,
+    }))
+    webrtcMode = true
+  }
+
+  function _teardownWebRtc() {
+    webrtcMode = false
+    try { pc.value?.close() } catch {}
+    pc.value = null
+    const el = remoteAudioEl.value
+    if (el) {
+      try { el.srcObject = null; el.remove() } catch {}
+    }
+    remoteAudioEl.value = null
   }
 
   function _wsUrl() {
@@ -529,24 +623,44 @@ function _createVoiceSession() {
         console.warn('[voice diag] track inspect failed', e)
       }
 
-      const ac = new (window.AudioContext || window.webkitAudioContext)()
-      console.log('[voice diag] AudioContext sampleRate', ac.sampleRate)
-      try {
-        sock.send(JSON.stringify({
-          type: 'diag',
-          stage: 'audio_context',
-          sampleRate: ac.sampleRate,
-        }))
-      } catch (e) { /* noop */ }
-      audioContext.value = ac
-      await ac.audioWorklet.addModule('/voice-worklet.js')
-      const node = new AudioWorkletNode(ac, 'pcm16-resampler', { processorOptions: { targetRate: 16000, frameMs: 100 } })
-      workletNode.value = node
-      const micSource = ac.createMediaStreamSource(ms)
-      micSource.connect(node)
-      // Don't connect to destination — we don't want the user to hear themselves.
-      node.port.onmessage = (e) => {
-        if (sock.readyState === 1) sock.send(e.data)
+      // Escape hatch for debugging / A-B testing: set
+      // localStorage.voice_transport = 'ws' to force the legacy WS audio path.
+      let _forceWs = false
+      try { _forceWs = localStorage.getItem('voice_transport') === 'ws' } catch { /* ignore */ }
+      if (_webrtcSupported() && !_forceWs) {
+        // Preferred: audio over WebRTC so the browser AEC kills the echo (iOS).
+        // Mic + TTS ride the RTCPeerConnection; the WS carries only control.
+        try {
+          await _startWebRtc(sock, ms)
+        } catch (e) {
+          // Negotiation set-up failed before it even started — fall back to the
+          // WS audio path so voice still works (minus the iOS AEC benefit).
+          console.warn('[voice] WebRTC setup failed, falling back to WS audio', e)
+          _teardownWebRtc()
+        }
+      }
+      if (!webrtcMode) {
+        // Legacy WS audio path: capture mic via an AudioWorklet, stream 16 kHz
+        // PCM frames over the WS; TTS arrives as binary frames (_enqueueAudio).
+        const ac = new (window.AudioContext || window.webkitAudioContext)()
+        console.log('[voice diag] AudioContext sampleRate', ac.sampleRate)
+        try {
+          sock.send(JSON.stringify({
+            type: 'diag',
+            stage: 'audio_context',
+            sampleRate: ac.sampleRate,
+          }))
+        } catch (e) { /* noop */ }
+        audioContext.value = ac
+        await ac.audioWorklet.addModule('/voice-worklet.js')
+        const node = new AudioWorkletNode(ac, 'pcm16-resampler', { processorOptions: { targetRate: 16000, frameMs: 100 } })
+        workletNode.value = node
+        const micSource = ac.createMediaStreamSource(ms)
+        micSource.connect(node)
+        // Don't connect to destination — we don't want the user to hear themselves.
+        node.port.onmessage = (e) => {
+          if (sock.readyState === 1) sock.send(e.data)
+        }
       }
       sock.send(JSON.stringify({ type: 'start' }))
       // Tell the server which agent + conversation the dashboard has
@@ -596,6 +710,7 @@ function _createVoiceSession() {
     }
     workletNode.value?.disconnect()
     workletNode.value = null
+    _teardownWebRtc()
     if (stream.value) {
       stream.value.getTracks().forEach(t => t.stop())
       stream.value = null
