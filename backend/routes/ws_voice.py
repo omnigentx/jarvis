@@ -301,7 +301,7 @@ async def voice_ws(ws: WebSocket) -> None:
     agent_task: Optional[asyncio.Task] = None
     tts_task: Optional[asyncio.Task] = None
     user_query_pending = False  # set when STT finalises text but agent task hasn't started yet
-    bot_speaking = False        # True from tts_start to tts_end / interruption
+    bot_speaking = False        # True from tts_start until client playback_done / barge-in
     # Dictation mode: client picked the bottom mic in ChatInput (press-to-talk
     # transcription) instead of the top hands-free button. In this mode the
     # STT pipeline runs as usual but ``final_transcript`` does NOT trigger
@@ -328,7 +328,7 @@ async def voice_ws(ws: WebSocket) -> None:
 
     def _cancel_inflight(reason: str) -> None:
         """Abort agent generation + TTS playback. Idempotent."""
-        nonlocal agent_task, tts_task
+        nonlocal agent_task, tts_task, bot_speaking
         cancelled = []
         if agent_task is not None and not agent_task.done():
             agent_task.cancel()
@@ -336,8 +336,21 @@ async def voice_ws(ws: WebSocket) -> None:
         if tts_task is not None and not tts_task.done():
             tts_task.cancel()
             cancelled.append("tts")
-        if cancelled:
-            logger.info("[ws_voice] barge-in (%s) cancelled %s", reason, ",".join(cancelled))
+        # Emit the interruption if we cancelled an in-flight task OR the client
+        # is still PLAYING buffered TTS audio. ``bot_speaking`` now stays True
+        # from tts_start until the client sends ``playback_done`` (queue
+        # drained) — see speak() + the playback_done handler. During that
+        # playback tail the server's tts_task has already finished synthesising
+        # (nothing to cancel), but the user is still HEARING the bot and the
+        # frontend must flush its queue. Without this branch a barge-in during
+        # the tail was a silent no-op — the root cause of "TTS keeps playing
+        # until I stop talking and the transcript submits".
+        if cancelled or bot_speaking:
+            bot_speaking = False
+            logger.info(
+                "[ws_voice] barge-in (%s) cancelled %s",
+                reason, ",".join(cancelled) or "playback-only",
+            )
             try:
                 out_queue.put_nowait({"type": "tts_interruption", "reason": reason})
             except Exception:
@@ -412,8 +425,11 @@ async def voice_ws(ws: WebSocket) -> None:
             logger.info("[ws_voice] _dispatch_user_turn skipped (dictation mode)")
             return
         # Cancel any previous in-flight agent/tts so a barge-in mid-turn
-        # cleanly resets to the new user input.
-        if (agent_task is not None and not agent_task.done()) or (
+        # cleanly resets to the new user input. ``bot_speaking`` covers the
+        # playback-tail case where synthesis already finished but the client
+        # is still playing buffered audio — flush it so the previous reply's
+        # audio doesn't bleed past the new turn.
+        if bot_speaking or (agent_task is not None and not agent_task.done()) or (
             tts_task is not None and not tts_task.done()
         ):
             _cancel_inflight("new_user_turn")
@@ -547,7 +563,13 @@ async def voice_ws(ws: WebSocket) -> None:
             await out_queue.put({"type": "barge_in_ack"})
             raise
         finally:
-            bot_speaking = False
+            # bot_speaking is intentionally NOT reset here. It now tracks actual
+            # CLIENT PLAYBACK, not server synthesis: it stays True from tts_start
+            # until the client sends ``playback_done`` (its buffer drained) or a
+            # barge-in clears it via _cancel_inflight. Synthesis finishing is not
+            # the same as the user no longer hearing the bot — the client buffers
+            # several seconds of audio ahead, and barge-in must still work during
+            # that tail.
             # Dump the mic PCM captured during this TTS turn to /data/voice_diag
             # so we can listen to what the server saw + compare RMS vs the
             # silent baseline. This is the ground truth for "is AEC working".
@@ -857,6 +879,15 @@ async def voice_ws(ws: WebSocket) -> None:
                     tts_task = asyncio.create_task(speak(text))
                 elif kind == "barge_in":
                     _cancel_inflight("client_barge_in")
+                elif kind == "playback_done":
+                    # Authoritative "the user has stopped hearing the bot"
+                    # signal: the client finished playing every buffered TTS
+                    # chunk. Until this lands, bot_speaking stays True (set at
+                    # tts_start, kept past synthesis end) so a barge-in during
+                    # the playback tail still flushes the client queue. This is
+                    # the SSoT fix: server ``bot_speaking`` mirrors real client
+                    # playback instead of server-side synthesis state.
+                    bot_speaking = False
                 elif kind == "set_session":
                     session_id = payload.get("id") or session_id
                 elif kind == "set_agent":
