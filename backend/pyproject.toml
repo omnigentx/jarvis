@@ -45,6 +45,7 @@ dependencies = [
   # against (currently 1.24.4), but faster-whisper transitively pulls
   # onnxruntime>=1.25 — so on Python 3.13 the import always fails.
   "sherpa-onnx==1.10.46",
+  "aiortc>=1.14.0",
 ]
 
 [tool.uv]
