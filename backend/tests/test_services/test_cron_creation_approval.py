@@ -278,6 +278,40 @@ def test_agent_changing_schedule_resets_to_pending():
     assert len([c for c in _cron_approvals() if c.status == "pending"]) == 1
 
 
+def test_agent_editing_prompt_before_approval_supersedes_stale_card():
+    """The agent updates the prompt (payload) while the FIRST card is still
+    pending. There must be exactly ONE actionable card — vetting the NEW
+    payload — so the user can't approve the stale card (v1) and have the job
+    silently run the new payload (v2). The stale card is cancelled."""
+    from tools import cron_server
+    from core.database import ApprovalRequestModel
+
+    cron_server.cron_create(
+        name="Pre-approval edit", cron_expr="*/5 * * * *", exec_mode="agent_turn",
+        exec_payload="v1 original", exec_agent="Jarvis",
+    )
+    job_id = _only_job().id
+
+    # Agent edits the payload BEFORE the user has approved the first card.
+    cron_server.cron_update(job_id=job_id, exec_payload="v2 replacement")
+
+    db = get_db_session()
+    try:
+        cards = (
+            db.query(ApprovalRequestModel)
+            .filter(ApprovalRequestModel.approval_type == "cron_approval")
+            .all()
+        )
+        pending = [c for c in cards if c.status == "pending"]
+        cancelled = [c for c in cards if c.status == "cancelled"]
+        assert len(pending) == 1, f"exactly one actionable card expected, got {len(pending)}"
+        assert "v2 replacement" in pending[0].content, "surviving card must vet the NEW payload"
+        assert "v1 original" not in pending[0].content
+        assert len(cancelled) == 1, "the stale v1 card must be cancelled, not left pending"
+    finally:
+        db.close()
+
+
 # ── Dashboard edit supersedes a pending agent approval ────────────────
 
 

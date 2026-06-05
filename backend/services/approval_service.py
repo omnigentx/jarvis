@@ -84,6 +84,17 @@ class ApprovalService:
         approval_id = str(uuid.uuid4())
         now = time.time()
 
+        # Enforce ONE pending cron_approval card per job. If the agent re-gates
+        # a job (edited payload / agent / schedule) while an OLDER card is still
+        # pending, two cards would point at the same job — and approving the
+        # STALE one would vet old bytes while the job runs the NEW ones
+        # (vet-v1-run-v2). Supersede the stale card(s) so only this fresh one,
+        # which shows the current payload, is actionable.
+        if data.get("approval_type") == "cron_approval":
+            _job_id = (data.get("metadata") or {}).get("job_id")
+            if _job_id:
+                self._supersede_pending_cron_cards(_job_id)
+
         # Resolve team membership AUTHORITATIVELY from ``spawn_records``.
         # ``team_name`` arrives from the MCP tool as a free-text LLM
         # parameter — the LLM frequently picks the workspace basename
@@ -247,6 +258,53 @@ class ApprovalService:
         self._broadcast_stats()
 
         return result
+
+    def _supersede_pending_cron_cards(self, job_id: str) -> None:
+        """Mark any still-pending cron_approval card(s) for ``job_id`` as
+        ``cancelled`` so a fresh card (vetting the current payload) is the only
+        actionable one. Cleanup ONLY — deliberately does NOT write through to
+        ``CronJobModel.approval_status``: superseding a stale card is not a user
+        decision, and the re-gate that triggered this already set the job back
+        to ``pending``. Broadcasts ``approval_resolved`` so the inbox clears the
+        stale card live."""
+        db = SessionLocal()
+        superseded: list[tuple] = []
+        try:
+            cards = db.query(ApprovalRequestModel).filter(
+                ApprovalRequestModel.approval_type == "cron_approval",
+                ApprovalRequestModel.status == "pending",
+            ).all()
+            now = time.time()
+            for c in cards:
+                try:
+                    meta = json.loads(c.metadata_json or "{}")
+                except (TypeError, ValueError):
+                    meta = {}
+                if meta.get("job_id") == job_id:
+                    c.status = "cancelled"
+                    c.resolved_at = now
+                    superseded.append((c.id, c.agent_name, c.title))
+            if superseded:
+                db.commit()
+        finally:
+            db.close()
+
+        for cid, agent_name, title in superseded:
+            activity_stream_manager.broadcast({
+                "agent_name": agent_name,
+                "event_type": "approval_resolved",
+                "message": f"Approval superseded: {title}",
+                "timestamp": time.time(),
+                "data": {
+                    "approval_id": cid,
+                    "decision": "cancelled",
+                    "agent_name": agent_name,
+                },
+            })
+        if superseded:
+            self._broadcast_stats()
+            logger.info("[APPROVAL] Superseded %d stale cron card(s) for job %s",
+                        len(superseded), job_id)
 
     def _apply_cron_decision(self, job_id: Optional[str], decision: str) -> None:
         """Mirror an approval decision onto the cron job's approval_status
