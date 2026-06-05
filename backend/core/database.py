@@ -425,6 +425,17 @@ class CronJobModel(Base):
     updated_at = Column(Float, nullable=False, default=lambda: datetime.now().timestamp())
     created_by = Column(String(20), default="user")  # user | agent
 
+    # Approval — SINGLE SOURCE OF TRUTH for "may this job fire?".
+    # Decided ONCE at creation time (not at fire time) so an agent-created
+    # job can't run unsupervised before a human has vetted its payload —
+    # the prompt-injection defence. Dashboard-created jobs are 'approved'
+    # immediately (the user is present and in control). Agent-created
+    # agent_turn jobs start 'pending' until the user resolves the matching
+    # ApprovalRequest card. At fire time the scheduler only READS this flag;
+    # it never blocks waiting for a human (see cron_scheduler._execute_agent_turn).
+    # Default 'approved' so jobs created before this column existed keep running.
+    approval_status = Column(String(20), default="approved")  # approved | pending | rejected
+
 
 class CronRunModel(Base):
     """Cron job execution history."""
@@ -745,6 +756,10 @@ def init_db():
             "ALTER TABLE spawn_records ADD COLUMN runtime_config_json TEXT",
             "ALTER TABLE agent_activities ADD COLUMN session_id VARCHAR(100)",
             "ALTER TABLE mcp_servers ADD COLUMN cwd TEXT",
+            # Pre-existing cron jobs predate creation-time approval — default
+            # them to 'approved' so the new gate doesn't silently freeze jobs
+            # that were already running.
+            "ALTER TABLE cron_jobs ADD COLUMN approval_status VARCHAR(20) DEFAULT 'approved'",
         ]
         for sql in migrations:
             try:

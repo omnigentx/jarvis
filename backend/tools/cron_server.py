@@ -86,6 +86,62 @@ def _compute_next_run(cron_expr: str, calendar_type: str, tz_name: str, lunar_le
         raise ValueError(f"Unknown calendar_type: {calendar_type}")
 
 
+def _require_approval() -> bool:
+    """Whether agent-created agent_turn jobs need human approval before they
+    may fire. Default ON. The Settings toggle ``scheduler.REQUIRE_APPROVAL``
+    can disable it (use at your own risk). Fail safe: if the toggle can't be
+    read, require approval.
+    """
+    try:
+        from services.config_service import config_service
+        v = config_service.get("scheduler", "REQUIRE_APPROVAL", default="true")
+        return str(v).strip().lower() in ("1", "true", "yes", "on")
+    except Exception:
+        return True
+
+
+def _approval_content(job: CronJobModel) -> str:
+    """Markdown shown in the approval card for an agent-created job."""
+    return (
+        f"## Agent-created schedule: `{job.name}`\n\n"
+        f"**Schedule:** `{job.schedule_cron}` ({job.calendar_type})\n"
+        f"**Target agent:** `{job.exec_agent}`\n\n"
+        f"**Payload that will run:**\n\n```text\n{(job.exec_payload or '').rstrip()}\n```\n\n"
+        f"---\n\n"
+        f"⚠️ **Use at your own risk.** Approving lets this exact payload run on "
+        f"the schedule above, unsupervised, with the target agent's full tool "
+        f"set — including anything that touches the filesystem, shell, network, "
+        f"or external accounts.\n\n"
+        f"Approve only if you recognise the payload and trust the source that "
+        f"created this job. (This job was created by an agent, not from the "
+        f"dashboard — if you didn't ask for it, reject it.)"
+    )
+
+
+def _create_cron_approval_card(*, job_id: str, name: str, exec_agent: str, content_md: str) -> None:
+    """Create the user-facing approval card for an agent-created job, via the
+    backend RPC socket. Best-effort: the job row is already ``pending`` so it
+    can't fire even if the card fails to materialise (fail-safe). ``pause`` is
+    False — this is a deferred gate, not a hold on a live agent turn, so the
+    agent the user may be chatting with must NOT be frozen.
+    """
+    from tools.runtime_rpc_client import RuntimeRpcError, call as rpc_call
+    try:
+        rpc_call("approval.create", {
+            "agent_name": exec_agent or "Jarvis",
+            "approval_type": "cron_approval",
+            "title": f"Schedule approval: {name}",
+            "content": content_md,
+            "content_format": "markdown",
+            "urgency": "normal",
+            "pause": False,
+            "metadata": {"job_id": job_id},
+        })
+    except RuntimeRpcError as exc:
+        print(f"[cron_create] approval card RPC failed (job stays pending): {exc}",
+              file=sys.stderr)
+
+
 def _format_job(job: CronJobModel) -> dict:
     """Format a job for display."""
     tz = ZoneInfo(job.schedule_timezone or "Asia/Ho_Chi_Minh")
@@ -99,6 +155,7 @@ def _format_job(job: CronJobModel) -> dict:
         "exec_payload": job.exec_payload[:100] if job.exec_payload else "",
         "exec_agent": job.exec_agent,
         "status": job.status,
+        "approval_status": job.approval_status,
         "last_result": job.last_result,
         "run_count": job.run_count or 0,
         "fail_count": job.fail_count or 0,
@@ -161,6 +218,15 @@ def cron_create(
     except Exception as e:
         return f"❌ next_run computation failed: {e}"
 
+    # Approval gate — decided HERE at creation time, not at fire time.
+    # An agent created this job (created_by='agent'); only agent_turn jobs
+    # carry execution risk (reminders just broadcast text). When approval is
+    # required, the job starts 'pending' and cannot fire until the user
+    # resolves the approval card below. This is the prompt-injection defence:
+    # a poisoned cron can't run unsupervised before a human vets its payload.
+    needs_approval = exec_mode == "agent_turn" and _require_approval()
+    approval_status = "pending" if needs_approval else "approved"
+
     # Create job
     job_id = str(uuid.uuid4())[:8]
     now = time.time()
@@ -183,28 +249,49 @@ def cron_create(
             created_at=now,
             updated_at=now,
             created_by="agent",
+            approval_status=approval_status,
         )
         db.add(job)
         db.commit()
+        # Build the approval-card markdown while the row is live, so we don't
+        # touch the ORM object after the session closes.
+        card_content = _approval_content(job) if needs_approval else None
 
-        formatted = _format_job(job)
         tz = ZoneInfo(tz_name)
         next_str = datetime.fromtimestamp(next_run, tz=tz).strftime("%Y-%m-%d %H:%M %Z")
-
-        return (
-            f"✅ Job created\n"
-            f"• ID: {job_id}\n"
-            f"• Name: {name}\n"
-            f"• Cron: {cron_expr} ({calendar_type})\n"
-            f"• Mode: {exec_mode}\n"
-            f"• One-shot: {'yes' if one_shot else 'no'}\n"
-            f"• Next run: {next_str}"
-        )
     except Exception as e:
         db.rollback()
         return f"❌ Failed to create job: {e}"
     finally:
         db.close()
+
+    if needs_approval:
+        # After commit (job durably 'pending') so the card always points at a
+        # real row, and outside the DB session so an RPC stall can't hold it.
+        _create_cron_approval_card(
+            job_id=job_id, name=name, exec_agent=exec_agent, content_md=card_content,
+        )
+        return (
+            f"✅ Job created — ⏳ AWAITING YOUR APPROVAL before it can run\n"
+            f"• ID: {job_id}\n"
+            f"• Name: {name}\n"
+            f"• Cron: {cron_expr} ({calendar_type})\n"
+            f"• Mode: {exec_mode}\n"
+            f"• One-shot: {'yes' if one_shot else 'no'}\n"
+            f"• Next run: {next_str} (will be SKIPPED until approved)\n"
+            f"\n⚠️ This job will NOT run until you approve it in the Approvals "
+            f"page. Tell the user to review and approve it."
+        )
+
+    return (
+        f"✅ Job created\n"
+        f"• ID: {job_id}\n"
+        f"• Name: {name}\n"
+        f"• Cron: {cron_expr} ({calendar_type})\n"
+        f"• Mode: {exec_mode}\n"
+        f"• One-shot: {'yes' if one_shot else 'no'}\n"
+        f"• Next run: {next_str}"
+    )
 
 
 @mcp.tool()
@@ -282,22 +369,31 @@ def cron_update(
             return f"❌ Job not found: {job_id}"
 
         changes = []
+        payload_changed = False
+        agent_changed = False
+        schedule_changed = False
 
         if name is not None:
             job.name = name
             changes.append(f"name → {name}")
 
-        if exec_payload is not None:
+        if exec_payload is not None and exec_payload != job.exec_payload:
             job.exec_payload = exec_payload
+            payload_changed = True
             changes.append(f"payload updated")
 
-        if exec_agent is not None:
+        if exec_agent is not None and exec_agent != job.exec_agent:
             job.exec_agent = exec_agent
+            agent_changed = True
             changes.append(f"exec_agent → {exec_agent}")
 
         if calendar_type is not None:
             if calendar_type not in ("solar", "lunar"):
                 return "❌ calendar_type must be 'solar' or 'lunar'"
+            # calendar_type is a vetted artifact too — the card shows it next to
+            # the schedule, and solar↔lunar shifts WHEN the vetted payload fires.
+            if calendar_type != job.calendar_type:
+                schedule_changed = True
             job.calendar_type = calendar_type
             changes.append(f"calendar → {calendar_type}")
 
@@ -318,6 +414,8 @@ def cron_update(
             error = _validate_cron_expr(cron_expr)
             if error:
                 return f"❌ {error}"
+            if cron_expr != job.schedule_cron:
+                schedule_changed = True
             job.schedule_cron = cron_expr
             changes.append(f"cron → {cron_expr}")
 
@@ -333,11 +431,40 @@ def cron_update(
             except Exception as e:
                 return f"❌ next_run computation failed: {e}"
 
+        # An agent editing any VETTED field of an agent_turn job invalidates
+        # the prior approval — what was vetted no longer matches what will run.
+        # The approval card (``_approval_content``) shows the payload, the
+        # target agent AND the schedule, so all three are vetted artifacts:
+        #   - payload  → the bytes that execute
+        #   - exec_agent → which tool set runs them (WeakAgent vs PowerfulAgent)
+        #   - schedule_cron → when / how often they fire
+        # Re-gate on any of them. This closes the "create benign job → get it
+        # approved → quietly swap in a stronger agent / different schedule"
+        # path without hashing: the approval flag IS the state, reset on edit.
+        sensitive_changed = payload_changed or agent_changed or schedule_changed
+        reapproval_needed = (
+            sensitive_changed
+            and job.exec_mode == "agent_turn"
+            and _require_approval()
+        )
+        if reapproval_needed:
+            job.approval_status = "pending"
+            changes.append("approval reset → pending (vetted field changed)")
+
         job.updated_at = time.time()
+        # Snapshot fields for the post-commit approval card.
+        card_content = _approval_content(job) if reapproval_needed else None
+        card_name, card_agent = job.name, job.exec_agent
         db.commit()
 
         if not changes:
             return f"ℹ️ No changes for job [{job_id}]"
+
+        if reapproval_needed:
+            _create_cron_approval_card(
+                job_id=job_id, name=card_name, exec_agent=card_agent, content_md=card_content,
+            )
+            changes.append("⏳ job will NOT run until you re-approve it")
 
         return f"✅ Updated job [{job_id}] {job.name}:\n• " + "\n• ".join(changes)
     except Exception as e:

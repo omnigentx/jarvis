@@ -16,28 +16,20 @@ this test.
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from services.cron_scheduler import ApprovalBlocked, CronScheduler
 
 
-# All tests in this module exercise the *post-gate* behaviour of
-# ``_execute_agent_turn``. The approval gate itself has its own
-# coverage in test_approval_gate.py — here we patch it to auto-
-# approve so each test can focus on the resume_and_send contract
-# (originally added for the 2026-05-05 "no agent_name" regression).
-# ``_execute_agent_turn`` imports the gate locally as
-# ``from services.approval_gate import gate as _gate`` — patching
-# at the source module ``services.approval_gate.gate`` is the only
-# anchor that intercepts that local re-bind.
-@pytest.fixture(autouse=True)
-def _auto_approve_gate():
-    async def _allow(**_kw):
-        return True, "test auto-approve"
-    with patch("services.approval_gate.gate", side_effect=_allow):
-        yield
+# All tests in this module exercise the *post-approval* behaviour of
+# ``_execute_agent_turn``. Approval is now decided at CREATION time and
+# stored on ``job.approval_status`` (single source of truth) — the run path
+# only READS it (no blocking gate any more). So "auto-approve" here simply
+# means setting ``job.approval_status = "approved"`` on the stub job. The
+# creation-time gating + resolve flow has its own coverage in
+# test_cron_creation_approval.py.
 
 
 @pytest.mark.asyncio
@@ -58,6 +50,7 @@ async def test_execute_agent_turn_passes_configured_agent_name():
     job.name = "Daily AI digest"
     job.exec_agent = "ResearchAgent"
     job.exec_payload = "Tổng hợp tin tức AI"
+    job.approval_status = "approved"  # vetted at creation time
 
     result = await sched._execute_agent_turn(job)
 
@@ -90,6 +83,7 @@ async def test_execute_agent_turn_logs_warning_on_empty_response(caplog):
     job.name = "Empty response job"
     job.exec_agent = "ResearchAgent"
     job.exec_payload = "do something"
+    job.approval_status = "approved"
 
     with caplog.at_level(logging.WARNING, logger="services.cron_scheduler"):
         result = await sched._execute_agent_turn(job)
@@ -221,17 +215,13 @@ async def test_run_job_isolated_uses_fresh_db_session(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_execute_agent_turn_raises_approval_blocked_when_gate_refuses(_auto_approve_gate):
-    """When the approval gate returns ``approved=False`` the agent turn
-    MUST raise :class:`ApprovalBlocked`. This is the contract _execute_job
-    catches separately so a gate-blocked run is recorded as ``blocked``
-    rather than ``success`` (PR #57 reviewer finding, comment on
-    cron_scheduler.py:405).
+async def test_execute_agent_turn_raises_approval_blocked_when_not_approved():
+    """A not-yet-approved job (``approval_status='pending'``) MUST raise
+    :class:`ApprovalBlocked` at fire time — NEVER block waiting for a human,
+    and NEVER run the payload. _execute_job catches this and records the run
+    as ``blocked`` (not ``success``). This is the creation-time-approval
+    replacement for the old fire-time blocking gate.
     """
-    # Replace the auto-approve fixture's gate with one that refuses.
-    async def _refuse(**_kw):
-        return False, "user rejected: not happy with payload"
-
     sched = CronScheduler()
     sched._agent_app = MagicMock()
     sched._session_service = MagicMock()
@@ -244,11 +234,41 @@ async def test_execute_agent_turn_raises_approval_blocked_when_gate_refuses(_aut
     job.exec_payload = "do thing"
     job.schedule_cron = "* * * * *"
     job.calendar_type = "solar"
+    job.approval_status = "pending"  # agent-created, not yet vetted
 
-    with patch("services.approval_gate.gate", side_effect=_refuse):
-        with pytest.raises(ApprovalBlocked) as excinfo:
-            await sched._execute_agent_turn(job)
+    # Default config (no scheduler.REQUIRE_APPROVAL row) → approval required.
+    with pytest.raises(ApprovalBlocked) as excinfo:
+        await sched._execute_agent_turn(job)
 
-    assert "user rejected" in str(excinfo.value)
-    # The actual resume_and_send must NEVER be called when the gate refused.
+    assert excinfo.value.notify is False, "pending-approval skips must not spam the inbox"
+    assert "approval" in str(excinfo.value).lower()
+    # The actual resume_and_send must NEVER be called for an unapproved job.
     sched._session_service.resume_and_send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_execute_agent_turn_runs_when_approval_disabled(monkeypatch):
+    """With the Settings toggle scheduler.REQUIRE_APPROVAL=false, an
+    otherwise-pending job runs immediately — the documented "use at your own
+    risk" bypass."""
+    sched = CronScheduler()
+    sched._agent_app = MagicMock()
+    sched._session_service = MagicMock()
+    sched._session_service.resume_and_send = AsyncMock(return_value=("ran", "sid"))
+
+    job = MagicMock()
+    job.id = "bypass1"
+    job.name = "Bypass job"
+    job.exec_agent = "Jarvis"
+    job.exec_payload = "do thing"
+    job.approval_status = "pending"
+
+    monkeypatch.setattr(
+        "services.config_service.config_service.get",
+        lambda category, key, default=None: "false"
+        if (category, key) == ("scheduler", "REQUIRE_APPROVAL") else default,
+    )
+
+    result = await sched._execute_agent_turn(job)
+    assert result == "ran"
+    sched._session_service.resume_and_send.assert_called_once()

@@ -30,7 +30,7 @@ from typing import Callable, Iterable, Optional
 from sqlalchemy.orm import Session
 
 from core import secrets_crypto
-from core.database import ConfigHistory, SessionLocal, SystemConfig
+from core.database import ConfigHistory, SessionLocal, SystemConfig  # noqa: F401  (SessionLocal re-exported so tests/fixtures can monkeypatch config_service.SessionLocal)
 
 logger = logging.getLogger(__name__)
 
@@ -82,11 +82,26 @@ class ConfigService:
 
     def __init__(
         self,
-        db_factory: Callable[[], Session] = SessionLocal,
+        db_factory: Optional[Callable[[], Session]] = None,
     ) -> None:
-        self._db_factory = db_factory
+        # Store an EXPLICIT factory (tests inject one) but otherwise resolve
+        # ``core.database.SessionLocal`` lazily per-call via the ``_db_factory``
+        # property — never snapshot it here. The module-level singleton can be
+        # first instantiated DURING a test that has monkeypatched SessionLocal
+        # onto a temporary SAVEPOINT connection; capturing that snapshot would
+        # leave the singleton permanently bound to a connection closed at the
+        # test's teardown ("This Connection is closed"). Late-binding keeps ONE
+        # source of truth for the session factory. (SSoT — see CLAUDE.md #9.)
+        self._db_factory_override = db_factory
         self._listeners: list[ChangeListener] = []
         self._lock = threading.RLock()
+
+    @property
+    def _db_factory(self) -> Callable[[], Session]:
+        if self._db_factory_override is not None:
+            return self._db_factory_override
+        from core.database import SessionLocal
+        return SessionLocal
 
     # ---- Listener API -------------------------------------------------------
 

@@ -36,9 +36,14 @@ class ApprovalBlocked(Exception):
     no auto-disable) and "code crashed" (counts toward 5-strike disable).
     """
 
-    def __init__(self, reason: str):
+    def __init__(self, reason: str, notify: bool = True):
         super().__init__(reason)
         self.reason = reason
+        # When False, _execute_job records the blocked run but does NOT push a
+        # notification. Used for "awaiting approval" skips: the approval card
+        # already notified the user once at creation; re-notifying on every
+        # tick while they haven't approved yet is just inbox spam.
+        self.notify = notify
 
 
 class CronScheduler:
@@ -340,14 +345,44 @@ class CronScheduler:
             )
 
         except ApprovalBlocked as exc:
-            # Gate refused / timed out. NOT a failure — the user simply
-            # hasn't approved this payload yet (or rejected it). Record
-            # the run as `blocked`, do NOT bump fail_count, and let the
-            # job stay `active` for its next scheduled fire.
+            # Gate refused. NOT a failure — the user simply hasn't approved
+            # this payload yet (or rejected it). Never bumps fail_count; the
+            # job stays `active` for its next scheduled fire.
             completed_at = time.time()
             duration_ms = int((completed_at - started_at) * 1000)
             block_reason = exc.reason[:500]
+            silent = not getattr(exc, "notify", True)
 
+            job.last_run_at = completed_at
+            job.last_result = "blocked"
+            job.last_error = block_reason
+            job.status = "active"  # Restore from 'running'
+            if not job.one_shot:
+                job.next_run_at = self.compute_next_run(
+                    job.schedule_cron, job.calendar_type, job.schedule_timezone, job.lunar_leap
+                )
+
+            if silent:
+                # "Awaiting approval" skip (notify=False): a RECURRING no-op,
+                # not an event. Drop the run row we optimistically opened and
+                # skip the run_count bump — otherwise a never-approved `*/5`
+                # job accrues ~288 blocked rows/day, unbounded, until it's
+                # approved/rejected/deleted. The pending badge
+                # (job.approval_status) + the creation-time approval card are
+                # the user's signal; nothing per-tick is worth persisting or
+                # broadcasting.
+                if run_id:
+                    stale = db.query(CronRunModel).filter(CronRunModel.id == run_id).first()
+                    if stale:
+                        db.delete(stale)
+                job.updated_at = time.time()
+                db.commit()
+                logger.info("[CRON] Job '%s' awaiting approval — skipped (no run recorded)", job.name)
+                return
+
+            # Genuine one-off block (notify=True): persist the blocked run and
+            # notify so the dashboard shows why the job didn't run. run_count
+            # counts this attempt so the dashboard reflects that it ticked.
             if run_id:
                 run = db.query(CronRunModel).filter(CronRunModel.id == run_id).first()
                 if run:
@@ -355,21 +390,7 @@ class CronScheduler:
                     run.completed_at = completed_at
                     run.duration_ms = duration_ms
                     run.error = f"approval gate: {block_reason}"
-
-            job.last_run_at = completed_at
-            job.last_result = "blocked"
-            job.last_error = block_reason
-            # run_count counts attempts including blocked ones so the dashboard
-            # shows the job *did* tick. fail_count stays put — no auto-disable
-            # for blocked runs.
             job.run_count = (job.run_count or 0) + 1
-
-            job.status = "active"  # Restore from 'running'
-            if not job.one_shot:
-                job.next_run_at = self.compute_next_run(
-                    job.schedule_cron, job.calendar_type, job.schedule_timezone, job.lunar_leap
-                )
-
             job.updated_at = time.time()
             db.commit()
 
@@ -511,12 +532,15 @@ class CronScheduler:
     async def _execute_agent_turn(self, job: CronJobModel) -> str:
         """Execute agent turn — send message to specified agent via session.
 
-        Human-approval gate: cron payloads are LLM-supplied (the agent calls
-        ``cron_create(exec_payload=...)``) and run unsupervised at fire time
-        with the configured agent's full tool set — including terminal exec.
-        Block the first fire of every (job_id, hash(payload)) pair so the
-        operator sees the prompt before it goes live. Same hash on repeat
-        fires auto-proceeds.
+        Human-approval gate (READ-ONLY here): cron payloads are LLM-supplied
+        (the agent calls ``cron_create(exec_payload=...)``) and run unsupervised
+        with the configured agent's full tool set — including terminal exec. The
+        decision to allow this is made ONCE at CREATION time and stored on
+        ``job.approval_status`` (the single source of truth). At fire time we
+        only READ that flag — we never block waiting for a human, so an absent
+        user can't leave the scheduler hung. A not-yet-approved job simply skips
+        this fire and retries on the next tick; the Approvals resolve hook flips
+        the flag the moment the user decides.
         """
         if not self._agent_app or not self._session_service:
             raise RuntimeError("Agent references not set — cannot execute agent_turn")
@@ -526,41 +550,26 @@ class CronScheduler:
 
         logger.info("[CRON] Agent turn: '%s' → agent=%s payload='%s'", job.name, agent_name, payload[:80])
 
-        # Approval gate. Coalesces on (job_id, payload_hash) so re-runs of
-        # an already-approved cron skip the prompt.
-        from services.approval_gate import gate as _gate
-        content_md = (
-            f"## Cron job: `{job.name}`\n\n"
-            f"**Schedule:** `{job.schedule_cron}` ({job.calendar_type})\n"
-            f"**Target agent:** `{agent_name}`\n\n"
-            f"**Payload to run:**\n\n```text\n{(payload or '').rstrip()}\n```\n\n"
-            f"---\n\n"
-            f"⚠️ **Use at your own risk.** Approving lets this exact payload "
-            f"run on the schedule above, unsupervised. The target agent has "
-            f"its full tool set available — including any that touch the "
-            f"filesystem, shell, network, or external accounts.\n\n"
-            f"Approve only if you recognise the payload and trust the source "
-            f"that created this job."
-        )
-        approved, reason = await _gate(
-            approval_type="cron_first_fire",
-            scope_key=f"cron:{job.id}",
-            content_md=content_md,
-            title=f"Cron first run: {job.name}",
-            agent_name=agent_name,
-        )
-        if not approved:
-            logger.warning("[CRON] Job %s blocked by approval gate: %s", job.id, reason)
-            self._broadcast_event("agent_turn_blocked", {
-                "job_id": job.id,
-                "job_name": job.name,
-                "reason": reason,
-            })
-            # Raise so _execute_job records this as `blocked` rather than
-            # success. Different from failure: no fail_count bump, no
-            # auto-disable — the user simply hasn't approved this payload
-            # yet (or rejected it).
-            raise ApprovalBlocked(reason)
+        # Read the approval requirement fresh so the Settings toggle
+        # (scheduler.REQUIRE_APPROVAL) hot-reloads without a restart. Fail
+        # SAFE: if the config can't be read, require approval.
+        try:
+            from services.config_service import config_service
+            require_approval = str(
+                config_service.get("scheduler", "REQUIRE_APPROVAL", default="true")
+            ).strip().lower() in ("1", "true", "yes", "on")
+        except Exception:
+            require_approval = True
+        if require_approval and job.approval_status != "approved":
+            reason = (
+                "awaiting your approval — not yet approved"
+                if job.approval_status == "pending"
+                else f"approval was {job.approval_status}"
+            )
+            logger.info("[CRON] Job %s skipped: %s", job.id, reason)
+            # notify=False: don't spam the inbox every tick. The approval card
+            # created at job-creation time is the user's actionable surface.
+            raise ApprovalBlocked(reason, notify=False)
 
         # Tag every LLM call this turn makes with a deterministic run_id
         # so the dashboard can correlate ``token_usage`` rows back to the

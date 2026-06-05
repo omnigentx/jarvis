@@ -84,6 +84,17 @@ class ApprovalService:
         approval_id = str(uuid.uuid4())
         now = time.time()
 
+        # Enforce ONE pending cron_approval card per job. If the agent re-gates
+        # a job (edited payload / agent / schedule) while an OLDER card is still
+        # pending, two cards would point at the same job — and approving the
+        # STALE one would vet old bytes while the job runs the NEW ones
+        # (vet-v1-run-v2). Supersede the stale card(s) so only this fresh one,
+        # which shows the current payload, is actionable.
+        if data.get("approval_type") == "cron_approval":
+            _job_id = (data.get("metadata") or {}).get("job_id")
+            if _job_id:
+                self._supersede_pending_cron_cards(_job_id)
+
         # Resolve team membership AUTHORITATIVELY from ``spawn_records``.
         # ``team_name`` arrives from the MCP tool as a free-text LLM
         # parameter — the LLM frequently picks the workspace basename
@@ -100,6 +111,18 @@ class ApprovalService:
         from core.database import SpawnRecordModel
         team_name: str | None = None
         pause_agents: list[str]
+
+        # ``pause=False`` opts out of the team-pause machinery entirely.
+        # Used by deferred gates (e.g. cron creation-time approval) where the
+        # approval is NOT blocking a live agent turn — the requesting agent
+        # may be Jarvis mid-conversation with the user, and pausing it would
+        # freeze that chat. These approvals just sit in the inbox until
+        # resolved; nothing is held.
+        if not data.get("pause", True):
+            pause_agents = []
+            return self._persist_and_broadcast(
+                approval_id, now, data, team_name=None, pause_agents=pause_agents,
+            )
 
         # Single session for both lookups (team_name + team members).
         # Was two consecutive SessionLocal() blocks; merged because they
@@ -146,6 +169,18 @@ class ApprovalService:
         finally:
             _db.close()
 
+        return self._persist_and_broadcast(
+            approval_id, now, data, team_name=team_name, pause_agents=pause_agents,
+        )
+
+    def _persist_and_broadcast(
+        self, approval_id: str, now: float, data: dict, *,
+        team_name: Optional[str], pause_agents: list,
+    ) -> dict:
+        """Insert the approval row, pause ``pause_agents`` (may be empty),
+        and broadcast SSE. Shared by the normal team-pause path and the
+        ``pause=False`` deferred-gate path so both produce identical rows
+        and events."""
         db = SessionLocal()
         try:
             record = ApprovalRequestModel(
@@ -224,6 +259,90 @@ class ApprovalService:
 
         return result
 
+    def _supersede_pending_cron_cards(self, job_id: str) -> None:
+        """Mark any still-pending cron_approval card(s) for ``job_id`` as
+        ``cancelled`` so a fresh card (vetting the current payload) is the only
+        actionable one. Cleanup ONLY — deliberately does NOT write through to
+        ``CronJobModel.approval_status``: superseding a stale card is not a user
+        decision, and the re-gate that triggered this already set the job back
+        to ``pending``. Broadcasts ``approval_resolved`` so the inbox clears the
+        stale card live."""
+        db = SessionLocal()
+        superseded: list[tuple] = []
+        try:
+            cards = db.query(ApprovalRequestModel).filter(
+                ApprovalRequestModel.approval_type == "cron_approval",
+                ApprovalRequestModel.status == "pending",
+            ).all()
+            now = time.time()
+            for c in cards:
+                try:
+                    meta = json.loads(c.metadata_json or "{}")
+                except (TypeError, ValueError):
+                    meta = {}
+                if meta.get("job_id") == job_id:
+                    c.status = "cancelled"
+                    c.resolved_at = now
+                    superseded.append((c.id, c.agent_name, c.title))
+            if superseded:
+                db.commit()
+        finally:
+            db.close()
+
+        for cid, agent_name, title in superseded:
+            activity_stream_manager.broadcast({
+                "agent_name": agent_name,
+                "event_type": "approval_resolved",
+                "message": f"Approval superseded: {title}",
+                "timestamp": time.time(),
+                "data": {
+                    "approval_id": cid,
+                    "decision": "cancelled",
+                    "agent_name": agent_name,
+                },
+            })
+        if superseded:
+            self._broadcast_stats()
+            logger.info("[APPROVAL] Superseded %d stale cron card(s) for job %s",
+                        len(superseded), job_id)
+
+    def _apply_cron_decision(self, job_id: Optional[str], decision: str) -> None:
+        """Mirror an approval decision onto the cron job's approval_status
+        (the scheduler's source of truth) and wake the scheduler so an
+        approved job is re-evaluated immediately rather than on the next tick.
+        Best-effort: a missing job_id/job is logged, not raised — the
+        approval itself is already resolved."""
+        if not job_id:
+            logger.warning("[APPROVAL] cron_approval resolved with no job_id in metadata")
+            return
+        from core.database import CronJobModel
+        db = SessionLocal()
+        try:
+            job = db.query(CronJobModel).filter(CronJobModel.id == job_id).first()
+            if not job:
+                logger.warning("[APPROVAL] cron_approval job %s not found", job_id)
+                return
+            job.approval_status = "approved" if decision == "approve" else "rejected"
+            job.updated_at = time.time()
+            db.commit()
+            new_status = job.approval_status
+            job_name = job.name
+            logger.info("[APPROVAL] cron job %s approval_status → %s", job_id, new_status)
+        finally:
+            db.close()
+        try:
+            from services.cron_scheduler import cron_scheduler
+            # Push to the Scheduler dashboard so the pending badge flips live.
+            cron_scheduler._broadcast_event("job_approval_changed", {
+                "job_id": job_id,
+                "job_name": job_name,
+                "approval_status": new_status,
+            })
+            if decision == "approve":
+                cron_scheduler.wake()  # re-evaluate now instead of next tick
+        except Exception as exc:  # scheduler may be down in tests
+            logger.debug("[APPROVAL] could not notify scheduler: %s", exc)
+
     def resolve_approval(self, approval_id: str, decision: str, comment: Optional[str] = None) -> dict:
         """Resolve an approval request (approve/reject).
 
@@ -251,8 +370,21 @@ class ApprovalService:
 
             result = self._record_to_dict(record)
             paused_agents = json.loads(record.paused_agents or "[]")
+            # Captured here (while the row is loaded) for the cron write-through
+            # below — _record_to_dict intentionally omits metadata_json.
+            resolved_type = record.approval_type
+            resolved_meta = json.loads(record.metadata_json or "{}")
         finally:
             db.close()
+
+        # Write-through for deferred cron gates: the ApprovalRequest card is
+        # just the user's inbox surface — CronJobModel.approval_status is the
+        # SINGLE SOURCE OF TRUTH the scheduler reads at fire time. Mirror the
+        # decision onto the job so it can (or can't) fire. Done here so BOTH
+        # resolution surfaces (Approvals page, RPC) stay consistent through
+        # one write path.
+        if resolved_type == "cron_approval":
+            self._apply_cron_decision(resolved_meta.get("job_id"), decision)
 
         # Resume via PauseController — iterate the authoritative
         # ``paused_agents`` list stored on the approval row. This

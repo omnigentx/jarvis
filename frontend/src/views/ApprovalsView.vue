@@ -371,8 +371,9 @@ const knownTypes = [
                 :class="{
                   'chip-success': item.status === 'approved',
                   'chip-danger': item.status === 'rejected',
+                  'chip-muted': item.status === 'cancelled',
                 }"
-              ><span class="chip-dot"></span> {{ item.status }}</span>
+              ><span class="chip-dot"></span> {{ item.status === 'cancelled' ? 'superseded' : item.status }}</span>
             </div>
             <div class="approvals-row__title">{{ item.title }}</div>
             <div class="approvals-row__meta">
@@ -558,10 +559,12 @@ const knownTypes = [
             :class="{
               'chip-success': detail.status === 'approved',
               'chip-danger': detail.status === 'rejected',
+              'chip-muted': detail.status === 'cancelled',
             }"
           >
             <span class="chip-dot"></span>
-            {{ detail.status === 'approved' ? 'Approved' : 'Rejected' }}
+            {{ detail.status === 'approved' ? 'Approved'
+               : detail.status === 'cancelled' ? 'Superseded' : 'Rejected' }}
           </span>
         </div>
       </section>

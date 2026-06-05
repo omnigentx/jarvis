@@ -189,9 +189,14 @@ export const useApprovalsStore = defineStore('approvals', () => {
         const id = data?.approval_id
         if (id && approvals.value.has(id)) {
           const existing = approvals.value.get(id)
+          // 'cancelled' = a stale cron card superseded by a newer one (the
+          // agent re-edited the job); keep it distinct from a user 'reject'.
+          const resolvedStatus = data.decision === 'approve'
+            ? 'approved'
+            : data.decision === 'cancelled' ? 'cancelled' : 'rejected'
           approvals.value.set(id, {
             ...existing,
-            status: data.decision === 'approve' ? 'approved' : 'rejected',
+            status: resolvedStatus,
             user_decision: data.decision,
             user_comment: data.comment,
             resolved_at: event.timestamp,
