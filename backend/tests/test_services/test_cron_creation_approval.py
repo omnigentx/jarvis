@@ -278,6 +278,29 @@ def test_agent_changing_schedule_resets_to_pending():
     assert len([c for c in _cron_approvals() if c.status == "pending"]) == 1
 
 
+def test_agent_changing_calendar_type_resets_to_pending():
+    """calendar_type is a vetted artifact (the card shows it beside the
+    schedule). solar↔lunar shifts WHEN the approved payload fires → re-gate."""
+    from tools import cron_server
+
+    cron_server.cron_create(
+        name="Calendar swap", cron_expr="0 7 1 * *", exec_mode="agent_turn",
+        exec_payload="do it", exec_agent="Jarvis", calendar_type="solar",
+    )
+    job_id = _only_job().id
+    approval_service.resolve_approval(_cron_approvals()[0].id, decision="approve")
+
+    cron_server.cron_update(job_id=job_id, calendar_type="lunar")
+
+    db = get_db_session()
+    try:
+        job = db.query(CronJobModel).filter(CronJobModel.id == job_id).first()
+        assert job.approval_status == "pending", "changing calendar_type must re-gate"
+    finally:
+        db.close()
+    assert len([c for c in _cron_approvals() if c.status == "pending"]) == 1
+
+
 def test_agent_editing_prompt_before_approval_supersedes_stale_card():
     """The agent updates the prompt (payload) while the FIRST card is still
     pending. There must be exactly ONE actionable card — vetting the NEW

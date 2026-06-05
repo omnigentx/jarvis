@@ -390,6 +390,10 @@ def cron_update(
         if calendar_type is not None:
             if calendar_type not in ("solar", "lunar"):
                 return "❌ calendar_type must be 'solar' or 'lunar'"
+            # calendar_type is a vetted artifact too — the card shows it next to
+            # the schedule, and solar↔lunar shifts WHEN the vetted payload fires.
+            if calendar_type != job.calendar_type:
+                schedule_changed = True
             job.calendar_type = calendar_type
             changes.append(f"calendar → {calendar_type}")
 
