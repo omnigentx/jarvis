@@ -63,6 +63,7 @@ def _format_job_api(job: CronJobModel) -> dict:
         "created_at": job.created_at,
         "updated_at": job.updated_at,
         "created_by": job.created_by,
+        "approval_status": job.approval_status,
     }
 
 
@@ -195,6 +196,17 @@ async def update_job(job_id: str, request: Request, _auth: bool = Depends(verify
             if field in body and body[field] is not None:
                 setattr(job, field, body[field])
 
+        # Dashboard edits are user-driven and trusted (the user is present and
+        # in control). If this job was awaiting agent-approval (or was
+        # rejected), the user editing it HERE is the vetting step → mark it
+        # approved so it can run. We also resolve any stale pending approval
+        # card below (after commit) so a later click on it can't approve a
+        # payload the user never saw — the SSoT (job.approval_status) and the
+        # inbox card stay consistent.
+        was_unapproved = job.approval_status != "approved"
+        if was_unapproved:
+            job.approval_status = "approved"
+
         if "one_shot" in body:
             job.one_shot = bool(body["one_shot"])
 
@@ -219,14 +231,53 @@ async def update_job(job_id: str, request: Request, _auth: bool = Depends(verify
 
         job.updated_at = time.time()
         db.commit()
-
-        cron_scheduler.wake()
-        return {"job": _format_job_api(job)}
+        job_api = _format_job_api(job)
     except Exception as e:
         db.rollback()
         return {"error": str(e)}
     finally:
         db.close()
+
+    # After commit + close so the resolve's own sessions don't nest in ours.
+    if was_unapproved:
+        _approve_pending_cron_cards(job_id)
+
+    cron_scheduler.wake()
+    return {"job": job_api}
+
+
+def _approve_pending_cron_cards(job_id: str) -> None:
+    """Resolve (as approved) any pending cron_approval card pointing at this
+    job. Used when the user edits the job on the dashboard — a trusted action
+    that supersedes the agent-created approval request. Best-effort: a missing
+    card just means there's nothing to clear (the job flag is already the SSoT)."""
+    from services.approval_service import approval_service
+    from core.database import ApprovalRequestModel
+
+    db = get_db_session()
+    try:
+        cards = (
+            db.query(ApprovalRequestModel)
+            .filter(
+                ApprovalRequestModel.approval_type == "cron_approval",
+                ApprovalRequestModel.status == "pending",
+            )
+            .all()
+        )
+        ids = [
+            c.id for c in cards
+            if json.loads(c.metadata_json or "{}").get("job_id") == job_id
+        ]
+    finally:
+        db.close()
+
+    for cid in ids:
+        try:
+            approval_service.resolve_approval(
+                cid, decision="approve", comment="approved via dashboard edit",
+            )
+        except Exception as exc:
+            logger.warning("[scheduler] could not resolve cron card %s: %s", cid, exc)
 
 
 @router.delete("/jobs/{job_id}")

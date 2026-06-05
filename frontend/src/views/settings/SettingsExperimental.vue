@@ -17,6 +17,8 @@ import { apiFetch, ApiError } from '../../api'
 
 const CATEGORY = 'experimental'
 
+// `category` defaults to CATEGORY; `default` is the value used when no DB row
+// exists yet (most flags default off — security flags default ON).
 const features = ref([
   {
     key: 'SELF_IMPROVING_ENABLED',
@@ -27,6 +29,27 @@ const features = ref([
       'Every state change writes a notification so you can review what the agent did.',
     requiresRestart: false,
     value: false,
+    saving: false,
+    error: '',
+  },
+  {
+    // Security flag — lives under the `scheduler` config category (the backend
+    // reads scheduler.REQUIRE_APPROVAL). Surfaced here for now; will move to a
+    // dedicated Security section when that is planned.
+    key: 'REQUIRE_APPROVAL',
+    category: 'scheduler',
+    default: true,
+    danger: true,
+    label: 'Require approval for agent-created schedules',
+    description:
+      'When ON (recommended), any schedule an AGENT creates that runs an agent turn ' +
+      'is held for your approval before it can fire — your defence against a ' +
+      'prompt-injected cron running unsupervised. Schedules YOU create on the ' +
+      'dashboard are never gated. ' +
+      'Turn this OFF to let agent-created schedules run immediately without approval — ' +
+      '⚠ use at your own risk.',
+    requiresRestart: false,
+    value: true,
     saving: false,
     error: '',
   },
@@ -42,12 +65,12 @@ async function loadAll() {
     for (const f of features.value) {
       try {
         const res = await apiFetch(
-          `/api/settings/${CATEGORY}/${f.key}`,
+          `/api/settings/${f.category || CATEGORY}/${f.key}`,
         )
         f.value = _coerceBool(res?.value)
       } catch (err) {
         if (err instanceof ApiError && err.status === 404) {
-          f.value = false // no row yet → default off
+          f.value = f.default ?? false // no row yet → per-feature default
         } else {
           throw err
         }
@@ -65,7 +88,7 @@ async function toggle(feature) {
   feature.error = ''
   const next = !feature.value
   try {
-    await apiFetch(`/api/settings/${CATEGORY}/${feature.key}`, {
+    await apiFetch(`/api/settings/${feature.category || CATEGORY}/${feature.key}`, {
       method: 'PUT',
       body: JSON.stringify({ value: next ? 'true' : 'false', is_secret: false }),
     })
@@ -112,6 +135,7 @@ onMounted(loadAll)
           <div class="feature-title-row">
             <h3>{{ f.label }}</h3>
             <span v-if="f.requiresRestart" class="pill">Requires Restart</span>
+            <span v-if="f.danger && !f.value" class="pill pill-danger">⚠ Approval off — at your own risk</span>
           </div>
           <p class="feature-desc">{{ f.description }}</p>
           <p v-if="f.error" class="error">{{ f.error }}</p>
@@ -185,6 +209,11 @@ onMounted(loadAll)
   background: var(--warning-bg);
   color: var(--warning);
   border: 1px solid rgba(245, 158, 11, 0.25);
+}
+.pill-danger {
+  background: var(--danger-bg, rgba(239, 68, 68, 0.12));
+  color: var(--danger);
+  border-color: rgba(239, 68, 68, 0.3);
 }
 .feature-desc {
   margin: 0;

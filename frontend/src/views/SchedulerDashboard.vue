@@ -75,6 +75,15 @@ function handleSSEEvent(event) {
     stats.value = event.stats
     return
   }
+  if (event.type === 'job_approval_changed') {
+    // Approval was resolved on the Approvals page — refresh so the pending
+    // badge flips and next-run reflects the now-runnable (or rejected) job.
+    const name = event.job_name || 'Job'
+    if (event.approval_status === 'approved') toast.success(`✅ Approved: ${name} can now run`)
+    else if (event.approval_status === 'rejected') toast.info(`🚫 Rejected: ${name} will not run`)
+    fetchAll()
+    return
+  }
   if (['job_started', 'job_completed', 'job_failed', 'reminder'].includes(event.type)) {
     const name = event.job_name || 'Job'
     if (event.type === 'reminder') {
@@ -440,6 +449,8 @@ onMounted(() => {
           <span class="scheduler__col-name">
             <span class="scheduler__job-name">{{ job.name }}</span>
             <span v-if="job.calendar_type === 'lunar'" class="scheduler__job-tag">🌙</span>
+            <span v-if="job.approval_status === 'pending'" class="scheduler__approval-badge" title="Created by an agent — awaiting your approval before it can run">⏳ Awaiting approval</span>
+            <span v-else-if="job.approval_status === 'rejected'" class="scheduler__approval-badge scheduler__approval-badge--rejected" title="Approval rejected — this job will not run">🚫 Rejected</span>
           </span>
           <span class="scheduler__col-cron">
             <code class="scheduler__cron">{{ job.schedule_cron }}</code>
@@ -471,6 +482,8 @@ onMounted(() => {
             <span class="scheduler__job-card-name">
               {{ job.name }}
               <span v-if="job.calendar_type === 'lunar'" style="margin-left: 4px;">🌙</span>
+              <span v-if="job.approval_status === 'pending'" class="scheduler__approval-badge">⏳ Awaiting approval</span>
+              <span v-else-if="job.approval_status === 'rejected'" class="scheduler__approval-badge scheduler__approval-badge--rejected">🚫 Rejected</span>
             </span>
             <span
               class="scheduler__badge"
@@ -886,6 +899,22 @@ onMounted(() => {
 }
 .scheduler__job-name { color: var(--text); font-weight: 500; }
 .scheduler__job-tag { margin-left: 4px; font-size: 10px; color: var(--text-muted); }
+.scheduler__approval-badge {
+  margin-left: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 10px;
+  white-space: nowrap;
+  background: var(--warning-bg);
+  color: var(--warning);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+.scheduler__approval-badge--rejected {
+  background: var(--danger-bg);
+  color: var(--danger);
+  border-color: rgba(239, 68, 68, 0.3);
+}
 .scheduler__cron {
   font-family: var(--font-mono);
   font-size: 11px;

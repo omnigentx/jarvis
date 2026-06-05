@@ -188,6 +188,10 @@ async def test_cron_scheduler_sets_context_var_during_agent_turn():
     job.name = "test"
     job.exec_agent = "Jarvis"
     job.exec_payload = "hello"
+    # Approved at creation time — this test exercises the token-context
+    # contract downstream of the creation-time approval gate, not the gate
+    # itself (a bare MagicMock's approval_status would block the turn).
+    job.approval_status = "approved"
 
     # Pre-condition: outside the call, ContextVar is its default empty.
     assert current_run_id.get() == ""
@@ -229,6 +233,9 @@ async def test_cron_scheduler_resets_context_var_on_exception():
     job.name = "boom job"
     job.exec_agent = "Jarvis"
     job.exec_payload = "x"
+    # Approved so the turn proceeds to the agent send (where the boom is
+    # raised) rather than being short-circuited by the approval gate.
+    job.approval_status = "approved"
 
     with pytest.raises(RuntimeError, match="Agent turn failed"):
         await sched._execute_agent_turn(job)
