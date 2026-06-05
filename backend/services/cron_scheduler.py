@@ -345,14 +345,44 @@ class CronScheduler:
             )
 
         except ApprovalBlocked as exc:
-            # Gate refused / timed out. NOT a failure — the user simply
-            # hasn't approved this payload yet (or rejected it). Record
-            # the run as `blocked`, do NOT bump fail_count, and let the
-            # job stay `active` for its next scheduled fire.
+            # Gate refused. NOT a failure — the user simply hasn't approved
+            # this payload yet (or rejected it). Never bumps fail_count; the
+            # job stays `active` for its next scheduled fire.
             completed_at = time.time()
             duration_ms = int((completed_at - started_at) * 1000)
             block_reason = exc.reason[:500]
+            silent = not getattr(exc, "notify", True)
 
+            job.last_run_at = completed_at
+            job.last_result = "blocked"
+            job.last_error = block_reason
+            job.status = "active"  # Restore from 'running'
+            if not job.one_shot:
+                job.next_run_at = self.compute_next_run(
+                    job.schedule_cron, job.calendar_type, job.schedule_timezone, job.lunar_leap
+                )
+
+            if silent:
+                # "Awaiting approval" skip (notify=False): a RECURRING no-op,
+                # not an event. Drop the run row we optimistically opened and
+                # skip the run_count bump — otherwise a never-approved `*/5`
+                # job accrues ~288 blocked rows/day, unbounded, until it's
+                # approved/rejected/deleted. The pending badge
+                # (job.approval_status) + the creation-time approval card are
+                # the user's signal; nothing per-tick is worth persisting or
+                # broadcasting.
+                if run_id:
+                    stale = db.query(CronRunModel).filter(CronRunModel.id == run_id).first()
+                    if stale:
+                        db.delete(stale)
+                job.updated_at = time.time()
+                db.commit()
+                logger.info("[CRON] Job '%s' awaiting approval — skipped (no run recorded)", job.name)
+                return
+
+            # Genuine one-off block (notify=True): persist the blocked run and
+            # notify so the dashboard shows why the job didn't run. run_count
+            # counts this attempt so the dashboard reflects that it ticked.
             if run_id:
                 run = db.query(CronRunModel).filter(CronRunModel.id == run_id).first()
                 if run:
@@ -360,21 +390,7 @@ class CronScheduler:
                     run.completed_at = completed_at
                     run.duration_ms = duration_ms
                     run.error = f"approval gate: {block_reason}"
-
-            job.last_run_at = completed_at
-            job.last_result = "blocked"
-            job.last_error = block_reason
-            # run_count counts attempts including blocked ones so the dashboard
-            # shows the job *did* tick. fail_count stays put — no auto-disable
-            # for blocked runs.
             job.run_count = (job.run_count or 0) + 1
-
-            job.status = "active"  # Restore from 'running'
-            if not job.one_shot:
-                job.next_run_at = self.compute_next_run(
-                    job.schedule_cron, job.calendar_type, job.schedule_timezone, job.lunar_leap
-                )
-
             job.updated_at = time.time()
             db.commit()
 
@@ -385,40 +401,36 @@ class CronScheduler:
                 "reason": block_reason,
             })
 
-            # Suppress the inbox notification for "awaiting approval" skips
-            # (exc.notify=False) — those repeat every tick and the approval
-            # card already notified the user. Other blocks still notify.
-            if getattr(exc, "notify", True):
-                # Blocked notification — distinct from `error` so the dashboard
-                # can colour-code it (amber) vs failed (red).
-                notif = NotificationModel(
-                    run_id=run_id,
-                    job_id=job.id,
-                    type="blocked",
-                    title=job.name,
-                    preview=f"Blocked: {block_reason[:180]}",
-                    content=f"## Job blocked: {job.name}\n\n```\n{block_reason}\n```",
-                    content_type="markdown",
-                    is_read=0,
-                    created_at=completed_at,
-                    metadata_json=json.dumps({
-                        "agent": job.exec_agent or "system",
-                        "exec_mode": job.exec_mode,
-                        "duration_ms": duration_ms,
-                        "status": "blocked",
-                    }),
-                )
-                db.add(notif)
-                db.commit()
-                db.refresh(notif)
+            # Blocked notification — distinct from `error` so the dashboard
+            # can colour-code it (amber) vs failed (red).
+            notif = NotificationModel(
+                run_id=run_id,
+                job_id=job.id,
+                type="blocked",
+                title=job.name,
+                preview=f"Blocked: {block_reason[:180]}",
+                content=f"## Job blocked: {job.name}\n\n```\n{block_reason}\n```",
+                content_type="markdown",
+                is_read=0,
+                created_at=completed_at,
+                metadata_json=json.dumps({
+                    "agent": job.exec_agent or "system",
+                    "exec_mode": job.exec_mode,
+                    "duration_ms": duration_ms,
+                    "status": "blocked",
+                }),
+            )
+            db.add(notif)
+            db.commit()
+            db.refresh(notif)
 
-                self._broadcast_event("new_notification", {
-                    "id": notif.id,
-                    "notif_type": "blocked",
-                    "title": job.name,
-                    "preview": f"Blocked: {block_reason[:150]}",
-                    "created_at": completed_at,
-                })
+            self._broadcast_event("new_notification", {
+                "id": notif.id,
+                "notif_type": "blocked",
+                "title": job.name,
+                "preview": f"Blocked: {block_reason[:150]}",
+                "created_at": completed_at,
+            })
 
             logger.warning("[CRON] Job '%s' blocked: %s", job.name, block_reason)
             return

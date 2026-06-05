@@ -197,14 +197,18 @@ async def update_job(job_id: str, request: Request, _auth: bool = Depends(verify
                 setattr(job, field, body[field])
 
         # Dashboard edits are user-driven and trusted (the user is present and
-        # in control). If this job was awaiting agent-approval (or was
-        # rejected), the user editing it HERE is the vetting step → mark it
-        # approved so it can run. We also resolve any stale pending approval
-        # card below (after commit) so a later click on it can't approve a
-        # payload the user never saw — the SSoT (job.approval_status) and the
-        # inbox card stay consistent.
-        was_unapproved = job.approval_status != "approved"
-        if was_unapproved:
+        # in control). If this job is awaiting agent-approval, the user editing
+        # it HERE is the vetting step → mark it approved so it can run. We also
+        # resolve any stale pending approval card below (after commit) so a
+        # later click on it can't approve a payload the user never saw — the
+        # SSoT (job.approval_status) and the inbox card stay consistent.
+        #
+        # A `rejected` job is deliberately NOT auto-approved here: rejection is
+        # an explicit "no", and a trivial dashboard edit (e.g. a rename) must
+        # not silently revive it. Reviving a rejected job takes an explicit
+        # approve action, not an incidental field change.
+        was_pending = job.approval_status == "pending"
+        if was_pending:
             job.approval_status = "approved"
 
         if "one_shot" in body:
@@ -239,7 +243,7 @@ async def update_job(job_id: str, request: Request, _auth: bool = Depends(verify
         db.close()
 
     # After commit + close so the resolve's own sessions don't nest in ours.
-    if was_unapproved:
+    if was_pending:
         _approve_pending_cron_cards(job_id)
 
     cron_scheduler.wake()

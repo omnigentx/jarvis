@@ -231,6 +231,53 @@ def test_agent_no_op_edit_keeps_approval():
         db.close()
 
 
+def test_agent_swapping_exec_agent_resets_to_pending():
+    """exec_agent is a vetted artifact (the card shows the target agent). An
+    agent that swaps a WEAK approved agent for a POWERFUL one — same payload —
+    must re-gate; otherwise the vetted toolset is bypassed."""
+    from tools import cron_server
+
+    cron_server.cron_create(
+        name="Agent swap", cron_expr="*/5 * * * *", exec_mode="agent_turn",
+        exec_payload="do it", exec_agent="WeakAgent",
+    )
+    job_id = _only_job().id
+    approval_service.resolve_approval(_cron_approvals()[0].id, decision="approve")
+
+    cron_server.cron_update(job_id=job_id, exec_agent="PowerfulAgent")
+
+    db = get_db_session()
+    try:
+        job = db.query(CronJobModel).filter(CronJobModel.id == job_id).first()
+        assert job.approval_status == "pending", "swapping exec_agent must re-gate"
+    finally:
+        db.close()
+    assert len([c for c in _cron_approvals() if c.status == "pending"]) == 1
+
+
+def test_agent_changing_schedule_resets_to_pending():
+    """schedule_cron is a vetted artifact (the card shows the schedule). An
+    agent that changes WHEN / how often an approved payload fires must re-gate."""
+    from tools import cron_server
+
+    cron_server.cron_create(
+        name="Reschedule", cron_expr="0 9 * * *", exec_mode="agent_turn",
+        exec_payload="do it", exec_agent="Jarvis",
+    )
+    job_id = _only_job().id
+    approval_service.resolve_approval(_cron_approvals()[0].id, decision="approve")
+
+    cron_server.cron_update(job_id=job_id, cron_expr="*/1 * * * *")
+
+    db = get_db_session()
+    try:
+        job = db.query(CronJobModel).filter(CronJobModel.id == job_id).first()
+        assert job.approval_status == "pending", "changing the schedule must re-gate"
+    finally:
+        db.close()
+    assert len([c for c in _cron_approvals() if c.status == "pending"]) == 1
+
+
 # ── Dashboard edit supersedes a pending agent approval ────────────────
 
 
@@ -319,13 +366,14 @@ async def test_e2e_pending_job_skipped_then_runs_after_approval():
 
 
 @pytest.mark.asyncio
-async def test_execute_job_records_blocked_run_without_notification_then_runs():
+async def test_pending_job_skips_silently_then_runs_after_approval():
     """Through the REAL scheduler entry point ``_execute_job`` (what the loop
     calls), not just ``_execute_agent_turn``:
 
-    * a pending job → run row recorded ``blocked``, NO inbox notification
-      (the approval card already notified), no fail-count bump, job stays
-      ``active`` for the next tick.
+    * a pending job → skipped SILENTLY: no run row, no inbox notification
+      (the approval card already notified), no fail-count / run-count bump,
+      job stays ``active`` for the next tick. Ticking repeatedly must not
+      accrue rows (unbounded-growth guard).
     * after approval → the same path RUNS, records ``success`` + one
       ``agent_result`` notification.
 
@@ -344,25 +392,33 @@ async def test_execute_job_records_blocked_run_without_notification_then_runs():
     sched._session_service = MagicMock()
     sched._session_service.resume_and_send = AsyncMock(return_value=("done", "sid"))
 
-    # 1) Pending → _execute_job catches ApprovalBlocked and records 'blocked'.
-    db = get_db_session()
-    try:
-        await sched._execute_job(
-            db.query(CronJobModel).filter(CronJobModel.id == job_id).first(), db
-        )
-    finally:
-        db.close()
+    # 1) Pending → _execute_job catches ApprovalBlocked and records NOTHING:
+    #    no run row, no notification. Tick it THREE times to prove an
+    #    unapproved recurring job does not accrue blocked rows per tick (the
+    #    ~288-rows/day unbounded-growth regression).
+    for _ in range(3):
+        db = get_db_session()
+        try:
+            await sched._execute_job(
+                db.query(CronJobModel).filter(CronJobModel.id == job_id).first(), db
+            )
+        finally:
+            db.close()
 
     db = get_db_session()
     try:
         runs = db.query(CronRunModel).filter(CronRunModel.job_id == job_id).all()
-        assert len(runs) == 1 and runs[0].status == "blocked"
+        assert runs == [], (
+            "awaiting-approval skip must NOT persist a run row — a never-approved "
+            f"recurring job would grow unbounded; saw {len(runs)} rows after 3 ticks"
+        )
         notifs = db.query(NotificationModel).filter(NotificationModel.job_id == job_id).all()
         assert notifs == [], "pending-approval skip must NOT create an inbox notification"
         job = db.query(CronJobModel).filter(CronJobModel.id == job_id).first()
         assert job.approval_status == "pending"
         assert job.status == "active"
         assert (job.fail_count or 0) == 0
+        assert (job.run_count or 0) == 0, "silent skip must not inflate run_count"
     finally:
         db.close()
     sched._session_service.resume_and_send.assert_not_called()

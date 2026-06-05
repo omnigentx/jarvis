@@ -120,3 +120,54 @@ async def test_resolve_route_reject_blocks_job(app_client, _seeded_pending_job):
         assert job.approval_status == "rejected"
     finally:
         db.close()
+
+
+def _seed_job(approval_status: str):
+    """Seed an agent-created agent_turn job at a given approval_status.
+    Disposes the shared engine first (see _seeded_pending_job for why)."""
+    from core.database import engine
+    engine.dispose()
+    _cleanup()
+    db = get_db_session()
+    try:
+        db.add(CronJobModel(
+            id=JOB_ID, user_id="default", name="Edit me",
+            schedule_cron="*/5 * * * *", calendar_type="solar",
+            exec_mode="agent_turn", exec_payload="run report", exec_agent="Jarvis",
+            status="active", created_by="agent", approval_status=approval_status,
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_dashboard_edit_of_pending_job_approves_via_route(app_client):
+    """The REAL PUT /api/scheduler/jobs/{id} — a trusted dashboard edit of a
+    PENDING job is the vetting step → it becomes approved."""
+    _seed_job("pending")
+    try:
+        resp = await app_client.put(
+            f"/api/scheduler/jobs/{JOB_ID}", json={"name": "Renamed by user"}
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["job"]["approval_status"] == "approved"
+    finally:
+        _cleanup()
+
+
+@pytest.mark.asyncio
+async def test_dashboard_edit_of_rejected_job_stays_rejected_via_route(app_client):
+    """A REJECTED job is a deliberate 'no'. An incidental dashboard edit (a
+    rename) must NOT silently revive it — approval_status stays rejected."""
+    _seed_job("rejected")
+    try:
+        resp = await app_client.put(
+            f"/api/scheduler/jobs/{JOB_ID}", json={"name": "Sneaky rename"}
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["job"]["approval_status"] == "rejected", (
+            "a trivial edit must not auto-approve a job the user explicitly rejected"
+        )
+    finally:
+        _cleanup()

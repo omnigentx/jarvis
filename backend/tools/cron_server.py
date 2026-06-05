@@ -370,6 +370,8 @@ def cron_update(
 
         changes = []
         payload_changed = False
+        agent_changed = False
+        schedule_changed = False
 
         if name is not None:
             job.name = name
@@ -380,8 +382,9 @@ def cron_update(
             payload_changed = True
             changes.append(f"payload updated")
 
-        if exec_agent is not None:
+        if exec_agent is not None and exec_agent != job.exec_agent:
             job.exec_agent = exec_agent
+            agent_changed = True
             changes.append(f"exec_agent → {exec_agent}")
 
         if calendar_type is not None:
@@ -407,6 +410,8 @@ def cron_update(
             error = _validate_cron_expr(cron_expr)
             if error:
                 return f"❌ {error}"
+            if cron_expr != job.schedule_cron:
+                schedule_changed = True
             job.schedule_cron = cron_expr
             changes.append(f"cron → {cron_expr}")
 
@@ -422,19 +427,25 @@ def cron_update(
             except Exception as e:
                 return f"❌ next_run computation failed: {e}"
 
-        # An agent editing the payload of an agent_turn job invalidates any
-        # prior approval — the bytes that were vetted no longer match what
-        # will run. Re-gate it. This closes the "create benign job → get it
-        # approved → quietly swap in a malicious payload" path without needing
-        # to hash anything: the approval flag is the state, reset it on edit.
+        # An agent editing any VETTED field of an agent_turn job invalidates
+        # the prior approval — what was vetted no longer matches what will run.
+        # The approval card (``_approval_content``) shows the payload, the
+        # target agent AND the schedule, so all three are vetted artifacts:
+        #   - payload  → the bytes that execute
+        #   - exec_agent → which tool set runs them (WeakAgent vs PowerfulAgent)
+        #   - schedule_cron → when / how often they fire
+        # Re-gate on any of them. This closes the "create benign job → get it
+        # approved → quietly swap in a stronger agent / different schedule"
+        # path without hashing: the approval flag IS the state, reset on edit.
+        sensitive_changed = payload_changed or agent_changed or schedule_changed
         reapproval_needed = (
-            payload_changed
+            sensitive_changed
             and job.exec_mode == "agent_turn"
             and _require_approval()
         )
         if reapproval_needed:
             job.approval_status = "pending"
-            changes.append("approval reset → pending (payload changed)")
+            changes.append("approval reset → pending (vetted field changed)")
 
         job.updated_at = time.time()
         # Snapshot fields for the post-commit approval card.
