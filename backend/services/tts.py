@@ -29,6 +29,12 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_EDGE_VOICE = "vi-VN-NamMinhNeural"
 DEFAULT_EDGE_RATE = "+20%"
+# Largest text size sent in ONE edge_tts request. A single oversized request
+# (e.g. a whole ~9k-char story chapter) streams slower than real-time playback
+# and intermittently returns "no audio" / truncates — which made long story
+# chapters play "tậm tịt". Capping every chunk keeps each request small, fast
+# and reliable. Tier 1/2 stay far below this for low time-to-first-byte.
+EDGE_MAX_CHUNK = 500
 
 
 class TTSProvider(ABC):
@@ -90,38 +96,44 @@ class EdgeTTSProvider(TTSProvider):
 
     @staticmethod
     def _split_tiered(text: str) -> list[str]:
-        """3-tier split for low TTFB.
+        """Tiered split for low TTFB + reliable long-text synthesis.
 
-        Tier 1: ~50 chars  (instant first audio)
+        Tier 1: ~50 chars   (instant first audio)
         Tier 2: ~300 chars
-        Tier 3: remaining text in a single chunk.
+        Tier 3+: the rest in ``EDGE_MAX_CHUNK`` (500)-char chunks — NOT one
+        giant remainder chunk. A single oversized request streams slower than
+        playback and intermittently returns no audio / truncates (that made
+        long story chapters play "tậm tịt"); many small requests are fast and
+        reliable.
 
-        Splits at sentence > comma > whitespace boundaries to keep speech natural.
+        Splits at sentence > comma > whitespace boundaries to keep speech
+        natural. Every returned chunk is <= ``EDGE_MAX_CHUNK`` chars.
         """
         text = text.strip()
         if len(text) <= 100:
             return [text]
 
-        tiers = (50, 300)
         chunks: list[str] = []
         pos = 0
+        i = 0
 
-        for limit in tiers:
-            if pos >= len(text):
-                break
+        while pos < len(text):
+            # First two chunks stay tiny for low TTFB; everything after is
+            # capped at EDGE_MAX_CHUNK so no single request goes oversized.
+            limit = 50 if i == 0 else (300 if i == 1 else EDGE_MAX_CHUNK)
+            i += 1
 
             end = min(pos + limit, len(text))
             if end >= len(text):
                 tail = text[pos:].strip()
                 if tail:
                     chunks.append(tail)
-                pos = len(text)
                 break
 
             best = end
             search_start = max(pos, end - int(limit * 0.5))
 
-            # Sentence break first
+            # Sentence break first, then comma, then whitespace.
             for punct in (". ", "? ", "! ", ".\n", "?\n", "!\n"):
                 idx = text.rfind(punct, search_start, end)
                 if idx != -1:
@@ -139,20 +151,51 @@ class EdgeTTSProvider(TTSProvider):
             chunk = text[pos:best].strip()
             if chunk:
                 chunks.append(chunk)
-            pos = best
-
-        if pos < len(text):
-            remaining = text[pos:].strip()
-            if remaining:
-                chunks.append(remaining)
+            pos = best if best > pos else end  # guarantee forward progress
 
         return chunks
 
-    async def stream_audio(self, text: str) -> AsyncIterator[bytes]:
-        """Stream audio bytes with 3-tier chunking for low TTFB.
+    async def _synth_chunk(self, chunk_text: str, *, attempts: int = 3) -> bytes:
+        """Synthesize ONE text chunk to audio bytes, retrying transient
+        empty/failed responses with linear backoff.
 
-        Short text (<100 chars): single ``Communicate()`` call.
-        Long text: 50 → 300 → rest. Bytes are yielded as they arrive.
+        Buffered (not streamed) on purpose: a failed attempt can then be
+        retried cleanly without duplicating already-emitted audio. Chunks are
+        <= ``EDGE_MAX_CHUNK`` chars so the buffering cost is negligible.
+        Returns ``b''`` only if every attempt produced no audio.
+        """
+        last = "no audio received"
+        for attempt in range(1, attempts + 1):
+            buf = bytearray()
+            try:
+                communicate = edge_tts.Communicate(chunk_text, self.voice, rate=self.rate)
+                async for chunk in communicate.stream():
+                    if chunk.get("type") == "audio" and chunk.get("data"):
+                        buf.extend(chunk["data"])
+                if buf:
+                    return bytes(buf)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                last = str(exc)
+            if attempt < attempts:
+                logger.warning(
+                    "EdgeTTS chunk attempt %d/%d failed (%s) — retrying",
+                    attempt, attempts, last,
+                )
+                await asyncio.sleep(0.4 * attempt)  # linear backoff
+        logger.error("EdgeTTS chunk gave no audio after %d attempts (%s)", attempts, last)
+        return b""
+
+    async def stream_audio(self, text: str) -> AsyncIterator[bytes]:
+        """Stream audio bytes with tiered chunking for low TTFB.
+
+        Short text (<100 chars): single chunk.
+        Long text: 50 → 300 → <=``EDGE_MAX_CHUNK`` chunks. Each chunk is
+        synthesized with per-chunk retry (:meth:`_synth_chunk`). A chunk that
+        yields no audio after all retries fails the whole stream so the caller
+        drops the partial file instead of serving a silent gap (no silent
+        fallback).
         """
         if not text or not text.strip():
             return
@@ -170,39 +213,16 @@ class EdgeTTSProvider(TTSProvider):
             )
 
             for i, chunk_text in enumerate(chunks):
-                chunk_start = time.perf_counter()
-                chunk_ttfb: Optional[float] = None
-                chunk_bytes = 0
-
-                communicate = edge_tts.Communicate(chunk_text, self.voice, rate=self.rate)
-
-                async for chunk in communicate.stream():
-                    if chunk.get("type") != "audio":
-                        continue
-                    data: bytes = chunk["data"]
-                    if not data:
-                        continue
-                    if chunk_ttfb is None:
-                        chunk_ttfb = time.perf_counter() - chunk_start
-                        if ttfb is None:
-                            ttfb = time.perf_counter() - stream_start
-                            logger.debug(
-                                "EdgeTTS TTFB: %.0fms (chunk 1/%d)",
-                                ttfb * 1000,
-                                len(chunks),
-                            )
-                    chunk_bytes += len(data)
-                    yield data
-
-                total_bytes += chunk_bytes
-                logger.debug(
-                    "EdgeTTS chunk %d/%d done | %d chars | TTFB %.0fms | %dB",
-                    i + 1,
-                    len(chunks),
-                    len(chunk_text),
-                    (chunk_ttfb or 0.0) * 1000,
-                    chunk_bytes,
-                )
+                data = await self._synth_chunk(chunk_text)
+                if not data:
+                    raise RuntimeError(
+                        f"EdgeTTS produced no audio for chunk {i + 1}/{len(chunks)} "
+                        f"after retries ({len(chunk_text)} chars)"
+                    )
+                if ttfb is None:
+                    ttfb = time.perf_counter() - stream_start
+                total_bytes += len(data)
+                yield data
 
             total_duration = time.perf_counter() - stream_start
             logger.info(

@@ -197,18 +197,49 @@ class TTSPreGenJob(BackgroundJobRunner):
                     "started_at": time.time(),
                 }))
             
-            # Generate TTS using edge_tts directly (for chunk-by-chunk control)
-            communicate = edge_tts.Communicate(text, self.VOICE, rate=self.RATE)
-            
+            # Generate TTS in bounded chunks (<= EDGE_MAX_CHUNK) with per-chunk
+            # retry. A single whole-chapter edge_tts request streams slower than
+            # playback and intermittently returns no audio / truncates ("tậm
+            # tịt"); small chunks are fast + reliable. Pause/cancel is still
+            # checked between audio frames AND between chunks. Each chunk is
+            # buffered so a retried attempt can't duplicate already-written audio.
+            from services.tts import EdgeTTSProvider
+            text_chunks = EdgeTTSProvider._split_tiered(text)
+
             with open(cache_path, "wb") as audio_file:
-                async for chunk in communicate.stream():
-                    # ★ CHECK PAUSE/CANCEL EVERY CHUNK
-                    await self.scheduler.check_pause_point()
-                    
-                    if chunk["type"] == "audio":
-                        audio_data = chunk["data"]
-                        audio_file.write(audio_data)
-                        bytes_written += len(audio_data)
+                for ci, ctext in enumerate(text_chunks):
+                    if not ctext.strip():
+                        continue
+                    buf = bytearray()
+                    for attempt in range(1, 4):
+                        # ★ CHECK PAUSE/CANCEL before each attempt + every frame
+                        await self.scheduler.check_pause_point()
+                        buf.clear()
+                        try:
+                            communicate = edge_tts.Communicate(ctext, self.VOICE, rate=self.RATE)
+                            async for chunk in communicate.stream():
+                                await self.scheduler.check_pause_point()
+                                if chunk["type"] == "audio" and chunk["data"]:
+                                    buf.extend(chunk["data"])
+                            if buf:
+                                break
+                        except asyncio.CancelledError:
+                            raise  # pause/cancel — let scheduler handle, never retry
+                        except Exception as exc:
+                            if attempt >= 3:
+                                raise
+                            logger.warning(
+                                f"[PRE-GEN] {story_title}/{chapter_file} chunk "
+                                f"{ci + 1}/{len(text_chunks)} attempt {attempt} "
+                                f"failed ({exc}) — retrying"
+                            )
+                            await asyncio.sleep(0.4 * attempt)
+                    if not buf:
+                        raise RuntimeError(
+                            f"No audio for chunk {ci + 1}/{len(text_chunks)} after retries"
+                        )
+                    audio_file.write(buf)
+                    bytes_written += len(buf)
             
             # Done — remove lock
             if os.path.exists(lock_path):

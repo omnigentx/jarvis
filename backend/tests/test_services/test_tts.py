@@ -7,6 +7,7 @@ import pytest
 from services.tts import (
     DEFAULT_EDGE_RATE,
     DEFAULT_EDGE_VOICE,
+    EDGE_MAX_CHUNK,
     EdgeTTSProvider,
     TTSProvider,
 )
@@ -55,10 +56,15 @@ class TestEdgeTTSProviderTieredSplit:
         text = "a" * 100
         assert EdgeTTSProvider._split_tiered(text) == [text]
 
-    def test_long_text_splits_into_three_tiers(self):
+    def test_long_text_splits_into_bounded_chunks(self):
         text = "Câu một. " * 100  # ~900 chars
         chunks = EdgeTTSProvider._split_tiered(text)
-        assert len(chunks) == 3
+        # Tier 1/2 stay small for TTFB; the rest is capped at EDGE_MAX_CHUNK —
+        # NOT lumped into one giant remainder chunk (that oversized request is
+        # what made long story chapters play "tậm tịt").
+        assert len(chunks) >= 3
+        assert all(len(c) <= EDGE_MAX_CHUNK for c in chunks)
+        assert len(chunks[0]) <= 50
         # No content lost (modulo whitespace stripping)
         joined_len = sum(len(c) for c in chunks)
         assert joined_len <= len(text)
