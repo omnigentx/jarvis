@@ -198,34 +198,42 @@ class TTSPreGenJob(BackgroundJobRunner):
                 }))
             
             # Generate TTS in bounded chunks (<= EDGE_MAX_CHUNK) with per-chunk
-            # retry. A single whole-chapter edge_tts request streams slower than
-            # playback and intermittently returns no audio / truncates ("tậm
-            # tịt"); small chunks are fast + reliable. Pause/cancel is still
-            # checked between audio frames AND between chunks. Each chunk is
-            # buffered so a retried attempt can't duplicate already-written audio.
-            from services.tts import EdgeTTSProvider
+            # retry + timeout. A single whole-chapter edge_tts request streams
+            # slower than playback and intermittently returns no audio /
+            # truncates ("tậm tịt"); small chunks are fast + reliable. Each
+            # chunk is buffered so a retried attempt can't duplicate audio.
+            from services.tts import EdgeTTSProvider, EDGE_CHUNK_TIMEOUT
             text_chunks = EdgeTTSProvider._split_tiered(text)
 
             with open(cache_path, "wb") as audio_file:
                 for ci, ctext in enumerate(text_chunks):
                     if not ctext.strip():
                         continue
+                    # Pause/cancel checked BETWEEN chunks, NOT inside the
+                    # wait_for below: a pause must block here indefinitely until
+                    # resume, whereas the per-chunk timeout only guards a stalled
+                    # network request. Chunks are small so a cancel (user
+                    # switched chapter) lands within a few seconds — this is what
+                    # stops a stuck pre-gen from hanging the new chapter.
+                    await self.scheduler.check_pause_point()
+
                     buf = bytearray()
                     for attempt in range(1, 4):
-                        # ★ CHECK PAUSE/CANCEL before each attempt + every frame
-                        await self.scheduler.check_pause_point()
                         buf.clear()
-                        try:
+
+                        async def _consume():
                             communicate = edge_tts.Communicate(ctext, self.VOICE, rate=self.RATE)
                             async for chunk in communicate.stream():
-                                await self.scheduler.check_pause_point()
                                 if chunk["type"] == "audio" and chunk["data"]:
                                     buf.extend(chunk["data"])
+
+                        try:
+                            await asyncio.wait_for(_consume(), timeout=EDGE_CHUNK_TIMEOUT)
                             if buf:
                                 break
                         except asyncio.CancelledError:
                             raise  # pause/cancel — let scheduler handle, never retry
-                        except Exception as exc:
+                        except Exception as exc:  # incl. TimeoutError (stalled request)
                             if attempt >= 3:
                                 raise
                             logger.warning(

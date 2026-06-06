@@ -116,3 +116,25 @@ async def test_stream_audio_fails_loud_on_unrecoverable_chunk(_fast_retry):
     with pytest.raises(Exception):
         async for _ in EdgeTTSProvider().stream_audio("a longer line of text here"):
             pass
+
+
+class _StallingCommunicate:
+    """stream() that never yields in time — simulates a throttled/stuck WSS."""
+
+    def __init__(self, text, voice, rate=None):
+        pass
+
+    async def stream(self):
+        await asyncio.sleep(5)  # cancelled by wait_for well before this elapses
+        yield {"type": "audio", "data": b"LATE"}
+
+
+@pytest.mark.asyncio
+async def test_synth_chunk_times_out_so_it_cannot_hang(monkeypatch):
+    # A stalled request must NOT block forever — it's what froze the cooperative
+    # cancel point and hung the new chapter when switching mid-pre-gen. Each
+    # attempt is bounded by EDGE_CHUNK_TIMEOUT; all time out → returns b''.
+    monkeypatch.setattr(tts_mod, "EDGE_CHUNK_TIMEOUT", 0.05)
+    monkeypatch.setattr(tts_mod.edge_tts, "Communicate", _StallingCommunicate)
+    out = await EdgeTTSProvider()._synth_chunk("hello", attempts=2)
+    assert out == b"", "a stalled chunk must give up (time out), never hang"

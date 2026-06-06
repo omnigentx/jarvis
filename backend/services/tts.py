@@ -35,6 +35,13 @@ DEFAULT_EDGE_RATE = "+20%"
 # chapters play "tậm tịt". Capping every chunk keeps each request small, fast
 # and reliable. Tier 1/2 stay far below this for low time-to-first-byte.
 EDGE_MAX_CHUNK = 500
+# Hard wall-clock cap on ONE chunk's synthesis. A <=500-char chunk returns in a
+# few seconds normally; if a request stalls (throttled / dropped WebSocket) it
+# must NOT block forever — without this, a stuck pre-gen request blocks the
+# cooperative cancel point, so switching chapters mid-pre-gen would hang. On
+# timeout the attempt is aborted and retried; a freed slot lets the user's new
+# chapter proceed.
+EDGE_CHUNK_TIMEOUT = 30  # seconds
 
 
 class TTSProvider(ABC):
@@ -155,27 +162,38 @@ class EdgeTTSProvider(TTSProvider):
 
         return chunks
 
+    async def _synth_once(self, chunk_text: str) -> bytes:
+        """One edge_tts request → all audio bytes for ``chunk_text``."""
+        buf = bytearray()
+        communicate = edge_tts.Communicate(chunk_text, self.voice, rate=self.rate)
+        async for chunk in communicate.stream():
+            if chunk.get("type") == "audio" and chunk.get("data"):
+                buf.extend(chunk["data"])
+        return bytes(buf)
+
     async def _synth_chunk(self, chunk_text: str, *, attempts: int = 3) -> bytes:
         """Synthesize ONE text chunk to audio bytes, retrying transient
-        empty/failed responses with linear backoff.
+        empty/failed/stalled responses with linear backoff.
 
-        Buffered (not streamed) on purpose: a failed attempt can then be
-        retried cleanly without duplicating already-emitted audio. Chunks are
-        <= ``EDGE_MAX_CHUNK`` chars so the buffering cost is negligible.
-        Returns ``b''`` only if every attempt produced no audio.
+        Each attempt is wall-clock bounded by ``EDGE_CHUNK_TIMEOUT`` so a
+        stalled WebSocket can't hang forever. Buffered (not streamed) on
+        purpose: a failed attempt can then be retried cleanly without
+        duplicating already-emitted audio. Chunks are <= ``EDGE_MAX_CHUNK``
+        chars so the buffering cost is negligible. Returns ``b''`` only if
+        every attempt produced no audio.
         """
         last = "no audio received"
         for attempt in range(1, attempts + 1):
-            buf = bytearray()
             try:
-                communicate = edge_tts.Communicate(chunk_text, self.voice, rate=self.rate)
-                async for chunk in communicate.stream():
-                    if chunk.get("type") == "audio" and chunk.get("data"):
-                        buf.extend(chunk["data"])
-                if buf:
-                    return bytes(buf)
+                data = await asyncio.wait_for(
+                    self._synth_once(chunk_text), timeout=EDGE_CHUNK_TIMEOUT
+                )
+                if data:
+                    return data
             except asyncio.CancelledError:
                 raise
+            except asyncio.TimeoutError:
+                last = f"timed out after {EDGE_CHUNK_TIMEOUT}s"
             except Exception as exc:
                 last = str(exc)
             if attempt < attempts:
