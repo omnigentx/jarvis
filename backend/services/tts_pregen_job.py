@@ -184,6 +184,12 @@ class TTSPreGenJob(BackgroundJobRunner):
             return True
         
         lock_path = cache_path + ".lock"
+        # Write to a temp file and atomically rename to cache_path ONLY after
+        # every chunk succeeds. A present cache_path then always means "complete
+        # chapter" — a mid-chapter chunk failure (raise/timeout) can never leave
+        # a truncated file that the cache-hit short-circuit above would serve
+        # forever (the "tậm tịt" this PR fixes).
+        tmp_path = cache_path + ".tmp"
         start_time = time.time()
         bytes_written = 0
         
@@ -197,19 +203,62 @@ class TTSPreGenJob(BackgroundJobRunner):
                     "started_at": time.time(),
                 }))
             
-            # Generate TTS using edge_tts directly (for chunk-by-chunk control)
-            communicate = edge_tts.Communicate(text, self.VOICE, rate=self.RATE)
-            
-            with open(cache_path, "wb") as audio_file:
-                async for chunk in communicate.stream():
-                    # ★ CHECK PAUSE/CANCEL EVERY CHUNK
+            # Generate TTS in bounded chunks (<= EDGE_MAX_CHUNK) with per-chunk
+            # retry + timeout. A single whole-chapter edge_tts request streams
+            # slower than playback and intermittently returns no audio /
+            # truncates ("tậm tịt"); small chunks are fast + reliable. Each
+            # chunk is buffered so a retried attempt can't duplicate audio.
+            from services.tts import EdgeTTSProvider, EDGE_CHUNK_TIMEOUT
+            text_chunks = EdgeTTSProvider._split_tiered(text)
+
+            with open(tmp_path, "wb") as audio_file:
+                for ci, ctext in enumerate(text_chunks):
+                    if not ctext.strip():
+                        continue
+                    # Pause/cancel checked BETWEEN chunks, NOT inside the
+                    # wait_for below: a pause must block here indefinitely until
+                    # resume, whereas the per-chunk timeout only guards a stalled
+                    # network request. Chunks are small so a cancel (user
+                    # switched chapter) lands within a few seconds — this is what
+                    # stops a stuck pre-gen from hanging the new chapter.
                     await self.scheduler.check_pause_point()
-                    
-                    if chunk["type"] == "audio":
-                        audio_data = chunk["data"]
-                        audio_file.write(audio_data)
-                        bytes_written += len(audio_data)
-            
+
+                    buf = bytearray()
+                    for attempt in range(1, 4):
+                        buf.clear()
+
+                        async def _consume():
+                            communicate = edge_tts.Communicate(ctext, self.VOICE, rate=self.RATE)
+                            async for chunk in communicate.stream():
+                                if chunk["type"] == "audio" and chunk["data"]:
+                                    buf.extend(chunk["data"])
+
+                        try:
+                            await asyncio.wait_for(_consume(), timeout=EDGE_CHUNK_TIMEOUT)
+                            if buf:
+                                break
+                        except asyncio.CancelledError:
+                            raise  # pause/cancel — let scheduler handle, never retry
+                        except Exception as exc:  # incl. TimeoutError (stalled request)
+                            if attempt >= 3:
+                                raise
+                            logger.warning(
+                                f"[PRE-GEN] {story_title}/{chapter_file} chunk "
+                                f"{ci + 1}/{len(text_chunks)} attempt {attempt} "
+                                f"failed ({exc}) — retrying"
+                            )
+                            await asyncio.sleep(0.4 * attempt)
+                    if not buf:
+                        raise RuntimeError(
+                            f"No audio for chunk {ci + 1}/{len(text_chunks)} after retries"
+                        )
+                    audio_file.write(buf)
+                    bytes_written += len(buf)
+
+            # All chunks succeeded — atomically publish. Until this point only
+            # tmp_path exists, so any earlier failure leaves no servable file.
+            os.replace(tmp_path, cache_path)
+
             # Done — remove lock
             if os.path.exists(lock_path):
                 os.remove(lock_path)
@@ -239,8 +288,8 @@ class TTSPreGenJob(BackgroundJobRunner):
             # KB2: Clean up partial file
             logger.warning(f"[PRE-GEN] Cancelled: {story_title}/{chapter_file} "
                           f"(after {bytes_written} bytes)")
-            if os.path.exists(cache_path):
-                os.remove(cache_path)
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
             if os.path.exists(lock_path):
                 os.remove(lock_path)
             raise  # Let scheduler handle
@@ -250,9 +299,12 @@ class TTSPreGenJob(BackgroundJobRunner):
                         exc_info=True)
             self._stats["errors"] += 1
             self._stats["last_error"] = f"{story_title}/{chapter_file}: {str(e)}"
-            # Clean up
-            if os.path.exists(cache_path) and bytes_written == 0:
-                os.remove(cache_path)
+            # Clean up the partial temp file. cache_path is only created on full
+            # success (atomic replace above), so it is never left truncated —
+            # drop the old ``bytes_written == 0`` guard that, with chunked
+            # writes, left a partial cache_path that got served forever.
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
             if os.path.exists(lock_path):
                 os.remove(lock_path)
             # Emit error event
