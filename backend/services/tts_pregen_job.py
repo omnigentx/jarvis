@@ -184,6 +184,12 @@ class TTSPreGenJob(BackgroundJobRunner):
             return True
         
         lock_path = cache_path + ".lock"
+        # Write to a temp file and atomically rename to cache_path ONLY after
+        # every chunk succeeds. A present cache_path then always means "complete
+        # chapter" — a mid-chapter chunk failure (raise/timeout) can never leave
+        # a truncated file that the cache-hit short-circuit above would serve
+        # forever (the "tậm tịt" this PR fixes).
+        tmp_path = cache_path + ".tmp"
         start_time = time.time()
         bytes_written = 0
         
@@ -205,7 +211,7 @@ class TTSPreGenJob(BackgroundJobRunner):
             from services.tts import EdgeTTSProvider, EDGE_CHUNK_TIMEOUT
             text_chunks = EdgeTTSProvider._split_tiered(text)
 
-            with open(cache_path, "wb") as audio_file:
+            with open(tmp_path, "wb") as audio_file:
                 for ci, ctext in enumerate(text_chunks):
                     if not ctext.strip():
                         continue
@@ -248,7 +254,11 @@ class TTSPreGenJob(BackgroundJobRunner):
                         )
                     audio_file.write(buf)
                     bytes_written += len(buf)
-            
+
+            # All chunks succeeded — atomically publish. Until this point only
+            # tmp_path exists, so any earlier failure leaves no servable file.
+            os.replace(tmp_path, cache_path)
+
             # Done — remove lock
             if os.path.exists(lock_path):
                 os.remove(lock_path)
@@ -278,8 +288,8 @@ class TTSPreGenJob(BackgroundJobRunner):
             # KB2: Clean up partial file
             logger.warning(f"[PRE-GEN] Cancelled: {story_title}/{chapter_file} "
                           f"(after {bytes_written} bytes)")
-            if os.path.exists(cache_path):
-                os.remove(cache_path)
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
             if os.path.exists(lock_path):
                 os.remove(lock_path)
             raise  # Let scheduler handle
@@ -289,9 +299,12 @@ class TTSPreGenJob(BackgroundJobRunner):
                         exc_info=True)
             self._stats["errors"] += 1
             self._stats["last_error"] = f"{story_title}/{chapter_file}: {str(e)}"
-            # Clean up
-            if os.path.exists(cache_path) and bytes_written == 0:
-                os.remove(cache_path)
+            # Clean up the partial temp file. cache_path is only created on full
+            # success (atomic replace above), so it is never left truncated —
+            # drop the old ``bytes_written == 0`` guard that, with chunked
+            # writes, left a partial cache_path that got served forever.
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
             if os.path.exists(lock_path):
                 os.remove(lock_path)
             # Emit error event
