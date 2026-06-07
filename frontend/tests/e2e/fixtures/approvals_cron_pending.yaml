@@ -1,0 +1,50 @@
+# One pending cron-first-fire approval with a long Vietnamese title — the case
+# that crushed the mobile detail header into a one-word-per-line column.
+
+backend_source:
+  - "backend/routes/approvals.py::list_approvals"
+  - "backend/routes/approvals.py::get_approval"
+  - "frontend/src/views/ApprovalsView.vue"
+
+responses:
+  "GET /api/approvals":
+    status: 200
+    json:
+      - id: "appr_cron_1"
+        status: "pending"
+        approval_type: "cron_first_fire"
+        title: "Cron first run: Kiểm tra thời tiết Gia Lâm buổi sáng"
+        agent_name: "ResearchAgent"
+        created_at: 1780000000
+        content_format: "markdown"
+        comments: []
+
+  "GET /api/approvals/stats":
+    status: 200
+    json:
+      pending_count: 1
+      approved_today: 0
+      rejected_count: 0
+      avg_response_time: 0
+
+  "GET /api/approvals/appr_cron_1":
+    status: 200
+    json:
+      id: "appr_cron_1"
+      status: "pending"
+      approval_type: "cron_first_fire"
+      title: "Cron first run: Kiểm tra thời tiết Gia Lâm buổi sáng"
+      agent_name: "ResearchAgent"
+      created_at: 1780000000
+      content_format: "markdown"
+      content: |
+        ## Cron job: Kiểm tra thời tiết Gia Lâm buổi sáng
+
+        **Schedule:** `0 8 * * *` (solar)
+        **Target agent:** ResearchAgent
+
+        ```
+        weather check payload
+        ```
+      comments: []
+      paused_agents: []
