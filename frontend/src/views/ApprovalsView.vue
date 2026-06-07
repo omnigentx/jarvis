@@ -1132,5 +1132,21 @@ const knownTypes = [
      card on narrow phones. Stack full-width so neither button clips. */
   .approvals__resolve-actions { flex-direction: column; align-items: stretch; }
   .approvals__resolve-actions .btn { width: 100%; }
+
+  /* The detail header is a flex row (badge · title · Preview/Source toggle).
+     On a phone the title's flex item shrank to min-width:0 instead of forcing
+     a wrap, so the title was squeezed into a ~3-char column and broke one word
+     per line. Stack vertically so the title gets full width; keep the badge
+     compact and let the segmented toggle span full width below. */
+  .approvals__detail-head { flex-direction: column; align-items: stretch; gap: 8px; }
+  .approvals__detail-head .approvals-row__type { align-self: flex-start; }
+  .approvals__detail-title { overflow-wrap: anywhere; }
+  .approvals__detail-head .seg { width: 100%; }
+  .approvals__detail-head .seg button { flex: 1; }
+
+  /* Leave room below the content so the resolve buttons can scroll clear of
+     the floating chat/voice FABs (which sit just above the bottom tab bar),
+     instead of the FAB permanently covering "Approve". */
+  .approvals__detail { padding-bottom: 96px; }
 }
 </style>

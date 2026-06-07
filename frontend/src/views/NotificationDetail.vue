@@ -359,5 +359,8 @@ onMounted(fetchDetail)
 @media (max-width: 768px) {
   .notif-detail__title { font-size: 18px; }
   .notif-detail__body-content { padding: 14px 16px; }
+  /* Room to scroll the last content clear of the floating chat/voice FABs that
+     hover just above the bottom tab bar. */
+  .notif-detail { padding-bottom: 96px; }
 }
 </style>
