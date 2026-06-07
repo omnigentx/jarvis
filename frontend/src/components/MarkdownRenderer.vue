@@ -342,6 +342,12 @@ onMounted(() => {
   padding: 0;
   font-size: 12.5px;
   line-height: 1.65;
+  /* The code window is ALWAYS dark (#0A0C12) in both themes. ``.md-content
+     code`` above sets ``color: var(--text)`` which is near-black in light
+     theme — and because it matches the <code> directly it overrides the light
+     colour inherited from <pre>, making untokenised code invisible on the dark
+     window. Pin a fixed light colour here. */
+  color: #e3e6ef;
 }
 
 /* Code window chrome (matches DESIGN_HANDOFF §5). The wrapping div is
@@ -358,11 +364,14 @@ onMounted(() => {
   align-items: center;
   gap: 10px;
   padding: 8px 12px;
-  border-bottom: 1px solid var(--border-strong, rgba(255,255,255,0.12));
+  /* Fixed light tones — the chrome is always on the dark #0A0C12 window, so
+     these must NOT follow theme tokens (which go dark in light theme and
+     vanish). */
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(255, 255, 255, 0.02);
   font-family: var(--font-mono, monospace);
   font-size: 11px;
-  color: var(--text-muted, #7B8094);
+  color: #8b91a3;
 }
 .md-content .code-chrome__dots {
   display: inline-flex;
@@ -380,7 +389,7 @@ onMounted(() => {
   text-align: center;
   letter-spacing: 0.06em;
   text-transform: lowercase;
-  color: var(--text-muted, #7B8094);
+  color: #8b91a3;  /* fixed light — chrome is always dark */
 }
 .md-content .code-chrome__copy {
   font-family: var(--font-mono, monospace);
@@ -389,16 +398,18 @@ onMounted(() => {
   text-transform: uppercase;
   padding: 3px 8px;
   background: transparent;
-  border: 1px solid var(--border-strong, rgba(255,255,255,0.12));
-  color: var(--text-dim, #B6BAC6);
+  /* Fixed light tones — always on the dark #0A0C12 window. */
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #b6bac6;
   border-radius: var(--r-sm, 6px);
   cursor: pointer;
   transition: all 0.15s ease;
 }
 .md-content .code-chrome__copy:hover {
-  background: var(--bg-3, #161922);
-  border-color: var(--border-bright, rgba(255,255,255,0.18));
-  color: var(--text, #F1F2F6);
+  /* Fixed dark-window tones (theme-independent). */
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.18);
+  color: #f1f2f6;
 }
 
 /* Wide tables overflow the container on mobile; let them scroll
