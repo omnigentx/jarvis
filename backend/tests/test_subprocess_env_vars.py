@@ -615,6 +615,9 @@ class TestMCPServerEnvVars:
         monkeypatch.delenv("SPAWN_PROJECT_DIR", raising=False)
         monkeypatch.delenv("TEAM_SESSION_ID", raising=False)
         monkeypatch.delenv("TEAM_MESSAGES_DIR", raising=False)
+        # server.py sets SPAWN_REGISTRY_DB at import; any prior app_client test
+        # leaves it in os.environ, so clear it too or get_server_env returns it.
+        monkeypatch.delenv("SPAWN_REGISTRY_DB", raising=False)
         from fast_agent.spawn.config_reader import get_server_env
 
         result = get_server_env("meeting_room")
