@@ -508,8 +508,12 @@ function fmtTime(ts) {
           ! {{ statusCounts.error }}
         </button>
       </div>
-      <button class="btn btn-secondary" @click="loadServers" :disabled="loading">
-        {{ loading ? 'Loading…' : '↻ Refresh' }}
+      <button class="btn btn-secondary mcp__refresh" @click="loadServers" :disabled="loading" title="Refresh" aria-label="Refresh">
+        <svg class="mcp__refresh-ico" :class="{ spin: loading }" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="23 4 23 10 17 10"/>
+          <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+        </svg>
+        <span class="btn-label">{{ loading ? 'Loading…' : 'Refresh' }}</span>
       </button>
     </div>
 
@@ -884,6 +888,9 @@ function fmtTime(ts) {
   color: var(--accent);
 }
 
+.mcp__refresh { display: inline-flex; align-items: center; gap: 6px; }
+.mcp__refresh-ico.spin { animation: mcp-act-spin 0.9s linear infinite; }
+
 /* Toolbar */
 .mcp__toolbar {
   display: flex;
@@ -1048,8 +1055,12 @@ function fmtTime(ts) {
   display: flex;
   align-items: center;
   gap: 10px;
+  row-gap: 6px;
   flex: 1;
   min-width: 0;
+  /* Let the STOPPED + BUILTIN badges wrap below a long server name instead of
+     overflowing / being clipped at the right edge on narrow screens. */
+  flex-wrap: wrap;
 }
 .mcp-detail__name {
   font-family: var(--font-mono);
@@ -1471,6 +1482,18 @@ function fmtTime(ts) {
   .mcp__layout { grid-template-columns: 1fr; }
   .mcp__list { max-height: none; }
   .mcp__detail { max-height: none; }
+
+  /* Header: the app-bar already shows "MCP Servers", so drop the eyebrow and
+     the long help paragraph; keep the live stat title. Stack so "New server"
+     gets its own row instead of floating mid-paragraph. */
+  .mcp__header { flex-direction: column; align-items: stretch; gap: 10px; }
+  .mcp__header .eyebrow,
+  .mcp__desc { display: none; }
+  .mcp__header .btn-primary { align-self: flex-start; }
+
+  /* Refresh → icon-only (consistent with the detail actions). */
+  .mcp__refresh .btn-label { display: none; }
+  .mcp__refresh { padding: 8px; }
 
   /* Show only one pane at a time on phone. Without this the list +
      detail stack vertically and the user has to scroll past the full
