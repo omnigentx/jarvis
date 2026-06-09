@@ -295,10 +295,11 @@ function handleKeydown(e) {
   z-index: 140;  /* below voice indicator (150) so they don't overlap badly */
   font-family: var(--font-body);
 }
-/* When hidden (grip/scroll), the wrapper must not keep intercepting taps over
-   content — the translated/opacity-0 button still leaves the fixed wrapper box
-   in place, which silently blocked the area beneath it. */
-.floating-dock--off { pointer-events: none; }
+/* When hidden (grip/scroll), remove the wrapper entirely. pointer-events:none
+   alone wasn't enough — the fixed 44×44 wrapper box stayed in place (the inner
+   button only translates + fades), so it still read as a phantom square over
+   content. display:none drops the box completely (no slide-out, but no ghost). */
+.floating-dock--off { display: none; }
 
 /* ── Collapsed FAB ── */
 .dock-fab {

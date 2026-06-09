@@ -102,16 +102,10 @@ async function onTap() {
               background 0.22s var(--ease-out), box-shadow 0.22s var(--ease-out);
 }
 .voice-fab:active { transform: scale(0.96); }
-/* Hidden (manual grip or scroll-down): slide off the right edge, no clicks. */
-.voice-fab--hidden {
-  transform: translateX(150%);
-  opacity: 0;
-  pointer-events: none;
-  /* Drop the frosted blur when hidden so an opacity:0 element can't leave a
-     faint blurred square over content (Chrome backdrop-filter quirk). */
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-}
+/* Hidden (manual grip or scroll-down): remove entirely so no phantom box /
+   blurred square is left over content (a translated opacity:0 button keeps its
+   52px layout box + can ghost its backdrop-filter in Chrome). */
+.voice-fab--hidden { display: none; }
 .voice-fab--active {
   background: var(--accent);
   color: #0B0D12;
