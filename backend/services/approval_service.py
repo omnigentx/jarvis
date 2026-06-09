@@ -505,6 +505,14 @@ class ApprovalService:
             if not record:
                 raise ValueError(f"Approval {approval_id} not found")
 
+            # Comments belong to the review phase. Once approved/rejected the
+            # thread is closed — reject server-side so a direct API call can't
+            # append after resolution (the UI already hides the composer).
+            if record.status != "pending":
+                raise ValueError(
+                    f"Approval {approval_id} is {record.status}; commenting is closed"
+                )
+
             # Extract values before session close (avoid DetachedInstanceError)
             agent_name = record.agent_name
             title = record.title
