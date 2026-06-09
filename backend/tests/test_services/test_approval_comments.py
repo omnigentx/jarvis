@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from services.approval_service import approval_service
+from services.approval_service import approval_service, ApprovalConflictError
 
 
 @pytest.fixture(autouse=True)
@@ -37,12 +37,12 @@ def test_comment_allowed_while_pending():
 def test_comment_blocked_after_approve():
     aid = _make_pending()
     approval_service.resolve_approval(aid, decision="approve")
-    with pytest.raises(ValueError, match="commenting is closed"):
+    with pytest.raises(ApprovalConflictError, match="commenting is closed"):
         approval_service.add_comment(aid, {"line_number": 2, "body": "too late", "author": "user"})
 
 
 def test_comment_blocked_after_reject():
     aid = _make_pending()
     approval_service.resolve_approval(aid, decision="reject")
-    with pytest.raises(ValueError, match="commenting is closed"):
+    with pytest.raises(ApprovalConflictError, match="commenting is closed"):
         approval_service.add_comment(aid, {"line_number": 2, "body": "too late", "author": "user"})

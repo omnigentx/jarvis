@@ -25,6 +25,13 @@ from services.activity_stream import activity_stream_manager
 logger = logging.getLogger(__name__)
 
 
+class ApprovalConflictError(ValueError):
+    """The approval exists but is in a state that forbids the action (e.g.
+    commenting on an already-resolved approval). Subclasses ValueError so
+    existing ``except ValueError`` callers still catch it, while the route can
+    map it to HTTP 409 Conflict (not 404 — the approval is not missing)."""
+
+
 # In-process pub/sub for approval resolution. Each pending approval
 # can have multiple waiters (e.g. team scenarios where >1 agent blocks
 # on the same approval). The dict key is approval_id, the value is the
@@ -509,7 +516,7 @@ class ApprovalService:
             # thread is closed — reject server-side so a direct API call can't
             # append after resolution (the UI already hides the composer).
             if record.status != "pending":
-                raise ValueError(
+                raise ApprovalConflictError(
                     f"Approval {approval_id} is {record.status}; commenting is closed"
                 )
 
