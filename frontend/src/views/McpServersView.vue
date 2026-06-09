@@ -1060,7 +1060,14 @@ function fmtTime(ts) {
 .mcp-detail__pill--stopped { color: var(--text-muted); }
 .mcp-detail__pill--error { color: var(--danger); background: var(--danger-bg); border-color: rgba(239,68,68,0.30); }
 .mcp-detail__builtin {
-  padding: 1px 6px;
+  /* inline-flex + nowrap so the 🔒 and "BUILTIN" stay on one line and the flex
+     header can't squeeze it into a tall two-line box on narrow screens. */
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  padding: 2px 7px;
   border-radius: 3px;
   background: var(--bg-3);
   border: 1px solid var(--border-strong);
