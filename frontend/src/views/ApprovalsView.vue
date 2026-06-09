@@ -1114,6 +1114,16 @@ const knownTypes = [
 
 /* Mobile */
 @media (max-width: 768px) {
+  /* SINGLE scroll on mobile. The desktop layout fills the viewport
+     (height:100%) and gives the queue list, the detail panel AND the preview
+     each their own inner scrollbar — stacked on a phone that's a mess of
+     nested scrolls. Let everything grow with content so the page (AppLayout's
+     content area) is the only thing that scrolls. */
+  .approvals { height: auto; min-height: 0; }
+  .approvals__queue { overflow: visible; }
+  .approvals__queue-list { overflow-y: visible; flex: none; }
+  .approvals__detail { overflow-y: visible; }
+
   .approvals__main {
     grid-template-columns: 1fr;
   }

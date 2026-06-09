@@ -46,14 +46,12 @@ function toggleManual() {
 // ── one-time scroll wiring ────────────────────────────────────────────
 let _wired = false
 let _lastY = 0
-let _idleTimer = null
-const _SCROLL_DELTA = 6      // ignore sub-pixel / momentum jitter
-const _REVEAL_IDLE_MS = 1200 // show again once scrolling settles
+const _SCROLL_DELTA = 6  // ignore sub-pixel / momentum jitter
 
 function _onScroll(e) {
   // _lastY is shared across all scroll containers (capture phase sees them all).
   // With nested scrollers a single frame's `dy` can jump and mis-toggle once;
-  // harmless — the next event corrects it and the idle-reveal timer recovers.
+  // harmless — the next event in the same direction corrects it.
   const t = e.target
   const cur =
     t && typeof t.scrollTop === 'number' && t.scrollTop >= 0
@@ -63,13 +61,11 @@ function _onScroll(e) {
   _lastY = cur
   if (Math.abs(dy) < _SCROLL_DELTA) return
 
-  // Down → hide; up → show. (manualHidden still wins via `visible`.)
-  scrollHidden.value = dy > 0
-
-  // Safety net: after the user stops scrolling, reveal — so a single
-  // downward flick can't strand the FABs off-screen.
-  if (_idleTimer) clearTimeout(_idleTimer)
-  _idleTimer = setTimeout(() => { scrollHidden.value = false }, _REVEAL_IDLE_MS)
+  // Material-style: hide on scroll DOWN and STAY hidden while reading; reveal
+  // only on scroll UP. (No idle-reveal timer — that re-showed the FABs over
+  // whatever the user had just scrolled to and stopped on.) manualHidden still
+  // wins via `visible`. At the very top, always show.
+  scrollHidden.value = dy > 0 && cur > 4
 }
 
 function _wire() {
