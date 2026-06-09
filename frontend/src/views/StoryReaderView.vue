@@ -11,6 +11,9 @@ import { useRoute, useRouter } from 'vue-router'
 import { apiFetch } from '../api'
 import { useAudioPlayerStore } from '../stores/audioPlayer'
 import { useToast } from '../composables/useToast'
+import { useBreakpoint } from '../composables/useBreakpoint'
+
+const { isMobile } = useBreakpoint()
 
 const props = defineProps({
   storyId: { type: String, required: true },
@@ -144,7 +147,8 @@ onMounted(() => {
   <div class="reader jv">
     <!-- Header -->
     <div class="reader__header">
-      <button class="btn btn-icon btn-ghost" @click="handleBack" title="Back">
+      <!-- Mobile already shows a back arrow in the app-bar; hide this one there. -->
+      <button v-if="!isMobile" class="btn btn-icon btn-ghost" @click="handleBack" title="Back">
         <svg viewBox="0 0 24 24" fill="none" width="14" height="14">
           <path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
@@ -159,6 +163,17 @@ onMounted(() => {
         <span class="chip-dot pulse-dot"></span>
         PLAYING
       </span>
+    </div>
+
+    <!-- Controls: prev chapter · font size · next chapter · play (one row).
+         Chapter nav is up here too so the reader doesn't have to scroll to the
+         bottom to move chapters. -->
+    <div class="reader__controls">
+      <button class="btn btn-icon btn-secondary reader__chap" :disabled="!canPrev" @click="goChapter(-1)" title="Previous chapter" aria-label="Previous chapter">
+        <svg viewBox="0 0 24 24" fill="none" width="15" height="15">
+          <path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
 
       <div class="seg reader__seg">
         <button
@@ -168,6 +183,12 @@ onMounted(() => {
           @click="setFontSize(size)"
         >Aa {{ size }}</button>
       </div>
+
+      <button class="btn btn-icon btn-secondary reader__chap" :disabled="!canNext" @click="goChapter(1)" title="Next chapter" aria-label="Next chapter">
+        <svg viewBox="0 0 24 24" fill="none" width="15" height="15">
+          <path d="M9 18l6-6-6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
 
       <button
         class="btn btn-icon"
@@ -243,6 +264,23 @@ onMounted(() => {
   z-index: 10;
   flex-wrap: wrap;
 }
+/* Controls row: prev · font-size · next · play, all on one line. The font
+   segment flexes + scrolls so the play button stays on the same row. */
+.reader__controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.reader__controls .reader__seg {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.reader__controls .reader__seg::-webkit-scrollbar { display: none; }
+.reader__chap { flex: 0 0 auto; }
 .reader__info {
   flex: 1;
   min-width: 0;

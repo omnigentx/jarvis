@@ -834,6 +834,11 @@ function formatTimestamp(ts) {
    widths). Switch from horizontal-scroll to multi-row wrap so users
    don't have to swipe to discover hidden participants. */
 @media (max-width: 767px) {
+  /* Diagnostic footer (SSE status + raw /stream URL) is dev noise on a phone
+     and duplicates the connection badge already shown in the header — hide it
+     to give the transcript that vertical space back. */
+  .tp-footer { display: none; }
+
   /* Keep the roster on ONE horizontally-scrollable row instead of wrapping
      into 3–4 rows — wrapping ate most of the screen and left almost no room
      for the transcript. Names stay; swipe sideways to see everyone. */

@@ -359,10 +359,16 @@ onMounted(fetchDetail)
 .notif-detail__body-content { padding: 20px 22px; font-size: 14px; line-height: 1.65; color: var(--text-dim); }
 
 @media (max-width: 768px) {
-  .notif-detail__title { font-size: 18px; }
+  .notif-detail__title { font-size: 18px; overflow-wrap: anywhere; }
   .notif-detail__body-content { padding: 14px 16px; }
   /* Room to scroll the last content clear of the floating chat/voice FABs that
      hover just above the bottom tab bar. */
   .notif-detail { padding-bottom: 96px; }
+  /* Stack the header so the title gets full width (it was crushed one-word-per
+     -line beside the action buttons, which also overlapped the type label).
+     Actions move to their own full-width row below. */
+  .notif-detail__header { flex-direction: column; align-items: stretch; }
+  .notif-detail__actions { width: 100%; }
+  .notif-detail__actions .btn { flex: 1; justify-content: center; }
 }
 </style>
