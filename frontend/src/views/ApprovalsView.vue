@@ -144,16 +144,19 @@ function handleCmReady({ view }) {
 }
 
 function openCommentForLine(lineNumber) {
+  if (!isPending.value) return  // resolved approvals are read-only — no new comments
   commentDraft.value = ''
   commentPopover.value = { line: lineNumber, selection: null }
 }
 
 function openCommentForSelection(selection) {
+  if (!isPending.value) return  // resolved approvals are read-only — no new comments
   commentDraft.value = ''
   commentPopover.value = { line: null, selection }
 }
 
 async function submitComment() {
+  if (!isPending.value) return  // guard: commenting closes once approved/rejected
   if (!commentDraft.value.trim() || !detail.value) return
   const pop = commentPopover.value
   try {
@@ -452,8 +455,8 @@ const knownTypes = [
           />
         </div>
 
-        <!-- Comment popover -->
-        <div v-if="commentPopover" class="approvals__popover">
+        <!-- Comment popover (only while pending — resolved approvals are read-only) -->
+        <div v-if="commentPopover && isPending" class="approvals__popover">
           <div class="approvals__popover-head">
             <span v-if="commentPopover.line">💬 Comment on Line {{ commentPopover.line }}</span>
             <span v-else-if="commentPopover.selection">
