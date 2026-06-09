@@ -278,7 +278,7 @@ function handleKeydown(e) {
         @click="toggle"
         aria-label="Open chat dock"
       >
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
           <path d="M21 12a8 8 0 0 1-11.6 7.2L4 21l1.8-5.4A8 8 0 1 1 21 12z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
         <span v-if="showStreamingBadge" class="fab-badge" title="Agent is replying" />
@@ -315,7 +315,11 @@ function handleKeydown(e) {
   cursor: pointer;
   box-shadow: 0 8px 24px var(--primary-glow);
   position: relative;
-  display: inline-flex;
+  /* match VoiceFAB: flex + clip the frosted bg / backdrop-filter to the circle.
+     Without overflow:hidden the backdrop-filter rendered as a square behind the
+     icon (it didn't follow border-radius on this relative, nested element). */
+  overflow: hidden;
+  display: flex;
   align-items: center;
   justify-content: center;
   transition: transform 0.2s var(--ease-out), opacity 0.2s var(--ease-out), box-shadow 0.22s var(--ease-out);
@@ -644,8 +648,9 @@ function handleKeydown(e) {
   }
 
   .dock-fab {
-    width: 44px;
-    height: 44px;
+    /* Same size as VoiceFAB so the two FABs are visually consistent. */
+    width: 52px;
+    height: 52px;
     /* Translucent + frosted so content behind stays partly visible (covers
        less); the white icon stays opaque. */
     background: linear-gradient(180deg,

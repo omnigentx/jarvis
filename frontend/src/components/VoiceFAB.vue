@@ -60,7 +60,7 @@ async function onTap() {
     :aria-label="isActive ? 'Stop voice' : 'Start voice'"
     @click="onTap"
   >
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
       <path
         d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5 11a7 7 0 0 0 14 0M12 18v3M9 21h6"
         stroke="currentColor"
@@ -84,6 +84,7 @@ async function onTap() {
   width: 52px;
   height: 52px;
   border-radius: 50%;
+  overflow: hidden;
   border: 0;
   /* Translucent + frosted so content behind the FAB stays partly visible
      (covers less). The white icon stays fully opaque for contrast. */
