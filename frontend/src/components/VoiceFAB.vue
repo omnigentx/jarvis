@@ -60,7 +60,7 @@ async function onTap() {
     :aria-label="isActive ? 'Stop voice' : 'Start voice'"
     @click="onTap"
   >
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
       <path
         d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5 11a7 7 0 0 0 14 0M12 18v3M9 21h6"
         stroke="currentColor"
@@ -86,13 +86,10 @@ async function onTap() {
   border-radius: 50%;
   overflow: hidden;
   border: 0;
-  /* Translucent + frosted so content behind the FAB stays partly visible
-     (covers less). The white icon stays fully opaque for contrast. */
-  background: linear-gradient(180deg,
-    color-mix(in srgb, var(--primary-hover) 82%, transparent),
-    color-mix(in srgb, var(--primary) 82%, transparent));
-  -webkit-backdrop-filter: blur(8px);
-  backdrop-filter: blur(8px);
+  /* Solid brand gradient — crisp, no translucency/blur (the frosted version
+     looked washed-out and dimmed the icon). Content clearance is handled by a
+     bottom safe-zone + auto-hide-on-scroll + the grip, not by see-through. */
+  background: linear-gradient(180deg, var(--primary-hover), var(--primary));
   color: white;
   display: flex;
   align-items: center;

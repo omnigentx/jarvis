@@ -1144,9 +1144,6 @@ const knownTypes = [
   .approvals__detail-head .seg { width: 100%; }
   .approvals__detail-head .seg button { flex: 1; }
 
-  /* Leave room below the content so the resolve buttons can scroll clear of
-     the floating chat/voice FABs (which sit just above the bottom tab bar),
-     instead of the FAB permanently covering "Approve". */
-  .approvals__detail { padding-bottom: 96px; }
+  /* (FAB bottom safe-zone is now handled globally in AppLayout's content area.) */
 }
 </style>

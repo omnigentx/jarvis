@@ -909,10 +909,11 @@ const searchPlaceholder = computed(() =>
   padding-bottom: 24px;
 }
 .app-main--mobile .app-main__content {
-  /* Bottom padding clears: tabbar (56px) + safe-area-bottom + mini
-     player (when visible). Using max() with safe-area means non-iOS
-     just gets the tabbar offset. */
+  /* Bottom padding clears: tabbar (56px) + safe-area + mini player + the
+     FLOATING FAB band (≈52px button + 12px offset) that sits just above the
+     tab bar. Without the +64 the last content (e.g. a short page's actions)
+     stayed underneath the chat/voice FABs with no way to reach it. */
   padding: 16px;
-  padding-bottom: calc(var(--mobile-tabbar-h) + var(--mini-player-h, 0px) + max(16px, var(--safe-bottom)));
+  padding-bottom: calc(var(--mobile-tabbar-h) + var(--mini-player-h, 0px) + max(16px, var(--safe-bottom)) + 64px);
 }
 </style>
