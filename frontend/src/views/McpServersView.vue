@@ -1249,7 +1249,14 @@ function fmtTime(ts) {
   font-size: 11.5px;
   min-width: 200px;
 }
-.mcp-tool__desc { color: var(--text-dim); }
+.mcp-tool__desc {
+  color: var(--text-dim);
+  /* Long unbroken strings (URLs, base64 event ids) overflowed the card on
+     mobile — break them so the description wraps within the column. */
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 .mcp-tool--empty { color: var(--text-muted); font-style: italic; }
 
 /* Attached agents */
@@ -1474,6 +1481,21 @@ function fmtTime(ts) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+@media (max-width: 768px) {
+  /* The 4-column row (key · value · eye · remove) can't fit a ~320px modal —
+     it collapsed into a broken stack. Put KEY full-width on top, then
+     value · eye · remove on the second row. */
+  .mcp-env-row {
+    grid-template-columns: 1fr auto auto;
+    grid-template-areas:
+      "key key key"
+      "val eye rm";
+  }
+  .mcp-env-row > :nth-child(1) { grid-area: key; }
+  .mcp-env-row > :nth-child(2) { grid-area: val; }
+  .mcp-env-row__eye { grid-area: eye; }
+  .mcp-env-row__remove { grid-area: rm; }
 }
 .mcp-env-row__remove:hover { color: var(--danger); background: var(--danger-bg); }
 .mcp-env-add { height: 28px; padding: 0 10px; font-size: 11.5px; }
