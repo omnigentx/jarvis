@@ -55,6 +55,12 @@ const { isMobile } = useBreakpoint()
 // Quick hide/show for the floating chat + voice FABs (mobile). manualHidden is
 // sticky (persisted) and wins over scroll-based auto-hide — see useFabVisibility.
 const { manualHidden: fabsManualHidden, toggleManual: toggleFabs } = useFabVisibility()
+// Only show the grip where a FAB actually renders. The FABs are hidden on /chat
+// (inline composer already there) and on bare layouts (/login, /setup) — a grip
+// there would toggle nothing. Mirror that so it never becomes an orphan control.
+const showFabGrip = computed(() =>
+  isMobile.value && route.name !== 'Chat' && route.meta?.layout !== 'bare',
+)
 
 // ─── Mobile sidebar ───
 const isSidebarOpen = ref(false)
@@ -501,7 +507,7 @@ const searchPlaceholder = computed(() =>
        Always visible so it works even on screens with no scroll, and is the
        only way back once the user has manually hidden them. -->
   <button
-    v-if="isMobile"
+    v-if="showFabGrip"
     class="fab-grip"
     type="button"
     @click="toggleFabs"

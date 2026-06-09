@@ -51,6 +51,9 @@ const _SCROLL_DELTA = 6      // ignore sub-pixel / momentum jitter
 const _REVEAL_IDLE_MS = 1200 // show again once scrolling settles
 
 function _onScroll(e) {
+  // _lastY is shared across all scroll containers (capture phase sees them all).
+  // With nested scrollers a single frame's `dy` can jump and mis-toggle once;
+  // harmless — the next event corrects it and the idle-reveal timer recovers.
   const t = e.target
   const cur =
     t && typeof t.scrollTop === 'number' && t.scrollTop >= 0
