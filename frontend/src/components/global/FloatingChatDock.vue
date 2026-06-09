@@ -187,7 +187,7 @@ function handleKeydown(e) {
 </script>
 
 <template>
-  <div v-if="visible" class="floating-dock jv" :class="{ expanded }">
+  <div v-if="visible" class="floating-dock jv" :class="{ expanded, 'floating-dock--off': isMobile && !fabShown && !expanded }">
     <!-- Expanded panel -->
     <transition name="dock-slide">
       <div v-if="expanded" class="dock-panel">
@@ -295,6 +295,10 @@ function handleKeydown(e) {
   z-index: 140;  /* below voice indicator (150) so they don't overlap badly */
   font-family: var(--font-body);
 }
+/* When hidden (grip/scroll), the wrapper must not keep intercepting taps over
+   content — the translated/opacity-0 button still leaves the fixed wrapper box
+   in place, which silently blocked the area beneath it. */
+.floating-dock--off { pointer-events: none; }
 
 /* ── Collapsed FAB ── */
 .dock-fab {
@@ -322,6 +326,10 @@ function handleKeydown(e) {
   transform: translateX(-150%);
   opacity: 0;
   pointer-events: none;
+  /* Drop the frosted blur when hidden — an opacity:0 element with
+     backdrop-filter can still composite a faint blurred square in Chrome. */
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 .dock-fab.streaming { animation: dock-fab-pulse 1.6s ease-in-out infinite; }
 

@@ -107,6 +107,10 @@ async function onTap() {
   transform: translateX(150%);
   opacity: 0;
   pointer-events: none;
+  /* Drop the frosted blur when hidden so an opacity:0 element can't leave a
+     faint blurred square over content (Chrome backdrop-filter quirk). */
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 .voice-fab--active {
   background: var(--accent);
