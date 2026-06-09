@@ -815,12 +815,17 @@ function fmtTime(ts) {
                     class="mcp-input mcp-input--mono"
                     :readonly="row.masked && !row.revealed"
                   />
-                  <button v-if="row.masked && !row.revealed" type="button" class="btn btn-icon btn-ghost" @click="revealSecret(idx)" title="Reveal">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-                  </button>
-                  <button v-else-if="row.masked && row.revealed" type="button" class="btn btn-icon btn-ghost" @click="hideSecret(idx)" title="Hide">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
-                  </button>
+                  <!-- Fixed-width eye slot, ALWAYS present so non-secret rows
+                       (no eye) keep the value width + the remove × aligned with
+                       secret rows that do show the toggle. -->
+                  <span class="mcp-env-row__eye">
+                    <button v-if="row.masked && !row.revealed" type="button" class="btn btn-icon btn-ghost" @click="revealSecret(idx)" title="Reveal">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                    </button>
+                    <button v-else-if="row.masked && row.revealed" type="button" class="btn btn-icon btn-ghost" @click="hideSecret(idx)" title="Hide">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                    </button>
+                  </span>
                   <button type="button" class="btn btn-icon btn-ghost mcp-env-row__remove" @click="removeEnvRow(idx)" title="Remove">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                   </button>
@@ -1461,6 +1466,14 @@ function fmtTime(ts) {
   grid-template-columns: 1fr 1fr auto auto;
   gap: 6px;
   align-items: center;
+}
+/* Fixed slot so the eye toggle (secret rows only) doesn't shift the value
+   width or the remove button between rows. */
+.mcp-env-row__eye {
+  width: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 .mcp-env-row__remove:hover { color: var(--danger); background: var(--danger-bg); }
 .mcp-env-add { height: 28px; padding: 0 10px; font-size: 11.5px; }
