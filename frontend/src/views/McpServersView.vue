@@ -577,10 +577,26 @@ function fmtTime(ts) {
             <span v-if="selected.is_builtin" class="mcp-detail__builtin">🔒 BUILTIN</span>
           </div>
           <div class="mcp-detail__actions">
-            <button class="btn btn-secondary" :disabled="refreshingTools" @click="refreshTools(selected)">
-              {{ refreshingTools ? 'Testing…' : '✓ Test & refresh' }}
+            <button
+              class="btn btn-secondary mcp-detail__act"
+              :disabled="refreshingTools"
+              @click="refreshTools(selected)"
+              :title="refreshingTools ? 'Testing…' : 'Test & refresh'"
+              aria-label="Test & refresh"
+            >
+              <svg class="mcp-detail__act-ico" :class="{ spin: refreshingTools }" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="23 4 23 10 17 10"/>
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+              </svg>
+              <span class="btn-label">{{ refreshingTools ? 'Testing…' : 'Test & refresh' }}</span>
             </button>
-            <button class="btn btn-secondary" @click="openEdit(selected)">Edit</button>
+            <button class="btn btn-secondary mcp-detail__act" @click="openEdit(selected)" title="Edit" aria-label="Edit">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                <path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+              </svg>
+              <span class="btn-label">Edit</span>
+            </button>
             <button
               class="btn btn-icon btn-ghost mcp-detail__delete"
               @click="deleteServer(selected)"
@@ -1082,6 +1098,13 @@ function fmtTime(ts) {
   gap: 6px;
   flex-shrink: 0;
 }
+.mcp-detail__act {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.mcp-detail__act-ico.spin { animation: mcp-act-spin 0.9s linear infinite; }
+@keyframes mcp-act-spin { to { transform: rotate(360deg); } }
 .mcp-detail__delete:hover:not(:disabled) {
   color: var(--danger);
   background: var(--danger-bg);
@@ -1460,7 +1483,11 @@ function fmtTime(ts) {
      actions group at its single-line max-content width even after
      wrapping to its own line, so it spilled past the right edge. Give
      it the full row width so its own flex-wrap can actually engage. */
-  .mcp-detail__actions { flex-basis: 100%; flex-wrap: wrap; gap: 6px; }
+  /* Icon-only action buttons on mobile (label hidden) → all three fit one
+     compact row, no wrapping. Tooltip/aria keep the meaning. */
+  .mcp-detail__actions { flex-basis: 100%; flex-wrap: nowrap; gap: 6px; }
+  .mcp-detail__actions .btn-label { display: none; }
+  .mcp-detail__act { padding: 8px; }
 
   /* Tool rows: the 200px-min name column + center alignment left the
      name floating in a tall empty column while the description wrapped
