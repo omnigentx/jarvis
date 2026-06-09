@@ -179,7 +179,9 @@ onMounted(fetchDetail)
     <template v-else-if="notification">
       <!-- Header -->
       <div class="notif-detail__header">
-        <button class="btn btn-ghost notif-detail__back" @click="goBack">
+        <!-- Mobile already shows a back arrow in the global app-bar; hide this
+             in-content one there to avoid two stacked back buttons. -->
+        <button v-if="!isMobile" class="btn btn-ghost notif-detail__back" @click="goBack">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M19 12H5"/><polyline points="12 19 5 12 12 5"/>
           </svg>
@@ -357,7 +359,14 @@ onMounted(fetchDetail)
 .notif-detail__body-content { padding: 20px 22px; font-size: 14px; line-height: 1.65; color: var(--text-dim); }
 
 @media (max-width: 768px) {
-  .notif-detail__title { font-size: 18px; }
+  .notif-detail__title { font-size: 18px; overflow-wrap: anywhere; }
   .notif-detail__body-content { padding: 14px 16px; }
+  /* (FAB bottom safe-zone is now handled globally in AppLayout's content area.) */
+  /* Stack the header so the title gets full width (it was crushed one-word-per
+     -line beside the action buttons, which also overlapped the type label).
+     Actions move to their own full-width row below. */
+  .notif-detail__header { flex-direction: column; align-items: stretch; }
+  .notif-detail__actions { width: 100%; }
+  .notif-detail__actions .btn { flex: 1; justify-content: center; }
 }
 </style>

@@ -144,16 +144,19 @@ function handleCmReady({ view }) {
 }
 
 function openCommentForLine(lineNumber) {
+  if (!isPending.value) return  // resolved approvals are read-only — no new comments
   commentDraft.value = ''
   commentPopover.value = { line: lineNumber, selection: null }
 }
 
 function openCommentForSelection(selection) {
+  if (!isPending.value) return  // resolved approvals are read-only — no new comments
   commentDraft.value = ''
   commentPopover.value = { line: null, selection }
 }
 
 async function submitComment() {
+  if (!isPending.value) return  // guard: commenting closes once approved/rejected
   if (!commentDraft.value.trim() || !detail.value) return
   const pop = commentPopover.value
   try {
@@ -436,7 +439,7 @@ const knownTypes = [
           <div
             v-if="viewMode === 'preview'"
             class="approvals__preview"
-            :style="{ maxHeight: isMobile ? '320px' : '420px' }"
+            :style="isMobile ? {} : { maxHeight: '420px' }"
           >
             <MarkdownRenderer
               :content="cmContent"
@@ -447,13 +450,13 @@ const knownTypes = [
             v-else
             :model-value="cmContent"
             :extensions="cmExtensions"
-            :style="{ maxHeight: isMobile ? '320px' : '420px' }"
+            :style="isMobile ? {} : { maxHeight: '420px' }"
             @ready="handleCmReady"
           />
         </div>
 
-        <!-- Comment popover -->
-        <div v-if="commentPopover" class="approvals__popover">
+        <!-- Comment popover (only while pending — resolved approvals are read-only) -->
+        <div v-if="commentPopover && isPending" class="approvals__popover">
           <div class="approvals__popover-head">
             <span v-if="commentPopover.line">💬 Comment on Line {{ commentPopover.line }}</span>
             <span v-else-if="commentPopover.selection">
@@ -1114,6 +1117,16 @@ const knownTypes = [
 
 /* Mobile */
 @media (max-width: 768px) {
+  /* SINGLE scroll on mobile. The desktop layout fills the viewport
+     (height:100%) and gives the queue list, the detail panel AND the preview
+     each their own inner scrollbar — stacked on a phone that's a mess of
+     nested scrolls. Let everything grow with content so the page (AppLayout's
+     content area) is the only thing that scrolls. */
+  .approvals { height: auto; min-height: 0; }
+  .approvals__queue { overflow: visible; }
+  .approvals__queue-list { overflow-y: visible; flex: none; }
+  .approvals__detail { overflow-y: visible; }
+
   .approvals__main {
     grid-template-columns: 1fr;
   }
@@ -1132,5 +1145,18 @@ const knownTypes = [
      card on narrow phones. Stack full-width so neither button clips. */
   .approvals__resolve-actions { flex-direction: column; align-items: stretch; }
   .approvals__resolve-actions .btn { width: 100%; }
+
+  /* The detail header is a flex row (badge · title · Preview/Source toggle).
+     On a phone the title's flex item shrank to min-width:0 instead of forcing
+     a wrap, so the title was squeezed into a ~3-char column and broke one word
+     per line. Stack vertically so the title gets full width; keep the badge
+     compact and let the segmented toggle span full width below. */
+  .approvals__detail-head { flex-direction: column; align-items: stretch; gap: 8px; }
+  .approvals__detail-head .approvals-row__type { align-self: flex-start; }
+  .approvals__detail-title { overflow-wrap: anywhere; }
+  .approvals__detail-head .seg { width: 100%; }
+  .approvals__detail-head .seg button { flex: 1; }
+
+  /* (FAB bottom safe-zone is now handled globally in AppLayout's content area.) */
 }
 </style>

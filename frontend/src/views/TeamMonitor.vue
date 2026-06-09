@@ -1163,6 +1163,14 @@ onMounted(() => {
     max-width: 100%;
   }
 
+  /* The global mobile app-bar already shows "Team Monitor"; hide the
+     duplicate in-page title + tagline to give the activity stream more room.
+     The stats/Delete controls below stay. */
+  .monitor-title,
+  .monitor-subtitle {
+    display: none;
+  }
+
   /* Header: stack title + stats vertically */
   .monitor-header {
     flex-direction: column;
@@ -1243,16 +1251,16 @@ onMounted(() => {
   /* Row 2: agent dropdown — full width */
   .agent-dropdown {
     width: 100%;
-    padding: 8px 12px;
+    padding: 4px 0;        /* trim wrapper height (was 8px 12px) */
     box-sizing: border-box;
   }
 
   .dropdown-trigger {
     width: 100%;
     justify-content: space-between;
-    font-size: 13px;
-    padding: 9px 14px;
-    border-radius: 10px;
+    font-size: 12.5px;
+    padding: 6px 12px;     /* shorter on mobile (was 9px 14px) */
+    border-radius: 8px;
   }
 
   /* Dropdown panel: full width, anchored to agent-dropdown container */

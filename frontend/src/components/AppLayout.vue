@@ -22,6 +22,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter, RouterLink } from 'vue-router'
 import { useBreakpoint } from '../composables/useBreakpoint'
+import { useFabVisibility } from '../composables/useFabVisibility'
 import { useRealtimeStream } from '../composables/useRealtimeStream'
 import { useSSEConnection } from '../composables/useSSEConnection.js'
 import { useAgentsStore } from '../stores/agents'
@@ -51,6 +52,15 @@ const { status, reconnect } = useRealtimeStream()
 const route = useRoute()
 const router = useRouter()
 const { isMobile } = useBreakpoint()
+// Quick hide/show for the floating chat + voice FABs (mobile). manualHidden is
+// sticky (persisted) and wins over scroll-based auto-hide — see useFabVisibility.
+const { manualHidden: fabsManualHidden, toggleManual: toggleFabs } = useFabVisibility()
+// Only show the grip where a FAB actually renders. The FABs are hidden on /chat
+// (inline composer already there) and on bare layouts (/login, /setup) — a grip
+// there would toggle nothing. Mirror that so it never becomes an orphan control.
+const showFabGrip = computed(() =>
+  isMobile.value && route.name !== 'Chat' && route.meta?.layout !== 'bare',
+)
 
 // ─── Mobile sidebar ───
 const isSidebarOpen = ref(false)
@@ -492,6 +502,23 @@ const searchPlaceholder = computed(() =>
 
   <!-- Voice FAB (mobile-only, self-gates by route) -->
   <VoiceFAB />
+
+  <!-- FAB grip (mobile-only): one-tap hide/show for the chat + voice FABs.
+       Always visible so it works even on screens with no scroll, and is the
+       only way back once the user has manually hidden them. -->
+  <button
+    v-if="showFabGrip"
+    class="fab-grip"
+    type="button"
+    @click="toggleFabs"
+    :aria-label="fabsManualHidden ? 'Show chat and voice buttons' : 'Hide chat and voice buttons'"
+    :title="fabsManualHidden ? 'Show chat / voice' : 'Hide chat / voice'"
+  >
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path :d="fabsManualHidden ? 'M6 15l6-6 6 6' : 'M6 9l6 6 6-6'"
+            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+    </svg>
+  </button>
 </template>
 
 <style scoped>
@@ -693,6 +720,32 @@ const searchPlaceholder = computed(() =>
   border-radius: var(--r-md);
 }
 .mobile-header__btn:active { background: var(--bg-3); color: var(--text); }
+
+/* FAB grip — slim handle centered just above the tab bar (mobile). Tap to
+   hide/show the chat + voice FABs. Small + translucent so it barely covers
+   anything, yet always reachable (incl. on screens with no scroll). */
+.fab-grip {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(var(--mobile-tabbar-h) + var(--safe-bottom) + var(--mini-player-h, 0px) + 6px);
+  z-index: 196; /* above the FABs (195) */
+  width: 46px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-strong, rgba(120,120,140,0.25));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-2) 70%, transparent);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  color: var(--text-muted);
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+  transition: color 0.15s var(--ease-out), background 0.15s var(--ease-out);
+}
+.fab-grip:active { color: var(--text); background: var(--bg-3); }
 .mobile-header__title {
   flex: 1;
   font-size: 15px;
@@ -856,10 +909,11 @@ const searchPlaceholder = computed(() =>
   padding-bottom: 24px;
 }
 .app-main--mobile .app-main__content {
-  /* Bottom padding clears: tabbar (56px) + safe-area-bottom + mini
-     player (when visible). Using max() with safe-area means non-iOS
-     just gets the tabbar offset. */
+  /* Bottom padding clears: tabbar (56px) + safe-area + mini player + the
+     FLOATING FAB band (≈52px button + 12px offset) that sits just above the
+     tab bar. Without the +64 the last content (e.g. a short page's actions)
+     stayed underneath the chat/voice FABs with no way to reach it. */
   padding: 16px;
-  padding-bottom: calc(var(--mobile-tabbar-h) + var(--mini-player-h, 0px) + max(16px, var(--safe-bottom)));
+  padding-bottom: calc(var(--mobile-tabbar-h) + var(--mini-player-h, 0px) + max(16px, var(--safe-bottom)) + 64px);
 }
 </style>

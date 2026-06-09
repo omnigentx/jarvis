@@ -21,6 +21,8 @@ import { useChatStore } from '../../stores/chat.js'
 import { useChatStream } from '../../composables/useChatStream.js'
 import { useAudioPlayerStore } from '../../stores/audioPlayer.js'
 import { useCrawlStatus } from '../../composables/useCrawlStatus.js'
+import { useBreakpoint } from '../../composables/useBreakpoint'
+import { useFabVisibility } from '../../composables/useFabVisibility'
 import MarkdownRenderer from '../MarkdownRenderer.vue'
 
 const chatStore = useChatStore()
@@ -29,6 +31,8 @@ const audioStore = useAudioPlayerStore()
 const crawl = useCrawlStatus()
 const route = useRoute()
 const router = useRouter()
+const { isMobile } = useBreakpoint()
+const { visible: fabShown } = useFabVisibility()
 
 const expanded = ref(false)
 const draft = ref('')
@@ -183,7 +187,7 @@ function handleKeydown(e) {
 </script>
 
 <template>
-  <div v-if="visible" class="floating-dock jv" :class="{ expanded }">
+  <div v-if="visible" class="floating-dock jv" :class="{ expanded, 'floating-dock--off': isMobile && !fabShown && !expanded }">
     <!-- Expanded panel -->
     <transition name="dock-slide">
       <div v-if="expanded" class="dock-panel">
@@ -268,13 +272,13 @@ function handleKeydown(e) {
       <button
         v-if="!expanded"
         class="dock-fab"
-        :class="{ streaming: showStreamingBadge }"
+        :class="{ streaming: showStreamingBadge, 'dock-fab--hidden': isMobile && !fabShown }"
         type="button"
         title="Open chat dock"
         @click="toggle"
         aria-label="Open chat dock"
       >
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
           <path d="M21 12a8 8 0 0 1-11.6 7.2L4 21l1.8-5.4A8 8 0 1 1 21 12z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
         <span v-if="showStreamingBadge" class="fab-badge" title="Agent is replying" />
@@ -291,6 +295,11 @@ function handleKeydown(e) {
   z-index: 140;  /* below voice indicator (150) so they don't overlap badly */
   font-family: var(--font-body);
 }
+/* When hidden (grip/scroll), remove the wrapper entirely. pointer-events:none
+   alone wasn't enough — the fixed 44×44 wrapper box stayed in place (the inner
+   button only translates + fades), so it still read as a phantom square over
+   content. display:none drops the box completely (no slide-out, but no ghost). */
+.floating-dock--off { display: none; }
 
 /* ── Collapsed FAB ── */
 .dock-fab {
@@ -306,13 +315,27 @@ function handleKeydown(e) {
   cursor: pointer;
   box-shadow: 0 8px 24px var(--primary-glow);
   position: relative;
-  display: inline-flex;
+  /* match VoiceFAB: flex + clip the frosted bg / backdrop-filter to the circle.
+     Without overflow:hidden the backdrop-filter rendered as a square behind the
+     icon (it didn't follow border-radius on this relative, nested element). */
+  overflow: hidden;
+  display: flex;
   align-items: center;
   justify-content: center;
-  transition: transform 0.18s var(--ease-out), box-shadow 0.22s var(--ease-out);
+  transition: transform 0.2s var(--ease-out), opacity 0.2s var(--ease-out), box-shadow 0.22s var(--ease-out);
 }
 .dock-fab:hover { transform: scale(1.06); }
 .dock-fab:active { transform: scale(0.96); }
+/* Hidden (manual grip or scroll-down, mobile only): slide off the left edge. */
+.dock-fab--hidden {
+  transform: translateX(-150%);
+  opacity: 0;
+  pointer-events: none;
+  /* Drop the frosted blur when hidden — an opacity:0 element with
+     backdrop-filter can still composite a faint blurred square in Chrome. */
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
 .dock-fab.streaming { animation: dock-fab-pulse 1.6s ease-in-out infinite; }
 
 @keyframes dock-fab-pulse {
@@ -625,8 +648,10 @@ function handleKeydown(e) {
   }
 
   .dock-fab {
-    width: 44px;
-    height: 44px;
+    /* Same size as VoiceFAB so the two FABs are visually consistent.
+       Keeps the solid base gradient — no frosted/translucent (looked mờ). */
+    width: 52px;
+    height: 52px;
   }
 
   .dock-panel {

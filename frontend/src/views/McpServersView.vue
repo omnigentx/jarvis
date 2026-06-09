@@ -508,8 +508,12 @@ function fmtTime(ts) {
           ! {{ statusCounts.error }}
         </button>
       </div>
-      <button class="btn btn-secondary" @click="loadServers" :disabled="loading">
-        {{ loading ? 'Loading…' : '↻ Refresh' }}
+      <button class="btn btn-secondary mcp__refresh" @click="loadServers" :disabled="loading" title="Refresh" aria-label="Refresh">
+        <svg class="mcp__refresh-ico" :class="{ spin: loading }" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="23 4 23 10 17 10"/>
+          <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+        </svg>
+        <span class="btn-label">{{ loading ? 'Loading…' : 'Refresh' }}</span>
       </button>
     </div>
 
@@ -577,10 +581,26 @@ function fmtTime(ts) {
             <span v-if="selected.is_builtin" class="mcp-detail__builtin">🔒 BUILTIN</span>
           </div>
           <div class="mcp-detail__actions">
-            <button class="btn btn-secondary" :disabled="refreshingTools" @click="refreshTools(selected)">
-              {{ refreshingTools ? 'Testing…' : '✓ Test & refresh' }}
+            <button
+              class="btn btn-secondary mcp-detail__act"
+              :disabled="refreshingTools"
+              @click="refreshTools(selected)"
+              :title="refreshingTools ? 'Testing…' : 'Test & refresh'"
+              aria-label="Test & refresh"
+            >
+              <svg class="mcp-detail__act-ico" :class="{ spin: refreshingTools }" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="23 4 23 10 17 10"/>
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+              </svg>
+              <span class="btn-label">{{ refreshingTools ? 'Testing…' : 'Test & refresh' }}</span>
             </button>
-            <button class="btn btn-secondary" @click="openEdit(selected)">Edit</button>
+            <button class="btn btn-secondary mcp-detail__act" @click="openEdit(selected)" title="Edit" aria-label="Edit">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                <path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+              </svg>
+              <span class="btn-label">Edit</span>
+            </button>
             <button
               class="btn btn-icon btn-ghost mcp-detail__delete"
               @click="deleteServer(selected)"
@@ -795,12 +815,17 @@ function fmtTime(ts) {
                     class="mcp-input mcp-input--mono"
                     :readonly="row.masked && !row.revealed"
                   />
-                  <button v-if="row.masked && !row.revealed" type="button" class="btn btn-icon btn-ghost" @click="revealSecret(idx)" title="Reveal">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-                  </button>
-                  <button v-else-if="row.masked && row.revealed" type="button" class="btn btn-icon btn-ghost" @click="hideSecret(idx)" title="Hide">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
-                  </button>
+                  <!-- Fixed-width eye slot, ALWAYS present so non-secret rows
+                       (no eye) keep the value width + the remove × aligned with
+                       secret rows that do show the toggle. -->
+                  <span class="mcp-env-row__eye">
+                    <button v-if="row.masked && !row.revealed" type="button" class="btn btn-icon btn-ghost" @click="revealSecret(idx)" title="Reveal">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                    </button>
+                    <button v-else-if="row.masked && row.revealed" type="button" class="btn btn-icon btn-ghost" @click="hideSecret(idx)" title="Hide">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                    </button>
+                  </span>
                   <button type="button" class="btn btn-icon btn-ghost mcp-env-row__remove" @click="removeEnvRow(idx)" title="Remove">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                   </button>
@@ -867,6 +892,9 @@ function fmtTime(ts) {
   font-size: 12px;
   color: var(--accent);
 }
+
+.mcp__refresh { display: inline-flex; align-items: center; gap: 6px; }
+.mcp__refresh-ico.spin { animation: mcp-act-spin 0.9s linear infinite; }
 
 /* Toolbar */
 .mcp__toolbar {
@@ -1032,8 +1060,12 @@ function fmtTime(ts) {
   display: flex;
   align-items: center;
   gap: 10px;
+  row-gap: 6px;
   flex: 1;
   min-width: 0;
+  /* Let the STOPPED + BUILTIN badges wrap below a long server name instead of
+     overflowing / being clipped at the right edge on narrow screens. */
+  flex-wrap: wrap;
 }
 .mcp-detail__name {
   font-family: var(--font-mono);
@@ -1060,7 +1092,14 @@ function fmtTime(ts) {
 .mcp-detail__pill--stopped { color: var(--text-muted); }
 .mcp-detail__pill--error { color: var(--danger); background: var(--danger-bg); border-color: rgba(239,68,68,0.30); }
 .mcp-detail__builtin {
-  padding: 1px 6px;
+  /* inline-flex + nowrap so the 🔒 and "BUILTIN" stay on one line and the flex
+     header can't squeeze it into a tall two-line box on narrow screens. */
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  padding: 2px 7px;
   border-radius: 3px;
   background: var(--bg-3);
   border: 1px solid var(--border-strong);
@@ -1075,6 +1114,13 @@ function fmtTime(ts) {
   gap: 6px;
   flex-shrink: 0;
 }
+.mcp-detail__act {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.mcp-detail__act-ico.spin { animation: mcp-act-spin 0.9s linear infinite; }
+@keyframes mcp-act-spin { to { transform: rotate(360deg); } }
 .mcp-detail__delete:hover:not(:disabled) {
   color: var(--danger);
   background: var(--danger-bg);
@@ -1203,7 +1249,14 @@ function fmtTime(ts) {
   font-size: 11.5px;
   min-width: 200px;
 }
-.mcp-tool__desc { color: var(--text-dim); }
+.mcp-tool__desc {
+  color: var(--text-dim);
+  /* Long unbroken strings (URLs, base64 event ids) overflowed the card on
+     mobile — break them so the description wraps within the column. */
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 .mcp-tool--empty { color: var(--text-muted); font-style: italic; }
 
 /* Attached agents */
@@ -1421,6 +1474,29 @@ function fmtTime(ts) {
   gap: 6px;
   align-items: center;
 }
+/* Fixed slot so the eye toggle (secret rows only) doesn't shift the value
+   width or the remove button between rows. */
+.mcp-env-row__eye {
+  width: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+@media (max-width: 768px) {
+  /* The 4-column row (key · value · eye · remove) can't fit a ~320px modal —
+     it collapsed into a broken stack. Put KEY full-width on top, then
+     value · eye · remove on the second row. */
+  .mcp-env-row {
+    grid-template-columns: 1fr auto auto;
+    grid-template-areas:
+      "key key key"
+      "val eye rm";
+  }
+  .mcp-env-row > :nth-child(1) { grid-area: key; }
+  .mcp-env-row > :nth-child(2) { grid-area: val; }
+  .mcp-env-row__eye { grid-area: eye; }
+  .mcp-env-row__remove { grid-area: rm; }
+}
 .mcp-env-row__remove:hover { color: var(--danger); background: var(--danger-bg); }
 .mcp-env-add { height: 28px; padding: 0 10px; font-size: 11.5px; }
 
@@ -1442,6 +1518,18 @@ function fmtTime(ts) {
   .mcp__list { max-height: none; }
   .mcp__detail { max-height: none; }
 
+  /* Header: the app-bar already shows "MCP Servers", so drop the eyebrow and
+     the long help paragraph; keep the live stat title. Stack so "New server"
+     gets its own row instead of floating mid-paragraph. */
+  .mcp__header { flex-direction: column; align-items: stretch; gap: 10px; }
+  .mcp__header .eyebrow,
+  .mcp__desc { display: none; }
+  .mcp__header .btn-primary { align-self: flex-start; }
+
+  /* Refresh → icon-only (consistent with the detail actions). */
+  .mcp__refresh .btn-label { display: none; }
+  .mcp__refresh { padding: 8px; }
+
   /* Show only one pane at a time on phone. Without this the list +
      detail stack vertically and the user has to scroll past the full
      list to read the detail. */
@@ -1453,7 +1541,11 @@ function fmtTime(ts) {
      actions group at its single-line max-content width even after
      wrapping to its own line, so it spilled past the right edge. Give
      it the full row width so its own flex-wrap can actually engage. */
-  .mcp-detail__actions { flex-basis: 100%; flex-wrap: wrap; gap: 6px; }
+  /* Icon-only action buttons on mobile (label hidden) → all three fit one
+     compact row, no wrapping. Tooltip/aria keep the meaning. */
+  .mcp-detail__actions { flex-basis: 100%; flex-wrap: nowrap; gap: 6px; }
+  .mcp-detail__actions .btn-label { display: none; }
+  .mcp-detail__act { padding: 8px; }
 
   /* Tool rows: the 200px-min name column + center alignment left the
      name floating in a tall empty column while the description wrapped

@@ -737,6 +737,16 @@ onMounted(() => {
   color: var(--danger);
 }
 
+@media (max-width: 768px) {
+  /* App-bar already shows "Skills"; drop the eyebrow + the long help paragraph
+     and stack so "New skill" gets its own row (it was floating mid-paragraph).
+     Keep the live stat title. */
+  .skills__header { flex-direction: column; align-items: stretch; gap: 10px; }
+  .skills__header .eyebrow,
+  .skills__desc { display: none; }
+  .skills__header-actions .btn-primary { align-self: flex-start; }
+}
+
 @media (max-width: 640px) {
   .skill-row { grid-template-columns: 32px 1fr; }
   .skill-row__actions {

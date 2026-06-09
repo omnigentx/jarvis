@@ -19,10 +19,12 @@ import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useBreakpoint } from '../composables/useBreakpoint'
 import { useVoiceSession } from '../composables/useVoiceSession'
+import { useFabVisibility } from '../composables/useFabVisibility'
 
 const route = useRoute()
 const { isMobile } = useBreakpoint()
 const voice = useVoiceSession()
+const { visible: fabShown } = useFabVisibility()
 
 // Don't render on surfaces that already carry a primary mic — the
 // chat composer mic, the setup wizard voice step, login screens.
@@ -53,12 +55,12 @@ async function onTap() {
   <button
     v-if="visible"
     class="voice-fab jv"
-    :class="{ 'voice-fab--active': isActive }"
+    :class="{ 'voice-fab--active': isActive, 'voice-fab--hidden': !fabShown }"
     :aria-pressed="isActive"
     :aria-label="isActive ? 'Stop voice' : 'Start voice'"
     @click="onTap"
   >
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
       <path
         d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5 11a7 7 0 0 0 14 0M12 18v3M9 21h6"
         stroke="currentColor"
@@ -82,7 +84,11 @@ async function onTap() {
   width: 52px;
   height: 52px;
   border-radius: 50%;
+  overflow: hidden;
   border: 0;
+  /* Solid brand gradient — crisp, no translucency/blur (the frosted version
+     looked washed-out and dimmed the icon). Content clearance is handled by a
+     bottom safe-zone + auto-hide-on-scroll + the grip, not by see-through. */
   background: linear-gradient(180deg, var(--primary-hover), var(--primary));
   color: white;
   display: flex;
@@ -90,9 +96,14 @@ async function onTap() {
   justify-content: center;
   cursor: pointer;
   box-shadow: 0 8px 24px var(--primary-glow);
-  transition: transform 0.18s var(--ease-out), background 0.22s var(--ease-out), box-shadow 0.22s var(--ease-out);
+  transition: transform 0.2s var(--ease-out), opacity 0.2s var(--ease-out),
+              background 0.22s var(--ease-out), box-shadow 0.22s var(--ease-out);
 }
 .voice-fab:active { transform: scale(0.96); }
+/* Hidden (manual grip or scroll-down): remove entirely so no phantom box /
+   blurred square is left over content (a translated opacity:0 button keeps its
+   52px layout box + can ghost its backdrop-filter in Chrome). */
+.voice-fab--hidden { display: none; }
 .voice-fab--active {
   background: var(--accent);
   color: #0B0D12;

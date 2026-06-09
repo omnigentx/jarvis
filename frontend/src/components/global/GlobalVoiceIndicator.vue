@@ -223,7 +223,10 @@ function handleBargeIn() {
 /* Mobile: smaller, hide partial transcript */
 @media (max-width: 767px) {
   .voice-indicator {
-    bottom: 78px; /* avoid colliding with mobile bottom nav */
+    /* Clear the bottom tab bar + safe-area + mini player (when visible),
+       matching FloatingChatDock — a hardcoded 78px missed the safe-area on
+       notched phones and the mini player, leaving the mic over the nav. */
+    bottom: calc(var(--mobile-tabbar-h, 64px) + var(--safe-bottom, 0px) + var(--mini-player-h, 0px) + 12px);
     right: 12px;
     max-width: calc(100vw - 24px);
   }

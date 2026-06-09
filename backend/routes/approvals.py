@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from core.auth import verify_api_key
 from helpers.http_errors import safe_500
-from services.approval_service import approval_service
+from services.approval_service import approval_service, ApprovalConflictError
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +108,9 @@ async def add_comment(approval_id: str, req: AddCommentRequest):
         raise HTTPException(status_code=400, detail="Must provide either line_number or selection")
     try:
         return approval_service.add_comment(approval_id, req.model_dump())
+    except ApprovalConflictError as e:
+        # Approval exists but its thread is closed (resolved) → 409, not 404.
+        raise HTTPException(status_code=409, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
