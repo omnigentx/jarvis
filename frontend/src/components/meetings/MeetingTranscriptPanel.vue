@@ -834,13 +834,19 @@ function formatTimestamp(ts) {
    widths). Switch from horizontal-scroll to multi-row wrap so users
    don't have to swipe to discover hidden participants. */
 @media (max-width: 767px) {
+  /* Keep the roster on ONE horizontally-scrollable row instead of wrapping
+     into 3–4 rows — wrapping ate most of the screen and left almost no room
+     for the transcript. Names stay; swipe sideways to see everyone. */
   .tp-participants {
     width: 100%;
     max-width: none;
     margin-left: 0;
-    flex-wrap: wrap;
-    overflow-x: visible;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
     gap: 6px;
+    padding-bottom: 2px;
   }
+  .tp-part { flex: 0 0 auto; }
 }
 </style>

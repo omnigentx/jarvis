@@ -19,10 +19,12 @@ import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useBreakpoint } from '../composables/useBreakpoint'
 import { useVoiceSession } from '../composables/useVoiceSession'
+import { useFabVisibility } from '../composables/useFabVisibility'
 
 const route = useRoute()
 const { isMobile } = useBreakpoint()
 const voice = useVoiceSession()
+const { visible: fabShown } = useFabVisibility()
 
 // Don't render on surfaces that already carry a primary mic — the
 // chat composer mic, the setup wizard voice step, login screens.
@@ -53,7 +55,7 @@ async function onTap() {
   <button
     v-if="visible"
     class="voice-fab jv"
-    :class="{ 'voice-fab--active': isActive }"
+    :class="{ 'voice-fab--active': isActive, 'voice-fab--hidden': !fabShown }"
     :aria-pressed="isActive"
     :aria-label="isActive ? 'Stop voice' : 'Start voice'"
     @click="onTap"
@@ -83,16 +85,29 @@ async function onTap() {
   height: 52px;
   border-radius: 50%;
   border: 0;
-  background: linear-gradient(180deg, var(--primary-hover), var(--primary));
+  /* Translucent + frosted so content behind the FAB stays partly visible
+     (covers less). The white icon stays fully opaque for contrast. */
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--primary-hover) 82%, transparent),
+    color-mix(in srgb, var(--primary) 82%, transparent));
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
   color: white;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   box-shadow: 0 8px 24px var(--primary-glow);
-  transition: transform 0.18s var(--ease-out), background 0.22s var(--ease-out), box-shadow 0.22s var(--ease-out);
+  transition: transform 0.2s var(--ease-out), opacity 0.2s var(--ease-out),
+              background 0.22s var(--ease-out), box-shadow 0.22s var(--ease-out);
 }
 .voice-fab:active { transform: scale(0.96); }
+/* Hidden (manual grip or scroll-down): slide off the right edge, no clicks. */
+.voice-fab--hidden {
+  transform: translateX(150%);
+  opacity: 0;
+  pointer-events: none;
+}
 .voice-fab--active {
   background: var(--accent);
   color: #0B0D12;

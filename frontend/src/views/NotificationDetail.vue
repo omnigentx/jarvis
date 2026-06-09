@@ -179,7 +179,9 @@ onMounted(fetchDetail)
     <template v-else-if="notification">
       <!-- Header -->
       <div class="notif-detail__header">
-        <button class="btn btn-ghost notif-detail__back" @click="goBack">
+        <!-- Mobile already shows a back arrow in the global app-bar; hide this
+             in-content one there to avoid two stacked back buttons. -->
+        <button v-if="!isMobile" class="btn btn-ghost notif-detail__back" @click="goBack">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M19 12H5"/><polyline points="12 19 5 12 12 5"/>
           </svg>

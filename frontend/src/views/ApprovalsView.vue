@@ -436,7 +436,7 @@ const knownTypes = [
           <div
             v-if="viewMode === 'preview'"
             class="approvals__preview"
-            :style="{ maxHeight: isMobile ? '320px' : '420px' }"
+            :style="isMobile ? {} : { maxHeight: '420px' }"
           >
             <MarkdownRenderer
               :content="cmContent"
@@ -447,7 +447,7 @@ const knownTypes = [
             v-else
             :model-value="cmContent"
             :extensions="cmExtensions"
-            :style="{ maxHeight: isMobile ? '320px' : '420px' }"
+            :style="isMobile ? {} : { maxHeight: '420px' }"
             @ready="handleCmReady"
           />
         </div>

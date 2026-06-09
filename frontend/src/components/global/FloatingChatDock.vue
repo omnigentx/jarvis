@@ -21,6 +21,8 @@ import { useChatStore } from '../../stores/chat.js'
 import { useChatStream } from '../../composables/useChatStream.js'
 import { useAudioPlayerStore } from '../../stores/audioPlayer.js'
 import { useCrawlStatus } from '../../composables/useCrawlStatus.js'
+import { useBreakpoint } from '../../composables/useBreakpoint'
+import { useFabVisibility } from '../../composables/useFabVisibility'
 import MarkdownRenderer from '../MarkdownRenderer.vue'
 
 const chatStore = useChatStore()
@@ -29,6 +31,8 @@ const audioStore = useAudioPlayerStore()
 const crawl = useCrawlStatus()
 const route = useRoute()
 const router = useRouter()
+const { isMobile } = useBreakpoint()
+const { visible: fabShown } = useFabVisibility()
 
 const expanded = ref(false)
 const draft = ref('')
@@ -268,7 +272,7 @@ function handleKeydown(e) {
       <button
         v-if="!expanded"
         class="dock-fab"
-        :class="{ streaming: showStreamingBadge }"
+        :class="{ streaming: showStreamingBadge, 'dock-fab--hidden': isMobile && !fabShown }"
         type="button"
         title="Open chat dock"
         @click="toggle"
@@ -309,10 +313,16 @@ function handleKeydown(e) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: transform 0.18s var(--ease-out), box-shadow 0.22s var(--ease-out);
+  transition: transform 0.2s var(--ease-out), opacity 0.2s var(--ease-out), box-shadow 0.22s var(--ease-out);
 }
 .dock-fab:hover { transform: scale(1.06); }
 .dock-fab:active { transform: scale(0.96); }
+/* Hidden (manual grip or scroll-down, mobile only): slide off the left edge. */
+.dock-fab--hidden {
+  transform: translateX(-150%);
+  opacity: 0;
+  pointer-events: none;
+}
 .dock-fab.streaming { animation: dock-fab-pulse 1.6s ease-in-out infinite; }
 
 @keyframes dock-fab-pulse {
@@ -627,6 +637,13 @@ function handleKeydown(e) {
   .dock-fab {
     width: 44px;
     height: 44px;
+    /* Translucent + frosted so content behind stays partly visible (covers
+       less); the white icon stays opaque. */
+    background: linear-gradient(180deg,
+      color-mix(in srgb, var(--primary-hover) 82%, transparent),
+      color-mix(in srgb, var(--primary) 82%, transparent));
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
   }
 
   .dock-panel {
