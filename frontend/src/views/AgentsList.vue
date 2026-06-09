@@ -573,6 +573,10 @@ const counts = computed(() => ({
 
 @media (max-width: 767px) {
   .agents-page { gap: 12px; }
+  /* App-bar already shows "Agents"; drop the decorative in-page title +
+     tagline on mobile to reclaim space for the agent tree. */
+  .page-title,
+  .page-subtitle { display: none; }
   .toolbar { padding: 8px; gap: 8px; }
   .tb-search { width: 100%; min-width: 0; }
   .tree-header {

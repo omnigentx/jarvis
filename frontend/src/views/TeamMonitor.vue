@@ -1163,6 +1163,14 @@ onMounted(() => {
     max-width: 100%;
   }
 
+  /* The global mobile app-bar already shows "Team Monitor"; hide the
+     duplicate in-page title + tagline to give the activity stream more room.
+     The stats/Delete controls below stay. */
+  .monitor-title,
+  .monitor-subtitle {
+    display: none;
+  }
+
   /* Header: stack title + stats vertically */
   .monitor-header {
     flex-direction: column;
