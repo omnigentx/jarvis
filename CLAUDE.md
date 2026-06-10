@@ -94,6 +94,29 @@ opt-out (or convert the fixture to opt-in).
 - [ ] New AgentCard gate: parent view's `onMounted` seeds the dependency store.
 - [ ] Click-flow spelled out in PR body.
 
+## 7. English-First (Global Project)
+
+Jarvis is a global OSS project serving both Vietnamese and international
+users. **Everything written into the repo is English by default**:
+
+- Code identifiers, comments, docstrings, commit messages, PR bodies,
+  docs, log messages, backend user-facing strings, and agent prompts
+  (e.g. self-heal instructions) → **English only**.
+- **User-visible frontend copy** → **bilingual**, never a single-language
+  literal: `lang === 'vi' ? '…' : '…'` off the shared `useLang()`
+  composable (`frontend/src/composables/useLang.js`). Adding a Vietnamese
+  string without its English counterpart (or vice versa) is a bug.
+- **Intentional Vietnamese stays**: test data / e2e fixtures (vi+en
+  code-switching is a core feature), site-matching regexes
+  (`Chương|Quyển|mở đầu…` for Vietnamese story sites), bilingual TTS
+  samples, and English comments quoting Vietnamese strings as examples.
+
+Checklist for every change:
+
+- [ ] No Vietnamese in new/edited comments, docstrings, logs, prompts, or docs.
+- [ ] New user-visible UI string renders for BOTH locales via `useLang()`.
+- [ ] Vietnamese kept only as functional data (test fixture, regex, quoted example) — and it's obvious from context why.
+
 ---
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, clarifying questions come before implementation rather than after mistakes, and manual testing turns up no "basic case" failures.
@@ -103,7 +126,7 @@ opt-out (or convert the fixture to opt-in).
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **jarvis** (37816 symbols, 106117 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **jarvis** (44069 symbols, 126444 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
