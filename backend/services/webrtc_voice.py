@@ -31,6 +31,7 @@ import logging
 import os
 import threading
 import time
+import urllib.parse
 from typing import Callable, Optional
 
 import av
@@ -156,7 +157,9 @@ def _cloudflare_ice_servers() -> Optional[list[dict]]:
             import httpx
 
             resp = httpx.post(
-                _CF_TURN_MINT_URL.format(key_id=key_id),
+                # Percent-encode: a stray "/" in a mistyped key_id must fail as a
+                # clear CF 404, not silently hit a different API path.
+                _CF_TURN_MINT_URL.format(key_id=urllib.parse.quote(key_id, safe="")),
                 headers={"Authorization": f"Bearer {token}"},
                 json={"ttl": _CF_TURN_TTL},
                 timeout=10.0,
