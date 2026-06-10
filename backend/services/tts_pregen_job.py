@@ -188,7 +188,7 @@ class TTSPreGenJob(BackgroundJobRunner):
         # every chunk succeeds. A present cache_path then always means "complete
         # chapter" — a mid-chapter chunk failure (raise/timeout) can never leave
         # a truncated file that the cache-hit short-circuit above would serve
-        # forever (the "tậm tịt" this PR fixes).
+        # forever (the stuttering/cut-out playback this PR fixes).
         tmp_path = cache_path + ".tmp"
         start_time = time.time()
         bytes_written = 0
@@ -206,7 +206,7 @@ class TTSPreGenJob(BackgroundJobRunner):
             # Generate TTS in bounded chunks (<= EDGE_MAX_CHUNK) with per-chunk
             # retry + timeout. A single whole-chapter edge_tts request streams
             # slower than playback and intermittently returns no audio /
-            # truncates ("tậm tịt"); small chunks are fast + reliable. Each
+            # truncates (stuttering playback); small chunks are fast + reliable. Each
             # chunk is buffered so a retried attempt can't duplicate audio.
             from services.tts import EdgeTTSProvider, EDGE_CHUNK_TIMEOUT
             text_chunks = EdgeTTSProvider._split_tiered(text)

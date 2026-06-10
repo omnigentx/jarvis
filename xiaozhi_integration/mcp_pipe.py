@@ -1,8 +1,8 @@
 """
 MCP Pipe - WebSocket to stdio bridge for Xiaozhi
 
-Kết nối Xiaozhi Cloud với local MCP servers.
-Dựa trên: https://github.com/78/mcp-calculator
+Connects Xiaozhi Cloud to local MCP servers.
+Based on: https://github.com/78/mcp-calculator
 
 Usage:
     export MCP_ENDPOINT=<your_xiaozhi_mcp_endpoint>

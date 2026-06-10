@@ -32,7 +32,7 @@ DEFAULT_EDGE_RATE = "+20%"
 # Largest text size sent in ONE edge_tts request. A single oversized request
 # (e.g. a whole ~9k-char story chapter) streams slower than real-time playback
 # and intermittently returns "no audio" / truncates — which made long story
-# chapters play "tậm tịt". Capping every chunk keeps each request small, fast
+# chapters stutter/cut out mid-playback. Capping every chunk keeps each request small, fast
 # and reliable. Tier 1/2 stay far below this for low time-to-first-byte.
 EDGE_MAX_CHUNK = 500
 # Hard wall-clock cap on ONE chunk's synthesis. A <=500-char chunk returns in a
@@ -110,7 +110,7 @@ class EdgeTTSProvider(TTSProvider):
         Tier 3+: the rest in ``EDGE_MAX_CHUNK`` (500)-char chunks — NOT one
         giant remainder chunk. A single oversized request streams slower than
         playback and intermittently returns no audio / truncates (that made
-        long story chapters play "tậm tịt"); many small requests are fast and
+        long story chapters stutter/cut out); many small requests are fast and
         reliable.
 
         Splits at sentence > comma > whitespace boundaries to keep speech

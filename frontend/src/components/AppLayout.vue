@@ -23,6 +23,7 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter, RouterLink } from 'vue-router'
 import { useBreakpoint } from '../composables/useBreakpoint'
 import { useFabVisibility } from '../composables/useFabVisibility'
+import { useLang } from '../composables/useLang'
 import { useRealtimeStream } from '../composables/useRealtimeStream'
 import { useSSEConnection } from '../composables/useSSEConnection.js'
 import { useAgentsStore } from '../stores/agents'
@@ -245,18 +246,15 @@ const showMobileHeader = computed(() => {
 })
 
 // ─── Lang / theme persisted prefs ───
-const lang = ref(localStorage.getItem('jarvis_lang') || 'vi')
+// lang lives in the shared useLang composable so bilingual copy elsewhere
+// (ChatView crawl banner, …) reacts to the topbar toggle live.
+const { lang, toggleLang } = useLang()
 const theme = ref(localStorage.getItem('jarvis_theme') || 'dark')
 
 function applyTheme(t) {
   document.documentElement.setAttribute('data-theme', t)
 }
 applyTheme(theme.value)
-
-function toggleLang() {
-  lang.value = lang.value === 'vi' ? 'en' : 'vi'
-  localStorage.setItem('jarvis_lang', lang.value)
-}
 function toggleTheme() {
   theme.value = theme.value === 'dark' ? 'light' : 'dark'
   localStorage.setItem('jarvis_theme', theme.value)

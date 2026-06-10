@@ -649,7 +649,7 @@ function handleKeydown(e) {
 
   .dock-fab {
     /* Same size as VoiceFAB so the two FABs are visually consistent.
-       Keeps the solid base gradient — no frosted/translucent (looked mờ). */
+       Keeps the solid base gradient — no frosted/translucent (looked blurry). */
     width: 52px;
     height: 52px;
   }

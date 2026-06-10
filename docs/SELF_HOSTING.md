@@ -1,17 +1,17 @@
-# Self-Hosting Jarvis trên Ubuntu Server
+# Self-Hosting Jarvis on Ubuntu Server
 
-Hướng dẫn deploy Jarvis (Backend + Vue Web) trên Ubuntu server sử dụng Docker + GitHub Actions CD.
+Guide to deploying Jarvis (Backend + Vue Web) on an Ubuntu server using Docker + GitHub Actions CD.
 
-## Yêu cầu
+## Requirements
 
-- Ubuntu 22.04+ (hoặc 24.04)
-- RAM: tối thiểu 2GB (khuyến nghị 4GB)
+- Ubuntu 22.04+ (or 24.04)
+- RAM: 2GB minimum (4GB recommended)
 - Disk: 20GB+
-- Domain trỏ về server (tùy chọn, cho SSL)
+- Domain pointed at the server (optional, for SSL)
 
 ---
 
-## 1. Cài Docker & Docker Compose
+## 1. Install Docker & Docker Compose
 
 ```bash
 # Update system
@@ -20,25 +20,25 @@ sudo apt update && sudo apt upgrade -y
 # Install Docker
 curl -fsSL https://get.docker.com | sudo sh
 
-# Add user vào docker group (không cần sudo nữa)
+# Add user to the docker group (no more sudo needed)
 sudo usermod -aG docker $USER
 
-# Logout & login lại để group có hiệu lực
+# Logout & login again for the group to take effect
 exit
-# SSH lại vào server
+# SSH back into the server
 
 # Verify
 docker --version
 docker compose version
 ```
 
-## 2. Cài Git
+## 2. Install Git
 
 ```bash
 sudo apt install -y git
 ```
 
-## 3. Clone repo (với submodule)
+## 3. Clone the repo (with submodules)
 
 ```bash
 cd ~
@@ -46,12 +46,12 @@ git clone --recurse-submodules https://github.com/omnigentx/jarvis.git
 cd ~/jarvis
 ```
 
-> Nếu đã clone rồi nhưng thiếu submodule:
+> If you already cloned but the submodules are missing:
 > ```bash
 > git submodule update --init --recursive
 > ```
 
-## 4. Tạo file secrets
+## 4. Create secrets files
 
 ### `.env` (backend environment)
 
@@ -61,7 +61,7 @@ cat > backend/.env << 'EOF'
 # Settings → Voice in the dashboard. No env var needed for voice.
 
 # --- JWT ---
-JWT_SECRET=THAY_BANG_CHUOI_RANDOM_DAI
+JWT_SECRET=REPLACE_WITH_A_LONG_RANDOM_STRING
 JWT_ALGORITHM=HS256
 JWT_EXPIRE_DAYS=7
 
@@ -74,12 +74,12 @@ PYTHONUNBUFFERED=1
 EOF
 ```
 
-> ⚠️ **Quan trọng**: Thay `JWT_SECRET` bằng chuỗi random dài:
+> ⚠️ **Important**: Replace `JWT_SECRET` with a long random string:
 > ```bash
 > openssl rand -hex 32
 > ```
 
-### `fastagent.secrets.yaml` (API keys cho AI)
+### `fastagent.secrets.yaml` (API keys for AI)
 
 ```bash
 cat > backend/fastagent.secrets.yaml << 'EOF'
@@ -104,26 +104,26 @@ google:
 EOF
 ```
 
-### Credentials (nếu có)
+### Credentials (if any)
 
 ```bash
 mkdir -p backend/config/credentials
-# Copy các file credentials vào đây:
+# Copy credential files here:
 # - firebase-adminsdk.json
 # - google-cloud-tts.json
-# - v.v.
+# - etc.
 ```
 
-## 5. Mở Firewall
+## 5. Open the Firewall
 
 ```bash
 sudo ufw allow 22/tcp    # SSH
 sudo ufw allow 80/tcp    # HTTP
-sudo ufw allow 443/tcp   # HTTPS (nếu dùng SSL)
+sudo ufw allow 443/tcp   # HTTPS (if using SSL)
 sudo ufw enable
 ```
 
-## 6. Build & khởi chạy
+## 6. Build & launch
 
 ```bash
 cd ~/jarvis
@@ -131,39 +131,39 @@ docker compose build
 docker compose up -d
 ```
 
-Kiểm tra:
+Check:
 ```bash
-# Xem logs
+# View logs
 docker compose logs -f
 
-# Xem status
+# View status
 docker compose ps
 
 # Test API
 curl http://localhost:8000/api/health
 ```
 
-Mở browser: `http://<IP-SERVER>` → Jarvis Web UI.
+Open a browser: `http://<SERVER-IP>` → Jarvis Web UI.
 
 ---
 
-## 7. Setup CD với GitHub Actions Self-Hosted Runner
+## 7. Set up CD with a GitHub Actions Self-Hosted Runner
 
-Runner chạy trên chính server — mỗi khi push code lên `main`, GitHub Actions tự build Docker images và deploy.
+The runner lives on the server itself — every push to `main` makes GitHub Actions build the Docker images and deploy automatically.
 
-### Bước 1: Lấy Runner Token
+### Step 1: Get a Runner Token
 
-1. Vào GitHub repo → **Settings** → **Actions** → **Runners**
+1. Go to the GitHub repo → **Settings** → **Actions** → **Runners**
 2. Click **"New self-hosted runner"**
-3. Chọn **Linux** → Copy token từ lệnh `./config.sh`
+3. Select **Linux** → copy the token from the `./config.sh` command
 
-### Bước 2: Cài Runner
+### Step 2: Install the Runner
 
 ```bash
-# Tạo thư mục runner
+# Create the runner directory
 mkdir -p ~/actions-runner && cd ~/actions-runner
 
-# Download runner (check version mới nhất: https://github.com/actions/runner/releases)
+# Download the runner (check the latest version: https://github.com/actions/runner/releases)
 curl -o actions-runner-linux-x64.tar.gz -L \
   https://github.com/actions/runner/releases/download/v2.321.0/actions-runner-linux-x64-2.321.0.tar.gz
 tar xzf actions-runner-linux-x64.tar.gz
@@ -171,7 +171,7 @@ tar xzf actions-runner-linux-x64.tar.gz
 # Configure
 ./config.sh --url https://github.com/omnigentx/jarvis --token YOUR_TOKEN_HERE
 
-# Cài như system service (tự start khi reboot)
+# Install as a system service (auto-start on reboot)
 sudo ./svc.sh install
 sudo ./svc.sh start
 
@@ -179,42 +179,42 @@ sudo ./svc.sh start
 sudo ./svc.sh status
 ```
 
-### Bước 3: Verify runner online
+### Step 3: Verify the runner is online
 
-Vào GitHub repo → **Settings** → **Actions** → **Runners** → phải thấy runner ở trạng thái **"Idle"** (online).
+Go to the GitHub repo → **Settings** → **Actions** → **Runners** → the runner should show as **"Idle"** (online).
 
-### CD Flow hoạt động
+### How the CD flow works
 
 ```
 Push to main → GitHub Actions triggers deploy.yml
-  → Self-hosted runner checkout code (với submodules)
-  → restore secrets từ ~/jarvis-data vào backend/
-  → docker compose build (build images trên server)
+  → Self-hosted runner checks out code (with submodules)
+  → restores secrets from ~/jarvis-data into backend/
+  → docker compose build (builds images on the server)
   → docker compose up -d --force-recreate (deploy)
   → Health check
 ```
 
-### Ghi chú quan trọng về secrets Docker
+### Important notes on Docker secrets
 
-- File `backend/fastagent.secrets.docker.yaml` trong workspace runner chỉ là bản sao tạm thời.
-- Nguồn thật được workflow restore mỗi lần deploy là `~/jarvis-data/fastagent.secrets.docker.yaml`.
-- Nếu prod bị `401 Invalid API key` khi gọi qua CLIProxyAPI, kiểm tra file persistent này trước.
-- Với kiến trúc hiện tại, `openai.api_key` trong file persistent phải là `jarvis-proxy-key`, không phải `sk-proj-...`.
+- The `backend/fastagent.secrets.docker.yaml` file in the runner workspace is only a temporary copy.
+- The real source, restored by the workflow on every deploy, is `~/jarvis-data/fastagent.secrets.docker.yaml`.
+- If prod returns `401 Invalid API key` when calling through CLIProxyAPI, check this persistent file first.
+- With the current architecture, `openai.api_key` in the persistent file must be `jarvis-proxy-key`, not `sk-proj-...`.
 
 ---
 
-## 8. (Tùy chọn) SSL với Nginx + Let's Encrypt
+## 8. (Optional) SSL with Nginx + Let's Encrypt
 
-Nếu bạn có domain, setup SSL:
+If you have a domain, set up SSL:
 
 ```bash
-# Đổi Docker web port để tránh conflict với nginx host
-# Sửa docker-compose.yaml: ports "3080:80" thay vì "80:80"
+# Change the Docker web port to avoid conflicting with host nginx
+# Edit docker-compose.yaml: ports "3080:80" instead of "80:80"
 
-# Cài Nginx + Certbot
+# Install Nginx + Certbot
 sudo apt install -y nginx certbot python3-certbot-nginx
 
-# Tạo nginx config
+# Create the nginx config
 sudo tee /etc/nginx/sites-available/jarvis << 'NGINX'
 server {
     listen 80;
@@ -246,7 +246,7 @@ sudo nginx -t && sudo systemctl reload nginx
 sudo certbot --nginx -d your-domain.com
 ```
 
-> Thay `your-domain.com` bằng domain thật.
+> Replace `your-domain.com` with your real domain.
 
 ---
 
@@ -269,7 +269,7 @@ The key is stored encrypted in the server's DB and never reaches the browser —
 
 ---
 
-## Deploy thủ công (khi cần)
+## Manual deploy (when needed)
 
 ```bash
 cd ~/jarvis
@@ -280,7 +280,7 @@ docker compose up -d --force-recreate
 
 ---
 
-## Cập nhật fast-agent submodule
+## Updating the fast-agent submodule
 
 ```bash
 cd ~/jarvis
@@ -291,83 +291,83 @@ docker compose up -d --force-recreate jarvis-backend
 
 ---
 
-## Đăng nhập bằng Passkey (Touch ID / Face ID / Windows Hello)
+## Signing in with a Passkey (Touch ID / Face ID / Windows Hello)
 
-Sau khi vào dashboard bằng `JARVIS_API_KEY`, bạn có thể đăng ký passkey để
-lần sau không phải dán key — chỉ cần chạm Touch ID là vào.
+After logging into the dashboard with `JARVIS_API_KEY`, you can register a passkey
+so you never have to paste the key again — one Touch ID tap and you're in.
 
-### Đăng ký lần đầu
+### First-time registration
 
-1. Mở dashboard, nhập `JARVIS_API_KEY` từ `backend/.env` để đăng nhập như
-   bình thường.
-2. Vào **Settings → Authentication**.
-3. Đặt label (ví dụ "MacBook Touch ID") rồi bấm **Register passkey**. Hệ
-   điều hành sẽ bật prompt — chạm vân tay / camera để hoàn tất.
-4. Đăng xuất, mở lại trang. Nút **"Sign in with passkey"** sẽ xuất hiện.
+1. Open the dashboard and sign in as usual with the `JARVIS_API_KEY` from
+   `backend/.env`.
+2. Go to **Settings → Authentication**.
+3. Set a label (e.g. "MacBook Touch ID") and click **Register passkey**. The
+   OS will show a prompt — touch the fingerprint sensor / camera to finish.
+4. Sign out and reload the page. The **"Sign in with passkey"** button will appear.
 
-### Yêu cầu HTTPS
+### HTTPS requirement
 
-WebAuthn (passkey) chỉ hoạt động với:
-- `http://localhost:*` (browser cho phép ngoại lệ cho dev)
+WebAuthn (passkey) only works with:
+- `http://localhost:*` (browsers make an exception for dev)
 - `https://your-domain.com` (production)
 
-LAN IP như `http://192.168.1.50:3001` **KHÔNG** dùng được passkey — browser
-sẽ từ chối ceremony. Setup HTTPS qua Caddy / nginx + Let's Encrypt /
-Tailscale Funnel trước khi đăng ký.
+A LAN IP like `http://192.168.1.50:3001` does **NOT** work with passkeys — the
+browser will reject the ceremony. Set up HTTPS via Caddy / nginx + Let's Encrypt /
+Tailscale Funnel before registering.
 
-### Passkey scope theo domain
+### Passkey scope is per-domain
 
-Passkey gắn cứng vào **RP ID = hostname của lúc đăng ký**. Tức là:
-- Passkey đăng ký trên `localhost` → CHỈ dùng được khi truy cập qua
+A passkey is hard-bound to **RP ID = the hostname at registration time**. That means:
+- A passkey registered on `localhost` → ONLY works when you access via
   `localhost`.
-- Đổi sang `jarvis.alice.com` → phải đăng ký passkey mới cho domain đó.
+- Switching to `jarvis.alice.com` → you must register a new passkey for that domain.
 
-Đây là ràng buộc của WebAuthn spec, không phải bug. Khi chuyển sang
-production domain, vào Settings → Authentication trên domain mới và bấm
-"Register passkey" lần nữa.
+This is a constraint of the WebAuthn spec, not a bug. When you move to a
+production domain, open Settings → Authentication on the new domain and click
+"Register passkey" again.
 
 ### Cross-device (laptop + phone)
 
-Đăng ký passkey trên từng device riêng. iCloud Keychain / Google Password
-Manager / 1Password sẽ tự sync passkey nếu bạn dùng các hệ này; còn không
-thì mỗi device đăng ký một lần.
+Register a passkey on each device separately. iCloud Keychain / Google Password
+Manager / 1Password will sync passkeys automatically if you use them; otherwise
+register once per device.
 
-### Recovery — mất passkey
+### Recovery — lost passkeys
 
-Passkey không export được. Nếu mất tất cả device → cách duy nhất là
-đọc lại `JARVIS_API_KEY` từ `backend/.env`, đăng nhập bằng API key, rồi
-đăng ký passkey mới:
+Passkeys cannot be exported. If you lose all your devices → the only way back is
+to read `JARVIS_API_KEY` from `backend/.env` again, sign in with the API key, then
+register a new passkey:
 
 ```bash
-# Trên server
+# On the server
 grep JARVIS_API_KEY backend/.env
 ```
 
-API key cũng là credential cho các script (Xiaozhi voice, CLI tools) — đừng
-xóa.
+The API key is also the credential for scripts (Xiaozhi voice, CLI tools) — don't
+delete it.
 
-### Coexist với API key
+### Coexistence with the API key
 
-Passkey không thay thế API key. Hai thứ song song:
-- **Passkey**: chỉ dùng cho login browser.
-- **API key trong `.env`**: dùng cho Xiaozhi, scripts, recovery.
+Passkeys do not replace the API key. The two run in parallel:
+- **Passkey**: browser login only.
+- **API key in `.env`**: for Xiaozhi, scripts, recovery.
 
-Settings → General có nút rotate API key nếu cần.
+Settings → General has a rotate-API-key button if needed.
 
 ---
 
 ## Troubleshooting
 
-| Vấn đề | Cách fix |
+| Problem | Fix |
 |---------|----------|
-| Container không start | `docker compose logs jarvis-backend` |
-| Port 80 bị chiếm | `sudo lsof -i:80` → kill process hoặc đổi port |
-| Permission denied (Docker) | `sudo usermod -aG docker $USER` → logout/login lại |
+| Container won't start | `docker compose logs jarvis-backend` |
+| Port 80 already in use | `sudo lsof -i:80` → kill the process or change the port |
+| Permission denied (Docker) | `sudo usermod -aG docker $USER` → logout/login again |
 | Runner offline | `cd ~/actions-runner && sudo ./svc.sh status` |
-| Runner không nhận job | Check runner name match `self-hosted` label |
-| Disk đầy | `docker system prune -a` để xóa images cũ |
-| Submodule rỗng | `git submodule update --init --recursive` |
-| Backend crash loop | `docker compose logs -f jarvis-backend` → check .env và secrets |
-| Passkey không show "Sign in with passkey" button | Đăng ký lần đầu từ Settings → Authentication; cần HTTPS trừ localhost |
-| Passkey trên LAN IP không work | Setup HTTPS (Caddy / Tailscale Funnel / mkcert) — WebAuthn chỉ cho phép HTTPS + localhost |
-| Mất hết passkey | Lấy `JARVIS_API_KEY` từ `.env`, login bằng API key, đăng ký passkey mới |
+| Runner not picking up jobs | Check the runner name matches the `self-hosted` label |
+| Disk full | `docker system prune -a` to remove old images |
+| Empty submodule | `git submodule update --init --recursive` |
+| Backend crash loop | `docker compose logs -f jarvis-backend` → check .env and secrets |
+| "Sign in with passkey" button missing | Register first from Settings → Authentication; HTTPS required except on localhost |
+| Passkey not working on a LAN IP | Set up HTTPS (Caddy / Tailscale Funnel / mkcert) — WebAuthn only allows HTTPS + localhost |
+| Lost all passkeys | Get `JARVIS_API_KEY` from `.env`, log in with the API key, register a new passkey |

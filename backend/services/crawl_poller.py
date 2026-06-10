@@ -459,7 +459,7 @@ class CrawlPoller:
         self._update_job(
             job_id,
             status="needs_attention",
-            message=f"Kẹt ở chương {count+1}: {reason}",
+            message=f"Stuck at chapter {count+1}: {reason}",
             **self._merge_checkpoint(job_id, checkpoint),
         )
         _dbg(job_id, f"needs_attention @ ch{count+1}: {reason}")
@@ -470,7 +470,7 @@ class CrawlPoller:
             activity_stream_manager.broadcast({
                 "agent_name": "CrawlStoriesAgent",
                 "event_type": "crawl_anomaly",
-                "message": f"Crawl gặp vấn đề ở chương {count+1}: {reason}",
+                "message": f"Crawl hit a problem at chapter {count+1}: {reason}",
                 "run_id": job_id,
                 "timestamp": time.time(),
                 "data": {"job_id": job_id, "stuck_index": count, "reason": reason},
@@ -509,14 +509,15 @@ class CrawlPoller:
         stuck_url = checkpoint.get("stuck_url", "")
         recipe = checkpoint.get("recipe", {})
         payload = (
-            f"[CRAWL SELF-HEAL] Crawl job {job_id} bị kẹt ở chương {stuck_idx+1}: {reason}\n"
-            f"URL kẹt: {stuck_url}\n"
-            f"Recipe hiện tại: {json.dumps(recipe, ensure_ascii=False)}\n\n"
-            f"HÃY: render lại trang kẹt (detect_story_structure), chẩn đoán selector/pattern sai, "
-            f"chạy verify_chapters với recipe đã sửa. Nếu OK → gọi resume_crawl(job_id='{job_id}', "
-            f"recipe_patch=<phần sửa>). Nếu thật sự đã hết truyện ở chương {stuck_idx} → "
-            f"gọi resume_crawl(job_id='{job_id}', recipe_patch={{}}, mark_done=true). "
-            f"Nếu site đổi cấu trúc hẳn / bị chặn → báo người dùng."
+            f"[CRAWL SELF-HEAL] Crawl job {job_id} is stuck at chapter {stuck_idx+1}: {reason}\n"
+            f"Stuck URL: {stuck_url}\n"
+            f"Current recipe: {json.dumps(recipe, ensure_ascii=False)}\n\n"
+            f"DO THIS: re-render the stuck page (detect_story_structure), diagnose the bad "
+            f"selector/pattern, run verify_chapters with the fixed recipe. If OK → call "
+            f"resume_crawl(job_id='{job_id}', recipe_patch=<the fix>). If the story genuinely "
+            f"ends at chapter {stuck_idx} → call resume_crawl(job_id='{job_id}', "
+            f"recipe_patch={{}}, mark_done=true). If the site changed structure entirely / "
+            f"is blocking us → inform the user."
         )
 
         async def _run():
