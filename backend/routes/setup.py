@@ -31,6 +31,8 @@ from core.database import (
     get_db_session,
 )
 from middleware.setup_gate import refresh_setup_complete
+from services import voice_config as vc
+from services import voice_engine_registry as registry
 from services.config_service import config_service
 from services.runtime_config import apply_api_key
 
@@ -389,6 +391,20 @@ async def setup_services(payload: ServicesStep, _=Depends(verify_api_key)):
                 detail=f"Invalid service name: {svc_name!r}",
             )
         if not fields:
+            continue
+        # Voice infrastructure services (cloudflare_turn) live in the SAME
+        # encrypted slots Settings → Voice manages (voice.secrets.{name}.{slot})
+        # — NOT under service.{name}. Routing through set_engine_secret keeps
+        # one source of truth and validates slot names against the registry.
+        if registry.get_voice_service(name):
+            for k, v in fields.items():
+                try:
+                    vc.set_engine_secret(
+                        config_service, name, (k or "").strip(), v, updated_by="wizard"
+                    )
+                except ValueError as exc:
+                    raise HTTPException(status_code=400, detail=str(exc))
+            configured.append(name)
             continue
         for k, v in fields.items():
             if not isinstance(k, str) or not k.strip():

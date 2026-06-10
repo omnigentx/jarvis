@@ -1,0 +1,58 @@
+# Wizard Step 3 (Services) — Cloudflare TURN entry.
+#
+# The wizard collects key_id + api_token under the ``cloudflare_turn``
+# service card and submits them in the single POST /api/setup/services
+# payload. The backend maps that service name into the SAME encrypted
+# slots Settings → Voice manages (voice.secrets.cloudflare_turn.*) — see
+# routes/setup.py::setup_services — so the spec only needs to assert the
+# wire payload here; the storage mapping is covered by backend tests
+# (test_setup.py::test_cloudflare_turn_lands_in_voice_secrets).
+
+backend_source:
+  - "backend/routes/setup.py::get_setup_status, setup_services"
+  - "backend/routes/oauth.py::status (GoogleOAuthCard mounts on this page)"
+  - "dashboard/src/views/setup/StepServices.vue::SERVICES['cloudflare_turn']"
+
+responses:
+  "GET /api/setup/auth/probe":
+    status: 200
+    json:
+      configured: true
+
+  "GET /api/setup/status":
+    status: 200
+    json:
+      steps:
+        - { name: "auth",        completed: true,  skipped: false }
+        - { name: "llm",         completed: true,  skipped: false }
+        - { name: "services",    completed: false, skipped: false }
+        - { name: "yaml_config", completed: false, skipped: false }
+        - { name: "verify",      completed: false, skipped: false }
+      overall_complete: false
+      current_step: "services"
+
+  # GoogleOAuthCard mounts on the services page — keep it inert.
+  "GET /api/oauth/google/status":
+    status: 200
+    json:
+      client_configured: false
+      client_type: "none"
+      desktop_redirect_uri: null
+      connected: false
+      scopes: []
+      expires_at: null
+      has_refresh_token: false
+      project_number: null
+      required_apis: []
+
+  "POST /api/setup/services":
+    status: 200
+    json:
+      steps:
+        - { name: "auth",        completed: true,  skipped: false }
+        - { name: "llm",         completed: true,  skipped: false }
+        - { name: "services",    completed: true,  skipped: false, data: { configured: ["cloudflare_turn"] } }
+        - { name: "yaml_config", completed: false, skipped: false }
+        - { name: "verify",      completed: false, skipped: false }
+      overall_complete: false
+      current_step: "yaml_config"

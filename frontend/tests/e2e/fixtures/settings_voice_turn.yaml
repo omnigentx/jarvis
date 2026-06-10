@@ -1,0 +1,139 @@
+# Settings → Voice — Cloudflare TURN relay configuration flow.
+#
+# What this fixture stages:
+#   * GET /api/voice/engines returns the registry INCLUDING the new
+#     ``services.cloudflare_turn`` entry (VOICE_SERVICES on the backend).
+#     SettingsVoice.vue renders one panel per service — registry-driven,
+#     so this is exactly what the live backend emits.
+#   * GET /api/voice/secrets reports neither TURN slot on file, then flips
+#     per save: after key_id → {key_id: true}; after api_token → both true.
+#   * GET /api/voice/requirements/cloudflare_turn is probed on mount
+#     (services join the same probe loop as engines with secrets) and
+#     re-probed after each save — badge walks "set key_id · api_token"
+#     → "set api_token" → "configured — relay active".
+#
+# Backend contract this asserts:
+#   * voice_engine_registry.VOICE_SERVICES exposes cloudflare_turn with
+#     secrets [key_id, api_token]
+#   * routes/voice.list_engines includes the "services" key
+#   * routes/voice.list_secrets_status + check_requirements resolve
+#     voice-service names (not just TTS/STT engines)
+#   * routes/voice.set_secret accepts engine=cloudflare_turn
+
+backend_source:
+  - "backend/services/voice_engine_registry.py::VOICE_SERVICES['cloudflare_turn']"
+  - "backend/routes/voice.py::list_engines, list_secrets_status, set_secret, check_requirements"
+  - "dashboard/src/views/settings/SettingsVoice.vue::setSecret (voice-service section)"
+
+responses:
+  "GET /api/settings":
+    status: 200
+    json:
+      categories: {}
+
+  "GET /api/voice/engines":
+    status: 200
+    json:
+      tts:
+        edge:
+          label: "Microsoft Edge TTS"
+          description: "Free, no API key."
+          badges: ["free", "cloud"]
+          requires: []
+          secrets: []
+          realtimetts_engine: "EdgeEngine"
+          output_format: "mp3"
+          params:
+            - key: "voice"
+              type: "select"
+              label: "Voice"
+              default: "vi-VN-NamMinhNeural"
+              options: ["vi-VN-NamMinhNeural"]
+      stt:
+        faster_whisper:
+          label: "faster-whisper (local)"
+          description: "Local inference."
+          badges: ["free", "local"]
+          params:
+            - key: "model"
+              type: "select"
+              label: "Final model"
+              default: "base"
+              options: ["tiny", "base"]
+          wake_word_backends:
+            off:
+              label: "Disabled"
+              params: []
+      services:
+        cloudflare_turn:
+          label: "Cloudflare TURN (voice relay)"
+          description: "Lets voice work from outside your network (e.g. phone on 4G/5G). Not needed on localhost or LAN/VPN."
+          badges: ["cloud", "free-tier", "optional"]
+          requires: []
+          secrets: ["key_id", "api_token"]
+          params: []
+          docs_url: "https://developers.cloudflare.com/realtime/turn/"
+
+  "GET /api/voice/active":
+    status: 200
+    json:
+      tts_chat:
+        engine: "edge"
+        params: { voice: "vi-VN-NamMinhNeural" }
+      tts_stories:
+        voice: "vi-VN-NamMinhNeural"
+        rate: "+20%"
+      stt:
+        backend: "faster_whisper"
+        params: { model: "base" }
+        wake_word: { backend: "off", params: {} }
+
+  "GET /api/voice/backends":
+    status: 200
+    json:
+      tts:
+        enabled: ["edge"]
+        known: ["edge"]
+      stt:
+        enabled: ["faster_whisper"]
+        known: ["faster_whisper"]
+
+  # Sequenced: mount → after key_id save → after api_token save.
+  "GET /api/voice/secrets":
+    - status: 200
+      json:
+        engines:
+          cloudflare_turn: { key_id: false, api_token: false }
+    - status: 200
+      json:
+        engines:
+          cloudflare_turn: { key_id: true, api_token: false }
+    - status: 200
+      json:
+        engines:
+          cloudflare_turn: { key_id: true, api_token: true }
+
+  "GET /api/voice/requirements/cloudflare_turn":
+    - status: 200
+      json:
+        ok: false
+        missing_binaries: []
+        secrets_present: { key_id: false, api_token: false }
+    - status: 200
+      json:
+        ok: false
+        missing_binaries: []
+        secrets_present: { key_id: true, api_token: false }
+    - status: 200
+      json:
+        ok: true
+        missing_binaries: []
+        secrets_present: { key_id: true, api_token: true }
+
+  "POST /api/voice/secrets/cloudflare_turn/key_id":
+    status: 200
+    json: { status: "ok" }
+
+  "POST /api/voice/secrets/cloudflare_turn/api_token":
+    status: 200
+    json: { status: "ok" }

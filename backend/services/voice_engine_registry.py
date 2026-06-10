@@ -287,6 +287,33 @@ STT_BACKENDS: dict[str, STTBackendSpec] = {
 }
 
 
+# Voice infrastructure services — NOT TTS/STT engines (they never appear in
+# the engine pickers) but they share the same encrypted secret-slot plumbing
+# (voice.secrets.{name}.{slot}) so the Settings UI / Setup Wizard / API layer
+# handle them with zero new storage code.
+VOICE_SERVICES: dict[str, dict[str, Any]] = {
+    # WebRTC TURN relay — required for voice from networks that can't reach
+    # the host directly (phone on 4G/5G, any network outside your LAN/VPN).
+    # NOT needed for localhost / same-LAN / VPN use. Cloudflare Realtime TURN
+    # has a free 1 TB/month tier; the backend mints short-lived credentials
+    # from the long-term key pair entered here (key itself never reaches the
+    # browser). Env fallback: JARVIS_CF_TURN_KEY_ID / JARVIS_CF_TURN_API_TOKEN.
+    "cloudflare_turn": {
+        "label": "Cloudflare TURN (voice relay)",
+        "description": (
+            "Lets voice work from outside your network (e.g. phone on 4G/5G). "
+            "Not needed on localhost or LAN/VPN. Create a TURN app at "
+            "Cloudflare Dashboard → Realtime → TURN, then paste both values."
+        ),
+        "badges": ["cloud", "free-tier", "optional"],
+        "requires": [],
+        "secrets": ["key_id", "api_token"],
+        "params": [],
+        "docs_url": "https://developers.cloudflare.com/realtime/turn/",
+    },
+}
+
+
 def list_tts_engines() -> dict[str, TTSEngineSpec]:
     return TTS_ENGINES
 
@@ -301,6 +328,14 @@ def get_tts_engine(name: str) -> Optional[TTSEngineSpec]:
 
 def get_stt_backend(name: str) -> Optional[STTBackendSpec]:
     return STT_BACKENDS.get(name)
+
+
+def list_voice_services() -> dict[str, dict[str, Any]]:
+    return VOICE_SERVICES
+
+
+def get_voice_service(name: str) -> Optional[dict[str, Any]]:
+    return VOICE_SERVICES.get(name)
 
 
 def default_tts_chat_config() -> dict[str, Any]:

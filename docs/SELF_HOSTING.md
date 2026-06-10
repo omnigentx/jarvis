@@ -250,6 +250,25 @@ sudo certbot --nginx -d your-domain.com
 
 ---
 
+## 9. (Optional) Voice from outside your network — Cloudflare TURN
+
+**When you need this:** only when you use voice chat from **outside** the network the server lives on — e.g. a phone on 4G/5G, office Wi-Fi. On `localhost`, the same LAN, or over a VPN (Tailscale, …) you do **not** need this section.
+
+**Why:** voice uses WebRTC (UDP) flowing directly between the browser and the server — it does NOT ride the HTTP/tunnel path. If the server has no public UDP inbound (behind home NAT, behind a cloudflared tunnel) and the client sits behind carrier CGNAT, the two sides can never connect directly — a TURN relay must broker the traffic. This is the industry-standard fix (Meet/Zoom/Discord all run equivalent infrastructure).
+
+**How to enable (≈3 minutes, free 1 TB/month):**
+
+1. Open the [Cloudflare Dashboard → Realtime → TURN](https://dash.cloudflare.com/?to=/:account/calls) (a free Cloudflare account is enough)
+2. Click **Create** and give the TURN app any name (e.g. `jarvis-voice`)
+3. Copy the **Turn Token ID** and the **API Token**
+4. Paste them into Jarvis under **Settings → Voice → Cloudflare TURN (voice relay)** — or enter them in the Services step of the Setup Wizard. Applies immediately, no restart.
+
+The key is stored encrypted in the server's DB and never reaches the browser — browsers only receive short-lived (24 h) credentials minted from it.
+
+> Headless/CI fallback: set the env vars `JARVIS_CF_TURN_KEY_ID` + `JARVIS_CF_TURN_API_TOKEN` (DB-stored values take priority when both exist), or point `JARVIS_WEBRTC_ICE` at a self-hosted TURN server — see `backend/.env.example`.
+
+---
+
 ## Deploy thủ công (khi cần)
 
 ```bash

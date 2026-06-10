@@ -22,7 +22,7 @@ const loading = ref(true)
 const saving = ref(false)
 const saveSuccess = ref(false)
 const error = ref('')
-const engines = ref({ tts: {}, stt: {} })
+const engines = ref({ tts: {}, stt: {}, services: {} })
 const active = ref({ tts_chat: null, tts_stories: null, stt: null })
 const secretsStatus = ref({})
 const requirements = ref({})
@@ -117,6 +117,11 @@ onMounted(async () => {
       if (spec.requires?.length || spec.secrets?.length) probeIds.add(id)
     }
     for (const [id, spec] of Object.entries(reg.stt || {})) {
+      if (spec.requires?.length || spec.secrets?.length) probeIds.add(id)
+    }
+    // Voice infrastructure services (TURN relay) share the same secret-slot
+    // plumbing — probe them too so their "ready / set key" badge is live.
+    for (const [id, spec] of Object.entries(reg.services || {})) {
       if (spec.requires?.length || spec.secrets?.length) probeIds.add(id)
     }
     const checks = Array.from(probeIds).map(
@@ -238,8 +243,10 @@ const secretReveal = ref({})
 function _hasReqOrSecrets(engine) {
   const tts = engines.value.tts?.[engine]
   const stt = engines.value.stt?.[engine]
+  const svc = engines.value.services?.[engine]
   return !!(tts?.requires?.length || tts?.secrets?.length
-         || stt?.requires?.length || stt?.secrets?.length)
+         || stt?.requires?.length || stt?.secrets?.length
+         || svc?.requires?.length || svc?.secrets?.length)
 }
 async function setSecret(engine, slot) {
   const key = `${engine}.${slot}`
@@ -668,6 +675,92 @@ const chatProviderLabel = computed(() => {
         </div>
       </section>
 
+      <!-- 04 / Voice infrastructure services (TURN relay). Registry-driven
+           like the engine cards — a new entry in VOICE_SERVICES (backend)
+           shows up here with zero frontend changes. Secrets reuse the exact
+           setSecret/clearSecret path of the engine cards. -->
+      <section
+        v-for="(svc, svcId) in (engines.services || {})"
+        :key="svcId"
+        class="panel-card"
+        :data-testid="`voice-service-${svcId}`"
+      >
+        <header>
+          <div class="icon-circle">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="2" y1="12" x2="22" y2="12" />
+              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+            </svg>
+          </div>
+          <div>
+            <h2><span class="mono-num">04 /</span> {{ svc.label }}</h2>
+            <p>{{ svc.description }}</p>
+          </div>
+        </header>
+
+        <div class="provider-hint">
+          <span v-if="reqBadgeFor(svcId)" class="key-status" :class="reqBadgeFor(svcId).tone === 'ok' ? 'stored' : 'missing'">
+            {{ reqBadgeFor(svcId).tone === 'ok' ? 'configured — relay active' : reqBadgeFor(svcId).text }}
+          </span>
+        </div>
+
+        <ol v-if="svcId === 'cloudflare_turn'" class="turn-steps">
+          <li>
+            <strong>When do I need this?</strong> Only when you open Jarvis from
+            outside the network the server lives on — phone on 4G/5G, office Wi-Fi,
+            a friend's house. On <code>localhost</code>, the same LAN, or a VPN
+            (Tailscale etc.) voice already works without it.
+          </li>
+          <li>
+            Open the
+            <a href="https://dash.cloudflare.com/?to=/:account/calls" target="_blank" rel="noopener">
+              Cloudflare Dashboard → Realtime → TURN</a>
+            (free Cloudflare account is enough — the free tier includes 1&nbsp;TB/month of relay traffic).
+          </li>
+          <li>Click <strong>Create</strong>, give the TURN app any name (e.g. <code>jarvis-voice</code>).</li>
+          <li>
+            Copy the <strong>Turn Token ID</strong> into <code>key_id</code> and the
+            <strong>API Token</strong> into <code>api_token</code> below, then save both.
+            Applies immediately — no restart. The key never leaves this server;
+            browsers only ever receive short-lived credentials minted from it.
+          </li>
+        </ol>
+
+        <div v-for="slot in (svc.secrets || [])" :key="slot" class="field">
+          <label :for="`svc-secret-${svcId}-${slot}`">
+            Secret · {{ slot }}
+            <span v-if="(secretsStatus[svcId] || {})[slot]" class="key-status stored">stored · hidden</span>
+            <span v-else class="key-status missing">not set</span>
+          </label>
+          <div class="input-group">
+            <input
+              :id="`svc-secret-${svcId}-${slot}`"
+              class="pwd-input"
+              :type="secretReveal[`${svcId}.${slot}`] ? 'text' : 'password'"
+              autocomplete="off"
+              :placeholder="(secretsStatus[svcId] || {})[slot] ? 'Leave blank to keep current' : 'Paste value'"
+              :value="secretInput[`${svcId}.${slot}`] || ''"
+              @input="secretInput[`${svcId}.${slot}`] = $event.target.value"
+            />
+            <button type="button" class="icon-btn" @click="secretReveal[`${svcId}.${slot}`] = !secretReveal[`${svcId}.${slot}`]">
+              <svg v-if="secretReveal[`${svcId}.${slot}`]" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                <line x1="1" y1="1" x2="23" y2="23" />
+              </svg>
+              <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+            </button>
+          </div>
+          <div class="action-row" style="margin-top: 8px;">
+            <button type="button" class="btn ghost" :disabled="!(secretsStatus[svcId] || {})[slot]" @click="clearSecret(svcId, slot)">Clear</button>
+            <button type="button" class="btn primary" :disabled="!secretInput[`${svcId}.${slot}`]" @click="setSecret(svcId, slot)">Save key</button>
+          </div>
+        </div>
+      </section>
+
       <p v-if="previewError" class="error-msg">{{ previewError }}</p>
 
       <div class="footer-row">
@@ -682,6 +775,28 @@ const chatProviderLabel = computed(() => {
 
 <style scoped>
 .voice-sections { display: flex; flex-direction: column; gap: 18px; }
+
+/* TURN setup walkthrough — numbered steps inside the service card. */
+.turn-steps {
+  margin: 0 0 14px;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+.turn-steps strong { color: var(--text); }
+.turn-steps code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.turn-steps a { color: var(--primary); text-decoration: underline; }
 .loading { color: var(--text-muted); font-size: 13px; }
 
 /* ── Provider split (HUD glance card) ─────────────────────────────── */

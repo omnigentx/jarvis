@@ -280,6 +280,13 @@ def _on_config_change(event) -> None:
                 cfg = _json.loads(new_value) if (action != "delete" and new_value) else None
                 apply_voice_stt_config(cfg)
                 return
+            if key.startswith("secrets.cloudflare_turn."):
+                # TURN key rotation: drop the minted-credential cache so the
+                # next voice session mints with the new key. No TTS/STT
+                # provider involvement — this is WebRTC transport config.
+                from services.webrtc_voice import invalidate_turn_cache
+                invalidate_turn_cache()
+                return
             if key.startswith("secrets."):
                 # Secret rotation: rebuild chat provider so new key is picked up.
                 # (Stories never uses secrets — Edge has none.)

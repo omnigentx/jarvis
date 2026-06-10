@@ -41,6 +41,20 @@ const SERVICES = [
     ],
   },
   {
+    // Stored in voice.secrets.cloudflare_turn.* (same slots Settings → Voice
+    // manages) — routes/setup.py maps it there so both surfaces share one
+    // source of truth. See VOICE_SERVICES in voice_engine_registry.py.
+    id: 'cloudflare_turn',
+    label: 'Cloudflare TURN (Voice relay)',
+    desc: 'Lets voice chat work when you open Jarvis from OUTSIDE your home network — phone on 4G/5G, office Wi-Fi. Not needed for localhost / LAN / VPN use, and you can add it later in Settings → Voice. Get both values free at dash.cloudflare.com → Realtime → TURN → Create (free tier: 1 TB/month relay traffic).',
+    mode: 'fields',
+    fields: [
+      { key: 'key_id', label: 'Turn Token ID', secret: false },
+      { key: 'api_token', label: 'API Token', secret: true },
+    ],
+    requireAllIfAny: true,
+  },
+  {
     id: 'github',
     label: 'GitHub & Git',
     desc: 'Personal access token so dev agents can git clone/push/pull private repos (and drive the GitHub MCP). Name + email are used as the commit identity. Create a token at https://github.com/settings/tokens with the "repo" scope.',

@@ -29,7 +29,9 @@ import asyncio
 import fractions
 import logging
 import os
+import threading
 import time
+import urllib.parse
 from typing import Callable, Optional
 
 import av
@@ -79,6 +81,124 @@ def parse_ice_servers() -> list[dict]:
         else:
             servers.append({"urls": entry})
     return servers
+
+
+# ─── Cloudflare Realtime TURN ────────────────────────────────────────────────
+# The deployment has NO public UDP inbound (web traffic rides a cloudflared
+# tunnel; the host sits behind home NAT + docker bridge NAT), so WebRTC from
+# any network outside the tailnet (e.g. iPhone on 5G CGNAT) has no ICE path
+# unless a TURN relay brokers it. Cloudflare Realtime TURN issues SHORT-LIVED
+# credentials minted on demand from a long-term key — the key stays server-side
+# (env), the minted creds are what /api/voice/ice hands to the browser.
+#
+# Configured via Settings → Voice (or the Setup Wizard) — stored encrypted as
+# voice.secrets.cloudflare_turn.{key_id,api_token} (see voice_engine_registry
+# VOICE_SERVICES). The DB is the authoritative source; the env vars
+# JARVIS_CF_TURN_KEY_ID / JARVIS_CF_TURN_API_TOKEN are a bootstrap/headless
+# fallback only, consulted when the DB slots are empty.
+# When neither is set, get_ice_servers() falls back to JARVIS_WEBRTC_ICE /
+# default STUN (fine for localhost / LAN / VPN — TURN is only needed when
+# clients connect from networks that can't reach this host directly).
+_CF_TURN_MINT_URL = (
+    "https://rtc.live.cloudflare.com/v1/turn/keys/{key_id}/credentials/generate-ice-servers"
+)
+_CF_TURN_TTL = 86400  # 24 h — far longer than any voice session
+# Refresh at half-life so creds handed to a NEW session always have ≥12 h of
+# validity left; keep serving a stale-but-valid batch (up to TTL minus a 10-min
+# safety margin) if a refresh attempt fails, so a transient CF API blip doesn't
+# take voice down with it.
+_CF_REFRESH_AFTER = _CF_TURN_TTL / 2
+_CF_HARD_EXPIRY = _CF_TURN_TTL - 600
+
+_cf_lock = threading.Lock()
+_cf_cache: dict = {"servers": None, "minted_at": 0.0}
+
+
+def _db_turn_secrets() -> dict:
+    """TURN secrets stored via Settings/Wizard (encrypted in the config DB).
+
+    Isolated so tests can stub the DB away; a read failure is logged loudly
+    and degrades to the env fallback rather than killing voice signalling.
+    """
+    try:
+        from services.config_service import config_service as _cs
+        from services import voice_config as _vc
+        return _vc.get_engine_secrets(_cs, "cloudflare_turn")
+    except Exception:
+        logger.exception("[webrtc] reading TURN secrets from config DB failed")
+        return {}
+
+
+def invalidate_turn_cache() -> None:
+    """Drop cached minted credentials — called by the config-change listener
+    when the user saves/clears TURN secrets so the next session re-mints with
+    the new key immediately (no restart, no 12 h cache tail)."""
+    with _cf_lock:
+        _cf_cache["servers"] = None
+        _cf_cache["minted_at"] = 0.0
+    logger.info("[webrtc] TURN credential cache invalidated (config change)")
+
+
+def _cloudflare_ice_servers() -> Optional[list[dict]]:
+    """Mint (or serve cached) Cloudflare TURN credentials. None = not configured
+    or mint failed with no valid cached batch — caller falls back to env ICE."""
+    db = _db_turn_secrets()
+    key_id = (db.get("key_id") or os.environ.get("JARVIS_CF_TURN_KEY_ID", "")).strip()
+    token = (db.get("api_token") or os.environ.get("JARVIS_CF_TURN_API_TOKEN", "")).strip()
+    if not key_id or not token:
+        return None
+
+    with _cf_lock:
+        age = time.monotonic() - _cf_cache["minted_at"]
+        if _cf_cache["servers"] is not None and age < _CF_REFRESH_AFTER:
+            return _cf_cache["servers"]
+
+        try:
+            import httpx
+
+            resp = httpx.post(
+                # Percent-encode: a stray "/" in a mistyped key_id must fail as a
+                # clear CF 404, not silently hit a different API path.
+                _CF_TURN_MINT_URL.format(key_id=urllib.parse.quote(key_id, safe="")),
+                headers={"Authorization": f"Bearer {token}"},
+                json={"ttl": _CF_TURN_TTL},
+                timeout=10.0,
+            )
+            resp.raise_for_status()
+            servers = resp.json()["iceServers"]
+            if not isinstance(servers, list) or not servers:
+                raise ValueError(f"unexpected iceServers payload: {servers!r}")
+            _cf_cache["servers"] = servers
+            _cf_cache["minted_at"] = time.monotonic()
+            logger.info(
+                "[webrtc] Cloudflare TURN credentials minted (ttl=%ss, %d server entries)",
+                _CF_TURN_TTL, len(servers),
+            )
+            return servers
+        except Exception:
+            logger.exception("[webrtc] Cloudflare TURN credential mint FAILED")
+            if _cf_cache["servers"] is not None and age < _CF_HARD_EXPIRY:
+                logger.warning(
+                    "[webrtc] serving stale-but-valid TURN credentials (age %.0fs)", age
+                )
+                return _cf_cache["servers"]
+            logger.error(
+                "[webrtc] no valid TURN credentials — falling back to %s; "
+                "voice WILL fail from CGNAT/cellular networks until the CF API recovers",
+                os.environ.get("JARVIS_WEBRTC_ICE", _DEFAULT_STUN),
+            )
+            return None
+
+
+def get_ice_servers() -> list[dict]:
+    """Browser-shaped iceServers — the ONE source for both /api/voice/ice and
+    the server's own RTCPeerConnection (aiortc), so the two ends always agree.
+
+    Order of precedence: Cloudflare-minted TURN creds → JARVIS_WEBRTC_ICE →
+    default public STUN. May block on an HTTPS call (≤10 s) when the CF cache
+    is cold — event-loop callers must wrap in ``asyncio.to_thread``.
+    """
+    return _cloudflare_ice_servers() or parse_ice_servers()
 
 STT_RATE = 16000      # feed_audio() input rate (mono s16)
 TTS_RATE = 24000      # RealtimeTTS / Edge PCM rate (mono s16)
@@ -211,19 +331,23 @@ class WebRtcVoiceSession:
         feed_audio: FeedAudio,
         *,
         on_connection_lost: Optional[Callable[[], None]] = None,
-        ice_servers: Optional[list[str]] = None,
+        ice_servers: Optional[list] = None,
     ):
         self._feed_audio = feed_audio
         self._on_connection_lost = on_connection_lost
-        # Default to ICE from env (prod NAT traversal, incl. TURN creds); tests
-        # pass ice_servers=[] for a fast host-only localhost loopback.
-        if ice_servers is not None:
-            ice = [RTCIceServer(urls=u) for u in ice_servers]
-        else:
-            ice = [
-                RTCIceServer(urls=s["urls"], username=s.get("username"), credential=s.get("credential"))
-                for s in parse_ice_servers()
-            ]
+        # ``ice_servers`` entries may be plain url strings OR browser-shaped
+        # dicts ({urls, username?, credential?}) — the ws_voice handler passes
+        # the latter, pre-fetched off-loop via ``asyncio.to_thread(get_ice_servers)``
+        # because the Cloudflare mint can block. Tests pass ice_servers=[] for a
+        # fast host-only localhost loopback. The default (None) self-serves from
+        # get_ice_servers() as a safety net — blocking, so prefer pre-fetching.
+        if ice_servers is None:
+            ice_servers = get_ice_servers()
+        ice = [
+            RTCIceServer(urls=s["urls"], username=s.get("username"), credential=s.get("credential"))
+            if isinstance(s, dict) else RTCIceServer(urls=s)
+            for s in ice_servers
+        ]
         self.pc = RTCPeerConnection(configuration=RTCConfiguration(iceServers=ice))
         self.tts_track = TtsAudioTrack()
         self._inbound_task: Optional[asyncio.Task] = None
