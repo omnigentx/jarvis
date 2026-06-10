@@ -229,6 +229,20 @@ def test_get_ice_servers_mints_from_cloudflare_and_caches(_cf_env, monkeypatch):
     assert len(calls) == 1
 
 
+def test_mint_url_percent_encodes_key_id(_cf_env, monkeypatch):
+    """A mistyped key_id with a '/' must not silently hit a different API path."""
+    monkeypatch.setenv("JARVIS_CF_TURN_KEY_ID", "bad/key id")
+    calls: list[str] = []
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        calls.append(url)
+        return _FakeResp(_CF_RESPONSE)
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    get_ice_servers()
+    assert calls[0].endswith("/turn/keys/bad%2Fkey%20id/credentials/generate-ice-servers")
+
+
 def test_get_ice_servers_refreshes_after_half_life(_cf_env, monkeypatch):
     calls: list[int] = []
     monkeypatch.setattr(httpx, "post", lambda *a, **k: (calls.append(1), _FakeResp(_CF_RESPONSE))[1])
