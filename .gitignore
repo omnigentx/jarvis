@@ -72,6 +72,7 @@ backend/data/*.bak.*
 *.aab
 
 # Codex (sensitive credentials)
+.codex/
 backend/.codex/
 backend/meetings/
 
