@@ -250,22 +250,22 @@ sudo certbot --nginx -d your-domain.com
 
 ---
 
-## 9. (Tùy chọn) Voice từ ngoài mạng — Cloudflare TURN
+## 9. (Optional) Voice from outside your network — Cloudflare TURN
 
-**Khi nào cần:** chỉ khi bạn dùng voice chat từ **ngoài** mạng đặt server — ví dụ điện thoại 4G/5G, Wi-Fi công ty. Chạy `localhost`, cùng LAN, hoặc qua VPN (Tailscale…) thì **không cần** mục này.
+**When you need this:** only when you use voice chat from **outside** the network the server lives on — e.g. a phone on 4G/5G, office Wi-Fi. On `localhost`, the same LAN, or over a VPN (Tailscale, …) you do **not** need this section.
 
-**Tại sao:** voice dùng WebRTC (UDP) đi thẳng giữa trình duyệt và server, KHÔNG đi qua HTTP/tunnel. Nếu server không có cổng UDP public (sau NAT nhà, sau cloudflared tunnel) và client ở sau CGNAT nhà mạng, hai bên không thể nối trực tiếp — cần một TURN relay làm trung gian. Đây là chuẩn ngành (Meet/Zoom/Discord đều dùng hạ tầng tương tự).
+**Why:** voice uses WebRTC (UDP) flowing directly between the browser and the server — it does NOT ride the HTTP/tunnel path. If the server has no public UDP inbound (behind home NAT, behind a cloudflared tunnel) and the client sits behind carrier CGNAT, the two sides can never connect directly — a TURN relay must broker the traffic. This is the industry-standard fix (Meet/Zoom/Discord all run equivalent infrastructure).
 
-**Cách bật (≈3 phút, miễn phí 1 TB/tháng):**
+**How to enable (≈3 minutes, free 1 TB/month):**
 
-1. Vào [Cloudflare Dashboard → Realtime → TURN](https://dash.cloudflare.com/?to=/:account/calls) (account Cloudflare free là đủ)
-2. Bấm **Create**, đặt tên tùy ý (ví dụ `jarvis-voice`)
-3. Copy **Turn Token ID** và **API Token**
-4. Dán vào Jarvis tại **Settings → Voice → Cloudflare TURN (voice relay)** — hoặc nhập ngay ở bước Services của Setup Wizard. Áp dụng tức thì, không cần restart.
+1. Open the [Cloudflare Dashboard → Realtime → TURN](https://dash.cloudflare.com/?to=/:account/calls) (a free Cloudflare account is enough)
+2. Click **Create** and give the TURN app any name (e.g. `jarvis-voice`)
+3. Copy the **Turn Token ID** and the **API Token**
+4. Paste them into Jarvis under **Settings → Voice → Cloudflare TURN (voice relay)** — or enter them in the Services step of the Setup Wizard. Applies immediately, no restart.
 
-Key được lưu mã hóa trong DB của server và không bao giờ gửi xuống trình duyệt — trình duyệt chỉ nhận credentials ngắn hạn (24h) được mint từ key đó.
+The key is stored encrypted in the server's DB and never reaches the browser — browsers only receive short-lived (24 h) credentials minted from it.
 
-> Fallback cho môi trường headless/CI: đặt env `JARVIS_CF_TURN_KEY_ID` + `JARVIS_CF_TURN_API_TOKEN` (DB luôn được ưu tiên nếu có), hoặc TURN server tự host qua `JARVIS_WEBRTC_ICE` — xem `backend/.env.example`.
+> Headless/CI fallback: set the env vars `JARVIS_CF_TURN_KEY_ID` + `JARVIS_CF_TURN_API_TOKEN` (DB-stored values take priority when both exist), or point `JARVIS_WEBRTC_ICE` at a self-hosted TURN server — see `backend/.env.example`.
 
 ---
 
