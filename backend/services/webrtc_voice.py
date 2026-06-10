@@ -90,10 +90,14 @@ def parse_ice_servers() -> list[dict]:
 # credentials minted on demand from a long-term key — the key stays server-side
 # (env), the minted creds are what /api/voice/ice hands to the browser.
 #
-# Configure with:
-#   JARVIS_CF_TURN_KEY_ID    — TURN key id (Cloudflare dashboard → Realtime → TURN)
-#   JARVIS_CF_TURN_API_TOKEN — the key's API token (a secret; never sent to clients)
-# When unset, get_ice_servers() falls back to JARVIS_WEBRTC_ICE / default STUN.
+# Configured via Settings → Voice (or the Setup Wizard) — stored encrypted as
+# voice.secrets.cloudflare_turn.{key_id,api_token} (see voice_engine_registry
+# VOICE_SERVICES). The DB is the authoritative source; the env vars
+# JARVIS_CF_TURN_KEY_ID / JARVIS_CF_TURN_API_TOKEN are a bootstrap/headless
+# fallback only, consulted when the DB slots are empty.
+# When neither is set, get_ice_servers() falls back to JARVIS_WEBRTC_ICE /
+# default STUN (fine for localhost / LAN / VPN — TURN is only needed when
+# clients connect from networks that can't reach this host directly).
 _CF_TURN_MINT_URL = (
     "https://rtc.live.cloudflare.com/v1/turn/keys/{key_id}/credentials/generate-ice-servers"
 )
@@ -109,11 +113,37 @@ _cf_lock = threading.Lock()
 _cf_cache: dict = {"servers": None, "minted_at": 0.0}
 
 
+def _db_turn_secrets() -> dict:
+    """TURN secrets stored via Settings/Wizard (encrypted in the config DB).
+
+    Isolated so tests can stub the DB away; a read failure is logged loudly
+    and degrades to the env fallback rather than killing voice signalling.
+    """
+    try:
+        from services.config_service import config_service as _cs
+        from services import voice_config as _vc
+        return _vc.get_engine_secrets(_cs, "cloudflare_turn")
+    except Exception:
+        logger.exception("[webrtc] reading TURN secrets from config DB failed")
+        return {}
+
+
+def invalidate_turn_cache() -> None:
+    """Drop cached minted credentials — called by the config-change listener
+    when the user saves/clears TURN secrets so the next session re-mints with
+    the new key immediately (no restart, no 12 h cache tail)."""
+    with _cf_lock:
+        _cf_cache["servers"] = None
+        _cf_cache["minted_at"] = 0.0
+    logger.info("[webrtc] TURN credential cache invalidated (config change)")
+
+
 def _cloudflare_ice_servers() -> Optional[list[dict]]:
     """Mint (or serve cached) Cloudflare TURN credentials. None = not configured
     or mint failed with no valid cached batch — caller falls back to env ICE."""
-    key_id = os.environ.get("JARVIS_CF_TURN_KEY_ID", "").strip()
-    token = os.environ.get("JARVIS_CF_TURN_API_TOKEN", "").strip()
+    db = _db_turn_secrets()
+    key_id = (db.get("key_id") or os.environ.get("JARVIS_CF_TURN_KEY_ID", "")).strip()
+    token = (db.get("api_token") or os.environ.get("JARVIS_CF_TURN_API_TOKEN", "")).strip()
     if not key_id or not token:
         return None
 

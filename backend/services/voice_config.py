@@ -94,9 +94,14 @@ def _engine_spec(engine: str) -> Optional[dict[str, Any]]:
     engine name and share a single API-key slot (``voice.secrets.<engine>.api_key``).
     Routing every secret call through one lookup keeps that contract honest:
     we never silently fail to recognise a slot because we only checked one
-    half of the registry.
+    half of the registry. Voice infrastructure services (cloudflare_turn)
+    share the same secret-slot plumbing, so they resolve here too.
     """
-    return registry.get_tts_engine(engine) or registry.get_stt_backend(engine)
+    return (
+        registry.get_tts_engine(engine)
+        or registry.get_stt_backend(engine)
+        or registry.get_voice_service(engine)
+    )
 
 
 def get_engine_secrets(config_service, engine: str) -> dict[str, str]:

@@ -94,6 +94,9 @@ async def list_engines(_=Depends(verify_api_key)):
     return {
         "tts": registry.list_tts_engines(),
         "stt": registry.list_stt_backends(),
+        # Voice infrastructure (e.g. cloudflare_turn) — same secret-slot shape,
+        # rendered as its own Settings section, never in the engine pickers.
+        "services": registry.list_voice_services(),
     }
 
 
@@ -222,6 +225,7 @@ async def list_secrets_status(_=Depends(verify_api_key)):
     for engine, spec in (
         list(registry.list_tts_engines().items())
         + list(registry.list_stt_backends().items())
+        + list(registry.list_voice_services().items())
     ):
         if engine in seen:
             continue
@@ -251,7 +255,11 @@ async def delete_secret(engine: str, slot: str, _=Depends(verify_api_key)):
     """Clear a previously-set secret — frees the user from manual SQL surgery
     when rotating away from a paid engine.
     """
-    spec = registry.get_tts_engine(engine) or registry.get_stt_backend(engine)
+    spec = (
+        registry.get_tts_engine(engine)
+        or registry.get_stt_backend(engine)
+        or registry.get_voice_service(engine)
+    )
     if not spec or slot not in spec.get("secrets", []):
         raise HTTPException(400, f"Engine {engine!r} has no declared secret {slot!r}")
     cs = _config_service()
@@ -261,7 +269,11 @@ async def delete_secret(engine: str, slot: str, _=Depends(verify_api_key)):
 
 @router.get("/requirements/{engine}")
 async def check_requirements(engine: str, _=Depends(verify_api_key)):
-    spec = registry.get_tts_engine(engine) or registry.get_stt_backend(engine)
+    spec = (
+        registry.get_tts_engine(engine)
+        or registry.get_stt_backend(engine)
+        or registry.get_voice_service(engine)
+    )
     if not spec:
         raise HTTPException(404, f"Unknown engine {engine!r}")
     cs = _config_service()

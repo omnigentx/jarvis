@@ -340,6 +340,65 @@ class TestServicesStep:
         )
         assert resp.status_code == 400
 
+    def test_cloudflare_turn_lands_in_voice_secrets(self, client, db_factory):
+        """Wizard TURN entry must share the Settings → Voice storage slots
+        (voice.secrets.cloudflare_turn.*), NOT service.cloudflare_turn —
+        one source of truth for the WebRTC credential reader."""
+        client.post("/api/setup/auth", json={})
+        resp = client.post(
+            "/api/setup/services",
+            json={
+                "services": {
+                    "cloudflare_turn": {
+                        "key_id": "cf-key-id-1",
+                        "api_token": "cf-api-token-1",
+                    }
+                }
+            },
+            headers=_auth_headers(),
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        svc_step = next(s for s in body["steps"] if s["name"] == "services")
+        assert "cloudflare_turn" in svc_step["data"]["configured"]
+
+        with db_factory() as db:
+            rows = (
+                db.query(SystemConfig)
+                .filter(SystemConfig.category == "voice")
+                .filter(SystemConfig.key.like("secrets.cloudflare_turn.%"))
+                .all()
+            )
+            assert {r.key for r in rows} == {
+                "secrets.cloudflare_turn.key_id",
+                "secrets.cloudflare_turn.api_token",
+            }
+            assert all(r.is_secret for r in rows)
+            # No parallel copy under the generic service.* category.
+            stray = (
+                db.query(SystemConfig)
+                .filter(SystemConfig.category == "service.cloudflare_turn")
+                .count()
+            )
+            assert stray == 0
+
+        # The WebRTC credential reader sees the wizard-written values through
+        # the same decryption path (cross-layer: route → ConfigService → reader).
+        from services.webrtc_voice import _db_turn_secrets
+        assert _db_turn_secrets() == {
+            "key_id": "cf-key-id-1",
+            "api_token": "cf-api-token-1",
+        }
+
+    def test_cloudflare_turn_rejects_unknown_slot(self, client):
+        client.post("/api/setup/auth", json={})
+        resp = client.post(
+            "/api/setup/services",
+            json={"services": {"cloudflare_turn": {"bogus_slot": "x"}}},
+            headers=_auth_headers(),
+        )
+        assert resp.status_code == 400
+
     def test_jarvis_repo_resolves_immediately_after_wizard(
         self, client, monkeypatch
     ):

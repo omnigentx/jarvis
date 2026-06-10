@@ -139,9 +139,13 @@ _CF_RESPONSE = {
 
 @pytest.fixture
 def _cf_env(monkeypatch):
-    """CF TURN env set + module cache reset (it's process-global)."""
+    """CF TURN env set + module cache reset (it's process-global).
+
+    DB secrets are stubbed empty so these tests exercise the env fallback
+    deterministically (no config DB involvement)."""
     monkeypatch.setenv("JARVIS_CF_TURN_KEY_ID", "key123")
     monkeypatch.setenv("JARVIS_CF_TURN_API_TOKEN", "tok456")
+    monkeypatch.setattr(webrtc_voice, "_db_turn_secrets", lambda: {})
     monkeypatch.setitem(webrtc_voice._cf_cache, "servers", None)
     monkeypatch.setitem(webrtc_voice._cf_cache, "minted_at", 0.0)
 
@@ -163,7 +167,46 @@ def test_get_ice_servers_without_cf_env_falls_back_to_parse(monkeypatch):
     monkeypatch.delenv("JARVIS_CF_TURN_KEY_ID", raising=False)
     monkeypatch.delenv("JARVIS_CF_TURN_API_TOKEN", raising=False)
     monkeypatch.delenv("JARVIS_WEBRTC_ICE", raising=False)
+    monkeypatch.setattr(webrtc_voice, "_db_turn_secrets", lambda: {})
     assert get_ice_servers() == [{"urls": "stun:stun.l.google.com:19302"}]
+
+
+def test_db_secrets_take_priority_over_env(monkeypatch):
+    """Settings/Wizard-stored creds (DB) are authoritative; env is bootstrap
+    fallback only. A divergence must resolve to the DB value."""
+    monkeypatch.setenv("JARVIS_CF_TURN_KEY_ID", "env-key")
+    monkeypatch.setenv("JARVIS_CF_TURN_API_TOKEN", "env-tok")
+    monkeypatch.setattr(
+        webrtc_voice, "_db_turn_secrets",
+        lambda: {"key_id": "db-key", "api_token": "db-tok"},
+    )
+    monkeypatch.setitem(webrtc_voice._cf_cache, "servers", None)
+    monkeypatch.setitem(webrtc_voice._cf_cache, "minted_at", 0.0)
+
+    seen: list[tuple[str, str]] = []
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        seen.append((url, headers["Authorization"]))
+        return _FakeResp(_CF_RESPONSE)
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    get_ice_servers()
+    assert seen[0][0].endswith("/turn/keys/db-key/credentials/generate-ice-servers")
+    assert seen[0][1] == "Bearer db-tok"
+
+
+def test_invalidate_turn_cache_forces_remint(_cf_env, monkeypatch):
+    """Saving new TURN secrets in Settings fires the config listener →
+    invalidate_turn_cache() → next call re-mints instead of serving cache."""
+    calls: list[int] = []
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: (calls.append(1), _FakeResp(_CF_RESPONSE))[1])
+
+    get_ice_servers()
+    get_ice_servers()
+    assert len(calls) == 1  # cache hit
+    webrtc_voice.invalidate_turn_cache()
+    get_ice_servers()
+    assert len(calls) == 2
 
 
 def test_get_ice_servers_mints_from_cloudflare_and_caches(_cf_env, monkeypatch):
