@@ -1,0 +1,106 @@
+# Context Versions tab — compaction timeline on AgentDetail.
+#
+# Flow: /agents/Jarvis → click "Context Versions" tab → versions list
+# loads (metadata only) → expanding a version lazy-loads the summary →
+# "Before / After" lazy-loads the diff. A failed compaction renders its
+# error inline.
+
+backend_source:
+  - "backend/routes/agents.py::get_context_versions, get_context_version_detail, get_context_version_diff"
+  - "backend/services/context_persistence.py::get_compaction_events_meta, get_compaction_event_detail, get_compaction_diff"
+  - "frontend/src/views/AgentDetail.vue::versions tab"
+
+responses:
+  "GET /api/agents/Jarvis":
+    status: 200
+    json:
+      name: "Jarvis"
+      status: "idle"
+      type: "static"
+      model: "claude-sonnet-4-6"
+      instruction: "You are Jarvis."
+      servers: []
+      tools: {}
+      skills: []
+
+  "GET /api/skills":
+    status: 200
+    json: { skills: [] }
+
+  "GET /api/agents/Jarvis/context/versions":
+    status: 200
+    json:
+      versions:
+        - id: 42
+          run_id: "run-abc"
+          agent_name: "Jarvis"
+          session_id: null
+          team_name: null
+          raw_snapshot_id: 7
+          message_count_before: 20
+          message_count_after: 8
+          estimated_tokens_before: 10000
+          estimated_tokens_after: 4000
+          saved_tokens: 6000
+          reduction_ratio: 0.6
+          trigger: "auto_threshold"
+          confidence: 0.6
+          policy_version: 1
+          status: "completed"
+          error_message: null
+          created_at: 1765000000
+        - id: 41
+          run_id: "run-abc"
+          agent_name: "Jarvis"
+          session_id: null
+          team_name: null
+          raw_snapshot_id: 6
+          message_count_before: 20
+          message_count_after: 0
+          estimated_tokens_before: 9500
+          estimated_tokens_after: 0
+          saved_tokens: 0
+          reduction_ratio: 0
+          trigger: "auto_threshold"
+          confidence: 0
+          policy_version: 1
+          status: "failed"
+          error_message: "plan rejected: savings below minimum: 9500 -> 9400 (required ≥ 5%)"
+          created_at: 1764990000
+
+  "GET /api/agents/Jarvis/context/versions/42":
+    status: 200
+    json:
+      id: 42
+      status: "completed"
+      raw_snapshot_id: 7
+      estimated_tokens_before: 10000
+      estimated_tokens_after: 4000
+      saved_tokens: 6000
+      reduction_ratio: 0.6
+      confidence: 0.6
+      summary_message: "[COMPACTED_CONTEXT_SUMMARY]\n\nCurrent goal:\nResearch topic X\n\nUser constraints:\n(not captured by rule-based compactor)\n\nArchitecture facts:\n(not captured by rule-based compactor)\n\nImportant decisions:\n- chose approach A\n\nTool findings:\nTools used: search×4\n- found alpha\n\nErrors / unresolved issues:\n(none)\n\nRecent state:\nworking on summary\n\nNext actions:\nContinue the current task with the recent messages below.\n\nRaw references:\nraw snapshot #7, messages 2–13"
+      plan:
+        keep_verbatim: [0, 1, 14, 15, 16, 17, 18, 19]
+        delete_from_working_context: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
+        summarize: []
+        promote_to_memory: []
+        raw_references: [{ raw_snapshot_id: 7, message_indexes: [2, 13] }]
+        risks: ["rule-based summary may miss implicit decisions buried in dropped turns"]
+        confidence: 0.6
+      validation: []
+
+  "GET /api/agents/Jarvis/context/versions/42/diff":
+    status: 200
+    json:
+      before:
+        - { role: "user", preview: "SYSTEM TEMPLATE", disposition: "kept", has_tool_calls: false, has_tool_results: false }
+        - { role: "user", preview: "Research topic X", disposition: "kept", has_tool_calls: false, has_tool_results: false }
+        - { role: "assistant", preview: "searching...", disposition: "dropped", has_tool_calls: true, has_tool_results: false }
+        - { role: "user", preview: "result 1", disposition: "dropped", has_tool_calls: false, has_tool_results: true }
+        - { role: "assistant", preview: "final answer", disposition: "kept", has_tool_calls: false, has_tool_results: false }
+      after:
+        - { role: "user", preview: "SYSTEM TEMPLATE", disposition: "kept", has_tool_calls: false, has_tool_results: false }
+        - { role: "user", preview: "[COMPACTED_CONTEXT_SUMMARY] Current goal: Research topic X", disposition: "summary", has_tool_calls: false, has_tool_results: false }
+        - { role: "user", preview: "Research topic X", disposition: "kept", has_tool_calls: false, has_tool_results: false }
+        - { role: "assistant", preview: "final answer", disposition: "kept", has_tool_calls: false, has_tool_results: false }

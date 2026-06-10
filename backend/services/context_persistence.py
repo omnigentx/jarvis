@@ -483,6 +483,328 @@ def get_context_messages(snapshot_id: int) -> list[dict] | None:
         return None
 
 
+# ---------------------------------------------------------------------------
+# Context compaction events (working snapshots + audit trail)
+#
+# One row per compaction attempt. ``working_context_json`` is the compacted
+# history (NULL on failure); ``raw_snapshot_id`` points at the append-only
+# pre-compaction row in agent_context_snapshots. The spec proposed a second
+# ``agent_working_context_snapshots`` table, but every working snapshot maps
+# 1:1 to exactly one event — a single table is the single source of truth
+# (no join, nothing to diverge). Derived numbers (saved_tokens,
+# reduction_ratio) are computed at the API layer, never stored.
+# ---------------------------------------------------------------------------
+
+
+def _ensure_compaction_table(conn: sqlite3.Connection) -> None:
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS context_compaction_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL DEFAULT '',
+            agent_name TEXT NOT NULL,
+            session_id TEXT,
+            team_name TEXT,
+            raw_snapshot_id INTEGER,
+            working_context_json TEXT,
+            summary_message TEXT,
+            plan_json TEXT,
+            validation_json TEXT,
+            message_count_before INTEGER DEFAULT 0,
+            message_count_after INTEGER DEFAULT 0,
+            estimated_tokens_before INTEGER DEFAULT 0,
+            estimated_tokens_after INTEGER DEFAULT 0,
+            trigger TEXT DEFAULT 'auto_threshold',
+            confidence REAL DEFAULT 0,
+            policy_version INTEGER DEFAULT 1,
+            status TEXT NOT NULL DEFAULT 'completed',
+            error_message TEXT,
+            created_at REAL NOT NULL
+        )
+    """)
+    conn.commit()
+
+
+def save_compaction_event(
+    *,
+    agent_name: str,
+    run_id: str = "",
+    session_id: str | None = None,
+    team_name: str | None = None,
+    raw_snapshot_id: int | None = None,
+    working_context_json: str | None = None,
+    summary_message: str | None = None,
+    plan_json: str | None = None,
+    validation_json: str | None = None,
+    message_count_before: int = 0,
+    message_count_after: int = 0,
+    estimated_tokens_before: int = 0,
+    estimated_tokens_after: int = 0,
+    trigger: str = "auto_threshold",
+    confidence: float = 0.0,
+    policy_version: int = 1,
+    status: str = "completed",
+    error_message: str | None = None,
+) -> int | None:
+    """Insert one compaction event row. Never raises (mirrors
+    save_agent_context's contract — a recording failure must not break
+    the live agent)."""
+    db_path = _get_db_path()
+    if not db_path:
+        logger.debug("[COMPACT] No DB path available — event not recorded")
+        return None
+    try:
+        conn = sqlite3.connect(db_path, timeout=10)
+        _ensure_compaction_table(conn)
+        cursor = conn.execute(
+            """INSERT INTO context_compaction_events
+               (run_id, agent_name, session_id, team_name, raw_snapshot_id,
+                working_context_json, summary_message, plan_json, validation_json,
+                message_count_before, message_count_after,
+                estimated_tokens_before, estimated_tokens_after,
+                trigger, confidence, policy_version, status, error_message,
+                created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                run_id, agent_name, session_id, team_name, raw_snapshot_id,
+                working_context_json, summary_message, plan_json, validation_json,
+                message_count_before, message_count_after,
+                estimated_tokens_before, estimated_tokens_after,
+                trigger, confidence, policy_version, status, error_message,
+                time.time(),
+            ),
+        )
+        event_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        return event_id
+    except Exception as exc:
+        logger.error("[COMPACT] Event write failed: %s — %s", agent_name, exc, exc_info=True)
+        return None
+
+
+# Columns shared by the list and detail reads — keep them in one place so
+# the two payload shapes can't drift apart.
+_COMPACTION_META_COLS = (
+    "id, run_id, agent_name, session_id, team_name, raw_snapshot_id, "
+    "message_count_before, message_count_after, "
+    "estimated_tokens_before, estimated_tokens_after, "
+    "trigger, confidence, policy_version, status, error_message, created_at"
+)
+
+
+def _compaction_row_to_meta(r: tuple) -> dict:
+    before, after = r[8], r[9]
+    saved = (before - after) if (before and after and r[13] == "completed") else 0
+    return {
+        "id": r[0],
+        "run_id": r[1],
+        "agent_name": r[2],
+        "session_id": r[3],
+        "team_name": r[4],
+        "raw_snapshot_id": r[5],
+        "message_count_before": r[6],
+        "message_count_after": r[7],
+        "estimated_tokens_before": before,
+        "estimated_tokens_after": after,
+        "saved_tokens": saved,
+        "reduction_ratio": round(saved / before, 4) if before and saved else 0,
+        "trigger": r[10],
+        "confidence": r[11],
+        "policy_version": r[12],
+        "status": r[13],
+        "error_message": r[14],
+        "created_at": r[15],
+    }
+
+
+def get_compaction_events_meta(agent_name: str, *, limit: int = 3) -> list[dict]:
+    """Recent compaction events WITHOUT large payloads (metadata-first API)."""
+    db_path = _get_db_path()
+    if not db_path:
+        return []
+    try:
+        conn = sqlite3.connect(db_path, timeout=10)
+        _ensure_compaction_table(conn)
+        rows = conn.execute(
+            f"SELECT {_COMPACTION_META_COLS} FROM context_compaction_events "
+            "WHERE agent_name = ? ORDER BY created_at DESC LIMIT ?",
+            (agent_name, limit),
+        ).fetchall()
+        conn.close()
+        return [_compaction_row_to_meta(r) for r in rows]
+    except Exception as exc:
+        logger.error("[COMPACT] Meta read failed: %s — %s", agent_name, exc)
+        return []
+
+
+def get_compaction_event_detail(agent_name: str, event_id: int) -> dict | None:
+    """One event with summary/plan/validation (still no working json —
+    the diff endpoint serves message-level content lazily)."""
+    db_path = _get_db_path()
+    if not db_path:
+        return None
+    try:
+        conn = sqlite3.connect(db_path, timeout=10)
+        _ensure_compaction_table(conn)
+        row = conn.execute(
+            f"SELECT {_COMPACTION_META_COLS}, summary_message, plan_json, validation_json "
+            "FROM context_compaction_events WHERE id = ? AND agent_name = ?",
+            (event_id, agent_name),
+        ).fetchone()
+        conn.close()
+        if not row:
+            return None
+        meta = _compaction_row_to_meta(row[:16])
+        meta["summary_message"] = row[16]
+        meta["plan"] = json.loads(row[17]) if row[17] else None
+        meta["validation"] = json.loads(row[18]) if row[18] else None
+        return meta
+    except Exception as exc:
+        logger.error("[COMPACT] Detail read failed: #%d — %s", event_id, exc)
+        return None
+
+
+def get_compaction_diff(agent_name: str, event_id: int) -> dict | None:
+    """Before/after message-level view for the dashboard diff panel.
+
+    Dispositions come from the stored plan (kept / summarized /
+    dropped), so the UI shows exactly what the applied plan did — not a
+    re-derivation that could disagree with it.
+    """
+    db_path = _get_db_path()
+    if not db_path:
+        return None
+    try:
+        conn = sqlite3.connect(db_path, timeout=10)
+        _ensure_compaction_table(conn)
+        row = conn.execute(
+            "SELECT raw_snapshot_id, working_context_json, plan_json, status "
+            "FROM context_compaction_events WHERE id = ? AND agent_name = ?",
+            (event_id, agent_name),
+        ).fetchone()
+        conn.close()
+        if not row or row[3] != "completed" or not row[1]:
+            return None
+        raw_snapshot_id, working_json, plan_json, _status = row
+
+        plan = json.loads(plan_json) if plan_json else {}
+        dropped = set(plan.get("delete_from_working_context") or [])
+        truncated = {e.get("index") for e in (plan.get("summarize") or [])}
+
+        from services.context_compaction import SUMMARY_MARKER
+
+        def _preview(parsed_msg: dict) -> dict:
+            content = parsed_msg.get("content") or ""
+            return {
+                "role": parsed_msg.get("role"),
+                "preview": content[:200],
+                "has_tool_calls": parsed_msg.get("has_tool_calls", False),
+                "has_tool_results": parsed_msg.get("has_tool_results", False),
+            }
+
+        before_msgs = get_context_messages(raw_snapshot_id) or []
+        before = []
+        for idx, m in enumerate(before_msgs):
+            entry = _preview(m)
+            entry["disposition"] = (
+                "dropped" if idx in dropped
+                else "truncated" if idx in truncated
+                else "kept"
+            )
+            before.append(entry)
+
+        from fast_agent.mcp.prompt_serialization import from_json
+
+        after = []
+        for msg in from_json(working_json):
+            text_parts = [
+                getattr(b, "text", "") for b in (getattr(msg, "content", None) or [])
+                if getattr(b, "text", None)
+            ]
+            content = "\n".join(text_parts)
+            after.append({
+                "role": str(getattr(msg, "role", "")),
+                "preview": content[:200],
+                "has_tool_calls": bool(getattr(msg, "tool_calls", None)),
+                "has_tool_results": bool(getattr(msg, "tool_results", None)),
+                "disposition": "summary" if content.startswith(SUMMARY_MARKER) else "kept",
+            })
+        return {"before": before, "after": after}
+    except Exception as exc:
+        logger.error("[COMPACT] Diff build failed: #%d — %s", event_id, exc, exc_info=True)
+        return None
+
+
+def load_latest_context_json_any(
+    agent_name: str,
+    *,
+    run_id: str | None = None,
+    session_id: str | None = None,
+) -> str | None:
+    """Newest context across BOTH raw snapshots and completed compaction
+    working snapshots — by created_at.
+
+    Why not "prefer working, fallback raw" (the spec's wording): raw
+    snapshots keep being written on every chat_complete AFTER a
+    compaction. An older working snapshot must never shadow a newer raw
+    one — that would resume the agent into the past and silently drop
+    the turns since. Newest-wins is the only rule that can't lose data.
+    """
+    db_path = _get_db_path()
+    if not db_path:
+        return None
+    try:
+        conn = sqlite3.connect(db_path, timeout=10)
+        _ensure_table(conn)
+        _ensure_compaction_table(conn)
+
+        raw_q = (
+            "SELECT context_json, created_at FROM agent_context_snapshots "
+            "WHERE agent_name = ?"
+        )
+        raw_params: list[Any] = [agent_name]
+        if run_id:
+            raw_q += " AND run_id = ?"
+            raw_params.append(run_id)
+        if session_id:
+            raw_q += " AND session_id = ?"
+            raw_params.append(session_id)
+        raw_q += " ORDER BY created_at DESC LIMIT 1"
+        raw_row = conn.execute(raw_q, raw_params).fetchone()
+
+        work_q = (
+            "SELECT working_context_json, created_at FROM context_compaction_events "
+            "WHERE agent_name = ? AND status = 'completed' "
+            "AND working_context_json IS NOT NULL"
+        )
+        work_params: list[Any] = [agent_name]
+        if run_id:
+            work_q += " AND run_id = ?"
+            work_params.append(run_id)
+        if session_id:
+            work_q += " AND session_id = ?"
+            work_params.append(session_id)
+        work_q += " ORDER BY created_at DESC LIMIT 1"
+        work_row = conn.execute(work_q, work_params).fetchone()
+        conn.close()
+
+        candidates = [r for r in (raw_row, work_row) if r]
+        if not candidates:
+            logger.info("[CONTEXT] No snapshot (any) for %s — agent starts fresh", agent_name)
+            return None
+        newest = max(candidates, key=lambda r: r[1])
+        source = "working" if newest is work_row else "raw"
+        logger.info(
+            "[CONTEXT] Loaded latest-any for %s: source=%s (raw=%s, working=%s)",
+            agent_name, source,
+            raw_row[1] if raw_row else None, work_row[1] if work_row else None,
+        )
+        return newest[0]
+    except Exception as exc:
+        logger.error("[CONTEXT] Load latest-any failed: %s — %s", agent_name, exc, exc_info=True)
+        return None
+
+
 def delete_agent_snapshots(agent_name: str) -> int:
     """Delete all context snapshots for a given agent.
 
@@ -496,12 +818,19 @@ def delete_agent_snapshots(agent_name: str) -> int:
     try:
         conn = sqlite3.connect(db_path, timeout=10)
         _ensure_table(conn)
+        _ensure_compaction_table(conn)
 
         cursor = conn.execute(
             "DELETE FROM agent_context_snapshots WHERE agent_name = ?",
             (agent_name,),
         )
         deleted = cursor.rowcount
+        # Compaction events reference the deleted snapshots — drop them in
+        # the same pass so the versions UI never shows orphaned rows.
+        conn.execute(
+            "DELETE FROM context_compaction_events WHERE agent_name = ?",
+            (agent_name,),
+        )
         conn.commit()
         conn.close()
 

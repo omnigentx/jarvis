@@ -267,10 +267,13 @@ def _log_template_drift(
 
 
 def _load_context_from_db(agent_name: str) -> str | None:
-    """Load latest context snapshot as raw JSON string from DB."""
+    """Load the NEWEST context as raw JSON — across both raw snapshots
+    and compaction working snapshots (newest-wins, see
+    load_latest_context_json_any for why "prefer working" would lose
+    turns recorded after a compaction)."""
     try:
-        from services.context_persistence import load_latest_context_json
-        return load_latest_context_json(agent_name)
+        from services.context_persistence import load_latest_context_json_any
+        return load_latest_context_json_any(agent_name)
     except Exception as exc:
         logger.error(
             "[INJECT-RESUME] Failed to load context for %s: %s",

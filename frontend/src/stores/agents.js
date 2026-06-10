@@ -338,6 +338,42 @@ export const useAgentsStore = defineStore('agents', () => {
         break
       }
 
+      case 'context_compaction_started':
+        // Status untouched — compaction is a background maintenance step,
+        // not an agent state transition (the agent stays running).
+        upsertAgent(agent_name, {
+          compaction: { inProgress: true, last: agents.value.get(agent_name)?.compaction?.last || null },
+        })
+        break
+
+      case 'context_compaction_completed':
+        upsertAgent(agent_name, {
+          compaction: {
+            inProgress: false,
+            last: {
+              status: 'completed',
+              savedTokens: event.data?.saved_tokens || 0,
+              reductionRatio: event.data?.reduction_ratio || 0,
+              eventId: event.data?.event_id ?? null,
+              timestamp: event.timestamp,
+            },
+          },
+        })
+        break
+
+      case 'context_compaction_failed':
+        upsertAgent(agent_name, {
+          compaction: {
+            inProgress: false,
+            last: {
+              status: 'failed',
+              error: event.data?.error || 'unknown error',
+              timestamp: event.timestamp,
+            },
+          },
+        })
+        break
+
       default:
         // Forward approval events to approvals store
         if (event_type.startsWith('approval_')) {

@@ -20,7 +20,7 @@ const route = useRoute()
 const router = useRouter()
 const store = useAgentsStore()
 const agentDetail = ref(null)
-const validTabs = ['overview', 'skills', 'servers', 'instruction', 'context', 'activity']
+const validTabs = ['overview', 'skills', 'servers', 'instruction', 'context', 'versions', 'activity']
 const initialTab = validTabs.includes(route.query.tab) ? route.query.tab : 'overview'
 const activeTab = ref(initialTab)
 const isLoading = ref(true)
@@ -97,6 +97,7 @@ const tabs = [
   { id: 'servers', label: 'MCP Servers' },
   { id: 'instruction', label: 'Instruction' },
   { id: 'context', label: 'Context Window' },
+  { id: 'versions', label: 'Context Versions' },
   { id: 'activity', label: 'History' },
 ]
 
@@ -184,7 +185,78 @@ async function fetchTimeline() {
 watch(activeTab, (tab) => {
   if (tab === 'activity') fetchTimeline()
   if (tab === 'context') fetchContextSnapshots()
+  if (tab === 'versions') fetchContextVersions()
 })
+
+// ── Context Versions (compaction timeline) ──
+const contextVersions = ref([])
+const versionsLoading = ref(false)
+const versionsFetched = ref(false)
+const versionDetails = reactive({}) // event_id → detail payload (summary/plan)
+const versionDiffs = reactive({})   // event_id → diff payload
+const expandedVersionId = ref(null)
+const versionPanel = ref('summary') // 'summary' | 'diff'
+
+async function fetchContextVersions({ force = false } = {}) {
+  if ((versionsFetched.value && !force) || versionsLoading.value) return
+  versionsLoading.value = true
+  try {
+    // No explicit limit — the backend applies the user's
+    // snapshot_versions_visible setting as the default.
+    const data = await apiFetch(`/api/agents/${agentName.value}/context/versions`)
+    contextVersions.value = data.versions || []
+    versionsFetched.value = true
+  } catch (e) {
+    console.error('Failed to load context versions:', e)
+  } finally {
+    versionsLoading.value = false
+  }
+}
+
+// Live refresh: when a compaction completes while the user is on the
+// versions tab, the SSE event flips liveAgent.compaction — refetch so the
+// new version appears without a manual reload.
+watch(
+  () => liveAgent.value?.compaction?.last?.timestamp,
+  (ts, old) => {
+    if (ts && ts !== old && activeTab.value === 'versions') {
+      fetchContextVersions({ force: true })
+    }
+  },
+)
+
+async function toggleVersion(version, panel = 'summary') {
+  if (expandedVersionId.value === version.id && versionPanel.value === panel) {
+    expandedVersionId.value = null
+    return
+  }
+  expandedVersionId.value = version.id
+  versionPanel.value = panel
+  if (panel === 'summary' && !versionDetails[version.id]) {
+    try {
+      versionDetails[version.id] = await apiFetch(
+        `/api/agents/${agentName.value}/context/versions/${version.id}`,
+      )
+    } catch (e) {
+      console.error('Failed to load version detail:', e)
+      versionDetails[version.id] = { error: true }
+    }
+  }
+  if (panel === 'diff' && !versionDiffs[version.id]) {
+    try {
+      versionDiffs[version.id] = await apiFetch(
+        `/api/agents/${agentName.value}/context/versions/${version.id}/diff`,
+      )
+    } catch (e) {
+      console.error('Failed to load version diff:', e)
+      versionDiffs[version.id] = { error: true }
+    }
+  }
+}
+
+function savingsPct(v) {
+  return Math.round((v.reduction_ratio || 0) * 100)
+}
 
 // Fetch context snapshots from backend
 async function fetchContextSnapshots() {
@@ -1083,6 +1155,146 @@ function historyBadgeLabel(type) {
                       content-type="markdown"
                       :enable-mermaid="expandedMessages.has(idx)"
                     />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== CONTEXT VERSIONS TAB (compaction timeline) ===== -->
+      <div v-else-if="activeTab === 'versions'" class="animate-fade-in">
+        <!-- Live banner while a compaction is running -->
+        <div v-if="liveAgent?.compaction?.inProgress" class="version-live-banner">
+          <span class="version-live-dot" />
+          Compacting context…
+        </div>
+
+        <!-- Loading -->
+        <div v-if="versionsLoading && !contextVersions.length" class="loading-state">
+          <div class="loading-text">Loading compaction versions...</div>
+        </div>
+
+        <!-- Empty -->
+        <div v-else-if="!contextVersions.length" class="empty-state">
+          No context compactions yet — versions appear here when the agent's
+          context is automatically compacted (see Settings → Context Compaction)
+        </div>
+
+        <!-- Version timeline -->
+        <div v-else class="context-list">
+          <div
+            v-for="v in contextVersions"
+            :key="v.id"
+            class="context-card"
+            :class="{ 'context-card-expanded': expandedVersionId === v.id }"
+          >
+            <div class="context-header" @click="toggleVersion(v, 'summary')">
+              <div class="context-header-left">
+                <span
+                  class="version-status"
+                  :class="v.status === 'completed' ? 'version-status-ok' : 'version-status-fail'"
+                >
+                  {{ v.status === 'completed' ? '✓ Compacted' : '✕ Failed' }}
+                </span>
+                <span class="context-time">{{ formatDate(v.created_at) }}</span>
+                <span class="version-trigger">{{ v.trigger }}</span>
+              </div>
+              <div class="context-stats">
+                <template v-if="v.status === 'completed'">
+                  <span class="context-stat" title="messages before → after">
+                    💬 {{ v.message_count_before }} → {{ v.message_count_after }}
+                  </span>
+                  <span class="context-stat" title="estimated tokens before → after">
+                    🧮 {{ formatTokens(v.estimated_tokens_before) }} → {{ formatTokens(v.estimated_tokens_after) }}
+                  </span>
+                  <span class="version-saved">
+                    −{{ formatTokens(v.saved_tokens) }} ({{ savingsPct(v) }}%)
+                  </span>
+                </template>
+                <span v-else class="version-error-preview">{{ v.error_message }}</span>
+                <span class="expand-icon">{{ expandedVersionId === v.id ? '▼' : '▶' }}</span>
+              </div>
+            </div>
+
+            <!-- Expanded panel -->
+            <div v-if="expandedVersionId === v.id" class="version-detail">
+              <div class="version-detail-toolbar">
+                <button
+                  class="version-tab-btn"
+                  :class="{ active: versionPanel === 'summary' }"
+                  @click.stop="toggleVersion(v, 'summary')"
+                >Summary</button>
+                <button
+                  v-if="v.status === 'completed'"
+                  class="version-tab-btn"
+                  :class="{ active: versionPanel === 'diff' }"
+                  @click.stop="toggleVersion(v, 'diff')"
+                >Before / After</button>
+                <span class="version-meta">
+                  confidence {{ Math.round((v.confidence || 0) * 100) }}%
+                  <template v-if="v.raw_snapshot_id"> · raw snapshot #{{ v.raw_snapshot_id }}</template>
+                </span>
+              </div>
+
+              <!-- Summary panel -->
+              <div v-if="versionPanel === 'summary'">
+                <div v-if="!versionDetails[v.id]" class="loading-text" style="padding: 16px;">
+                  Loading summary...
+                </div>
+                <div v-else-if="versionDetails[v.id].error" class="empty-state" style="padding: 16px;">
+                  Failed to load detail
+                </div>
+                <template v-else>
+                  <div
+                    v-if="versionDetails[v.id].plan?.risks?.length"
+                    class="version-risks"
+                  >
+                    ⚠ {{ versionDetails[v.id].plan.risks.join(' · ') }}
+                  </div>
+                  <pre class="version-summary-pre">{{ versionDetails[v.id].summary_message || versionDetails[v.id].error_message }}</pre>
+                </template>
+              </div>
+
+              <!-- Diff panel -->
+              <div v-else-if="versionPanel === 'diff'">
+                <div v-if="!versionDiffs[v.id]" class="loading-text" style="padding: 16px;">
+                  Loading diff...
+                </div>
+                <div v-else-if="versionDiffs[v.id].error" class="empty-state" style="padding: 16px;">
+                  Diff unavailable
+                </div>
+                <div v-else class="version-diff">
+                  <div class="version-diff-col">
+                    <div class="version-diff-title">
+                      Before ({{ versionDiffs[v.id].before.length }} msgs)
+                    </div>
+                    <div
+                      v-for="(m, i) in versionDiffs[v.id].before"
+                      :key="'b' + i"
+                      class="version-diff-msg"
+                      :class="'diff-' + m.disposition"
+                    >
+                      <span class="version-diff-role">{{ m.role }}</span>
+                      <span class="version-diff-disposition">{{ m.disposition }}</span>
+                      <span class="version-diff-preview">{{ m.preview }}</span>
+                    </div>
+                  </div>
+                  <div class="version-diff-col">
+                    <div class="version-diff-title">
+                      After ({{ versionDiffs[v.id].after.length }} msgs)
+                    </div>
+                    <div
+                      v-for="(m, i) in versionDiffs[v.id].after"
+                      :key="'a' + i"
+                      class="version-diff-msg"
+                      :class="'diff-' + m.disposition"
+                    >
+                      <span class="version-diff-role">{{ m.role }}</span>
+                      <span class="version-diff-disposition">{{ m.disposition }}</span>
+                      <span class="version-diff-preview">{{ m.preview }}</span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2410,6 +2622,156 @@ function historyBadgeLabel(type) {
 }
 .msg-expanded {
   border-left: 2px solid var(--color-accent, #3b82f6);
+}
+
+/* ── Context Versions (compaction timeline) ── */
+.version-live-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  border-radius: 8px;
+  background: var(--warning-bg, rgba(245, 158, 11, 0.1));
+  color: var(--warning, #f59e0b);
+  font-size: 13px;
+}
+.version-live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--warning, #f59e0b);
+  /* reuses the existing `pulse` keyframes defined above (context section) */
+  animation: pulse 1.2s ease-in-out infinite;
+}
+.version-status {
+  font-size: 12px;
+  font-weight: 600;
+}
+.version-status-ok { color: var(--success, #10b981); }
+.version-status-fail { color: var(--danger, #ef4444); }
+.version-trigger {
+  font-size: 11px;
+  color: var(--text-muted, #7b8094);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.06));
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+.version-saved {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--success, #10b981);
+  background: var(--success-bg, rgba(16, 185, 129, 0.1));
+  border-radius: 4px;
+  padding: 2px 8px;
+}
+.version-error-preview {
+  font-size: 12px;
+  color: var(--danger, #ef4444);
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.version-detail {
+  border-top: 1px solid var(--border, rgba(255, 255, 255, 0.06));
+}
+.version-detail-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+}
+.version-tab-btn {
+  background: var(--bg-3, #161922);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.06));
+  color: var(--text-dim, #b6bac6);
+  font-size: 12px;
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.version-tab-btn.active {
+  color: var(--text, #f1f2f6);
+  border-color: var(--primary, #3b82f6);
+}
+.version-meta {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-muted, #7b8094);
+}
+.version-risks {
+  margin: 0 14px 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--warning-bg, rgba(245, 158, 11, 0.1));
+  color: var(--warning, #f59e0b);
+  font-size: 12px;
+}
+.version-summary-pre {
+  margin: 0 14px 14px;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--bg-0, #07080b);
+  color: var(--text-dim, #b6bac6);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 360px;
+  overflow-y: auto;
+}
+.version-diff {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  padding: 0 14px 14px;
+}
+.version-diff-col {
+  min-width: 0;
+}
+.version-diff-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim, #b6bac6);
+  margin-bottom: 6px;
+}
+.version-diff-msg {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  font-size: 11px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  margin-bottom: 2px;
+  background: var(--bg-2, #11141b);
+}
+.version-diff-msg.diff-dropped { opacity: 0.45; text-decoration: line-through; }
+.version-diff-msg.diff-summary { border-left: 2px solid var(--primary, #3b82f6); }
+.version-diff-msg.diff-truncated { border-left: 2px solid var(--warning, #f59e0b); }
+.version-diff-role {
+  flex: none;
+  font-weight: 600;
+  color: var(--text-muted, #7b8094);
+  text-transform: uppercase;
+  font-size: 10px;
+}
+.version-diff-disposition {
+  flex: none;
+  font-size: 10px;
+  color: var(--text-muted, #7b8094);
+}
+.version-diff-preview {
+  color: var(--text-dim, #b6bac6);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 720px) {
+  .version-diff {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* ── Mobile Responsive ── */

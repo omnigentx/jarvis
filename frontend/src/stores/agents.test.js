@@ -223,3 +223,66 @@ for (const ev of ['thinking', 'tool_call', 'tool_result', 'started', 'resumed'])
     )
   })
 }
+
+// ── Context compaction events ──
+// SSE lifecycle from services/context_compaction.py — the store tracks a
+// per-agent ``compaction`` field; status is NEVER touched (compaction is
+// background maintenance, not an agent state transition).
+
+test('context_compaction_started sets inProgress without touching status', () => {
+  const store = useAgentsStore()
+  store.processEvent({
+    agent_name: 'Jarvis', event_type: 'started', timestamp: 1, message: 'go',
+  })
+  store.processEvent({
+    agent_name: 'Jarvis', event_type: 'context_compaction_started',
+    timestamp: 2, data: { estimated_tokens_before: 90000 },
+  })
+  const agent = store.agents.get('Jarvis')
+  assert.equal(agent.compaction.inProgress, true)
+  assert.equal(agent.status, 'running', 'compaction must not change status')
+})
+
+test('context_compaction_completed records savings and clears inProgress', () => {
+  const store = useAgentsStore()
+  store.processEvent({
+    agent_name: 'Jarvis', event_type: 'context_compaction_started',
+    timestamp: 1, data: {},
+  })
+  store.processEvent({
+    agent_name: 'Jarvis', event_type: 'context_compaction_completed',
+    timestamp: 2,
+    data: { saved_tokens: 5000, reduction_ratio: 0.4, event_id: 7 },
+  })
+  const c = store.agents.get('Jarvis').compaction
+  assert.equal(c.inProgress, false)
+  assert.equal(c.last.status, 'completed')
+  assert.equal(c.last.savedTokens, 5000)
+  assert.equal(c.last.reductionRatio, 0.4)
+  assert.equal(c.last.eventId, 7)
+})
+
+test('context_compaction_failed records error and clears inProgress', () => {
+  const store = useAgentsStore()
+  store.processEvent({
+    agent_name: 'Jarvis', event_type: 'context_compaction_failed',
+    timestamp: 3, data: { error: 'plan rejected: savings below minimum' },
+  })
+  const c = store.agents.get('Jarvis').compaction
+  assert.equal(c.inProgress, false)
+  assert.equal(c.last.status, 'failed')
+  assert.match(c.last.error, /savings below minimum/)
+})
+
+test('compaction events do not clobber paused status', () => {
+  const store = useAgentsStore()
+  store.processEvent({
+    agent_name: 'QE', event_type: 'agent_paused', timestamp: 1,
+    data: { status: 'paused' },
+  })
+  store.processEvent({
+    agent_name: 'QE', event_type: 'context_compaction_completed',
+    timestamp: 2, data: { saved_tokens: 100 },
+  })
+  assert.equal(store.agents.get('QE').status, 'paused')
+})

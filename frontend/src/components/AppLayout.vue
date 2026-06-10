@@ -49,7 +49,39 @@ useAudioPlayer()
 const isAudioPlaying = computed(() => audioPlayerStore.isMiniPlayerVisible)
 
 const store = useAgentsStore()
-const { status, reconnect } = useRealtimeStream()
+const { status, reconnect } = useRealtimeStream({
+  // Context-compaction lifecycle → non-blocking toasts. The store case
+  // in agents.js owns the per-agent state; this only surfaces visible
+  // feedback so the user knows compaction happened (and saved tokens)
+  // without being interrupted mid-chat.
+  onEvent(event) {
+    if (event.event_type === 'context_compaction_completed') {
+      const saved = event.data?.saved_tokens || 0
+      const pct = Math.round((event.data?.reduction_ratio || 0) * 100)
+      toast.success(
+        lang.value === 'vi'
+          ? `Đã nén ngữ cảnh: ${event.agent_name}`
+          : `Context compacted: ${event.agent_name}`,
+        {
+          description: lang.value === 'vi'
+            ? `Tiết kiệm ~${saved.toLocaleString()} tokens (${pct}%)`
+            : `Saved ~${saved.toLocaleString()} tokens (${pct}%)`,
+        },
+      )
+    } else if (event.event_type === 'context_compaction_failed') {
+      toast.warning(
+        lang.value === 'vi'
+          ? `Nén ngữ cảnh thất bại: ${event.agent_name}`
+          : `Context compaction failed: ${event.agent_name}`,
+        {
+          description: lang.value === 'vi'
+            ? 'Agent tiếp tục với ngữ cảnh gốc. Xem tab Context Versions để biết chi tiết.'
+            : 'Agent continues on the raw context. See the Context Versions tab for details.',
+        },
+      )
+    }
+  },
+})
 const route = useRoute()
 const router = useRouter()
 const { isMobile } = useBreakpoint()

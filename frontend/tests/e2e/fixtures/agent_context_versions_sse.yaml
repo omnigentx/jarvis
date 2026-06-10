@@ -1,0 +1,39 @@
+# SSE overlay for the compaction lifecycle — merge AFTER
+# agent_context_versions.yaml so this activity-stream override wins.
+#
+# Harness note: mock SSE bodies are delivered atomically (no inter-event
+# timing), so a single fixture can't show the transient "started" banner
+# AND the completion toast in one flow. This overlay carries the full
+# started→completed sequence for the toast assertion; the banner has its
+# own overlay (.._sse_started.yaml) where the stream ends mid-compaction.
+
+backend_source:
+  - "backend/services/context_compaction.py::_emit_status"
+  - "frontend/src/components/AppLayout.vue::compaction toasts"
+  - "frontend/src/stores/agents.js::context_compaction_* cases"
+
+responses: {}
+
+sse_streams:
+  "/api/agents/activity-stream":
+    - { event: "ping", data: {} }
+    - data:
+        agent_name: "Jarvis"
+        event_type: "context_compaction_started"
+        run_id: "run-abc"
+        timestamp: 1765000100
+        data: { estimated_tokens_before: 10000, message_count: 20 }
+    - data:
+        agent_name: "Jarvis"
+        event_type: "context_compaction_completed"
+        run_id: "run-abc"
+        timestamp: 1765000101
+        data:
+          event_id: 42
+          raw_snapshot_id: 7
+          estimated_tokens_before: 10000
+          estimated_tokens_after: 4000
+          saved_tokens: 6000
+          reduction_ratio: 0.6
+          message_count_before: 20
+          message_count_after: 8
