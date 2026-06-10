@@ -303,8 +303,11 @@ export const useAuthStore = defineStore('auth', {
       this.expiresAt = expiresIn ? Math.floor(Date.now() / 1000) + expiresIn : null
       _scheduleRefresh(this, expiresIn)
       if (wasUnauth) {
-        emit(EVENTS.RESTORED, { from: prevStatus })
+        // Broadcast BEFORE the local emit: App.vue's RESTORED listener may
+        // call window.location.reload(), and sibling-tab notification must
+        // not depend on reload() letting the current task finish.
         this._broadcast(expiresIn)
+        emit(EVENTS.RESTORED, { from: prevStatus })
       }
     },
 

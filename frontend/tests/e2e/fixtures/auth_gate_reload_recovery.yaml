@@ -14,8 +14,8 @@
 backend_source:
   - "backend/routes/auth.py::login, whoami"
   - "backend/routes/token_usage.py::get_token_metrics"
-  - "dashboard/src/App.vue::RESTORED reload listener"
-  - "dashboard/src/views/TokenUsage.vue::fetchMetrics"
+  - "frontend/src/App.vue::RESTORED reload listener"
+  - "frontend/src/views/TokenUsage.vue::fetchMetrics"
 
 responses:
   "GET /api/auth/whoami":

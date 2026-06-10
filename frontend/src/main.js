@@ -14,4 +14,9 @@ app.use(router)
 // resolves makes meta read as {} for one tick — the probe then runs on
 // /setup, flips the auth store to 'unauthenticated' mid-wizard, and the
 // AppLayout chrome (with its SSE streams) flashes over the wizard.
-router.isReady().then(() => app.mount('#app'))
+// isReady() rejects if a navigation guard throws — degrade to mounting
+// anyway (router lands on the resolved-or-error state) instead of a
+// blank page with no surfaced error.
+router.isReady()
+  .catch((err) => console.error('[main] initial route failed:', err))
+  .then(() => app.mount('#app'))
