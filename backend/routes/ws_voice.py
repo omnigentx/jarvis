@@ -61,7 +61,7 @@ from services.sse_progress import (
     merge_hooks,
     progress_manager,
 )
-from services.webrtc_voice import WebRtcVoiceSession, parse_ice_servers
+from services.webrtc_voice import WebRtcVoiceSession, get_ice_servers
 
 
 def _chunk_rms_peak(pcm_chunk: bytes) -> tuple[int, int]:
@@ -83,12 +83,15 @@ router = APIRouter(tags=["voice-ws"])
 def voice_ice_config() -> dict:
     """ICE servers (STUN/TURN) for the browser's RTCPeerConnection.
 
-    Sourced from ``JARVIS_WEBRTC_ICE`` so a TURN deployment (needed for
-    symmetric-NAT / iPhone-on-cellular) is an env change, not a code change —
-    the frontend fetches this before negotiating. Not secret (TURN creds here
-    are the short-lived/shared kind); behind the same auth as the app.
+    Sourced from ``get_ice_servers`` — Cloudflare-minted TURN creds when
+    ``JARVIS_CF_TURN_KEY_ID``/``JARVIS_CF_TURN_API_TOKEN`` are set (needed for
+    symmetric-NAT / iPhone-on-cellular; this deployment has no public UDP),
+    else ``JARVIS_WEBRTC_ICE``, else public STUN. Not secret (TURN creds here
+    are the short-lived kind); behind the same auth as the app. Sync def on
+    purpose: FastAPI runs it in the threadpool, so a cold-cache CF mint
+    (blocking HTTPS) never stalls the event loop.
     """
-    return {"iceServers": parse_ice_servers()}
+    return {"iceServers": get_ice_servers()}
 
 
 # ─── Auth helpers (cookie / Bearer / query — with CSWSH defence) ────────────
@@ -943,7 +946,11 @@ async def voice_ws(ws: WebSocket) -> None:
                             if stt_service is not None:
                                 stt_service.feed_audio(pcm)
 
-                        webrtc_session = WebRtcVoiceSession(_feed_webrtc)
+                        # Pre-fetch ICE off-loop: a cold Cloudflare TURN mint
+                        # is a blocking HTTPS call (≤10 s) that must not stall
+                        # every other socket frame.
+                        ice_cfg = await asyncio.to_thread(get_ice_servers)
+                        webrtc_session = WebRtcVoiceSession(_feed_webrtc, ice_servers=ice_cfg)
                         answer = await webrtc_session.handle_offer(
                             sdp, payload.get("sdp_type") or "offer"
                         )

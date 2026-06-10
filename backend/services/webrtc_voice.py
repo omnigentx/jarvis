@@ -29,6 +29,7 @@ import asyncio
 import fractions
 import logging
 import os
+import threading
 import time
 from typing import Callable, Optional
 
@@ -79,6 +80,92 @@ def parse_ice_servers() -> list[dict]:
         else:
             servers.append({"urls": entry})
     return servers
+
+
+# ─── Cloudflare Realtime TURN ────────────────────────────────────────────────
+# The deployment has NO public UDP inbound (web traffic rides a cloudflared
+# tunnel; the host sits behind home NAT + docker bridge NAT), so WebRTC from
+# any network outside the tailnet (e.g. iPhone on 5G CGNAT) has no ICE path
+# unless a TURN relay brokers it. Cloudflare Realtime TURN issues SHORT-LIVED
+# credentials minted on demand from a long-term key — the key stays server-side
+# (env), the minted creds are what /api/voice/ice hands to the browser.
+#
+# Configure with:
+#   JARVIS_CF_TURN_KEY_ID    — TURN key id (Cloudflare dashboard → Realtime → TURN)
+#   JARVIS_CF_TURN_API_TOKEN — the key's API token (a secret; never sent to clients)
+# When unset, get_ice_servers() falls back to JARVIS_WEBRTC_ICE / default STUN.
+_CF_TURN_MINT_URL = (
+    "https://rtc.live.cloudflare.com/v1/turn/keys/{key_id}/credentials/generate-ice-servers"
+)
+_CF_TURN_TTL = 86400  # 24 h — far longer than any voice session
+# Refresh at half-life so creds handed to a NEW session always have ≥12 h of
+# validity left; keep serving a stale-but-valid batch (up to TTL minus a 10-min
+# safety margin) if a refresh attempt fails, so a transient CF API blip doesn't
+# take voice down with it.
+_CF_REFRESH_AFTER = _CF_TURN_TTL / 2
+_CF_HARD_EXPIRY = _CF_TURN_TTL - 600
+
+_cf_lock = threading.Lock()
+_cf_cache: dict = {"servers": None, "minted_at": 0.0}
+
+
+def _cloudflare_ice_servers() -> Optional[list[dict]]:
+    """Mint (or serve cached) Cloudflare TURN credentials. None = not configured
+    or mint failed with no valid cached batch — caller falls back to env ICE."""
+    key_id = os.environ.get("JARVIS_CF_TURN_KEY_ID", "").strip()
+    token = os.environ.get("JARVIS_CF_TURN_API_TOKEN", "").strip()
+    if not key_id or not token:
+        return None
+
+    with _cf_lock:
+        age = time.monotonic() - _cf_cache["minted_at"]
+        if _cf_cache["servers"] is not None and age < _CF_REFRESH_AFTER:
+            return _cf_cache["servers"]
+
+        try:
+            import httpx
+
+            resp = httpx.post(
+                _CF_TURN_MINT_URL.format(key_id=key_id),
+                headers={"Authorization": f"Bearer {token}"},
+                json={"ttl": _CF_TURN_TTL},
+                timeout=10.0,
+            )
+            resp.raise_for_status()
+            servers = resp.json()["iceServers"]
+            if not isinstance(servers, list) or not servers:
+                raise ValueError(f"unexpected iceServers payload: {servers!r}")
+            _cf_cache["servers"] = servers
+            _cf_cache["minted_at"] = time.monotonic()
+            logger.info(
+                "[webrtc] Cloudflare TURN credentials minted (ttl=%ss, %d server entries)",
+                _CF_TURN_TTL, len(servers),
+            )
+            return servers
+        except Exception:
+            logger.exception("[webrtc] Cloudflare TURN credential mint FAILED")
+            if _cf_cache["servers"] is not None and age < _CF_HARD_EXPIRY:
+                logger.warning(
+                    "[webrtc] serving stale-but-valid TURN credentials (age %.0fs)", age
+                )
+                return _cf_cache["servers"]
+            logger.error(
+                "[webrtc] no valid TURN credentials — falling back to %s; "
+                "voice WILL fail from CGNAT/cellular networks until the CF API recovers",
+                os.environ.get("JARVIS_WEBRTC_ICE", _DEFAULT_STUN),
+            )
+            return None
+
+
+def get_ice_servers() -> list[dict]:
+    """Browser-shaped iceServers — the ONE source for both /api/voice/ice and
+    the server's own RTCPeerConnection (aiortc), so the two ends always agree.
+
+    Order of precedence: Cloudflare-minted TURN creds → JARVIS_WEBRTC_ICE →
+    default public STUN. May block on an HTTPS call (≤10 s) when the CF cache
+    is cold — event-loop callers must wrap in ``asyncio.to_thread``.
+    """
+    return _cloudflare_ice_servers() or parse_ice_servers()
 
 STT_RATE = 16000      # feed_audio() input rate (mono s16)
 TTS_RATE = 24000      # RealtimeTTS / Edge PCM rate (mono s16)
@@ -211,19 +298,23 @@ class WebRtcVoiceSession:
         feed_audio: FeedAudio,
         *,
         on_connection_lost: Optional[Callable[[], None]] = None,
-        ice_servers: Optional[list[str]] = None,
+        ice_servers: Optional[list] = None,
     ):
         self._feed_audio = feed_audio
         self._on_connection_lost = on_connection_lost
-        # Default to ICE from env (prod NAT traversal, incl. TURN creds); tests
-        # pass ice_servers=[] for a fast host-only localhost loopback.
-        if ice_servers is not None:
-            ice = [RTCIceServer(urls=u) for u in ice_servers]
-        else:
-            ice = [
-                RTCIceServer(urls=s["urls"], username=s.get("username"), credential=s.get("credential"))
-                for s in parse_ice_servers()
-            ]
+        # ``ice_servers`` entries may be plain url strings OR browser-shaped
+        # dicts ({urls, username?, credential?}) — the ws_voice handler passes
+        # the latter, pre-fetched off-loop via ``asyncio.to_thread(get_ice_servers)``
+        # because the Cloudflare mint can block. Tests pass ice_servers=[] for a
+        # fast host-only localhost loopback. The default (None) self-serves from
+        # get_ice_servers() as a safety net — blocking, so prefer pre-fetching.
+        if ice_servers is None:
+            ice_servers = get_ice_servers()
+        ice = [
+            RTCIceServer(urls=s["urls"], username=s.get("username"), credential=s.get("credential"))
+            if isinstance(s, dict) else RTCIceServer(urls=s)
+            for s in ice_servers
+        ]
         self.pc = RTCPeerConnection(configuration=RTCConfiguration(iceServers=ice))
         self.tts_track = TtsAudioTrack()
         self._inbound_task: Optional[asyncio.Task] = None
