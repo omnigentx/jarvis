@@ -1,0 +1,83 @@
+# Reload-after-lockout recovery — the bug this guards against:
+#
+#   AuthGate is an OVERLAY, not a route guard. Deep-linking to a view
+#   while logged out mounts it behind the modal; its onMounted fetch
+#   401s and (pre-fix) was never replayed, so the view stayed broken
+#   after passkey/API-key login until a MANUAL page refresh.
+#
+# The fix (App.vue RESTORED listener, from === 'unauthenticated')
+# reloads the page after a modal login, replaying every mount fetch.
+# Sequenced entries model the auth state flipping server-side:
+#   whoami:  false (boot probe, locked)  → true (post-reload probe)
+#   metrics: 401  (mount fetch, locked)  → 200 (post-reload mount fetch)
+
+backend_source:
+  - "backend/routes/auth.py::login, whoami"
+  - "backend/routes/token_usage.py::get_token_metrics"
+  - "dashboard/src/App.vue::RESTORED reload listener"
+  - "dashboard/src/views/TokenUsage.vue::fetchMetrics"
+
+responses:
+  "GET /api/auth/whoami":
+    - status: 200
+      json: { authenticated: false }
+    - status: 200
+      json: { authenticated: true, expires_in: 3600 }
+
+  "GET /api/auth/passkey/has-any":
+    status: 200
+    json: { has_passkey: false }
+
+  "POST /api/auth/login":
+    status: 200
+    headers:
+      set-cookie: "jarvis_csrf=fixture-csrf-reload; Path=/; SameSite=Lax"
+    json:
+      status: "ok"
+      csrf_token: "fixture-csrf-reload"
+      expires_in: 3600
+
+  "GET /api/metrics/tokens":
+    - status: 401
+      json: { detail: { error: "unauthorized", reason: "invalid_or_missing_credentials" } }
+    - status: 200
+      json:
+        period: "24h"
+        totals:
+          input_tokens: 900000
+          output_tokens: 334500
+          total_tokens: 1234500
+          cached_tokens: 100000
+          reasoning_tokens: 0
+          est_cost: 12.34
+          llm_calls: 42
+        agents:
+          - agent_name: "Jarvis"
+            input_tokens: 900000
+            output_tokens: 334500
+            total_tokens: 1234500
+            cached_tokens: 100000
+            reasoning_tokens: 0
+            est_cost: 12.34
+            llm_calls: 42
+        models:
+          - model: "claude-sonnet-4-6"
+            input_tokens: 900000
+            output_tokens: 334500
+            total_tokens: 1234500
+            cached_tokens: 100000
+            reasoning_tokens: 0
+            est_cost: 12.34
+            llm_calls: 42
+
+  "GET /api/setup/status":
+    status: 200
+    json:
+      steps:
+        - { name: "auth",        completed: true,  skipped: false }
+        - { name: "llm",         completed: true,  skipped: false }
+        - { name: "services",    completed: true,  skipped: false }
+        - { name: "yaml_config", completed: true,  skipped: false }
+        - { name: "verify",      completed: true,  skipped: false }
+      overall_complete: true
+      current_step: "verify"

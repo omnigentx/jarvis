@@ -1,12 +1,11 @@
 # Login flow: user types key → POST /api/auth/login → returns 200 + csrf
 # in body + sets cookies. Whoami then flips to authenticated:true.
 #
-# Two-phase fixture: the FIRST whoami call returns false (boot probe
-# before login); subsequent calls return true. The mock-backend harness
-# doesn't natively support response-by-call-number, so we keep
-# whoami=true and rely on the dashboard's reaction to the login response
-# directly. The store's _setAuthenticated is fired off the login response
-# body (csrf_token + expires_in), not off whoami, so this works.
+# Two-phase whoami (sequence): the FIRST call returns false (boot probe
+# before login, opens the gate); subsequent calls return true. The second
+# phase matters because a successful modal login RELOADS the page
+# (App.vue's RESTORED listener) — the post-reload boot probe must
+# authenticate or the gate would re-open and the test would deadlock.
 
 backend_source:
   - "backend/routes/auth.py::login"
@@ -16,8 +15,10 @@ backend_source:
 
 responses:
   "GET /api/auth/whoami":
-    status: 200
-    json: { authenticated: false }
+    - status: 200
+      json: { authenticated: false }
+    - status: 200
+      json: { authenticated: true, expires_in: 3600 }
 
   "GET /api/auth/passkey/has-any":
     status: 200

@@ -58,6 +58,27 @@ export async function seedCsrfCookie(
 }
 
 /**
+ * A successful modal login (API key or passkey) makes the app reload
+ * itself (App.vue's RESTORED listener, ``from === 'unauthenticated'``) so
+ * every view's mount-time fetch replays with the fresh cookie. The
+ * reload's boot probe re-hits ``/api/auth/whoami`` — waiting for that
+ * response is the deterministic "reload finished" signal.
+ *
+ * Start the wait BEFORE triggering the login click, then await it after:
+ *
+ *     const settled = waitForPostLoginReload(page)
+ *     await page.getByRole('button', { name: /continue/i }).click()
+ *     await settled
+ *
+ * The fixture's whoami entry must be a sequence (``[false, true]``) so
+ * the post-reload probe authenticates instead of re-opening the gate.
+ */
+export async function waitForPostLoginReload(page: Page): Promise<void> {
+  await page.waitForResponse((r) => r.url().includes('/api/auth/whoami'))
+  await page.waitForLoadState()
+}
+
+/**
  * Wipe everything the dashboard stores about auth: localStorage key,
  * session cookie, csrf cookie. Use in beforeEach for tests that simulate
  * a fresh-browser scenario.
