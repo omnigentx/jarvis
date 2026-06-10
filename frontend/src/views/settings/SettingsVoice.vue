@@ -211,6 +211,9 @@ async function preview(scope) {
   previewError.value = ''
   previewing.value = scope
   try {
+    // Shape asymmetry is intentional: chat nests voice/language under
+    // .params ({engine, params: {voice}}), stories is a flat params object
+    // holding voice at top level — both give _voiceLang() the dict with .voice.
     const params = scope === 'chat' ? active.value.tts_chat?.params : active.value.tts_stories
     const body = { text: PREVIEW_TEXT[_voiceLang(params)] || PREVIEW_TEXT.en }
     if (scope === 'chat') {
