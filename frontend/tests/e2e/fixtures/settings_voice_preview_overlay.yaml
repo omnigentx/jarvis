@@ -1,0 +1,13 @@
+# Overlay for settings-voice-preview.spec.ts — adds the TTS preview route
+# on top of settings_voice_soniox.yaml. The spec asserts the REQUEST body
+# (preview text must match the selected voice's language); the response
+# bytes are irrelevant (Audio playback of this stub fails harmlessly).
+
+backend_source:
+  - "backend/routes/voice.py::test_tts"
+  - "dashboard/src/views/settings/SettingsVoice.vue::preview, _voiceLang"
+
+responses:
+  "POST /api/voice/test/tts":
+    status: 200
+    json: { stub: "not real audio" }

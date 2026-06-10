@@ -1,13 +1,13 @@
 """
 Jarvis MCP Server - Xiaozhi Integration
 
-MCP Server expose Jarvis AI capabilities cho Xiaozhi ESP32.
-Sử dụng với mcp_pipe.py để kết nối với Xiaozhi Cloud.
+MCP Server exposing Jarvis AI capabilities to the Xiaozhi ESP32.
+Used together with mcp_pipe.py to connect to Xiaozhi Cloud.
 
 Features:
-- Background task ngay từ đầu để tránh duplicate API calls
-- Chờ tối đa 9s cho kết quả (fit trong 10s timeout của Xiaozhi)
-- Polling mechanism để lấy kết quả nếu chưa xong
+- Background task from the start to avoid duplicate API calls
+- Waits up to 9s for the result (fits within Xiaozhi's 10s timeout)
+- Polling mechanism to fetch the result if not finished yet
 
 Usage:
     python jarvis_mcp_server.py
@@ -39,8 +39,8 @@ if sys.platform == 'win32':
 # Configuration
 JARVIS_API_URL = os.environ.get('JARVIS_API_URL', 'http://localhost:8000')
 JARVIS_API_KEY = os.environ.get('JARVIS_API_KEY', '')
-WAIT_TIMEOUT = 9.0  # Chờ tối đa 9s (fit trong 10s timeout của Xiaozhi)
-API_TIMEOUT = 120.0  # Timeout dài cho Jarvis API (2 phút)
+WAIT_TIMEOUT = 9.0  # Wait up to 9s (fits within Xiaozhi's 10s timeout)
+API_TIMEOUT = 120.0  # Long timeout for the Jarvis API (2 minutes)
 
 # Task storage for background tasks
 # task_id -> {"status": "pending"|"done"|"error", "result": str, "message": str, "future": Future}
@@ -67,8 +67,8 @@ def _extract_audio_url(text: str) -> tuple[str, str | None]:
 
 def call_jarvis_api(message: str) -> tuple[bool, str, str | None]:
     """
-    Call Jarvis API với timeout dài (không giới hạn bởi Xiaozhi timeout)
-    Trả về (success, result, audio_url)
+    Call the Jarvis API with a long timeout (not limited by the Xiaozhi timeout).
+    Returns (success, result, audio_url).
     """
     try:
         headers = {"Content-Type": "application/json"}
@@ -86,7 +86,7 @@ def call_jarvis_api(message: str) -> tuple[bool, str, str | None]:
 
             if response.status_code == 200:
                 data = response.json()
-                result = data.get("response", "Xin lỗi, tôi không thể xử lý yêu cầu này.")
+                result = data.get("response", "Sorry, I could not process this request.")
                 logger.info(f"Jarvis API response: {result[:50]}...")
                 # Get playback URL from API response (absolute URL for device)
                 audio_url = data.get("playback_url")
@@ -114,7 +114,7 @@ def call_jarvis_api(message: str) -> tuple[bool, str, str | None]:
 
 def process_task(task_id: str, message: str):
     """
-    Xử lý task trong background - GỌI JARVIS API MỘT LẦN DUY NHẤT
+    Process the task in the background - CALL THE JARVIS API EXACTLY ONCE
     """
     logger.info(f"Starting task {task_id}: {message[:50]}...")
 
@@ -136,17 +136,17 @@ def process_task(task_id: str, message: str):
 
 def wait_for_task(task_id: str, timeout: float) -> dict | None:
     """
-    Chờ task hoàn thành trong khoảng thời gian timeout.
-    Trả về kết quả nếu task hoàn thành, None nếu còn pending.
+    Wait for the task to finish within the timeout window.
+    Returns the result if the task finished, None if still pending.
     """
-    poll_interval = 0.3  # Check mỗi 0.3s
+    poll_interval = 0.3  # Check every 0.3s
     start_time = time.time()
     
     while time.time() - start_time < timeout:
         with task_lock:
             task = tasks.get(task_id)
             if task is None:
-                return {"status": "not_found", "success": False, "response": "Task không tồn tại"}
+                return {"status": "not_found", "success": False, "response": "Task does not exist"}
             
             if task["status"] == "done":
                 result = task["result"]
@@ -163,64 +163,64 @@ def wait_for_task(task_id: str, timeout: float) -> dict | None:
                 del tasks[task_id]
                 return {"status": "error", "success": False, "response": result}
         
-        # Vẫn pending, chờ thêm
+        # Still pending, keep waiting
         time.sleep(poll_interval)
-    
-    # Timeout mà vẫn pending
+
+    # Timed out while still pending
     return None
 
 
 @mcp.tool()
 def ping() -> dict:
     """
-    Kiểm tra kết nối với Jarvis. Dùng tool này để test connection.
-    Trả về ngay lập tức, không cần chờ.
+    Check the connection to Jarvis. Use this tool to test the connection.
+    Returns immediately, no waiting required.
     """
-    return {"success": True, "response": "Jarvis đã sẵn sàng!"}
+    return {"success": True, "response": "Jarvis is ready!"}
 
 
 @mcp.tool()
 def ask_jarvis(message: str) -> dict:
     """
-    Hỏi Jarvis AI - Trợ lý thông minh đa năng.
-    
-    Jarvis có thể giúp bạn:
-    • Tìm kiếm thông tin, tin tức, thời tiết
-    • Tra cứu tài chính: giá vàng, cổ phiếu, coin
-    • Quản lý lịch Google Calendar, email Gmail
-    • Điều khiển nhà thông minh (robot hút bụi Roborock)
-    • Tìm và phát nhạc YouTube
-    • Đọc truyện, sách nói từ thư viện
-    • Hỗ trợ lập trình, GitHub
-    • Trả lời câu hỏi thông minh với AI
-    
-    QUAN TRỌNG: Nếu kết quả trả về có "task_id", nghĩa là Jarvis đang xử lý.
-    Bạn PHẢI tiếp tục gọi check_task(task_id) cho đến khi nhận được kết quả cuối cùng.
+    Ask Jarvis AI - a versatile smart assistant.
 
-    QUAN TRỌNG: Nếu kết quả có "audio_url", bạn PHẢI gọi self.media.play_url(url=audio_url)
-    để phát audio trên thiết bị. Đây là bắt buộc để phát truyện/nhạc cho người dùng.
+    Jarvis can help you:
+    • Search for information, news, weather
+    • Look up finance: gold prices, stocks, coins
+    • Manage Google Calendar and Gmail
+    • Control smart home devices (Roborock vacuum robot)
+    • Find and play YouTube music
+    • Read stories and audiobooks from the library
+    • Help with programming, GitHub
+    • Answer questions intelligently with AI
+
+    IMPORTANT: If the result contains a "task_id", Jarvis is still processing.
+    You MUST keep calling check_task(task_id) until you receive the final result.
+
+    IMPORTANT: If the result contains an "audio_url", you MUST call self.media.play_url(url=audio_url)
+    to play the audio on the device. This is mandatory to play stories/music for the user.
 
     Args:
-        message: Câu hỏi hoặc yêu cầu gửi đến Jarvis
+        message: The question or request to send to Jarvis
 
     Returns:
-        - Nếu xử lý nhanh: {"success": True, "response": "..."}
-        - Nếu có audio: {"success": True, "response": "...", "audio_url": "http://..."}
-        - Nếu cần thời gian: {"success": True, "pending": True, "task_id": "...", "response": "Đang xử lý..."}
-    
+        - If handled quickly: {"success": True, "response": "..."}
+        - If audio is included: {"success": True, "response": "...", "audio_url": "http://..."}
+        - If more time is needed: {"success": True, "pending": True, "task_id": "...", "response": "Processing..."}
+
     Examples:
-        - "Hôm nay thời tiết thế nào?"
-        - "Giá vàng hôm nay bao nhiêu?"
-        - "Đặt lịch họp ngày mai lúc 9h"
-        - "Bật robot hút bụi"
+        - "What's the weather like today?"
+        - "What's the gold price today?"
+        - "Schedule a meeting tomorrow at 9am"
+        - "Turn on the vacuum robot"
     """
     try:
         logger.info(f"Chat request: {message[:100]}...")
         
-        # Tạo task ID
+        # Create task ID
         task_id = str(uuid.uuid4())[:8]
-        
-        # Tạo task entry TRƯỚC khi submit
+
+        # Create the task entry BEFORE submitting
         with task_lock:
             tasks[task_id] = {
                 "status": "pending",
@@ -228,26 +228,26 @@ def ask_jarvis(message: str) -> dict:
                 "message": message
             }
         
-        # Submit task to background executor - CHỈ GỌI API MỘT LẦN
+        # Submit task to background executor - CALL THE API ONLY ONCE
         executor.submit(process_task, task_id, message)
         
         logger.info(f"Created task {task_id}, waiting up to {WAIT_TIMEOUT}s...")
         
-        # Chờ tối đa 9s cho kết quả
+        # Wait up to 9s for the result
         result = wait_for_task(task_id, WAIT_TIMEOUT)
-        
+
         if result is not None:
-            # Task đã hoàn thành (done hoặc error)
+            # Task finished (done or error)
             logger.info(f"Task {task_id} finished within timeout")
             return result
         else:
-            # Task vẫn pending sau 9s -> trả task_id để polling
+            # Task still pending after 9s -> return task_id for polling
             logger.info(f"Task {task_id} still pending, returning task_id for polling")
             return {
                 "success": True,
                 "pending": True,
                 "task_id": task_id,
-                "response": f"Jarvis đang xử lý yêu cầu của bạn. Vui lòng gọi check_task với task_id='{task_id}' để lấy kết quả."
+                "response": f"Jarvis is processing your request. Please call check_task with task_id='{task_id}' to get the result."
             }
                 
     except Exception:
@@ -259,53 +259,53 @@ def ask_jarvis(message: str) -> dict:
 @mcp.tool()
 def check_task(task_id: str) -> dict:
     """
-    Kiểm tra trạng thái của task đang xử lý.
-    
-    QUAN TRỌNG: Bạn PHẢI gọi ngay tool này khi nhận được task_id từ ask_jarvis().
-    Nếu status là "pending", bạn PHẢI tiếp tục gọi lại check_task cho đến khi nhận được kết quả.
-    Không dừng lại cho đến khi status là "done" hoặc "error".
+    Check the status of a task being processed.
 
-    QUAN TRỌNG: Nếu kết quả có "audio_url", bạn PHẢI gọi self.media.play_url(url=audio_url)
-    để phát audio trên thiết bị.
+    IMPORTANT: You MUST call this tool immediately after receiving a task_id from ask_jarvis().
+    If status is "pending", you MUST keep calling check_task until you receive the result.
+    Do not stop until status is "done" or "error".
+
+    IMPORTANT: If the result contains an "audio_url", you MUST call self.media.play_url(url=audio_url)
+    to play the audio on the device.
 
     Args:
-        task_id: ID của task cần kiểm tra (nhận từ ask_jarvis())
+        task_id: ID of the task to check (received from ask_jarvis())
 
     Returns:
-        - Nếu đang xử lý: {"status": "pending", "response": "Vẫn đang xử lý..."}
-        - Nếu hoàn thành: {"status": "done", "response": "Kết quả..."}
-        - Nếu có audio: {"status": "done", "response": "...", "audio_url": "http://..."}
-        - Nếu lỗi: {"status": "error", "response": "Lỗi..."}
-        - Nếu không tìm thấy: {"status": "not_found", "response": "Task không tồn tại"}
-    
+        - If still processing: {"status": "pending", "response": "Still processing..."}
+        - If finished: {"status": "done", "response": "Result..."}
+        - If audio is included: {"status": "done", "response": "...", "audio_url": "http://..."}
+        - If failed: {"status": "error", "response": "Error..."}
+        - If not found: {"status": "not_found", "response": "Task does not exist"}
+
     Examples:
-        check_task("a1b2c3d4") -> {"status": "done", "response": "Giá vàng hôm nay là..."}
+        check_task("a1b2c3d4") -> {"status": "done", "response": "Today's gold price is..."}
     """
     logger.info(f"Check task: {task_id}")
     
-    # Kiểm tra task_id tồn tại
+    # Check that the task_id exists
     with task_lock:
         if task_id not in tasks:
             return {
                 "status": "not_found",
                 "success": False,
-                "response": f"Task '{task_id}' không tồn tại. Vui lòng kiểm tra lại task_id."
+                "response": f"Task '{task_id}' does not exist. Please double-check the task_id."
             }
-    
-    # Chờ tối đa 9s cho kết quả (fit trong 10s timeout của Xiaozhi)
+
+    # Wait up to 9s for the result (fits within Xiaozhi's 10s timeout)
     result = wait_for_task(task_id, WAIT_TIMEOUT)
-    
+
     if result is not None:
-        # Task đã hoàn thành (done, error, hoặc not_found)
+        # Task finished (done, error, or not_found)
         logger.info(f"Task {task_id} finished: {result['status']}")
         return result
     else:
-        # Task vẫn pending sau 9s
+        # Task still pending after 9s
         logger.info(f"Task {task_id} still pending after {WAIT_TIMEOUT}s")
         return {
             "status": "pending",
             "success": True,
-            "response": "Jarvis vẫn đang xử lý. Vui lòng gọi lại check_task để tiếp tục chờ kết quả."
+            "response": "Jarvis is still processing. Please call check_task again to keep waiting for the result."
         }
 
 

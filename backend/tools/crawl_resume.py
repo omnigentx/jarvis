@@ -17,6 +17,7 @@ sys.path.insert(0, _backend_dir)
 os.chdir(_backend_dir)
 
 from core.database import get_db_session, CrawlJob, init_db
+from helpers.crawl_markers import NEXT_CHAPTER_PHRASES
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - crawl_resume - %(levelname)s - %(message)s")
 logger = logging.getLogger("crawl_resume")
@@ -201,8 +202,7 @@ def resume_crawl(job_id: str, params_json: str):
                 if not next_url:
                     for a in soup.find_all("a"):
                         t = a.get_text(strip=True).lower()
-                        # TODO(i18n): VN literal — matches Vietnamese story-site "next chapter" link text
-                        if any(kw in t for kw in ["chương sau", "tiếp", "next", "chap sau"]):
+                        if any(kw in t for kw in NEXT_CHAPTER_PHRASES):
                             next_url = a.get("href")
                             break
                 if next_url:

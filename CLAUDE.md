@@ -94,6 +94,14 @@ opt-out (or convert the fixture to opt-in).
 - [ ] New AgentCard gate: parent view's `onMounted` seeds the dependency store.
 - [ ] Click-flow spelled out in PR body.
 
+## 7. English-First (Global Project)
+
+- Everything in the repo (code, comments, docs, commits, logs, agent prompts) → English.
+- User-visible UI copy → bilingual via `useLang()` (`lang === 'vi' ? … : …`); single-language literals are bugs.
+- TTS preview/sample text must match the selected voice's language — never a fixed cross-language string.
+- Site-language crawl markers live only in `backend/helpers/crawl_markers.py`; extend per locale there, never inline.
+- Vietnamese allowed only as test data/fixtures (vi+en code-switching is a core feature) or quoted examples inside English comments.
+
 ---
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, clarifying questions come before implementation rather than after mistakes, and manual testing turns up no "basic case" failures.
@@ -103,7 +111,7 @@ opt-out (or convert the fixture to opt-in).
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **jarvis** (37816 symbols, 106117 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **jarvis** (44114 symbols, 126483 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

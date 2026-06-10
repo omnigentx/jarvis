@@ -19,6 +19,7 @@ import { useChatStore } from '../stores/chat'
 import { useAudioPlayerStore } from '../stores/audioPlayer'
 import { useAgentsStore } from '../stores/agents'
 import { useCrawlStatus } from '../composables/useCrawlStatus'
+import { useLang } from '../composables/useLang'
 import { EVENTS, on } from '../auth/bus.js'
 import { useChatStream } from '../composables/useChatStream'
 import { useConfirm } from '../composables/useConfirm'
@@ -42,6 +43,9 @@ const chatStore = useChatStore()
 const audioStore = useAudioPlayerStore()
 const agentsStore = useAgentsStore()
 const crawl = useCrawlStatus()
+// Shared UI language pref (topbar Vi/En toggle) — the crawl banner below
+// renders bilingual copy off this, like every user-visible string.
+const { lang } = useLang()
 const { isStreaming, send, cancel } = useChatStream()
 const { confirm } = useConfirm()
 const toast = useToast()
@@ -267,25 +271,25 @@ function handleSwitchAgent(name) {
         <span class="crawl-spinner" v-if="crawl.isActive.value" />
         <span class="crawl-label">
           <template v-if="crawl.status.value === 'completed'">
-            ✓ Tải xong{{ crawl.storyTitle.value ? ` "${crawl.storyTitle.value}"` : '' }} — {{ crawl.current.value }}/{{ crawl.total.value }} chương
+            ✓ {{ lang === 'vi' ? 'Tải xong' : 'Downloaded' }}{{ crawl.storyTitle.value ? ` "${crawl.storyTitle.value}"` : '' }} — {{ crawl.current.value }}/{{ crawl.total.value }} {{ lang === 'vi' ? 'chương' : 'chapters' }}
           </template>
           <template v-else-if="crawl.status.value === 'failed' || crawl.status.value === 'error'">
-            ⚠ Tải truyện thất bại{{ crawl.message.value ? `: ${crawl.message.value}` : '' }}
+            ⚠ {{ lang === 'vi' ? 'Tải truyện thất bại' : 'Story download failed' }}{{ crawl.message.value ? `: ${crawl.message.value}` : '' }}
           </template>
           <template v-else-if="crawl.status.value === 'cancelled'">
-            Đã huỷ tải truyện
+            {{ lang === 'vi' ? 'Đã huỷ tải truyện' : 'Story download cancelled' }}
           </template>
           <template v-else-if="crawl.needsAttention.value">
-            ⚠ Crawl gặp vấn đề — Jarvis đang xử lý… {{ crawl.message.value ? `(${crawl.message.value})` : '' }}
+            ⚠ {{ lang === 'vi' ? 'Crawl gặp vấn đề — Jarvis đang xử lý…' : 'Crawl hit a snag — Jarvis is on it…' }} {{ crawl.message.value ? `(${crawl.message.value})` : '' }}
           </template>
           <template v-else>
-            Đang tải{{ crawl.storyTitle.value ? ` "${crawl.storyTitle.value}"` : ' truyện' }}…
-            {{ crawl.current.value }}/{{ crawl.total.value || '?' }} chương
+            {{ lang === 'vi' ? 'Đang tải' : 'Downloading' }}{{ crawl.storyTitle.value ? ` "${crawl.storyTitle.value}"` : (lang === 'vi' ? ' truyện' : ' story') }}…
+            {{ crawl.current.value }}/{{ crawl.total.value || '?' }} {{ lang === 'vi' ? 'chương' : 'chapters' }}
             <span v-if="crawl.total.value" class="crawl-pct">{{ crawl.percent.value }}%</span>
           </template>
         </span>
-        <button v-if="crawl.isActive.value" class="crawl-btn" @click="crawl.cancel()">Huỷ</button>
-        <button v-else class="crawl-btn" @click="crawl.dismiss()">Ẩn</button>
+        <button v-if="crawl.isActive.value" class="crawl-btn" @click="crawl.cancel()">{{ lang === 'vi' ? 'Huỷ' : 'Cancel' }}</button>
+        <button v-else class="crawl-btn" @click="crawl.dismiss()">{{ lang === 'vi' ? 'Ẩn' : 'Dismiss' }}</button>
       </div>
 
       <!-- Status footer (above input) -->

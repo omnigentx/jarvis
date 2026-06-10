@@ -3,7 +3,7 @@ name: Sync fast-agent submodule
 on:
   # Manual trigger
   workflow_dispatch:
-  # Auto trigger khi fast-agent push (cần setup webhook ở bước dưới)
+  # Auto trigger when fast-agent pushes (requires the webhook set up below)
   repository_dispatch:
     types: [fast-agent-updated]
 

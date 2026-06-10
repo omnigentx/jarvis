@@ -17,6 +17,12 @@ _backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _backend_dir not in sys.path:
     sys.path.insert(0, _backend_dir)
 
+from helpers.crawl_markers import (
+    CHAPTER_HEADING_RE,
+    CHAPTER_HREF_RE,
+    NEXT_PAGE_LINK_RE,
+    SITE_TITLE_SUFFIX_RE,
+)
 from helpers.http_safety import get_capped_text
 from helpers.path_safety import safe_story_path
 from mcp.server.fastmcp import FastMCP
@@ -514,9 +520,9 @@ def _get_story_chapters_impl(story_url: str) -> list:
                         
                         if not href or not text: continue
                         
-                        # Heuristic: Link text must look like a chapter
-                        # TODO(i18n): VN literals — regex matches Vietnamese chapter link text/URLs
-                        if re.search(r'(chương|chapter|hồi)\s+\d+', text, re.I) or re.search(r'chapter|chuong', href, re.I):
+                        # Heuristic: link text must look like a chapter
+                        # (locale markers live in helpers/crawl_markers).
+                        if CHAPTER_HEADING_RE.search(text) or CHAPTER_HREF_RE.search(href):
                              # [FIX] Filter out pagination links explicitly
                             if re.search(r'(trang-\d+|page/\d+|/page-\d+)', href, re.I):
                                 continue
@@ -539,8 +545,7 @@ def _get_story_chapters_impl(story_url: str) -> list:
                     
                     # Fallback for TruyenFull: check for specific symbols or text if selector fails
                     if not next_link:
-                        # TODO(i18n): VN literals — matches Vietnamese pagination link text
-                        next_link = soup.find("a", string=re.compile(r"(Trang tiếp|Tiếp|Next|Sau|»|›)", re.I))
+                        next_link = soup.find("a", string=NEXT_PAGE_LINK_RE)
 
                     if next_link and next_link.get("href"):
                         next_href = next_link.get("href")
@@ -602,8 +607,7 @@ def get_chapter_content(chapter_url: str) -> str:
         page_title = soup.title.get_text(strip=True) if soup.title else ""
         if page_title:
              page_title = re.sub(r"\s*\|\s*.*$", "", page_title)
-             # TODO(i18n): VN literal — strips trailing "- Truyện..." (Vietnamese "Story") suffix from page titles
-             page_title = re.sub(r"\s*-\s*Truyện.*$", "", page_title, flags=re.I)
+             page_title = SITE_TITLE_SUFFIX_RE.sub("", page_title)
         
         final_content = ""
         
