@@ -7,6 +7,16 @@ import unicodedata
 from pathlib import Path
 from bs4 import BeautifulSoup
 
+# Bootstrap sys.path BEFORE importing helpers.*: when this file is launched as a
+# script (python tools/story_server.py) by the MCP runtime, sys.path[0] is the
+# tools/ dir, not backend/, so `helpers` is unresolvable and the server crashes
+# at startup with ModuleNotFoundError (shows up as "story-server Failed" in UI).
+# Inserting backend/ here — above the helpers imports — is the fix.
+import sys
+_backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _backend_dir not in sys.path:
+    sys.path.insert(0, _backend_dir)
+
 from helpers.http_safety import get_capped_text
 from helpers.path_safety import safe_story_path
 from mcp.server.fastmcp import FastMCP
@@ -24,11 +34,7 @@ logger = logging.getLogger("story_server")
 # DATA_DIR: absolute path to backend/data/ — works in MCP subprocess context
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 
-# Load .env from backend directory
-_backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-import sys
-if _backend_dir not in sys.path:
-    sys.path.insert(0, _backend_dir)
+# Load .env from backend directory (_backend_dir set during sys.path bootstrap above)
 load_dotenv(os.path.join(_backend_dir, ".env"))
 
 # NOTE: Crawl execution is decoupled from MCP subprocess.
