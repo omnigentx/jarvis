@@ -1300,17 +1300,24 @@ function historyBadgeLabel(type) {
   opacity: 0.55;
 }
 .server-error-banner {
-  background: rgba(239, 68, 68, 0.08);
-  border: 1px solid rgba(239, 68, 68, 0.25);
-  color: #fca5a5;
+  background: var(--danger-bg);
+  border: 1px solid rgba(239, 68, 68, 0.30);
+  color: var(--danger);
   font-size: 12px;
+  line-height: 1.5;
   padding: 8px 12px;
   border-radius: 6px;
   margin: 8px 0;
 }
+/* Light theme keeps --danger at #EF4444 (red-500), which is too pale on the
+   light danger-bg — drop to red-700 for AA-legible text. */
+:root[data-theme="light"] .server-error-banner {
+  color: #B91C1C;
+  border-color: rgba(185, 28, 28, 0.30);
+}
 .server-error-banner.muted {
   background: rgba(239, 68, 68, 0.04);
-  color: #9ca3af;
+  color: var(--text-muted);
 }
 .runtime-pending-skeleton {
   display: flex;
