@@ -96,26 +96,11 @@ opt-out (or convert the fixture to opt-in).
 
 ## 7. English-First (Global Project)
 
-Jarvis is a global OSS project serving both Vietnamese and international
-users. **Everything written into the repo is English by default**:
-
-- Code identifiers, comments, docstrings, commit messages, PR bodies,
-  docs, log messages, backend user-facing strings, and agent prompts
-  (e.g. self-heal instructions) → **English only**.
-- **User-visible frontend copy** → **bilingual**, never a single-language
-  literal: `lang === 'vi' ? '…' : '…'` off the shared `useLang()`
-  composable (`frontend/src/composables/useLang.js`). Adding a Vietnamese
-  string without its English counterpart (or vice versa) is a bug.
-- **Intentional Vietnamese stays**: test data / e2e fixtures (vi+en
-  code-switching is a core feature), site-matching regexes
-  (`Chương|Quyển|mở đầu…` for Vietnamese story sites), bilingual TTS
-  samples, and English comments quoting Vietnamese strings as examples.
-
-Checklist for every change:
-
-- [ ] No Vietnamese in new/edited comments, docstrings, logs, prompts, or docs.
-- [ ] New user-visible UI string renders for BOTH locales via `useLang()`.
-- [ ] Vietnamese kept only as functional data (test fixture, regex, quoted example) — and it's obvious from context why.
+- Everything in the repo (code, comments, docs, commits, logs, agent prompts) → English.
+- User-visible UI copy → bilingual via `useLang()` (`lang === 'vi' ? … : …`); single-language literals are bugs.
+- TTS preview/sample text must match the selected voice's language — never a fixed cross-language string.
+- Site-language crawl markers live only in `backend/helpers/crawl_markers.py`; extend per locale there, never inline.
+- Vietnamese allowed only as test data/fixtures (vi+en code-switching is a core feature) or quoted examples inside English comments.
 
 ---
 
@@ -126,7 +111,7 @@ Checklist for every change:
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **jarvis** (44069 symbols, 126444 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **jarvis** (44085 symbols, 126445 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

@@ -17,7 +17,9 @@
  */
 import { onMounted, ref, computed } from 'vue'
 import { apiFetch } from '../../api.js'
+import { useLang } from '../../composables/useLang.js'
 
+const { lang } = useLang()
 const loading = ref(true)
 const saving = ref(false)
 const saveSuccess = ref(false)
@@ -185,12 +187,32 @@ async function save() {
   }
 }
 
+// Preview must SPEAK the language of the selected voice — a Vietnamese
+// sample through an English voice (or vice versa) sounds broken and tells
+// the user nothing about real quality.
+const PREVIEW_TEXT = {
+  vi: 'Xin chào, đây là bản xem trước giọng đọc.',
+  en: 'Hello, this is a voice preview.',
+}
+
+function _voiceLang(params) {
+  const p = params || {}
+  // Soniox-style explicit `language` param ('vi', 'en', …).
+  const explicit = String(p.language || '').toLowerCase()
+  if (explicit) return explicit.split('-')[0]
+  // Edge/Azure voice ids carry a locale prefix ('vi-VN-NamMinhNeural').
+  const m = String(p.voice || '').match(/^([a-z]{2})-[A-Z]{2}-/i)
+  if (m) return m[1].toLowerCase()
+  // No locale info (OpenAI alloy…, system ids) → follow the UI language.
+  return lang.value
+}
+
 async function preview(scope) {
   previewError.value = ''
   previewing.value = scope
   try {
-    // TODO(i18n): VN+EN preview string intentionally kept — exercises multilingual TTS output
-    const body = { text: 'Xin chào, đây là bản xem trước. Hello, this is a preview.' }
+    const params = scope === 'chat' ? active.value.tts_chat?.params : active.value.tts_stories
+    const body = { text: PREVIEW_TEXT[_voiceLang(params)] || PREVIEW_TEXT.en }
     if (scope === 'chat') {
       body.engine = active.value.tts_chat?.engine
       body.params = active.value.tts_chat?.params || {}

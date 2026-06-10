@@ -21,6 +21,12 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import urljoin
 
+from helpers.crawl_markers import (
+    CHAPTER_ONE_RE,
+    CHAPTER_TITLE_SUFFIX_RE,
+    NEXT_CHAPTER_PHRASES,
+    PRELUDE_RE,
+)
 from helpers.http_safety import get_capped_text
 from helpers.path_safety import safe_story_path
 
@@ -310,7 +316,7 @@ class CrawlPoller:
         if not story_title:
             t = fsoup.select_one(title_sel)
             raw = t.get_text(strip=True) if t else ""
-            story_title = re.sub(r'\s*(Chương|Chapter|Quyển)\s*\d+.*$', '', raw, flags=re.I).strip() or "Story"
+            story_title = CHAPTER_TITLE_SUFFIX_RE.sub('', raw).strip() or "Story"
         story_folder = re.sub(r'[\\/*?:"<>|]', "", story_title).strip() or "Untitled_Story"
         save_dir = os.path.join(DATA_DIR, "stories", story_folder)
         os.makedirs(save_dir, exist_ok=True)
@@ -636,11 +642,9 @@ class CrawlPoller:
                 _dbg(job_id, f"Found {len(chapters)} chapters from list")
                 
                 if chapters:
-                    # Find Chapter 1
-                    # TODO(i18n): VN literals — regex patterns match Vietnamese chapter titles in scraped HTML
-                    c1 = next((c for c in chapters if re.search(
-                        r'(chương|chapter)\s+0*1(\s+:|$|\D)', c['title'], re.I
-                    ) or re.search(r'(mở đầu|văn án)', c['title'], re.I)), None)
+                    # Find Chapter 1 (locale markers live in helpers/crawl_markers)
+                    c1 = next((c for c in chapters if CHAPTER_ONE_RE.search(c['title'])
+                               or PRELUDE_RE.search(c['title'])), None)
                     
                     if c1 and c1['url'] != start_url:
                         _dbg(job_id, f"Switching to Chapter 1: {c1['url'][:80]}")
@@ -666,7 +670,7 @@ class CrawlPoller:
             
             story_name = full_title.split("-")[0].strip()
             # TODO(i18n): VN literal — strips Vietnamese chapter suffix from scraped page titles
-            story_name = re.sub(r'\s*(Chương|Chapter)\s+\d+.*$', '', story_name, flags=re.I).strip()
+            story_name = CHAPTER_TITLE_SUFFIX_RE.sub('', story_name).strip()
             if not story_name:
                 story_name = f"Story_{int(time.time())}"
             
@@ -831,8 +835,7 @@ class CrawlPoller:
                         else:
                             for a in soup.find_all("a"):
                                 t = a.get_text(strip=True).lower()
-                                # TODO(i18n): VN literal — matches Vietnamese "next chapter" link text on scraped pages
-                                if any(kw in t for kw in ["chương sau", "tiếp", "next", "chap sau"]):
+                                if any(kw in t for kw in NEXT_CHAPTER_PHRASES):
                                     next_url = a.get("href")
                                     break
                     
