@@ -210,6 +210,56 @@ test('login() success → status=authenticated + RESTORED + broadcast', async ()
   assert.equal(otherTabMsgs[0].status, STATUS.AUTHENTICATED)
 })
 
+// ---- RESTORED payload (drives the App.vue reload-after-lockout) -------------
+// App.vue reloads the page only when RESTORED carries from='unauthenticated'
+// (modal login — in-page state is 401-poisoned). Boot probe must carry
+// from='unknown' so it never triggers a reload loop.
+
+test('RESTORED from boot probe carries from=unknown (no reload path)', async () => {
+  _setFetch(async () => new Response(JSON.stringify({ authenticated: true, expires_in: 3600 }), {
+    status: 200, headers: { 'content-type': 'application/json' },
+  }))
+
+  const payloads = []
+  on(EVENTS.RESTORED, (p) => { payloads.push(p) })
+
+  const auth = useAuthStore()
+  await auth.probe()
+
+  assert.equal(payloads.length, 1)
+  assert.equal(payloads[0].from, STATUS.UNKNOWN)
+})
+
+test('RESTORED from modal login after lockout carries from=unauthenticated', async () => {
+  _setFetch(async () => new Response(JSON.stringify({ status: 'ok', csrf_token: 'c', expires_in: 3600 }), {
+    status: 200, headers: { 'content-type': 'application/json' },
+  }))
+
+  const auth = useAuthStore()
+  auth.$patch({ status: STATUS.UNAUTHENTICATED })
+
+  const payloads = []
+  on(EVENTS.RESTORED, (p) => { payloads.push(p) })
+
+  await auth.login('good-key')
+
+  assert.equal(payloads.length, 1)
+  assert.equal(payloads[0].from, STATUS.UNAUTHENTICATED)
+})
+
+test('RESTORED from cross-tab transition carries THIS tab previous status', () => {
+  const auth = useAuthStore()
+  auth.$patch({ status: STATUS.UNAUTHENTICATED })
+
+  const payloads = []
+  on(EVENTS.RESTORED, (p) => { payloads.push(p) })
+
+  auth._applyRemoteTransition(STATUS.AUTHENTICATED, 'csrf-x', 3600)
+
+  assert.equal(payloads.length, 1)
+  assert.equal(payloads[0].from, STATUS.UNAUTHENTICATED)
+})
+
 test('login() 401 returns reason from backend, status stays unchanged', async () => {
   _setFetch(async () => new Response(JSON.stringify({
     detail: { error: 'unauthorized', reason: 'invalid_credentials' },

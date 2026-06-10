@@ -15,7 +15,7 @@ import { expect, test } from '@playwright/test'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { clearAllAuth, mockBackend, NetworkRecorder } from '../harness'
+import { clearAllAuth, mockBackend, NetworkRecorder, waitForPostLoginReload } from '../harness'
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), '..', 'fixtures')
 
@@ -32,9 +32,14 @@ test('typing the right key dismisses the modal', async ({ page }) => {
   await expect(modal).toBeVisible()
 
   await page.locator('#auth-gate-key').fill('test-api-key-e2e')
+  // Successful login reloads the page (App.vue RESTORED listener);
+  // wait for the post-reload boot probe so assertions run on the
+  // settled, authenticated document.
+  const settled = waitForPostLoginReload(page)
   await page.getByRole('button', { name: /continue/i }).click()
+  await settled
 
-  // Modal should disappear once the login response sets store status.
+  // Modal must stay gone on the reloaded, authenticated page.
   await expect(modal).toBeHidden({ timeout: 3000 })
 
   // The login POST must have been observed by the mock backend.
@@ -53,7 +58,9 @@ test('login attaches X-CSRF-Token to subsequent mutations', async ({ page }) => 
 
   await page.goto('/')
   await page.locator('#auth-gate-key').fill('test-api-key-e2e')
+  const settled = waitForPostLoginReload(page)
   await page.getByRole('button', { name: /continue/i }).click()
+  await settled
   await expect(
     page.getByRole('dialog', { name: /authentication required/i }),
   ).toBeHidden()

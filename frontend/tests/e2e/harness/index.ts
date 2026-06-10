@@ -6,7 +6,7 @@
 export { mockBackend } from './mock-backend'
 export type { MockBackend, RequestRecord } from './mock-backend'
 
-export { seedApiKey, clearApiKey, seedCsrfCookie, clearAllAuth } from './auth'
+export { seedApiKey, clearApiKey, seedCsrfCookie, clearAllAuth, waitForPostLoginReload } from './auth'
 
 export { installVirtualAuthenticator } from './passkey'
 export type { VirtualAuthenticatorHandle } from './passkey'

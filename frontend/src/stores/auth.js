@@ -291,15 +291,23 @@ export const useAuthStore = defineStore('auth', {
      * "authenticated" state and notify subscribers. Idempotent.
      */
     setAuthenticated(csrfToken, expiresIn) {
-      const wasUnauth = this.status !== STATUS.AUTHENTICATED
+      // ``from`` rides on RESTORED so subscribers can distinguish a modal
+      // login (from === 'unauthenticated' — page state is 401-poisoned and
+      // needs a full replay) from the boot probe (from === 'unknown') or a
+      // challenged-recovery, where in-page state is still good.
+      const prevStatus = this.status
+      const wasUnauth = prevStatus !== STATUS.AUTHENTICATED
       this.status = STATUS.AUTHENTICATED
       this.csrfToken = csrfToken || getCsrfToken()
       this.lastReason = ''
       this.expiresAt = expiresIn ? Math.floor(Date.now() / 1000) + expiresIn : null
       _scheduleRefresh(this, expiresIn)
       if (wasUnauth) {
-        emit(EVENTS.RESTORED)
+        // Broadcast BEFORE the local emit: App.vue's RESTORED listener may
+        // call window.location.reload(), and sibling-tab notification must
+        // not depend on reload() letting the current task finish.
         this._broadcast(expiresIn)
+        emit(EVENTS.RESTORED, { from: prevStatus })
       }
     },
 
@@ -323,7 +331,8 @@ export const useAuthStore = defineStore('auth', {
      */
     _applyRemoteTransition(status, csrfToken, expiresIn) {
       if (status === STATUS.AUTHENTICATED) {
-        const wasUnauth = this.status !== STATUS.AUTHENTICATED
+        const prevStatus = this.status
+        const wasUnauth = prevStatus !== STATUS.AUTHENTICATED
         this.status = STATUS.AUTHENTICATED
         this.csrfToken = csrfToken || getCsrfToken()
         this.lastReason = ''
@@ -331,7 +340,9 @@ export const useAuthStore = defineStore('auth', {
           this.expiresAt = Math.floor(Date.now() / 1000) + expiresIn
           _scheduleRefresh(this, expiresIn)
         }
-        if (wasUnauth) emit(EVENTS.RESTORED)
+        // ``from`` is THIS tab's previous status — a locked sibling tab
+        // (modal showing) recovers exactly like the tab that logged in.
+        if (wasUnauth) emit(EVENTS.RESTORED, { from: prevStatus })
       } else if (status === STATUS.UNAUTHENTICATED) {
         const wasAuth = this.status === STATUS.AUTHENTICATED
         this.status = STATUS.UNAUTHENTICATED

@@ -18,7 +18,7 @@ import { expect, test } from '@playwright/test'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { clearAllAuth, mockBackend, NetworkRecorder } from '../harness'
+import { clearAllAuth, mockBackend, NetworkRecorder, waitForPostLoginReload } from '../harness'
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), '..', 'fixtures')
 
@@ -33,7 +33,9 @@ test('after API-key login the key never lands in localStorage', async ({ page })
   await expect(modal).toBeVisible()
 
   await page.locator('#auth-gate-key').fill('test-api-key-e2e')
+  const settled = waitForPostLoginReload(page)
   await page.getByRole('button', { name: /^continue$/i }).click()
+  await settled
   await expect(modal).toBeHidden({ timeout: 3000 })
 
   // The credential MUST NOT have leaked into any localStorage key.
@@ -66,7 +68,9 @@ test('mutations after login carry X-CSRF-Token but NOT Authorization: Bearer',
 
     await page.goto('/')
     await page.locator('#auth-gate-key').fill('test-api-key-e2e')
+    const settled = waitForPostLoginReload(page)
     await page.getByRole('button', { name: /^continue$/i }).click()
+    await settled
     await expect(
       page.getByRole('dialog', { name: /authentication required/i }),
     ).toBeHidden()
@@ -115,7 +119,9 @@ test('SSE URLs do not carry ?api_key=', async ({ page }) => {
   ])
   await page.goto('/')
   await page.locator('#auth-gate-key').fill('test-api-key-e2e')
+  const settled = waitForPostLoginReload(page)
   await page.getByRole('button', { name: /^continue$/i }).click()
+  await settled
   await expect(
     page.getByRole('dialog', { name: /authentication required/i }),
   ).toBeHidden()
