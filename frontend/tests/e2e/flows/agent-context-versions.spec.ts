@@ -110,6 +110,39 @@ test('context_compaction_started SSE drives the live banner on the tab', async (
   await expect(page.getByText('Compacting context…')).toBeVisible()
 })
 
+test('versions fetch error shows error state, Retry recovers', async ({
+  page,
+}) => {
+  await seedApiKey(page)
+  await mockBackend(page, [
+    NOISE,
+    join(FIXTURES, 'agent_context_versions.yaml'),
+  ])
+  // First list request 500s; the retry falls through to the fixture.
+  let calls = 0
+  await page.route('**/api/agents/Jarvis/context/versions', (route) => {
+    calls++
+    if (calls === 1) {
+      return route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: 'boom' }),
+      })
+    }
+    return route.fallback()
+  })
+
+  await page.goto('/agents/Jarvis')
+  await page.getByRole('button', { name: 'Context Versions' }).click()
+
+  // Error state — must NOT read as "no compactions yet".
+  await expect(page.getByText(/Failed to load compaction versions/)).toBeVisible()
+  await expect(page.getByText(/No context compactions yet/)).toBeHidden()
+
+  await page.getByRole('button', { name: 'Retry' }).click()
+  await expect(page.getByText('✓ Compacted')).toBeVisible()
+})
+
 test('versions tab renders the empty state', async ({ page }) => {
   await seedApiKey(page)
   await mockBackend(page, [

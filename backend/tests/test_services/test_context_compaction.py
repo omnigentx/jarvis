@@ -352,6 +352,130 @@ def test_memo_guard_blocks_retry_at_same_length(reg_db, monkeypatch):
     assert len(get_compaction_events_meta(agent.name, limit=10)) == 1
 
 
+@pytest.fixture
+def sse_spy(monkeypatch):
+    """Record every activity-stream broadcast from _emit_status."""
+    import services.activity_stream as act
+
+    events = []
+    monkeypatch.setattr(act.activity_stream_manager, "broadcast", events.append)
+    return events
+
+
+def test_infeasible_plan_is_silent_noop(reg_db, monkeypatch, sse_spy):
+    # PR #85 review F1: threshold exceeded but the middle zone is too
+    # small to compact (keep_recent ≈ history length). Must be a TOTAL
+    # no-op: no started event (stuck banner), no orphan raw snapshot,
+    # no event row.
+    msgs = build_history(n_pairs=2)  # 10 messages
+    agent = FakeAgent(msgs, usage=FakeUsage(current=110000))
+    stats = run_compact(agent, monkeypatch, cfg=_trigger_cfg(keep_recent_messages=7))
+    assert stats is None
+    assert sse_spy == []
+    conn = sqlite3.connect(reg_db)
+    # The table itself may not even exist — save_agent_context was never
+    # reached, which is exactly the point.
+    try:
+        n_raw = conn.execute("SELECT COUNT(*) FROM agent_context_snapshots").fetchone()[0]
+    except sqlite3.OperationalError:
+        n_raw = 0
+    conn.close()
+    assert n_raw == 0
+    assert get_compaction_events_meta(agent.name, limit=10) == []
+
+
+def test_unexpected_pipeline_error_emits_terminal_failed(reg_db, monkeypatch, sse_spy):
+    # PR #85 review F1: once ``started`` is emitted, EVERY exit path must
+    # produce a terminal event — an unexpected exception included.
+    msgs = build_history()
+    agent = FakeAgent(msgs, usage=FakeUsage(current=110000))
+    before_json = to_json(agent.message_history)
+    monkeypatch.setattr(
+        cc, "build_working_context",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    stats = run_compact(agent, monkeypatch)
+    assert stats is None
+    types = [e["event_type"] for e in sse_spy]
+    assert types == ["context_compaction_started", "context_compaction_failed"]
+    assert to_json(agent.message_history) == before_json
+    events = get_compaction_events_meta(agent.name, limit=10)
+    assert len(events) == 1 and events[0]["status"] == "failed"
+
+
+def test_config_fails_closed_when_db_unreadable(monkeypatch):
+    # PR #85 review F5: a history-rewriting feature must not run on
+    # guessed defaults when the user's config cannot be read.
+    import services.config_service as cs
+
+    def _boom(*a, **k):
+        raise RuntimeError("db gone")
+
+    monkeypatch.setattr(cs.config_service, "get", _boom)
+    cfg = cc.get_compaction_config()
+    assert cfg.enabled is False
+
+
+def test_out_of_range_config_value_reverts_to_default(monkeypatch):
+    # PR #85 review F4: the generic settings PUT bypasses the typed PATCH
+    # validation — out-of-range rows must revert to the default loudly.
+    import services.config_service as cs
+
+    def _get(category, key, default=None):
+        return "5.0" if key == "compact_at_ratio" else None
+
+    monkeypatch.setattr(cs.config_service, "get", _get)
+    cfg = cc.get_compaction_config()
+    assert cfg.compact_at_ratio == DEFAULTS["compact_at_ratio"]
+
+
+def test_truncation_flag_is_per_block_not_joined(reg_db):
+    # PR #85 review F7: many small blocks whose JOINED text exceeds the
+    # cap must NOT be flagged — _truncate_tool_result only cuts blocks
+    # that are individually oversized, and the diff UI must agree.
+    msgs = build_history()
+    call = CallToolRequest(
+        method="tools/call", params=CallToolRequestParams(name="multi", arguments={})
+    )
+    result = CallToolResult(
+        content=[TextContent(type="text", text="z" * 1500) for _ in range(5)],
+        isError=False,
+    )
+    msgs.append(PromptMessageExtended(role="assistant", tool_calls={"call_multi": call}))
+    msgs.append(PromptMessageExtended(role="user", tool_results={"call_multi": result}))
+    msgs.append(text_msg("assistant", "done"))
+    cfg = cfg_with(keep_recent_messages=4, max_tool_result_tokens_in_context=500)
+    plan = plan_compaction(msgs, cfg, 1)
+    flagged = [e for e in plan["summarize"] if e["call_id"] == "call_multi"]
+    assert flagged == []  # joined 7500 chars > 2000, but each block is 1500 < 2000
+
+
+def test_attach_compaction_hooks_idempotent_and_merges():
+    # PR #85 review F2 plumbing: the helper both server.py AND the
+    # dynamic-agents reload loop call. Sentinel must prevent stacking;
+    # existing hooks must be merged, not shadowed.
+    class App:
+        pass
+
+    class Ag:
+        pass
+
+    app = App()
+    a = Ag()
+    from fast_agent.agents.tool_runner import ToolRunnerHooks
+
+    async def noop(*_a):
+        return None
+
+    a.tool_runner_hooks = ToolRunnerHooks(after_llm_call=noop)
+    app._agents = {"x": a}
+    assert cc.attach_compaction_hooks_to_all(app) == 1
+    assert a._jarvis_compaction_hook is True
+    assert a.tool_runner_hooks.before_llm_call is not None  # ours
+    assert a.tool_runner_hooks.after_llm_call is not None   # original preserved
+    assert cc.attach_compaction_hooks_to_all(app) == 0      # idempotent
+
+
 def test_hook_never_raises(monkeypatch):
     class BrokenRunner:
         @property

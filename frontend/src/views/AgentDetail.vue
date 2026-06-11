@@ -192,6 +192,7 @@ watch(activeTab, (tab) => {
 const contextVersions = ref([])
 const versionsLoading = ref(false)
 const versionsFetched = ref(false)
+const versionsError = ref(false)
 const versionDetails = reactive({}) // event_id → detail payload (summary/plan)
 const versionDiffs = reactive({})   // event_id → diff payload
 const expandedVersionId = ref(null)
@@ -200,6 +201,7 @@ const versionPanel = ref('summary') // 'summary' | 'diff'
 async function fetchContextVersions({ force = false } = {}) {
   if ((versionsFetched.value && !force) || versionsLoading.value) return
   versionsLoading.value = true
+  versionsError.value = false
   try {
     // No explicit limit — the backend applies the user's
     // snapshot_versions_visible setting as the default.
@@ -208,6 +210,9 @@ async function fetchContextVersions({ force = false } = {}) {
     versionsFetched.value = true
   } catch (e) {
     console.error('Failed to load context versions:', e)
+    // Distinct from the empty state — an unreachable backend must not
+    // read as "no compactions yet" (PR #85 review F6).
+    versionsError.value = true
   } finally {
     versionsLoading.value = false
   }
@@ -232,7 +237,10 @@ async function toggleVersion(version, panel = 'summary') {
   }
   expandedVersionId.value = version.id
   versionPanel.value = panel
-  if (panel === 'summary' && !versionDetails[version.id]) {
+  // Errors are never cached: a failed lazy-load retries on the next
+  // expand (or via the explicit Retry button) instead of sticking.
+  if (panel === 'summary' && (!versionDetails[version.id] || versionDetails[version.id].error)) {
+    delete versionDetails[version.id]
     try {
       versionDetails[version.id] = await apiFetch(
         `/api/agents/${agentName.value}/context/versions/${version.id}`,
@@ -242,7 +250,8 @@ async function toggleVersion(version, panel = 'summary') {
       versionDetails[version.id] = { error: true }
     }
   }
-  if (panel === 'diff' && !versionDiffs[version.id]) {
+  if (panel === 'diff' && (!versionDiffs[version.id] || versionDiffs[version.id].error)) {
+    delete versionDiffs[version.id]
     try {
       versionDiffs[version.id] = await apiFetch(
         `/api/agents/${agentName.value}/context/versions/${version.id}/diff`,
@@ -252,6 +261,14 @@ async function toggleVersion(version, panel = 'summary') {
       versionDiffs[version.id] = { error: true }
     }
   }
+}
+
+function retryVersionPanel(version) {
+  // Force re-entry into the same panel: clear the collapse short-circuit
+  // by nulling the expansion first.
+  const panel = versionPanel.value
+  expandedVersionId.value = null
+  toggleVersion(version, panel)
 }
 
 function savingsPct(v) {
@@ -1176,6 +1193,14 @@ function historyBadgeLabel(type) {
           <div class="loading-text">Loading compaction versions...</div>
         </div>
 
+        <!-- Fetch error: distinct from empty, with a retry path -->
+        <div v-else-if="versionsError" class="empty-state">
+          Failed to load compaction versions —
+          <button class="version-retry-btn" @click="fetchContextVersions({ force: true })">
+            Retry
+          </button>
+        </div>
+
         <!-- Empty -->
         <div v-else-if="!contextVersions.length" class="empty-state">
           No context compactions yet — versions appear here when the agent's
@@ -1244,7 +1269,8 @@ function historyBadgeLabel(type) {
                   Loading summary...
                 </div>
                 <div v-else-if="versionDetails[v.id].error" class="empty-state" style="padding: 16px;">
-                  Failed to load detail
+                  Failed to load detail —
+                  <button class="version-retry-btn" @click.stop="retryVersionPanel(v)">Retry</button>
                 </div>
                 <template v-else>
                   <div
@@ -1263,7 +1289,8 @@ function historyBadgeLabel(type) {
                   Loading diff...
                 </div>
                 <div v-else-if="versionDiffs[v.id].error" class="empty-state" style="padding: 16px;">
-                  Diff unavailable
+                  Diff unavailable —
+                  <button class="version-retry-btn" @click.stop="retryVersionPanel(v)">Retry</button>
                 </div>
                 <div v-else class="version-diff">
                   <div class="version-diff-col">
@@ -2643,6 +2670,18 @@ function historyBadgeLabel(type) {
   background: var(--warning, #f59e0b);
   /* reuses the existing `pulse` keyframes defined above (context section) */
   animation: pulse 1.2s ease-in-out infinite;
+}
+.version-retry-btn {
+  background: var(--bg-3, #161922);
+  border: 1px solid var(--border-strong, rgba(255, 255, 255, 0.12));
+  color: var(--text, #f1f2f6);
+  font-size: 12px;
+  border-radius: 6px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+.version-retry-btn:hover {
+  border-color: var(--primary, #3b82f6);
 }
 .version-status {
   font-size: 12px;

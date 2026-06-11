@@ -107,8 +107,25 @@ class CompactionConfig:
     emit_live_status: bool
 
 
-def _coerce(value: Any, default: Any) -> Any:
-    """Parse a config-DB string back into the default's type."""
+# Single source for the valid numeric ranges — used by the typed PATCH
+# validation AND re-checked at read time, because the generic
+# ``PUT /api/settings/{category}/{key}`` route can write any string into
+# the same rows, bypassing the typed endpoint.
+_RANGES: dict[str, tuple[float, float]] = {
+    "compact_at_ratio": (0.3, 0.95),
+    "keep_recent_messages": (2, 100),
+    "max_tool_result_tokens_in_context": (100, 100000),
+    "min_savings_ratio": (0.0, 0.9),
+    "snapshot_versions_visible": (1, 50),
+}
+# max_context_tokens is special-cased: 0 (= auto) or within this range.
+_MAX_CONTEXT_TOKENS_RANGE = (10000, 2000000)
+
+
+def _coerce(key: str, value: Any, default: Any) -> Any:
+    """Parse a config-DB string back into the default's type. Garbage
+    falls back to the default LOUDLY — a typo'd value written through
+    the generic settings route must not silently change behaviour."""
     if value is None:
         return default
     if isinstance(default, bool):
@@ -119,28 +136,57 @@ def _coerce(value: Any, default: Any) -> Any:
         if isinstance(default, float):
             return float(value)
     except (TypeError, ValueError):
+        logger.warning(
+            "[COMPACT] Unparseable config %s.%s=%r — using default %r",
+            CONFIG_CATEGORY, key, value, default,
+        )
         return default
     return value
+
+
+def _in_range(key: str, value: Any) -> bool:
+    if key == "max_context_tokens":
+        lo, hi = _MAX_CONTEXT_TOKENS_RANGE
+        return value == 0 or lo <= value <= hi
+    if key in _RANGES:
+        lo, hi = _RANGES[key]
+        return lo <= value <= hi
+    return True
 
 
 def get_compaction_config() -> CompactionConfig:
     """Read config from the config DB (category ``context_compaction``),
     falling back to DEFAULTS per key. Values are plain (non-secret), so
     this is subprocess-safe — no master key needed.
+
+    Fails CLOSED: this feature rewrites agent history, so if the config
+    DB cannot be read at all we disable compaction for this call rather
+    than running on guessed defaults. Out-of-range values (possible via
+    the generic settings PUT, which bypasses the typed PATCH validation)
+    revert to the default for that key with a warning.
     """
     values = dict(DEFAULTS)
     try:
         from services.config_service import config_service
 
         for key, default in DEFAULTS.items():
-            try:
-                raw = config_service.get(CONFIG_CATEGORY, key, default=None)
-            except Exception:
-                raw = None
-            if raw is not None:
-                values[key] = _coerce(raw, default)
-    except Exception as exc:  # config DB unavailable (e.g. bare subprocess)
-        logger.debug("[COMPACT] Config read failed, using defaults: %s", exc)
+            raw = config_service.get(CONFIG_CATEGORY, key, default=None)
+            if raw is None:
+                continue
+            value = _coerce(key, raw, default)
+            if not _in_range(key, value):
+                logger.warning(
+                    "[COMPACT] Out-of-range config %s.%s=%r — using default %r",
+                    CONFIG_CATEGORY, key, value, default,
+                )
+                value = default
+            values[key] = value
+    except Exception as exc:  # config DB unavailable/unreadable
+        logger.warning(
+            "[COMPACT] Config read failed — compaction disabled for this call: %s", exc,
+        )
+        values = dict(DEFAULTS)
+        values["enabled"] = False
     return CompactionConfig(**values)
 
 
@@ -176,30 +222,16 @@ def validate_config_updates(updates: dict[str, Any]) -> list[str]:
             errors.append(f"{key} must be a number")
             return None
 
-    if "compact_at_ratio" in updates:
-        v = _num("compact_at_ratio")
-        if v is not None and not (0.3 <= v <= 0.95):
-            errors.append("compact_at_ratio must be between 0.3 and 0.95")
-    if "keep_recent_messages" in updates:
-        v = _num("keep_recent_messages")
-        if v is not None and not (2 <= v <= 100):
-            errors.append("keep_recent_messages must be between 2 and 100")
+    for key, (lo, hi) in _RANGES.items():
+        if key in updates:
+            v = _num(key)
+            if v is not None and not (lo <= v <= hi):
+                errors.append(f"{key} must be between {lo} and {hi}")
     if "max_context_tokens" in updates:
         v = _num("max_context_tokens")
-        if v is not None and v != 0 and not (10000 <= v <= 2000000):
-            errors.append("max_context_tokens must be 0 (auto) or between 10000 and 2000000")
-    if "max_tool_result_tokens_in_context" in updates:
-        v = _num("max_tool_result_tokens_in_context")
-        if v is not None and not (100 <= v <= 100000):
-            errors.append("max_tool_result_tokens_in_context must be between 100 and 100000")
-    if "min_savings_ratio" in updates:
-        v = _num("min_savings_ratio")
-        if v is not None and not (0 <= v <= 0.9):
-            errors.append("min_savings_ratio must be between 0 and 0.9")
-    if "snapshot_versions_visible" in updates:
-        v = _num("snapshot_versions_visible")
-        if v is not None and not (1 <= v <= 50):
-            errors.append("snapshot_versions_visible must be between 1 and 50")
+        lo, hi = _MAX_CONTEXT_TOKENS_RANGE
+        if v is not None and v != 0 and not (lo <= v <= hi):
+            errors.append(f"max_context_tokens must be 0 (auto) or between {lo} and {hi}")
     return errors
 
 
@@ -378,11 +410,15 @@ def plan_compaction(messages: list, cfg: CompactionConfig, raw_snapshot_id: int 
     # Oversized tool results inside the kept tail get truncated (full
     # text stays in the raw snapshot) — except the final message, whose
     # tool result may be the one the next LLM call reasons over.
+    # Per-BLOCK check, matching exactly what _truncate_tool_result will
+    # cut — a joined-text check would flag messages nothing gets removed
+    # from (PR #85 review F7).
     max_chars = cfg.max_tool_result_tokens_in_context * 4
     summarize: list[dict] = []
     for idx in range(tail_start, len(messages) - 1):
-        for call_id, text, _err in _tool_result_texts(messages[idx]):
-            if len(text) > max_chars:
+        for call_id, result in (getattr(messages[idx], "tool_results", None) or {}).items():
+            blocks = getattr(result, "content", None) or []
+            if any(len(getattr(b, "text", "") or "") > max_chars for b in blocks):
                 summarize.append(
                     {
                         "index": idx,
@@ -748,7 +784,18 @@ async def _run_compaction(
 
     from services.context_persistence import save_agent_context, save_compaction_event
 
+    # 0. Feasibility BEFORE any event or snapshot (PR #85 review F1): a
+    #    too-small middle zone must be a silent no-op — emitting
+    #    ``started`` here with no terminal event would leave the UI
+    #    banner stuck, and snapshotting would write an orphan raw row
+    #    on every LLM call. The planner is deterministic, so a
+    #    feasibility pass with a placeholder snapshot id is exact.
+    if plan_compaction(history, cfg, raw_snapshot_id=None) is None:
+        logger.info("[COMPACT] Nothing to compact for %s (middle zone too small)", agent_name)
+        return None
+
     tokens_before = estimate_tokens(history)
+    raw_snapshot_id: int | None = None
     _emit_status(
         cfg, "context_compaction_started", agent_name, run_id,
         {"estimated_tokens_before": tokens_before, "message_count": len(history)},
@@ -771,39 +818,47 @@ async def _run_compaction(
         )
         return None
 
-    # 1. Raw snapshot FIRST — without the audit copy we refuse to touch
-    #    the history (non-negotiable: raw is never lost).
-    raw_snapshot_id = await save_agent_context(
-        agent, run_id or f"compact-{int(time.time())}", trigger="pre_compaction",
-        agent_name=agent_name, session_id=session_id, team_name=team_name,
-    )
-    if raw_snapshot_id is None:
-        return _fail("raw snapshot could not be saved — compaction aborted")
-
-    # 2. Plan (rule-based compactor).
-    plan = plan_compaction(history, cfg, raw_snapshot_id)
-    if plan is None:
-        logger.info("[COMPACT] Nothing to compact for %s (middle zone too small)", agent_name)
-        return None
-
-    # 3. Build working context from copies.
+    # From here on, ``started`` has been emitted — every exit path below
+    # MUST be a completed event or a ``_fail`` (terminal failed event),
+    # or the UI banner sticks. The blanket except enforces that for
+    # anything unforeseen.
     try:
+        # 1. Raw snapshot FIRST — without the audit copy we refuse to
+        #    touch the history (non-negotiable: raw is never lost).
+        raw_snapshot_id = await save_agent_context(
+            agent, run_id or f"compact-{int(time.time())}", trigger="pre_compaction",
+            agent_name=agent_name, session_id=session_id, team_name=team_name,
+        )
+        if raw_snapshot_id is None:
+            return _fail("raw snapshot could not be saved — compaction aborted")
+
+        # 2. Plan (rule-based compactor) — same inputs as the
+        #    feasibility pass, now with the real snapshot id for the
+        #    summary's raw references. Deterministic, so it cannot be
+        #    None here; guard anyway so a planner regression still
+        #    produces a terminal event.
+        plan = plan_compaction(history, cfg, raw_snapshot_id)
+        if plan is None:
+            return _fail("planner returned no plan after a feasible pre-check")
+
+        # 3. Build working context from copies.
         working = build_working_context(history, plan)
-    except Exception as exc:
-        return _fail(f"failed to build working context: {exc}", plan=plan)
 
-    # 4. Validate — the live history is mutated only after this passes.
-    violations = validate_working_context(history, working, cfg, reason=reason)
-    if violations:
-        return _fail("plan rejected: " + "; ".join(violations), plan=plan, validation=violations)
+        # 4. Validate — the live history is mutated only after this passes.
+        violations = validate_working_context(history, working, cfg, reason=reason)
+        if violations:
+            return _fail(
+                "plan rejected: " + "; ".join(violations),
+                plan=plan, validation=violations,
+            )
 
-    tokens_after = estimate_tokens(working)
+        tokens_after = estimate_tokens(working)
 
-    # 5. Apply atomically (load_message_history deep-copies the input).
-    try:
+        # 5. Apply atomically (load_message_history deep-copies the input).
         agent.load_message_history(working)
     except Exception as exc:
-        return _fail(f"failed to load working context into agent: {exc}", plan=plan)
+        logger.error("[COMPACT] Pipeline error for %s: %s", agent_name, exc, exc_info=True)
+        return _fail(f"unexpected compaction error: {exc}")
 
     # 6. Persist the completed event (working json + plan + stats).
     from fast_agent.mcp.prompt_serialization import to_json
