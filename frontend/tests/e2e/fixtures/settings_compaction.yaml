@@ -1,0 +1,34 @@
+# Settings → Context Compaction — typed settings form.
+#
+# GET returns defaults-merged config; PATCH carries ONLY the changed keys
+# and returns the updated config (the form re-seeds from the response).
+
+backend_source:
+  - "backend/routes/context_compaction.py::get_settings, patch_settings"
+  - "backend/services/context_compaction.py::get_compaction_config, update_compaction_config"
+  - "frontend/src/views/settings/SettingsCompaction.vue"
+
+responses:
+  "GET /api/context-compaction/settings":
+    status: 200
+    json:
+      enabled: true
+      max_context_tokens: 0
+      compact_at_ratio: 0.7
+      keep_recent_messages: 10
+      max_tool_result_tokens_in_context: 1500
+      min_savings_ratio: 0.05
+      snapshot_versions_visible: 3
+      emit_live_status: true
+
+  "PATCH /api/context-compaction/settings":
+    status: 200
+    json:
+      enabled: true
+      max_context_tokens: 0
+      compact_at_ratio: 0.8
+      keep_recent_messages: 10
+      max_tool_result_tokens_in_context: 1500
+      min_savings_ratio: 0.05
+      snapshot_versions_visible: 5
+      emit_live_status: true

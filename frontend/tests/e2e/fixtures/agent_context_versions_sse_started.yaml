@@ -1,0 +1,18 @@
+# SSE overlay — compaction STARTED but never completed (stream ends).
+# Drives the "Compacting context…" live banner on the versions tab.
+
+backend_source:
+  - "backend/services/context_compaction.py::_emit_status (started)"
+  - "frontend/src/views/AgentDetail.vue::version-live-banner"
+
+responses: {}
+
+sse_streams:
+  "/api/agents/activity-stream":
+    - { event: "ping", data: {} }
+    - data:
+        agent_name: "Jarvis"
+        event_type: "context_compaction_started"
+        run_id: "run-abc"
+        timestamp: 1765000100
+        data: { estimated_tokens_before: 10000, message_count: 20 }

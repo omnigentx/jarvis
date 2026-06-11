@@ -1,0 +1,310 @@
+<script setup>
+/**
+ * Settings → Context Compaction.
+ *
+ * Typed form over GET/PATCH /api/context-compaction/settings (backed by
+ * the config DB category `context_compaction`). Range validation lives
+ * on the backend (services.context_compaction.validate_config_updates);
+ * the inputs only carry min/max hints so the browser nudges the user
+ * toward valid values — the PATCH 422 message is the authority.
+ *
+ * Save sends ONLY the changed keys (PATCH semantics) so the audit
+ * history in config_history reflects what the user actually touched.
+ */
+import { computed, onMounted, ref } from 'vue'
+import { apiFetch, ApiError } from '../../api'
+
+const loading = ref(true)
+const saving = ref(false)
+const error = ref('')
+const saveSuccess = ref(false)
+
+const config = ref(null) // server truth
+const draft = ref(null)  // form state
+
+const NUMBER_FIELDS = [
+  {
+    key: 'compact_at_ratio',
+    label: 'Compaction threshold (ratio of context window)',
+    hint: 'Compact when the context reaches this fraction of the limit. 0.3–0.95.',
+    min: 0.3, max: 0.95, step: 0.05,
+  },
+  {
+    key: 'max_context_tokens',
+    label: 'Max context tokens',
+    hint: '0 = auto-detect from the model’s context window (recommended).',
+    min: 0, max: 2000000, step: 1000,
+  },
+  {
+    key: 'keep_recent_messages',
+    label: 'Recent messages kept verbatim',
+    hint: 'The newest N messages are never summarized. 2–100.',
+    min: 2, max: 100, step: 1,
+  },
+  {
+    key: 'max_tool_result_tokens_in_context',
+    label: 'Max tool-result tokens kept in context',
+    hint: 'Older oversized tool outputs are truncated beyond this (full text stays in the raw snapshot).',
+    min: 100, max: 100000, step: 100,
+  },
+  {
+    key: 'min_savings_ratio',
+    label: 'Minimum savings to accept a compaction',
+    hint: 'Plans saving less than this fraction are rejected. 0–0.9.',
+    min: 0, max: 0.9, step: 0.01,
+  },
+  {
+    key: 'snapshot_versions_visible',
+    label: 'Versions shown in the dashboard',
+    hint: 'Default number of compaction versions listed on the agent’s Context Versions tab.',
+    min: 1, max: 50, step: 1,
+  },
+]
+
+const dirtyKeys = computed(() => {
+  if (!config.value || !draft.value) return []
+  return Object.keys(draft.value).filter(
+    (k) => String(draft.value[k]) !== String(config.value[k]),
+  )
+})
+
+async function load() {
+  loading.value = true
+  error.value = ''
+  try {
+    config.value = await apiFetch('/api/context-compaction/settings')
+    draft.value = { ...config.value }
+  } catch (err) {
+    error.value = _friendly(err)
+  } finally {
+    loading.value = false
+  }
+}
+
+async function save() {
+  if (!dirtyKeys.value.length || saving.value) return
+  saving.value = true
+  error.value = ''
+  saveSuccess.value = false
+  try {
+    const patch = {}
+    for (const k of dirtyKeys.value) {
+      patch[k] = typeof config.value[k] === 'boolean'
+        ? Boolean(draft.value[k])
+        : Number(draft.value[k])
+    }
+    config.value = await apiFetch('/api/context-compaction/settings', {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    })
+    draft.value = { ...config.value }
+    saveSuccess.value = true
+    setTimeout(() => { saveSuccess.value = false }, 2500)
+  } catch (err) {
+    error.value = _friendly(err)
+  } finally {
+    saving.value = false
+  }
+}
+
+function _friendly(err) {
+  if (err instanceof ApiError && err.body && typeof err.body === 'object') {
+    const detail = err.body.detail
+    if (typeof detail === 'string') return detail
+    if (detail && typeof detail === 'object') return detail.message || 'Request failed.'
+  }
+  return err?.message || String(err)
+}
+
+onMounted(load)
+</script>
+
+<template>
+  <div class="compaction">
+    <div class="intro">
+      When an agent's context grows past the threshold, the backend snapshots
+      the raw history (never deleted), summarizes the older middle section,
+      and reloads the compacted context so the agent continues seamlessly.
+      Inspect every compaction on the agent's <strong>Context Versions</strong> tab.
+    </div>
+
+    <p v-if="loading" class="muted">Loading…</p>
+    <p v-if="error" class="error">{{ error }}</p>
+
+    <template v-if="draft">
+      <div class="row">
+        <div class="row-info">
+          <h3>Enable automatic compaction</h3>
+          <p class="desc">
+            When off, contexts grow until the model's own limit — no
+            snapshots or summaries are produced.
+          </p>
+        </div>
+        <button
+          class="toggle"
+          :class="{ on: draft.enabled }"
+          :aria-pressed="draft.enabled"
+          @click="draft.enabled = !draft.enabled"
+        >
+          <span class="knob"></span>
+        </button>
+      </div>
+
+      <div class="row">
+        <div class="row-info">
+          <h3>Live status events</h3>
+          <p class="desc">
+            Emit context_compaction_* events on the activity stream
+            (toasts + live banner). Compaction itself is unaffected.
+          </p>
+        </div>
+        <button
+          class="toggle"
+          :class="{ on: draft.emit_live_status }"
+          :aria-pressed="draft.emit_live_status"
+          @click="draft.emit_live_status = !draft.emit_live_status"
+        >
+          <span class="knob"></span>
+        </button>
+      </div>
+
+      <div v-for="f in NUMBER_FIELDS" :key="f.key" class="row">
+        <div class="row-info">
+          <h3>{{ f.label }}</h3>
+          <p class="desc">{{ f.hint }}</p>
+        </div>
+        <input
+          v-model="draft[f.key]"
+          class="num-input"
+          type="number"
+          :min="f.min"
+          :max="f.max"
+          :step="f.step"
+        />
+      </div>
+
+      <div class="actions">
+        <button class="save-btn" :disabled="!dirtyKeys.length || saving" @click="save">
+          {{ saving ? 'Saving…' : 'Save Changes' }}
+        </button>
+        <span v-if="saveSuccess" class="success-msg">Saved · live now (no restart needed)</span>
+        <span v-else-if="dirtyKeys.length" class="muted">{{ dirtyKeys.length }} unsaved change(s)</span>
+      </div>
+    </template>
+  </div>
+</template>
+
+<style scoped>
+.compaction {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 800px;
+}
+.intro {
+  padding: 12px 16px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.muted { color: var(--text-muted); font-size: 13px; }
+.error { color: var(--danger); font-size: 13px; margin: 4px 0 0; }
+.row {
+  display: flex;
+  align-items: flex-start;
+  gap: 18px;
+  padding: 16px 18px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+}
+.row-info { flex: 1; min-width: 0; }
+.row-info h3 {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.desc {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+.num-input {
+  flex-shrink: 0;
+  width: 130px;
+  padding: 8px 10px;
+  background: var(--bg-4);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  font-family: var(--font-mono);
+}
+.num-input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+.toggle {
+  flex-shrink: 0;
+  width: 44px;
+  height: 24px;
+  border-radius: 24px;
+  background: var(--bg-3);
+  border: 1px solid var(--border-strong);
+  cursor: pointer;
+  position: relative;
+  transition: background 0.2s, border-color 0.2s;
+}
+.toggle:hover { border-color: var(--primary); }
+.toggle.on {
+  background: var(--primary);
+  border-color: var(--primary);
+}
+.knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  background: white;
+  border-radius: 50%;
+  transition: left 0.2s;
+}
+.toggle.on .knob { left: 22px; }
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-top: 4px;
+}
+.save-btn {
+  padding: 9px 18px;
+  background: var(--primary);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.save-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.success-msg { color: var(--success); font-size: 13px; }
+
+@media (max-width: 768px) {
+  .row { flex-direction: column; gap: 10px; }
+  .num-input { width: 100%; }
+  .toggle::before {
+    content: '';
+    position: absolute;
+    inset: -10px -6px;
+  }
+}
+</style>

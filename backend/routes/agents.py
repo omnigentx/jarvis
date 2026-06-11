@@ -1743,6 +1743,48 @@ async def get_agent_context(name: str, run_id: str | None = None, limit: int = 5
     return {"snapshots": snapshots}
 
 
+@router.get("/{name}/context/versions", dependencies=[Depends(verify_api_key)])
+async def get_context_versions(name: str, limit: int | None = None):
+    """Compaction version timeline for an agent (metadata only — the
+    summary/plan/diff load lazily via the detail endpoints below).
+
+    ``limit`` defaults to the user's ``snapshot_versions_visible``
+    setting so the dashboard and the settings page agree by construction.
+    """
+    from services.context_compaction import get_compaction_config
+    from services.context_persistence import get_compaction_events_meta
+
+    if limit is None:
+        limit = get_compaction_config().snapshot_versions_visible
+    versions = get_compaction_events_meta(name, limit=max(1, min(limit, 50)))
+    return {"versions": versions}
+
+
+@router.get("/{name}/context/versions/{event_id}", dependencies=[Depends(verify_api_key)])
+async def get_context_version_detail(name: str, event_id: int):
+    """One compaction event with summary message, plan, and validation."""
+    from services.context_persistence import get_compaction_event_detail
+
+    detail = get_compaction_event_detail(name, event_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Compaction event not found")
+    return detail
+
+
+@router.get("/{name}/context/versions/{event_id}/diff", dependencies=[Depends(verify_api_key)])
+async def get_context_version_diff(name: str, event_id: int):
+    """Before/after message dispositions (kept/truncated/dropped/summary)."""
+    from services.context_persistence import get_compaction_diff
+
+    diff = get_compaction_diff(name, event_id)
+    if diff is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Diff unavailable (event missing, failed, or payload pruned)",
+        )
+    return diff
+
+
 @router.get("/{name}/context/{snapshot_id}/messages", dependencies=[Depends(verify_api_key)])
 async def get_context_messages_endpoint(name: str, snapshot_id: int):
     """Get parsed context window messages from a specific snapshot.

@@ -150,6 +150,21 @@ async def db_rev_poll_loop(agent_app) -> None:
                         "[DYNAMIC] Failed to re-attach token hook after reload: %s",
                         _e,
                     )
+                # Same deal for the context-compaction hook — without
+                # this, agents registered after startup would silently
+                # never compact (PR #85 review F2). Idempotent per-agent
+                # sentinel, safe to re-run on every reload.
+                try:
+                    from services.context_compaction import (
+                        attach_compaction_hooks_to_all,
+                    )
+
+                    attach_compaction_hooks_to_all(agent_app)
+                except Exception as _e:  # noqa: BLE001
+                    logger.warning(
+                        "[DYNAMIC] Failed to re-attach compaction hook after reload: %s",
+                        _e,
+                    )
 
                 last_rev = current
             except Exception as e:  # noqa: BLE001

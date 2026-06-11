@@ -18,6 +18,7 @@ import SettingsRunningTemplates from './settings/SettingsRunningTemplates.vue'
 import SettingsServices from './settings/SettingsServices.vue'
 import SettingsLLM from './settings/SettingsLLM.vue'
 import SettingsVoice from './settings/SettingsVoice.vue'
+import SettingsCompaction from './settings/SettingsCompaction.vue'
 import SettingsExperimental from './settings/SettingsExperimental.vue'
 
 const TABS = [
@@ -28,6 +29,7 @@ const TABS = [
   { id: 'services',     label: 'Services',       eyebrow: 'INTEGRATIONS' },
   { id: 'yaml',         label: 'YAML Config',    eyebrow: 'INTEGRATIONS' },
   { id: 'running-tmpl', label: 'Running Templates', eyebrow: 'INTEGRATIONS' },
+  { id: 'compaction',   label: 'Context Compaction', eyebrow: 'ADVANCED' },
   { id: 'experimental', label: 'Experimental',   eyebrow: 'ADVANCED' },
 ]
 const active = ref('general')
@@ -90,6 +92,7 @@ function labelFor(id) {
         <SettingsYaml v-else-if="active === 'yaml'" />
         <SettingsRunningTemplates v-else-if="active === 'running-tmpl'" />
         <SettingsServices v-else-if="active === 'services'" />
+        <SettingsCompaction v-else-if="active === 'compaction'" />
         <SettingsExperimental v-else-if="active === 'experimental'" />
       </section>
     </main>

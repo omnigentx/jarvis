@@ -480,6 +480,20 @@ async def lifespan(app: FastAPI):
         except Exception as _e:
             logger.warning("[TOKEN] Failed to attach default token hook: %s", _e, exc_info=True)
 
+        # ── Always-on context-compaction hook ─────────────────
+        # Same wiring pattern as the token hook above: fires on
+        # before_llm_call for every in-process agent, threshold-checks
+        # the context size, and compacts message_history when the
+        # configured ratio is exceeded (services/context_compaction.py).
+        # Subprocess team agents are NOT hooked here — they benefit via
+        # the resume path (newest raw/working snapshot wins).
+        try:
+            from services.context_compaction import attach_compaction_hooks_to_all
+            _n_compact = attach_compaction_hooks_to_all(agent)
+            logger.info("[COMPACT] Compaction hook attached to %d agent(s)", _n_compact)
+        except Exception as _e:
+            logger.warning("[COMPACT] Failed to attach compaction hook: %s", _e, exc_info=True)
+
         # Wire CronScheduler agent references (for agent_turn execution)
         if state.cron_scheduler:
             state.cron_scheduler.set_agent_refs(agent, state.session_service)
@@ -497,6 +511,12 @@ async def lifespan(app: FastAPI):
                 attach_token_persistence_hooks_to_all(agent)
             except Exception as _e:
                 logger.warning("[TOKEN] Failed to re-attach hook after preload: %s", _e)
+            # Compaction hook is idempotent the same way (per-agent sentinel).
+            try:
+                from services.context_compaction import attach_compaction_hooks_to_all
+                attach_compaction_hooks_to_all(agent)
+            except Exception as _e:
+                logger.warning("[COMPACT] Failed to re-attach hook after preload: %s", _e)
 
         # Background task: poll agent_definitions_meta.rev and reload on change.
         # Writers (REST CRUD + agent_spawner MCP) bump rev; this loop converges.
