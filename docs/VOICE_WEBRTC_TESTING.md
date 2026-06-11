@@ -8,9 +8,15 @@ playback. Control/STT/barge-in events still ride `/ws/voice`.
 
 Automated coverage (all green, headless):
 - backend bridge loopback — `backend/tests/test_services/test_webrtc_voice.py`
+- TTS track pacing (no catch-up burst → no dropped reply head) —
+  `test_webrtc_voice.py::test_tts_track_paces_backlog_instead_of_bursting`
 - signalling over the WS handler — `test_ws_voice.py::test_webrtc_offer_is_answered_over_ws`
+- mid-session re-offer (ICE-death recovery, server half) —
+  `test_ws_voice.py::test_webrtc_reoffer_replaces_session_over_same_ws`
 - barge-in SSoT — `test_ws_voice.py` (onset / playback-tail / playback_done)
-- frontend negotiation — `frontend/tests/e2e/flows/voice-webrtc.spec.ts`
+- frontend negotiation + ICE-failure reconnect policy —
+  `frontend/tests/e2e/flows/voice-webrtc.spec.ts`,
+  `frontend/src/composables/webrtcRecovery.test.js`
 
 What automation **cannot** check (needs a real device): audio fidelity and
 whether the browser AEC actually cancels the echo. That's this guide.
