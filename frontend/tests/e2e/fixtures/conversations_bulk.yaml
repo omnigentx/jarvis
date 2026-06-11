@@ -1,0 +1,66 @@
+# Conversation sidebar — multi-select bulk delete + per-agent scoping.
+#
+# Backend list endpoint is now paginated + agent-scoped:
+#   GET /api/conversations?agent_name=&limit=&offset=  →  { items, total }
+# and supports batch removal:
+#   POST /api/conversations/bulk-delete { ids: [...] }  →  { deleted, failed }
+#
+# The mock matches on method+path only (query ignored), so every list request
+# returns this same page regardless of agent_name/offset — the test asserts the
+# REQUEST wiring (agent_name in query, ids in the bulk body), not server-side
+# filtering, which is covered by backend unit tests.
+
+backend_source:
+  - "backend/routes/sessions.py::list_conversations"
+  - "backend/routes/sessions.py::bulk_delete_conversations"
+  - "backend/routes/agents.py::list_agents"
+
+responses:
+  # total == items → no infinite-scroll sentinel, so request counts stay clean.
+  "GET /api/conversations":
+    status: 200
+    json:
+      total: 3
+      items:
+        - id: "conv-a"
+          title: "Alpha conversation"
+          agent_name: "Jarvis"
+          created_at: 1749600000
+          updated_at: 1749600300
+          message_count: 4
+        - id: "conv-b"
+          title: "Beta conversation"
+          agent_name: "Jarvis"
+          created_at: 1749600100
+          updated_at: 1749600200
+          message_count: 2
+        - id: "conv-c"
+          title: "Gamma conversation"
+          agent_name: "Jarvis"
+          created_at: 1749600200
+          updated_at: 1749600100
+          message_count: 6
+
+  "POST /api/conversations/bulk-delete":
+    status: 200
+    json:
+      deleted: ["conv-a", "conv-b"]
+      failed: []
+
+  "GET /api/agents":
+    status: 200
+    json:
+      - name: "Jarvis"
+        description: "Main orchestrator"
+        status: "idle"
+        is_default: true
+        team_name: null
+      - name: "IoT"
+        description: "Home automation"
+        status: "idle"
+        is_default: false
+        team_name: null
+
+  "GET /api/agents/activities/recent":
+    status: 200
+    json: {}

@@ -5,6 +5,9 @@ import { useAudioPlayerStore } from './audioPlayer'
 
 const META_STORAGE_KEY = 'jarvis_chat_meta'
 const TTS_STORAGE_KEY = 'jarvis_tts_enabled'
+// Page size for the conversation sidebar's infinite scroll. The sidebar is
+// scoped to one agent at a time, so 20 is plenty per fetch.
+const CONV_PAGE_SIZE = 20
 
 export const useChatStore = defineStore('chat', () => {
   // --- State ---
@@ -13,6 +16,15 @@ export const useChatStore = defineStore('chat', () => {
   const activeAgentName = ref(null)
   const isStreaming = ref(false)
   const isLoadingHistory = ref(false)
+  // Conversation-list pagination (server-side, scoped to activeAgentName).
+  // convOffset == number of backend rows already loaded for the current agent;
+  // convTotal == total backend rows for that agent. hasMore drives infinite
+  // scroll. Both reset whenever the agent changes.
+  const convOffset = ref(0)
+  const convTotal = ref(0)
+  const isLoadingConversations = ref(false)
+  const isLoadingMoreConversations = ref(false)
+  const convHasMore = computed(() => convOffset.value < convTotal.value)
   const ttsEnabled = ref(localStorage.getItem(TTS_STORAGE_KEY) === 'true')
   // Chat TTS plays through the singleton audio player (single source of
   // truth) — ttsPlaying just mirrors it so chat UI reacts without owning
@@ -63,39 +75,89 @@ export const useChatStore = defineStore('chat', () => {
 
   // --- Backend API ---
 
+  function _mapConv(c) {
+    return {
+      id: c.id,
+      title: c.title,
+      // Backend stamps the primary agent per session (see PRIMARY_AGENT_META_KEY
+      // in services/session_service.py). Fall back to Jarvis for any legacy
+      // session where the backend couldn't resolve one.
+      agentName: c.agent_name || 'Jarvis',
+      backendConversationId: c.id,
+      messages: [], // Loaded on-demand via fetchHistory
+      createdAt: c.created_at * 1000,
+      updatedAt: c.updated_at * 1000,
+      messageCount: c.message_count,
+    }
+  }
+
   /**
-   * Fetch conversation list from backend.
-   * Called on page load to populate sidebar.
+   * Fetch the conversation list from backend, scoped to the active agent and
+   * paginated. ``reset`` replaces the list (initial load / agent switch);
+   * otherwise it appends the next page (infinite scroll).
+   *
+   * Server-side filtering means the loaded list already contains ONLY the
+   * active agent's conversations — the sidebar renders it directly, no
+   * client-side agent filter needed. Returns early until an agent is known
+   * so we never flash a cross-agent list on first mount.
    */
-  async function fetchConversations() {
+  async function fetchConversations({ reset = true } = {}) {
+    if (!activeAgentName.value) return
+    if (reset) {
+      if (isLoadingConversations.value) return
+      isLoadingConversations.value = true
+      convOffset.value = 0
+    } else {
+      if (isLoadingMoreConversations.value || !convHasMore.value) return
+      isLoadingMoreConversations.value = true
+    }
+
+    const agentAtRequest = activeAgentName.value
     try {
-      const data = await apiFetch('/api/conversations')
-      if (!Array.isArray(data)) return
+      const params = new URLSearchParams({
+        agent_name: agentAtRequest,
+        limit: String(CONV_PAGE_SIZE),
+        offset: String(convOffset.value),
+      })
+      const data = await apiFetch(`/api/conversations?${params.toString()}`)
+      const items = Array.isArray(data?.items) ? data.items.map(_mapConv) : []
 
-      conversations.value = data.map(c => ({
-        id: c.id,
-        title: c.title,
-        // Backend stamps the primary agent per session (see PRIMARY_AGENT_META_KEY
-        // in services/session_service.py). Fall back to Jarvis for any legacy
-        // session where the backend couldn't resolve one.
-        agentName: c.agent_name || 'Jarvis',
-        backendConversationId: c.id,
-        messages: [], // Loaded on-demand via fetchHistory
-        createdAt: c.created_at * 1000,
-        updatedAt: c.updated_at * 1000,
-        messageCount: c.message_count,
-      }))
+      // Guard against a stale response landing after the user switched agents.
+      if (activeAgentName.value !== agentAtRequest) return
 
-      // Auto-select previously active conversation
-      if (activeConversationId.value) {
+      convTotal.value = Number.isFinite(data?.total) ? data.total : items.length
+
+      if (reset) {
+        // Keep any in-memory, never-sent conversation for THIS agent pinned on
+        // top (created via "+" but not yet persisted, so absent from backend).
+        const unsent = conversations.value.filter(
+          c => !c.backendConversationId && c.agentName === agentAtRequest,
+        )
+        conversations.value = [...unsent, ...items]
+      } else {
+        const seen = new Set(conversations.value.map(c => c.id))
+        conversations.value.push(...items.filter(c => !seen.has(c.id)))
+      }
+      convOffset.value += items.length
+
+      // Auto-load history for the restored active conversation (initial load).
+      if (reset && activeConversationId.value) {
         const exists = conversations.value.find(c => c.id === activeConversationId.value)
-        if (exists && exists.messages.length === 0) {
+        if (exists && exists.backendConversationId && exists.messages.length === 0) {
           await fetchHistory(activeConversationId.value, exists.agentName)
         }
       }
     } catch (e) {
       console.warn('[ChatStore] Failed to fetch conversations:', e)
+    } finally {
+      if (reset) isLoadingConversations.value = false
+      else isLoadingMoreConversations.value = false
     }
+  }
+
+  /** Load the next page of conversations (infinite scroll). */
+  async function loadMoreConversations() {
+    await fetchConversations({ reset: false })
   }
 
   /**
@@ -217,13 +279,56 @@ export const useChatStore = defineStore('chat', () => {
     _saveMeta()
   }
 
-  function setActiveAgent(name) {
+  /**
+   * Bulk-delete conversations (the sidebar's multi-select). Sends one
+   * request for all backend-persisted ids; purely in-memory (never-sent)
+   * conversations are just dropped locally. Re-points the active selection
+   * if it was among the deleted.
+   */
+  async function deleteConversations(ids) {
+    const idSet = new Set(ids)
+    const backendIds = conversations.value
+      .filter(c => idSet.has(c.id) && c.backendConversationId)
+      .map(c => c.backendConversationId)
+
+    if (backendIds.length) {
+      await apiFetch('/api/conversations/bulk-delete', {
+        method: 'POST',
+        body: JSON.stringify({ ids: backendIds }),
+      })
+    }
+
+    conversations.value = conversations.value.filter(c => !idSet.has(c.id))
+    // Keep the paging counters honest so convHasMore stays correct.
+    convTotal.value = Math.max(0, convTotal.value - backendIds.length)
+    convOffset.value = Math.max(0, convOffset.value - backendIds.length)
+
+    if (idSet.has(activeConversationId.value)) {
+      const next = conversations.value[0] || null
+      activeConversationId.value = next?.id || null
+      if (next) activeAgentName.value = next.agentName
+      _saveMeta()
+    }
+  }
+
+  async function setActiveAgent(name) {
+    if (activeAgentName.value === name) return
     activeAgentName.value = name
+    // The active conversation belonged to the previous agent — drop it.
     const conv = activeConversation.value
     if (conv && conv.agentName !== name) {
       activeConversationId.value = null
     }
+    // The list is server-scoped per agent: clear the old agent's rows for
+    // instant feedback (keep this agent's unsent draft if any), reset paging,
+    // then reload the new agent's first page.
+    conversations.value = conversations.value.filter(
+      c => c.agentName === name && !c.backendConversationId,
+    )
+    convOffset.value = 0
+    convTotal.value = 0
     _saveMeta()
+    await fetchConversations({ reset: true })
   }
 
   function toggleTts() {
@@ -391,16 +496,21 @@ export const useChatStore = defineStore('chat', () => {
     activeAgentName,
     isStreaming,
     isLoadingHistory,
+    isLoadingConversations,
+    isLoadingMoreConversations,
+    convHasMore,
     ttsEnabled,
     ttsPlaying,
     activeConversation,
     activeMessages,
     sortedConversations,
     fetchConversations,
+    loadMoreConversations,
     fetchHistory,
     createConversation,
     selectConversation,
     deleteConversation,
+    deleteConversations,
     setActiveAgent,
     toggleTts,
     stopTts,

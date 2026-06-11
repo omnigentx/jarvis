@@ -177,7 +177,7 @@ class TestListSessions:
         svc._manager.list_sessions.return_value = [empty_info]
         svc._manager.get_session.return_value = empty_session
 
-        assert svc.list_sessions() == []
+        assert svc.list_sessions() == {"items": [], "total": 0}
 
     def test_includes_jarvis_session(self, tmp_path):
         """Classic Jarvis session renders with agent_name=Jarvis."""
@@ -202,10 +202,11 @@ class TestListSessions:
         svc._manager.get_session.return_value = session
 
         result = svc.list_sessions()
-        assert len(result) == 1
-        assert result[0]["id"] == "s-jarvis"
-        assert result[0]["agent_name"] == "Jarvis"
-        assert result[0]["title"] == "Hello"
+        assert result["total"] == 1
+        assert len(result["items"]) == 1
+        assert result["items"][0]["id"] == "s-jarvis"
+        assert result["items"][0]["agent_name"] == "Jarvis"
+        assert result["items"][0]["title"] == "Hello"
 
     def test_hides_legacy_session_with_no_primary_agent(self, tmp_path, caplog):
         """Legacy session (no primary_agent key) is hidden from the list.
@@ -236,7 +237,7 @@ class TestListSessions:
 
         with caplog.at_level("WARNING"):
             result = svc.list_sessions()
-        assert result == []
+        assert result["items"] == []
         assert any("Primary agent missing" in r.message for r in caplog.records)
 
 

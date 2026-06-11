@@ -29,7 +29,9 @@ responses:
   # ChatView.onMounted → chatStore.fetchConversations
   "GET /api/conversations":
     status: 200
-    json: []
+    json:
+      items: []
+      total: 0
 
   # ChatView → agentsStore.fetchAgents (guarded by `if (!agentsList.length)`)
   "GET /api/agents":
