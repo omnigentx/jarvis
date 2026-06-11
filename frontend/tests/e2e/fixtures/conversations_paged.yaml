@@ -1,0 +1,50 @@
+# Conversation sidebar — infinite scroll paging.
+#
+# total (8) > the page we return (3), so chatStore.convHasMore stays true and
+# the IntersectionObserver sentinel renders. When it enters view the store
+# fetches the next page → a SECOND GET /api/conversations fires. The mock
+# returns the same 3 rows (query ignored); the store dedupes by id, so no
+# duplicates render, and offset advances past total to end the loop. The test
+# asserts the second request fired (paging wiring), not paged content.
+
+backend_source:
+  - "backend/routes/sessions.py::list_conversations"
+  - "backend/routes/agents.py::list_agents"
+
+responses:
+  "GET /api/conversations":
+    status: 200
+    json:
+      total: 8
+      items:
+        - id: "conv-1"
+          title: "First conversation"
+          agent_name: "Jarvis"
+          created_at: 1749600000
+          updated_at: 1749600300
+          message_count: 1
+        - id: "conv-2"
+          title: "Second conversation"
+          agent_name: "Jarvis"
+          created_at: 1749600100
+          updated_at: 1749600200
+          message_count: 1
+        - id: "conv-3"
+          title: "Third conversation"
+          agent_name: "Jarvis"
+          created_at: 1749600200
+          updated_at: 1749600100
+          message_count: 1
+
+  "GET /api/agents":
+    status: 200
+    json:
+      - name: "Jarvis"
+        description: "Main orchestrator"
+        status: "idle"
+        is_default: true
+        team_name: null
+
+  "GET /api/agents/activities/recent":
+    status: 200
+    json: {}

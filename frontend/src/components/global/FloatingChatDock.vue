@@ -269,7 +269,7 @@ function handleKeydown(e) {
 
     <!-- Collapsed FAB -->
     <transition name="dock-fab">
-      <button
+      <!-- <button
         v-if="!expanded"
         class="dock-fab"
         :class="{ streaming: showStreamingBadge, 'dock-fab--hidden': isMobile && !fabShown }"
@@ -277,6 +277,19 @@ function handleKeydown(e) {
         title="Open chat dock"
         @click="toggle"
         aria-label="Open chat dock"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+          <path d="M21 12a8 8 0 0 1-11.6 7.2L4 21l1.8-5.4A8 8 0 1 1 21 12z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span v-if="showStreamingBadge" class="fab-badge" title="Agent is replying" />
+      </button> -->
+
+      <button
+        v-if="visible"
+        class="dock-fab"
+        :class="{ streaming: showStreamingBadge, 'dock-fab--hidden': isMobile && !fabShown }"
+        aria-label="Open chat dock"
+        @click="toggle"
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
           <path d="M21 12a8 8 0 0 1-11.6 7.2L4 21l1.8-5.4A8 8 0 1 1 21 12z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
@@ -303,26 +316,30 @@ function handleKeydown(e) {
 
 /* ── Collapsed FAB ── */
 .dock-fab {
-  width: 48px;
-  height: 48px;
+  position: fixed;
+  left: 16px;
+  /* Stack above the tab bar (56px content + safe-area) AND the mini
+     audio player when it's visible. --mini-player-h is 0 by default,
+     64 while playing. */
+  bottom: calc(var(--mobile-tabbar-h) + var(--safe-bottom) + var(--mini-player-h, 0px) + 12px);
+  z-index: 195;
+  width: 52px;
+  height: 52px;
   border-radius: 50%;
-  /* Match the brand: indigo→primary gradient that the main app uses
-     for "talk to Jarvis" actions. Previous navy was off-brand and
-     identical to no other surface in the app. */
-  background: linear-gradient(180deg, var(--primary-hover), var(--primary));
-  border: 0;
-  color: #fff;
-  cursor: pointer;
-  box-shadow: 0 8px 24px var(--primary-glow);
-  position: relative;
-  /* match VoiceFAB: flex + clip the frosted bg / backdrop-filter to the circle.
-     Without overflow:hidden the backdrop-filter rendered as a square behind the
-     icon (it didn't follow border-radius on this relative, nested element). */
   overflow: hidden;
+  border: 0;
+  /* Solid brand gradient — crisp, no translucency/blur (the frosted version
+     looked washed-out and dimmed the icon). Content clearance is handled by a
+     bottom safe-zone + auto-hide-on-scroll + the grip, not by see-through. */
+  background: linear-gradient(180deg, var(--primary-hover), var(--primary));
+  color: white;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: transform 0.2s var(--ease-out), opacity 0.2s var(--ease-out), box-shadow 0.22s var(--ease-out);
+  cursor: pointer;
+  box-shadow: 0 8px 24px var(--primary-glow);
+  transition: transform 0.2s var(--ease-out), opacity 0.2s var(--ease-out),
+              background 0.22s var(--ease-out), box-shadow 0.22s var(--ease-out);
 }
 .dock-fab:hover { transform: scale(1.06); }
 .dock-fab:active { transform: scale(0.96); }

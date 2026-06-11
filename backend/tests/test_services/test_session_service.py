@@ -42,15 +42,82 @@ class TestSessionService:
         result = isolated_svc.create_session()
         assert result["title"] == "New Chat"
 
-    def test_list_sessions_returns_list(self, isolated_svc):
-        """list_sessions should return a list."""
-        assert isinstance(isolated_svc.list_sessions(), list)
+    def test_list_sessions_returns_envelope(self, isolated_svc):
+        """list_sessions returns the paginated {items, total} envelope."""
+        result = isolated_svc.list_sessions()
+        assert isinstance(result, dict)
+        assert isinstance(result["items"], list)
+        assert isinstance(result["total"], int)
 
     def test_multiple_sessions_unique_ids(self, isolated_svc):
         """Each created session should have a unique ID."""
         s1 = isolated_svc.create_session("Chat 1")
         s2 = isolated_svc.create_session("Chat 2")
         assert s1["id"] != s2["id"]
+
+
+class TestListSessionsFilterPagination:
+    """Agent-scoping + paging for the conversation sidebar.
+
+    Sessions only become listable once a primary agent is stamped (a bare
+    create has no agent and is hidden), so we seed metadata directly — the
+    same key ``resume_and_send`` writes on the first turn.
+    """
+
+    @staticmethod
+    def _seed(svc, title, agent):
+        from services.session_service import PRIMARY_AGENT_META_KEY
+        s = svc._manager.create_session(
+            metadata={"title": title, PRIMARY_AGENT_META_KEY: agent}
+        )
+        return s.info.name
+
+    def test_filters_by_agent(self, isolated_svc):
+        self._seed(isolated_svc, "J1", "Jarvis")
+        self._seed(isolated_svc, "J2", "Jarvis")
+        self._seed(isolated_svc, "I1", "IoT")
+
+        all_rows = isolated_svc.list_sessions()
+        assert all_rows["total"] == 3
+
+        jarvis = isolated_svc.list_sessions(agent_name="Jarvis")
+        assert jarvis["total"] == 2
+        assert {r["agent_name"] for r in jarvis["items"]} == {"Jarvis"}
+
+        iot = isolated_svc.list_sessions(agent_name="IoT")
+        assert iot["total"] == 1
+        assert iot["items"][0]["agent_name"] == "IoT"
+
+    def test_pagination_window_with_stable_total(self, isolated_svc):
+        for i in range(5):
+            self._seed(isolated_svc, f"C{i}", "Jarvis")
+
+        first = isolated_svc.list_sessions(agent_name="Jarvis", limit=2, offset=0)
+        assert first["total"] == 5
+        assert len(first["items"]) == 2
+
+        last = isolated_svc.list_sessions(agent_name="Jarvis", limit=2, offset=4)
+        assert last["total"] == 5
+        assert len(last["items"]) == 1
+
+        # total stays the filtered count even when the offset is past the end.
+        beyond = isolated_svc.list_sessions(agent_name="Jarvis", limit=2, offset=10)
+        assert beyond["total"] == 5
+        assert beyond["items"] == []
+
+    def test_pages_do_not_overlap(self, isolated_svc):
+        for i in range(5):
+            self._seed(isolated_svc, f"C{i}", "Jarvis")
+        p1 = isolated_svc.list_sessions(agent_name="Jarvis", limit=2, offset=0)
+        p2 = isolated_svc.list_sessions(agent_name="Jarvis", limit=2, offset=2)
+        ids = [r["id"] for r in p1["items"]] + [r["id"] for r in p2["items"]]
+        assert len(ids) == len(set(ids))  # no id appears on two pages
+
+    @pytest.fixture()
+    def isolated_svc(self, tmp_path):
+        svc = SessionService()
+        svc._manager = SessionManager(cwd=tmp_path)
+        return svc
 
 
 class TestDeleteSession:

@@ -18,7 +18,9 @@ backend_source:
 responses:
   "GET /api/conversations":
     status: 200
-    json: []
+    json:
+      items: []
+      total: 0
 
   "GET /api/agents":
     status: 200

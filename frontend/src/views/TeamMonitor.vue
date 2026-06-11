@@ -1287,6 +1287,17 @@ onMounted(() => {
     width: 100%;
     justify-content: center;
   }
+
+  /* Inject bar: inline at the end of the stream, NOT sticky. Sticky honoured
+     app-main's content padding-bottom (tab bar + safe-area + FAB band), so it
+     pinned ~136px above the viewport bottom — i.e. floating mid-screen over the
+     agent stream, worst of all when the FABs are hidden (the reserved FAB band
+     becomes dead space below it). Inline flow puts it after the last agent
+     card; the content padding still clears the tab bar + FABs underneath it. */
+  .bulk-inject-host {
+    position: static;
+    backdrop-filter: none;
+  }
 }
 
 </style>

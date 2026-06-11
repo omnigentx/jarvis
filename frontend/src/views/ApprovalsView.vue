@@ -764,6 +764,7 @@ const knownTypes = [
   border-radius: var(--r-lg);
   overflow: hidden;
   min-height: 0;
+  min-width: 0;  /* grid item: shrink below content min-content (see __detail) */
 }
 .approvals__queue-head {
   padding: 12px 14px;
@@ -869,6 +870,12 @@ const knownTypes = [
   padding: 16px;
   overflow-y: auto;
   min-height: 0;
+  /* Grid items default to min-width:auto (= content min-content). A wide code
+     block in the preview (long unbreakable line) then forces this 1fr track
+     wider than the viewport → whole page scrolls horizontally. iOS Safari is
+     stricter than Blink here. min-width:0 lets the item shrink so the code
+     block's own overflow-x:auto scrolls internally instead of pushing the page. */
+  min-width: 0;
 }
 .approvals__detail--empty {
   display: flex;

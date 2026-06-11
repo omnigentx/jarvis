@@ -288,7 +288,12 @@ class SessionService:
         session = self._manager.create_session(metadata={"title": "New Chat"})
         return session.info.name
 
-    def list_sessions(self) -> List[Dict]:
+    def list_sessions(
+        self,
+        agent_name: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: int = 0,
+    ) -> Dict:
         """List chat sessions, one row per user-facing conversation.
 
         A session is listed when any agent has saved history to it — we used
@@ -299,37 +304,62 @@ class SessionService:
 
         Sessions with no saved history yet (just-created, never sent) are
         skipped — they have no content to display and no agent to attribute.
-        """
-        all_sessions = self._manager.list_sessions()
-        results = []
 
-        for s in all_sessions:
+        Args:
+            agent_name: when given, only sessions whose primary agent matches
+                are returned (the sidebar is scoped to the active agent).
+            limit/offset: page window over the filtered+sorted set. ``limit``
+                of ``None`` returns everything (kept for internal callers).
+
+        Returns a paginated envelope ``{"items": [...], "total": N}`` where
+        ``total`` is the count AFTER agent filtering but BEFORE the page slice,
+        so the UI knows whether more pages exist.
+
+        Scales with session count: cheap metadata (id/title/agent/timestamps)
+        is collected for every session, but the expensive per-session history
+        read for ``message_count`` is done ONLY for the rows on the requested
+        page — not the whole corpus.
+        """
+        rows = []
+        for s in self._manager.list_sessions():
             session = self._manager.get_session(s.name)
             if not session:
                 continue
 
-            agent_name = _resolve_primary_agent(session)
-            if not agent_name:
+            primary = _resolve_primary_agent(session)
+            if not primary:
                 # No agent has written history yet → nothing to show.
                 continue
+            if agent_name and primary != agent_name:
+                continue
 
-            message_count = 0
-            history_path = session.latest_history_path(agent_name)
-            if history_path and history_path.exists():
-                message_count = len(_extract_display_messages(history_path))
-
-            title = s.metadata.get("title") or s.metadata.get("first_user_preview") or "New Chat"
-
-            results.append({
+            rows.append({
                 "id": s.name,
-                "title": title,
-                "agent_name": agent_name,
+                "title": s.metadata.get("title") or s.metadata.get("first_user_preview") or "New Chat",
+                "agent_name": primary,
                 "created_at": s.created_at.timestamp(),
                 "updated_at": s.last_activity.timestamp(),
-                "message_count": message_count,
+                "_session": session,  # carried for the deferred message_count
             })
 
-        return results
+        # Newest first — matches the frontend's updatedAt-desc ordering so page
+        # boundaries are stable as the user scrolls.
+        rows.sort(key=lambda r: r["updated_at"], reverse=True)
+        total = len(rows)
+
+        page = rows[offset:] if limit is None else rows[offset:offset + limit]
+
+        items = []
+        for r in page:
+            session = r.pop("_session")
+            message_count = 0
+            history_path = session.latest_history_path(r["agent_name"])
+            if history_path and history_path.exists():
+                message_count = len(_extract_display_messages(history_path))
+            r["message_count"] = message_count
+            items.append(r)
+
+        return {"items": items, "total": total}
 
     def delete_session(self, session_id: str) -> bool:
         """Delete a session."""
