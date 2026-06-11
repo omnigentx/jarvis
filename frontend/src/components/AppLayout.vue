@@ -944,6 +944,6 @@ const searchPlaceholder = computed(() =>
      tab bar. Without the +64 the last content (e.g. a short page's actions)
      stayed underneath the chat/voice FABs with no way to reach it. */
   padding: 16px;
-  padding-bottom: calc(var(--mobile-tabbar-h) + var(--mini-player-h, 0px) + max(16px, var(--safe-bottom)) + 64px);
+  padding-bottom: calc(var(--mobile-tabbar-h) + var(--mini-player-h, 0px) + max(16px, var(--safe-bottom)) + var(--mobile-fab-band));
 }
 </style>

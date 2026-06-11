@@ -118,6 +118,12 @@
   --mobile-tabbar-h: 56px;
   --mobile-header-h: 52px;
   --mini-player-h: 0px;   /* updated to 64px when MiniAudioPlayer is visible */
+  /* Clearance band for the floating chat/voice FABs that hover just above
+     the tab bar (≈52px button + 12px offset). Page content reserves this so
+     the last item never hides under a FAB. Single source of truth — consumed
+     by AppLayout's content padding AND any view that bleeds past it (ChatView).
+     Keep in sync: change here, not inline. */
+  --mobile-fab-band: 64px;
 }
 
 /* Light theme */

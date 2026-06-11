@@ -325,8 +325,13 @@ function handleSwitchAgent(name) {
 .chat-root--mobile {
   --chat-bottom-pad: calc(var(--mobile-tabbar-h) + var(--mini-player-h, 0px) + max(16px, var(--safe-bottom)));
   margin: -16px -12px;
-  margin-bottom: calc(-1 * var(--chat-bottom-pad));
-  height: calc(100% + 16px + var(--chat-bottom-pad));
+  /* AppLayout's content padding-bottom = --chat-bottom-pad + --mobile-fab-band
+     (the band keeps normal pages' content above the floating FABs). The chat
+     composer doesn't need that band — the FABs self-hide on /chat — so bleed
+     the FULL padding (band included), otherwise the band shows as dead space
+     below the composer. Composer still clears the tab bar via padding-bottom. */
+  margin-bottom: calc(-1 * (var(--chat-bottom-pad) + var(--mobile-fab-band)));
+  height: calc(100% + 16px + var(--chat-bottom-pad) + var(--mobile-fab-band));
   padding-bottom: var(--chat-bottom-pad);
 }
 
