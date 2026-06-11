@@ -578,4 +578,8 @@ def merge_hooks(a: ToolRunnerHooks, b: ToolRunnerHooks) -> ToolRunnerHooks:
             if a.after_turn_complete or b.after_turn_complete else None,
         on_pause_cancel=(lambda r: _any_true(a.on_pause_cancel, b.on_pause_cancel, r))
             if a.on_pause_cancel or b.on_pause_cancel else None,
+        # OR'd like on_pause_cancel: the first hook that handled the
+        # overflow (returned True) wins and the LLM call is reissued.
+        on_context_overflow=(lambda r, e: _any_true(a.on_context_overflow, b.on_context_overflow, r, e))
+            if a.on_context_overflow or b.on_context_overflow else None,
     )
