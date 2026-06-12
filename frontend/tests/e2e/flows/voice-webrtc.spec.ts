@@ -92,3 +92,75 @@ test('mic toggle → client sends a valid webrtc_offer (audio over WebRTC)', asy
   await page.waitForTimeout(300)
   expect(inbound.some((m) => m.includes('"type":"playback_done"'))).toBe(false)
 })
+
+/**
+ * Track every RTCPeerConnection the app creates and let the test force the
+ * NEWEST one into a connection state — the only way to exercise the ICE-death
+ * recovery path headless (Playwright can't make a real ICE pair die on cue).
+ * The composable's own ``connectionstatechange`` listener receives the event,
+ * so everything downstream (webrtcRecovery policy, re-offer, give-up banner)
+ * is production code.
+ */
+async function trackPeerConnections(page: Page) {
+  await page.addInitScript(() => {
+    const pcs: RTCPeerConnection[] = []
+    const Orig = window.RTCPeerConnection
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(window as any).RTCPeerConnection = class extends Orig {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      constructor(...args: any[]) {
+        super(...args)
+        pcs.push(this)
+      }
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(window as any).__pcCount = () => pcs.length
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(window as any).__failNewestPc = () => {
+      const pc = pcs[pcs.length - 1]
+      Object.defineProperty(pc, 'connectionState', { configurable: true, get: () => 'failed' })
+      pc.dispatchEvent(new Event('connectionstatechange'))
+    }
+  })
+}
+
+test('ICE failure mid-session → re-offers over the live WS; exhausted retries → error banner', async ({ page }) => {
+  await seedApiKey(page)
+  await stubRealMicStream(page)
+  await trackPeerConnections(page)
+  await mockBackend(page, [NOISE])
+
+  const offers: string[] = []
+  await page.routeWebSocket(/\/ws\/voice$/, (ws) => {
+    ws.onMessage((data) => {
+      const s = typeof data === 'string' ? data : '<binary>'
+      if (s.includes('"type":"webrtc_offer"')) offers.push(s)
+      try {
+        if (JSON.parse(s).type === 'start') ws.send(JSON.stringify({ type: 'stt_ready' }))
+      } catch { /* binary */ }
+    })
+  })
+
+  await page.goto('/chat')
+  const mic = page.locator('.voice-bar .mic-btn')
+  await expect(mic).toBeVisible()
+  await mic.click()
+  await expect.poll(() => offers.length, { timeout: 8000 }).toBe(1)
+
+  // First ICE death (routine on 5G: handover/NAT rebind) → the client must
+  // re-negotiate with a fresh PC over the still-open WS, NOT show the fatal
+  // banner (the prod bug this pins).
+  await page.evaluate(() => (window as unknown as { __failNewestPc: () => void }).__failNewestPc())
+  await expect.poll(() => offers.length, { timeout: 8000 }).toBe(2)
+  await expect(page.locator('.voice-bar .err-msg')).toHaveCount(0)
+
+  // Second consecutive death → second (last-budget) reconnect attempt.
+  await page.evaluate(() => (window as unknown as { __failNewestPc: () => void }).__failNewestPc())
+  await expect.poll(() => offers.length, { timeout: 8000 }).toBe(3)
+
+  // Third consecutive death → budget exhausted → fail loud, no more offers.
+  await page.evaluate(() => (window as unknown as { __failNewestPc: () => void }).__failNewestPc())
+  await expect(page.locator('.voice-bar .err-msg')).toContainText('WebRTC could not connect')
+  await page.waitForTimeout(500)
+  expect(offers.length).toBe(3)
+})

@@ -832,3 +832,39 @@ def test_webrtc_offer_is_answered_over_ws(ws_client, monkeypatch):
         assert "v=0" in (evt.get("sdp") or "")
         assert "m=audio" in evt["sdp"]
         ws.close()
+
+
+def test_webrtc_reoffer_replaces_session_over_same_ws(ws_client, monkeypatch):
+    """Mid-session ICE recovery: when the client's RTCPeerConnection dies
+    (5G cell handover, NAT rebind), the frontend re-sends ``webrtc_offer`` on
+    the SAME control WS. The handler must replace the dead WebRtcVoiceSession
+    with a fresh one and answer again — this is the server half of the
+    reconnect flow in useVoiceSession.js/_restartWebRtc."""
+    import asyncio as _asyncio
+
+    from aiortc import RTCPeerConnection
+
+    monkeypatch.setenv("JARVIS_WEBRTC_ICE", "")  # host-only ICE, no STUN wait
+
+    async def _make_offer_sdp() -> str:
+        pc = RTCPeerConnection()
+        pc.addTransceiver("audio", direction="sendrecv")
+        await pc.setLocalDescription(await pc.createOffer())
+        sdp = pc.localDescription.sdp
+        await pc.close()
+        return sdp
+
+    first_sdp = _asyncio.run(_make_offer_sdp())
+    second_sdp = _asyncio.run(_make_offer_sdp())  # the post-failure fresh PC
+
+    client, _ = ws_client
+    with client.websocket_connect("/ws/voice") as ws:
+        ws.send_text(json.dumps({"type": "webrtc_offer", "sdp": first_sdp, "sdp_type": "offer"}))
+        first = _drain_until(ws, "webrtc_answer")
+        assert first.get("sdp_type") == "answer"
+
+        ws.send_text(json.dumps({"type": "webrtc_offer", "sdp": second_sdp, "sdp_type": "offer"}))
+        second = _drain_until(ws, "webrtc_answer")
+        assert second.get("sdp_type") == "answer"
+        assert "m=audio" in (second.get("sdp") or "")
+        ws.close()
