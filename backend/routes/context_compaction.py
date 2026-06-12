@@ -39,6 +39,8 @@ class CompactionSettingsPatch(BaseModel):
     min_savings_ratio: float | None = None
     snapshot_versions_visible: int | None = None
     emit_live_status: bool | None = None
+    compactor_model: str | None = None
+    compactor_input_ratio: float | None = None
 
 
 @router.get("/settings", dependencies=[Depends(verify_api_key)])

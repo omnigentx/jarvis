@@ -205,6 +205,12 @@ TTS_RATE = 24000      # RealtimeTTS / Edge PCM rate (mono s16)
 WEBRTC_RATE = 48000   # Opus / WebRTC standard
 FRAME_SAMPLES = 960   # 20 ms @ 48 kHz — one outbound frame
 _SILENCE_48K = b"\x00\x00" * FRAME_SAMPLES
+# recv() must never repay pacing debt by emitting frames faster than real
+# time: the receiver's jitter buffer treats a catch-up burst as late packets
+# and DISCARDS them (the "TTS loses its first seconds on prod" bug). Past this
+# lag we re-anchor the pacing clock to "now" instead of bursting. Two frames
+# (40 ms) of slack still lets normal scheduling jitter self-correct.
+_MAX_PACING_LAG_S = 2 * FRAME_SAMPLES / WEBRTC_RATE
 
 FeedAudio = Callable[[bytes], None]
 
@@ -264,14 +270,27 @@ class TtsAudioTrack(MediaStreamTrack):
             # out.samples*2 bytes of real audio; planes[0] may be padded, so slice.
             self._buf.extend(bytes(out.planes[0])[: out.samples * 2])
 
-    async def _next_frame_bytes(self) -> bytes:
-        # Top up the buffer until we have a full 20 ms frame, but don't block the
-        # cadence: if no TTS arrives within one frame interval, emit silence.
+    def _next_frame_bytes(self) -> bytes:
+        # Non-blocking: top up the buffer only with data that has ALREADY
+        # arrived. All pacing lives in recv()'s sleep — the previous version
+        # awaited the queue with a 20 ms timeout *in series with* the pacing
+        # sleep, so every idle frame silently ran ~1 ms over cadence. That
+        # drift accumulated (~50 ms per idle second) and was then repaid as a
+        # faster-than-real-time burst when the next reply arrived, which the
+        # client's jitter buffer dropped — heard as "the reply's head is gone".
         while len(self._buf) < FRAME_SAMPLES * 2:
             try:
-                pcm24k = await asyncio.wait_for(self._queue.get(), timeout=FRAME_SAMPLES / WEBRTC_RATE)
-            except asyncio.TimeoutError:
-                return _SILENCE_48K
+                pcm24k = self._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                if self._buf:
+                    # Queue ran dry with a partial frame buffered (reply tail,
+                    # or a mid-reply underrun). Flush it padded with silence —
+                    # leaving it would strand pending()=True forever and hang
+                    # wait_drained() whenever a reply isn't frame-aligned.
+                    out = bytes(self._buf) + _SILENCE_48K[len(self._buf):]
+                    self._buf.clear()
+                    return out
+                return _SILENCE_48K  # idle keepalive between replies
             self._resample_into_buf(pcm24k)
         out = bytes(self._buf[: FRAME_SAMPLES * 2])
         del self._buf[: FRAME_SAMPLES * 2]
@@ -287,8 +306,13 @@ class TtsAudioTrack(MediaStreamTrack):
             delay = target - time.time()
             if delay > 0:
                 await asyncio.sleep(delay)
+            elif -delay > _MAX_PACING_LAG_S:
+                # Fell behind wall clock (event-loop stall, slow consumer).
+                # Re-anchor so queued TTS plays from "now" at real-time pace
+                # rather than bursting the backlog (see _MAX_PACING_LAG_S).
+                self._start = time.time() - self._timestamp / WEBRTC_RATE
 
-        data = await self._next_frame_bytes()
+        data = self._next_frame_bytes()
         frame = av.AudioFrame(format="s16", layout="mono", samples=FRAME_SAMPLES)
         frame.sample_rate = WEBRTC_RATE
         frame.pts = self._timestamp

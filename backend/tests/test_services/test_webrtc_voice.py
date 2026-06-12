@@ -305,3 +305,50 @@ def test_webrtc_loopback_bridges_audio_both_directions():
     # Outbound: the server's TTS track produced frames the browser received.
     assert out_frames, "outbound TTS track produced no frames at the peer"
     assert all(n > 0 for n in out_frames)
+
+
+def test_tts_track_paces_backlog_instead_of_bursting():
+    """Pacing debt must NEVER be repaid as a faster-than-real-time burst.
+
+    When recv() falls behind wall clock (idle-frame drift or an event-loop
+    stall), the old code emitted the entire backlog instantly once TTS data
+    arrived; the browser's jitter buffer treats those frames as late and
+    discards them — heard on prod (iPhone/5G) as the reply's first seconds
+    missing. The fix re-anchors the pacing clock instead, so the first
+    second of a reply must take ~1 s of wall time to emit.
+    """
+    async def run() -> float:
+        track = webrtc_voice.TtsAudioTrack()
+        for _ in range(5):  # prime the pacing clock
+            await track.recv()
+        await asyncio.sleep(1.0)  # starve recv() → 1 s of pacing debt
+        for _ in range(20):  # a 2 s reply, pushed in 100 ms chunks
+            track.push(b"\x11\x00" * 2400)
+        t0 = time.time()
+        emitted = 0
+        while emitted < webrtc_voice.WEBRTC_RATE:  # pull 1.0 s of media
+            await track.recv()
+            emitted += webrtc_voice.FRAME_SAMPLES
+        return time.time() - t0
+
+    elapsed = asyncio.run(run())
+    assert elapsed >= 0.8, (
+        f"first 1.0s of reply emitted in {elapsed:.3f}s wall — catch-up burst; "
+        "the receiver's jitter buffer will drop the head of the reply"
+    )
+    assert elapsed <= 1.5, f"pacing too slow: {elapsed:.3f}s wall for 1.0s of media"
+
+
+def test_tts_track_flushes_partial_tail_so_wait_drained_completes():
+    """A reply whose PCM isn't 20 ms-frame-aligned must still drain: the
+    partial tail is flushed padded with silence, otherwise pending() stays
+    True forever and speak()'s wait_drained() hangs bot_speaking high."""
+    async def run() -> None:
+        track = webrtc_voice.TtsAudioTrack()
+        track.push(b"\x11\x00" * 720)  # 30 ms @ 24 kHz → 1.5 outbound frames
+        await track.recv()             # full frame
+        await track.recv()             # padded tail flush
+        assert not track.pending(), "partial tail left pending() stuck True"
+        await asyncio.wait_for(track.wait_drained(), timeout=1.0)
+
+    asyncio.run(run())
