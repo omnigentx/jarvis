@@ -368,3 +368,110 @@ Shipped in `backend/services/context_compaction.py` + `backend/routes/context_co
 9. **Scope**: the `before_llm_call` hook is attached to **in-process agents** (chat path), mirroring the always-on token-persistence hook. Subprocess team agents are not hooked in v1 — they still benefit via the resume path (newest raw/working). `promote_to_memory` stays in the plan contract but is always empty, and §8's "remove pinned messages" validation rule is dropped — no memory or pinning subsystem exists anywhere in the repo to source either from. `tool_result_artifacts` (spec §5 "optional later") is deferred — `raw_references` point at (raw_snapshot_id, message index range).
 
 10. **Failed compactions are recorded, never disruptive**: any planner/validator/apply error writes a `status='failed'` event row, emits `context_compaction_failed`, and leaves the live history untouched (the working context is built from deep copies and applied in one `load_message_history()` call only after validation passes).
+
+## 17. Overflow recovery + serving-model window detection (2026-06-11)
+
+Motivated by a field incident: the default model is a 9router **combo alias**
+(`openai.coding-agent`) unknown to ModelDatabase, so the auto window detection
+silently fell back to 120000 → threshold 84000 → repeated premature
+compactions at a real context of ~85–88K while the dashboard showed only the
+~24K history estimate. Combos also **rotate** between real models with
+different windows (observed: `claude-sonnet-4.5` 200K vs `gpt-5.5` 272K),
+which the static window assumption cannot survive.
+
+1. **Serving-model window detection (Tier 1).** OpenAI-compatible responses
+   carry the real serving model in `response.model` even when the request
+   used an alias. After every call the OpenAI provider resolves that name
+   through ModelDatabase (normalizing gateway dot-versions,
+   `claude-sonnet-4.5` → `claude-sonnet-4-5`) and updates
+   `usage_accumulator.set_context_window_size()` — unless an explicit
+   `context=1m`-style override is active. The threshold side
+   (`_context_token_limit`) tracks the **minimum window seen per agent per
+   session**: after a rotation to a smaller model the threshold never climbs
+   back, because the next call may land on the small model again. An UNKNOWN
+   window **fails loud instead of falling back**: auto-compaction is skipped
+   and the misconfiguration is surfaced once per agent per session (ERROR
+   log + a `status='failed'` event row on the Context Versions tab + the
+   SSE failure toast) — thresholding against an invented 120000 either
+   compacts prematurely or never, and the operator needs to know either
+   way. The 120000 constant survives only as a chunk-sizing default inside
+   the LLM compactor, where it affects efficiency, not policy.
+
+2. **Context-overflow recovery (reactive backstop).** Rotation can still
+   overflow mid-conversation (context built at 272K, next call lands on a
+   200K model). Overflow errors are classified **fatal** in the provider
+   retry loop (`is_context_overflow_error` — retrying an identical payload is
+   futile) and propagate to the tool runner, where a new
+   `ToolRunnerHooks.on_context_overflow` hook runs
+   `maybe_compact_agent(reason="context_overflow")` — threshold and
+   grow-memo bypassed, `enabled=false` respected — and the LLM call is
+   reissued **once** on the rebuilt payload. A second consecutive overflow
+   propagates (compaction could not shrink below the window).
+
+3. **LLM compaction ONLY — the rule-based planner was removed entirely
+   (2026-06-11 final revision).** Earlier addenda kept a rule-based
+   compactor as the MVP/fallback (spec §3 "rule-based first"). The
+   product decision is that semantic preservation matters more than
+   speed/cost: a blind cut-and-paste summary silently loses the decisions
+   a resumed agent needs. So `plan_compaction`/`_build_summary` are gone;
+   `plan_compaction_llm` is the only planner. The structural helpers
+   (`_plan_zones`, `_tail_truncations`, `_plan_skeleton`,
+   `build_working_context`, `validate_working_context`) remain — they are
+   compactor-agnostic plumbing, not "rule-based compaction".
+
+   The compactor is a **dedicated LLM agent** built from the
+   `compactor_model` setting (Settings → Context Compaction; reuses the
+   origin agent's provider config/keys) — choose a larger-window model so
+   one call can feed more history at once. Empty setting = degraded
+   default: the origin agent's own LLM via an isolated side-channel call.
+
+   When the middle zone exceeds the compactor input budget
+   (`compactor_input_ratio ×` the COMPACTOR's window — UI-configurable,
+   default 0.7), it is split into **pair-safe chunks** (a cut never
+   separates a tool call from its result) summarized concurrently by
+   independent calls, then merged deterministically into the single
+   required summary message — no second LLM merge pass (extra cost, new
+   failure mode, no structural gain). Stream listeners are detached around
+   the whole batch so compactor tokens never leak into the live chat
+   stream.
+
+   **No fallback — fail loud everywhere** (addendum item 1's philosophy,
+   now applied without exception): if the compactor fails (no LLM, timeout,
+   unparseable JSON) the compaction is a `status='failed'` event + SSE
+   toast, and the agent continues on raw context. For overflow recovery
+   the `on_context_overflow` hook then returns False so the original
+   overflow error propagates — an honest failure beats a silently
+   degraded summary. Events record `compactor: "llm"` and
+   `compactor_model` in `plan_json`.
+
+4. **`File references:` summary section (new required section).** Paths the
+   agent read/edited must survive compaction so the resumed agent can
+   re-open its working set. Populated from BOTH sources, unioned: the
+   compactor LLM's `file_references` extraction AND a deterministic scan
+   of tool-call arguments (`_file_references`) — a path the model
+   overlooks still survives.
+
+5. **`compactor_input_ratio` config (UI-editable, range 0.1–0.9, default
+   0.7).** Fraction of the compactor's window one summary call may read.
+   Larger = fewer chunks (faster, cheaper) but riskier of overflowing the
+   compactor. Lives in the config DB like every other compaction setting.
+
+6. **Compactor is a FAITHFUL compressor, never a decision-maker
+   (2026-06-11).** Field incident: during a long "read many files" turn
+   the LLM compactor wrote `Recent state: read phase complete, awaiting
+   user's questions` / `Next actions: answer the user` — a verdict the
+   conversation did not support (the user had said "keep going"). The
+   resumed agent, trusting the summary, ended its turn with empty output.
+   Root cause: the prompt invited the model to JUDGE task state and
+   prescribe next steps. First fix attempt hardcoded a "you are mid-task,
+   do not stop" header — rejected as scenario-overfitting (it would force
+   the agent to fabricate work when a task is genuinely done). General
+   fix: the compactor prompt now forbids interpretation — record only what
+   the excerpt explicitly establishes, never decide whether the task is
+   complete or what to do next; "next_actions" stays empty unless the
+   conversation explicitly states pending steps. The summary header is
+   purely descriptive ("a faithful, compressed summary of earlier turns"),
+   with NO steering in either direction. Whether to continue, stop, or ask
+   the user remains the agent's decision, driven by the preserved goal +
+   verbatim recent messages exactly as with full history — so it adapts to
+   any task state instead of being hardcoded to one outcome.

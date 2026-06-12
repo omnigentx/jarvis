@@ -54,6 +54,12 @@ const NUMBER_FIELDS = [
     min: 0, max: 0.9, step: 0.01,
   },
   {
+    key: 'compactor_input_ratio',
+    label: 'Compactor input budget (ratio of compactor window)',
+    hint: 'Fraction of the compactor model’s window one summary call may read. Larger = fewer calls (faster) but riskier. 0.1–0.9.',
+    min: 0.1, max: 0.9, step: 0.05,
+  },
+  {
     key: 'snapshot_versions_visible',
     label: 'Versions shown in the dashboard',
     hint: 'Default number of compaction versions listed on the agent’s Context Versions tab.',
@@ -91,7 +97,9 @@ async function save() {
     for (const k of dirtyKeys.value) {
       patch[k] = typeof config.value[k] === 'boolean'
         ? Boolean(draft.value[k])
-        : Number(draft.value[k])
+        : typeof config.value[k] === 'number'
+          ? Number(draft.value[k])
+          : String(draft.value[k] ?? '').trim()
     }
     config.value = await apiFetch('/api/context-compaction/settings', {
       method: 'PATCH',
@@ -183,6 +191,22 @@ onMounted(load)
         />
       </div>
 
+      <div class="row">
+        <div class="row-info">
+          <h3>Compactor model</h3>
+          <p class="desc">
+            Dedicated compactor agent's model (e.g. a large-window model so one
+            call can summarize more history). Empty = use each agent's own model.
+          </p>
+        </div>
+        <input
+          v-model="draft.compactor_model"
+          class="text-input"
+          type="text"
+          placeholder="e.g. kr/gemini-2.5-pro"
+        />
+      </div>
+
       <div class="actions">
         <button class="save-btn" :disabled="!dirtyKeys.length || saving" @click="save">
           {{ saving ? 'Saving…' : 'Save Changes' }}
@@ -245,6 +269,21 @@ onMounted(load)
   font-size: 13px;
   font-family: var(--font-mono);
 }
+.text-input {
+  flex-shrink: 0;
+  width: 220px;
+  padding: 8px 10px;
+  background: var(--bg-4);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  font-family: var(--font-mono);
+}
+.text-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
 .num-input:focus {
   outline: none;
   border-color: var(--primary);
@@ -301,6 +340,7 @@ onMounted(load)
 @media (max-width: 768px) {
   .row { flex-direction: column; gap: 10px; }
   .num-input { width: 100%; }
+  .text-input { width: 100%; }
   .toggle::before {
     content: '';
     position: absolute;
