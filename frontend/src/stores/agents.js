@@ -382,6 +382,15 @@ export const useAgentsStore = defineStore('agents', () => {
           }).catch(e => console.warn('[Store] Failed to forward approval event:', e))
           break
         }
+        // Forward the live-reactive memory events (spec §17 subset) to the
+        // memory store: candidate badge, index refresh, degraded banner.
+        if (event_type.startsWith('memory_') || event_type === 'retrieval_degraded'
+            || event_type === 'retrieval_completed') {
+          import('./memory').then(({ useMemoryStore }) => {
+            useMemoryStore().processMemoryEvent(event)
+          }).catch(e => console.warn('[Store] Failed to forward memory event:', e))
+          break
+        }
         // Unknown event — still track
         upsertAgent(agent_name, {
           lastAction: { message: event.message, timestamp: event.timestamp },

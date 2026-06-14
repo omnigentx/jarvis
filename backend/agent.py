@@ -259,6 +259,11 @@ _JARVIS_SERVERS.append("skill_server")
 # off-the-shelf MCPs (Path A) and scaffold/test/promote new ones (Path B).
 _JARVIS_SERVERS.append("mcp_admin")
 
+# Durable agent memory (search/remember/forget). Tools self-gate on the
+# `memory` settings flag and return a structured memory_disabled message when
+# off, so the Settings → Agent Memory toggle hot-reloads without a restart.
+_JARVIS_SERVERS.append("memory_server")
+
 if _SPAWNER_ENABLED:
     _JARVIS_SERVERS.append("agent_spawner")
     _JARVIS_TOOLS["agent_spawner"] = [

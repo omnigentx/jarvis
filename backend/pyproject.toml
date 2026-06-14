@@ -46,6 +46,19 @@ dependencies = [
   # onnxruntime>=1.25 — so on Python 3.13 the import always fails.
   "sherpa-onnx==1.10.46",
   "aiortc>=1.14.0",
+  "ladybug>=0.17.1",
+]
+
+[project.optional-dependencies]
+# Dense/semantic memory retrieval (Agent Memory + Adaptive RAG). Optional so
+# the core install stays lean — without these the memory subsystem degrades to
+# SQLite FTS5 keyword search. Qdrant runs as a pinned container (see
+# docs/memory-impl), not a Python dependency.
+#   docker run -d --name jarvis-qdrant -p 6333:6333 \
+#     -v ./.runtime/qdrant_storage:/qdrant/storage qdrant/qdrant:v1.12.4
+memory = [
+  "FlagEmbedding>=1.4.0",   # BAAI/bge-m3 multilingual embeddings + reranker
+  "qdrant-client>=1.18.0",  # vector + sparse BM25 index client
 ]
 
 [tool.uv]
@@ -95,4 +108,7 @@ norecursedirs = [
 ]
 markers = [
   "slow: marks tests that spawn real subprocesses or take >1s",
+  "memory_eval: offline memory retrieval evaluation (run explicitly with -m memory_eval)",
 ]
+# Eval suite is opt-in: it measures quality, not a pass/fail unit invariant.
+addopts = "-m 'not memory_eval'"

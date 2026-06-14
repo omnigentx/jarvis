@@ -27,6 +27,8 @@ from routes.ws_voice import router as ws_voice_router
 from routes.team_template import router as team_template_router
 from routes.team_templates_factory import router as team_templates_factory_router
 from routes.context_compaction import router as context_compaction_router
+from routes.memory_settings import router as memory_settings_router
+from routes.memory import router as memory_router
 
 all_routers: list[APIRouter] = [
     auth_router,
@@ -55,4 +57,6 @@ all_routers: list[APIRouter] = [
     team_template_router,
     team_templates_factory_router,
     context_compaction_router,
+    memory_settings_router,
+    memory_router,
 ]

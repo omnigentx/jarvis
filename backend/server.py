@@ -192,6 +192,7 @@ async def lifespan(app: FastAPI):
             approval_rpc_handlers,
             team_template_rpc_handlers,
         )
+        from services.memory import rpc_handlers as memory_rpc_handlers
 
         rpc_socket_path = os.environ["JARVIS_RUNTIME_RPC_SOCKET"]
         runtime_rpc_server = RuntimeRpcServer(rpc_socket_path)
@@ -199,6 +200,7 @@ async def lifespan(app: FastAPI):
         mcp_rpc_handlers.register(runtime_rpc_server)
         approval_rpc_handlers.register(runtime_rpc_server)
         team_template_rpc_handlers.register(runtime_rpc_server)
+        memory_rpc_handlers.register(runtime_rpc_server)
         await runtime_rpc_server.start()
         state.runtime_rpc_server = runtime_rpc_server
         logger.info(
@@ -439,7 +441,59 @@ async def lifespan(app: FastAPI):
     state.crawl_poller = CrawlPoller()
     crawl_poller_task = asyncio.create_task(state.crawl_poller.start())
     logger.info("CrawlPoller started.")
-    
+
+    # Start the memory index worker ALWAYS (its own continuous loop, NOT the
+    # idle-gated TTS scheduler). It is cheap when idle: writes only happen when
+    # the `memory` flag is enabled (the RPC tools self-gate), so a disabled
+    # deployment leaves the outbox empty and the worker drains nothing.
+    # Running it unconditionally means the Settings → Agent Memory toggle takes
+    # effect WITHOUT a restart. Mark this as the main process so the embedding
+    # model may load here (agents must use the API, never load a model in a
+    # spawn subprocess).
+    memory_index_task = None
+    try:
+        os.environ["JARVIS_MAIN_PROCESS"] = "1"
+        from services.memory.settings import get_memory_settings
+        _mem_cfg = get_memory_settings()
+        from services.indexing.memory_index_worker import MemoryIndexWorker
+        state.memory_index_worker = MemoryIndexWorker(
+            qdrant_url=_mem_cfg.qdrant_url,
+            embedding_model=_mem_cfg.embedding_model,
+            embedding_revision=_mem_cfg.embedding_revision,
+        )
+        memory_index_task = asyncio.create_task(state.memory_index_worker.run_loop())
+        logger.info("Memory index worker started (drains only when memory enabled).")
+    except Exception:
+        logger.exception("Failed to start memory index worker")
+
+    # v2 migration: if the LadybugDB backend is selected but its graph is empty
+    # while SQLite (the source of truth) has memories — e.g. first boot after
+    # switching from Qdrant — enqueue a full rebuild so the worker repopulates
+    # Ladybug. Best-effort; the index is a disposable projection.
+    try:
+        if _mem_cfg.enabled and getattr(_mem_cfg, "vector_backend", "ladybug") == "ladybug":
+            from services.indexing.ladybug_store import get_ladybug_store
+            store = get_ladybug_store(getattr(_mem_cfg, "ladybug_path", "data/memory_graph"))
+            if store.count() == 0:
+                from sqlalchemy import func
+
+                from core.database import MemoryRecord, get_db_session
+                _db = get_db_session()
+                try:
+                    n_sqlite = _db.query(func.count(MemoryRecord.id)).filter(
+                        MemoryRecord.status == "active").scalar() or 0
+                    if n_sqlite:
+                        import time as _t
+
+                        from services.indexing import consistency_service as cs
+                        enq = cs.rebuild(_db, now=_t.time())
+                        logger.info("[MEMORY] LadybugDB empty + %d SQLite memories → "
+                                    "enqueued %d for rebuild", n_sqlite, enq)
+                finally:
+                    _db.close()
+    except Exception:
+        logger.exception("[MEMORY] ladybug migration check failed")
+
     # Enable shell execution runtime (equivalent to --shell CLI flag)
     await fast.app.initialize()
     setattr(fast.app.context, "shell_runtime", True)
@@ -494,6 +548,16 @@ async def lifespan(app: FastAPI):
         except Exception as _e:
             logger.warning("[COMPACT] Failed to attach compaction hook: %s", _e, exc_info=True)
 
+        # Memory auto-inject retrieval hook — merged ON TOP of compaction (runs
+        # after it). Self-gates on the `memory` flag, so attaching is harmless
+        # when memory is off.
+        try:
+            from services.memory.retrieval_hook import attach_memory_hooks_to_all
+            _n_mem = attach_memory_hooks_to_all(agent)
+            logger.info("[MEMORY] Retrieval hook attached to %d agent(s)", _n_mem)
+        except Exception as _e:
+            logger.warning("[MEMORY] Failed to attach retrieval hook: %s", _e, exc_info=True)
+
         # Wire CronScheduler agent references (for agent_turn execution)
         if state.cron_scheduler:
             state.cron_scheduler.set_agent_refs(agent, state.session_service)
@@ -515,6 +579,8 @@ async def lifespan(app: FastAPI):
             try:
                 from services.context_compaction import attach_compaction_hooks_to_all
                 attach_compaction_hooks_to_all(agent)
+                from services.memory.retrieval_hook import attach_memory_hooks_to_all
+                attach_memory_hooks_to_all(agent)
             except Exception as _e:
                 logger.warning("[COMPACT] Failed to re-attach hook after preload: %s", _e)
 
@@ -683,6 +749,15 @@ async def lifespan(app: FastAPI):
         await reload_task
     except asyncio.CancelledError:
         pass
+
+    # Shutdown memory index worker
+    if memory_index_task:
+        state.memory_index_worker.stop()
+        memory_index_task.cancel()
+        try:
+            await memory_index_task
+        except asyncio.CancelledError:
+            pass
     
     # Shutdown spawn event socket server
     if event_socket_server:

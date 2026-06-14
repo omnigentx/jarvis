@@ -11,14 +11,23 @@ def _get_tz() -> ZoneInfo:
     tz_name = os.environ.get("JARVIS_TIMEZONE", "Asia/Ho_Chi_Minh")
     return ZoneInfo(tz_name)  # ZoneInfoNotFoundError propagates — bad timezone is an explicit config error
 
+# Explicit English weekday names so the output never depends on the host
+# locale (strftime('%A') would return Vietnamese under LANG=vi_VN). The tool is
+# LLM-facing — English in, the agent renders the user's language out (§7).
+_WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+
+def _weekday(d: datetime) -> str:
+    return _WEEKDAYS[d.weekday()]
+
 # Initialize FastMCP server
 mcp = FastMCP("TimeService")
 
 @mcp.tool()
 def get_current_time() -> str:
-    """Get the current time (Vietnam timezone by default)."""
+    """Get the current time and weekday (Vietnam timezone by default)."""
     now = datetime.now(_get_tz())
-    return f"It is {now.strftime('%H:%M')} on {now.strftime('%d/%m/%Y')}."
+    return f"It is {now.strftime('%H:%M')} on {_weekday(now)}, {now.strftime('%d/%m/%Y')}."
 
 @mcp.tool()
 def solar_to_lunar(day: int, month: int, year: int) -> str:
@@ -50,10 +59,11 @@ def get_solar_date() -> str:
 
 @mcp.tool()
 def get_today_info() -> str:
-    """Return both Solar and Lunar representations of today's date."""
+    """Return the weekday plus Solar and Lunar representations of today's date."""
+    now = datetime.now(_get_tz())
     solar = get_solar_date()
     lunar = get_lunar_date()
-    return f"Today is {solar} (Solar) / {lunar} (Lunar)."
+    return f"Today is {_weekday(now)}, {solar} (Solar) / {lunar} (Lunar)."
 
 @mcp.tool()
 async def wait_for_seconds(seconds: int) -> str:

@@ -244,6 +244,7 @@ const typeLabels = {
   budget: 'Budget',
   deploy: 'Deploy',
   brd: 'BRD',
+  memory_candidate: 'Memory',
   custom: 'Custom',
 }
 
@@ -254,6 +255,7 @@ const typeColors = {
   budget: 'var(--role-qe)',
   deploy: 'var(--role-dso)',
   brd: 'var(--role-ba)',
+  memory_candidate: 'var(--primary)',
   custom: 'var(--role-des)',
 }
 

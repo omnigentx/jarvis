@@ -25,6 +25,26 @@ _TEST_DB_PATH = BACKEND_DIR / "data" / "jarvis.test.db"
 _TEST_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 os.environ.setdefault("JARVIS_DB_PATH", str(_TEST_DB_PATH))
 
+# Isolate fast-agent's environment (sessions/history) to a throwaway dir so any
+# test that calls agent.generate()/resume_and_send() never pollutes the
+# developer's live .fast-agent/sessions with test conversations.
+import tempfile as _tempfile  # noqa: E402
+os.environ["ENVIRONMENT_DIR"] = _tempfile.mkdtemp(prefix="fa_env_test_")
+
+# Test isolation for the v2 LadybugDB store: it's an embedded single-writer DB,
+# so a test that opens the live `data/memory_graph` (the settings default) would
+# fight the running backend's file lock AND pollute production data. Redirect the
+# singleton to a throwaway temp dir for the whole test session.
+try:
+    import tempfile as _tf
+
+    import services.indexing.ladybug_store as _lbs
+    _LB_TEST_DIR = _tf.mkdtemp(prefix="ladybug_test_")
+    _lbs_real_get = _lbs.get_ladybug_store
+    _lbs.get_ladybug_store = lambda path: _lbs_real_get(f"{_LB_TEST_DIR}/graph")  # noqa: E731
+except Exception:  # noqa: BLE001 — ladybug not installed in this env → nothing to isolate
+    pass
+
 # Session-level default so any test that imports secrets_crypto without
 # explicitly setting a master key (the typical case for routes/integration
 # tests) gets a deterministic Fernet bring-up. Tests that need to exercise
