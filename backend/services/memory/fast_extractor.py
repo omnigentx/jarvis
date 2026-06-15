@@ -104,7 +104,7 @@ async def run_fast_extraction(owner: str, snippet: str, cfg, *, generate_fn=None
     try:
         raw = await generate_fn(EXTRACTION_PROMPT + "\n\nConversation snippet:\n" + snippet)
     except Exception as exc:  # noqa: BLE001 — extractor is best-effort
-        logger.debug("[MEMORY] fast extractor LLM failed: %s", exc)
+        logger.warning("[MEMORY] fast extractor LLM failed: %s", exc)
         return []
     return _persist_candidates(owner, parse_extraction(raw), cfg, "extracted")
 
@@ -130,7 +130,7 @@ def _persist_candidates(owner, mems, cfg, candidate_type: str) -> list[str]:
                     pinned_token_budget=getattr(cfg, "pinned_token_budget", 1500))
                 ids.append(cand.id)
             except Exception as exc:  # noqa: BLE001 — one bad item never drops the rest
-                logger.debug("[MEMORY] candidate from extraction failed: %s", exc)
+                logger.warning("[MEMORY] candidate from extraction failed: %s", exc)
     finally:
         db.close()
     return ids
@@ -154,22 +154,36 @@ def build_extractor_generate_fn(category: str = "memory:fast"):
         ctx = getattr(agent, "_context", None) or getattr(agent, "context", None)
         main_llm = getattr(agent, "_llm", None)
 
-        if (not provider and not model) or (provider and not model):
-            llm = main_llm
-        else:
-            from fast_agent.agents.agent_types import AgentConfig
-            from fast_agent.agents.llm_agent import LlmAgent
-            from fast_agent.llm.model_factory import ModelFactory
+        # ALWAYS build a SEPARATE extractor LLM instance (its own
+        # usage_accumulator). Even on "inherit" we resolve the agent's own model
+        # and spin up a fresh LlmAgent — never reuse agent._llm — because the
+        # extractor's fire-and-forget turn would otherwise become the agent's
+        # turns[-1], which compaction reads for its threshold (a small extractor
+        # turn deflates the context estimate → compaction skipped) and would
+        # double-count the agent's tokens.
+        if provider and model:
+            spec = f"{provider}.{model}"
+            api_key = get_curator_api_key()
             from services.memory.conflict import _ctx_with_override
-            if provider:
-                spec = f"{provider}.{model}"
-                api_key = get_curator_api_key()
-                use_ctx = (_ctx_with_override(ctx, provider, cfg.curator_base_url, api_key)
-                           if (cfg.curator_base_url or "").strip() or api_key else ctx)
-            else:
-                spec, use_ctx = model, ctx
-            shell = LlmAgent(AgentConfig(name="memory-extractor"), context=use_ctx)
-            llm = ModelFactory.create_factory(spec)(shell)
+            use_ctx = (_ctx_with_override(ctx, provider, cfg.curator_base_url, api_key)
+                       if (cfg.curator_base_url or "").strip() or api_key else ctx)
+        else:                                   # inherit (or provider w/o model)
+            spec = model or getattr(
+                getattr(main_llm, "default_request_params", None), "model", None)
+            use_ctx = ctx
+
+        llm = None
+        if spec and use_ctx is not None:
+            try:
+                from fast_agent.agents.agent_types import AgentConfig
+                from fast_agent.agents.llm_agent import LlmAgent
+                from fast_agent.llm.model_factory import ModelFactory
+                shell = LlmAgent(AgentConfig(name="memory-extractor"), context=use_ctx)
+                llm = ModelFactory.create_factory(spec)(shell)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("[MEMORY] dedicated extractor LLM failed (%s); using agent LLM", exc)
+        if llm is None:                         # last resort only (model unresolvable)
+            llm = main_llm
         if llm is None:
             return None
 
@@ -224,7 +238,7 @@ async def run_slow_extraction(owner: str, snippet: str, cfg, *, generate_fn=None
     try:
         raw = await generate_fn(SLOW_EXTRACTION_PROMPT + "\n\nConversation:\n" + snippet)
     except Exception as exc:  # noqa: BLE001
-        logger.debug("[MEMORY] slow extractor LLM failed: %s", exc)
+        logger.warning("[MEMORY] slow extractor LLM failed: %s", exc)
         return []
     return _persist_candidates(owner, parse_extraction(raw), cfg, "extracted_slow")
 
@@ -267,7 +281,7 @@ def fire_slow_extraction_from_history(agent_name: str, history) -> None:
             try:
                 await run_slow_extraction(owner, snippet, cfg)
             except Exception as exc:  # noqa: BLE001
-                logger.debug("[MEMORY] slow extraction failed: %s", exc)
+                logger.warning("[MEMORY] slow extraction failed: %s", exc)
         asyncio.create_task(_bg())
     except Exception as exc:  # noqa: BLE001
         logger.debug("[MEMORY] slow extraction trigger skipped: %s", exc)

@@ -78,7 +78,10 @@ def apply_policy(evidence: list[Evidence], *, now: float) -> list[Evidence]:
             * (0.9 + 0.2 * max(0.0, min(1.0, ev.confidence)))  # confidence in [0.9,1.1]
         )
         ev.scores.final = (ev.scores.rrf or 0.0) * w
-    evidence.sort(key=lambda e: e.scores.final, reverse=True)
+    # Newer wins ties: the day-bucketed freshness nudge can't separate two facts
+    # captured in the SAME session (e.g. "works at Techcombank" then "works at
+    # FPT"), so break score ties by recency — the read-side of ADD-only.
+    evidence.sort(key=lambda e: (e.scores.final, e.source.timestamp or 0.0), reverse=True)
     return evidence
 
 

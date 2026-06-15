@@ -57,20 +57,30 @@ class MemoryIndexWorker:
         return self._embedding
 
     def _qd(self):
-        # Backend chosen at runtime (hot-reloadable via settings): LadybugDB
-        # (embedded graph + HNSW, v2) or legacy Qdrant. Both expose the same
-        # is_available/ensure_collection/upsert_points/delete_by_record surface.
+        # ONE authoritative backend decision (hot-reloadable via settings),
+        # SYMMETRIC with the reader (orchestrator). When the configured backend
+        # is LadybugDB but it can't be opened, we DEFER the dense write (return a
+        # LadybugIndexer with store=None → is_available()==False) — we do NOT
+        # silently divert writes to Qdrant, which would land data the reader
+        # (FTS-only on the same failure) can't see (writer≠reader SSoT bug).
         try:
             from services.memory.settings import get_memory_settings
             cfg = get_memory_settings()
-            if getattr(cfg, "vector_backend", "ladybug") == "ladybug":
-                from services.indexing.ladybug_store import LadybugIndexer, get_ladybug_store
-                return LadybugIndexer(
-                    get_ladybug_store(getattr(cfg, "ladybug_path", "data/memory_graph")))
-        except Exception as exc:  # noqa: BLE001 — fall back to Qdrant on any issue
-            import logging
-            logging.getLogger("memory.index_worker").warning(
-                "[MEMORY] ladybug indexer unavailable, using qdrant: %s", exc)
+            backend = getattr(cfg, "vector_backend", "ladybug")
+        except Exception:  # noqa: BLE001
+            backend, cfg = "ladybug", None
+        if backend == "ladybug":
+            from services.indexing.ladybug_store import LadybugIndexer, get_ladybug_store
+            store = None
+            try:
+                path = getattr(cfg, "ladybug_path", "data/memory_graph") if cfg else "data/memory_graph"
+                store = get_ladybug_store(path)
+            except Exception as exc:  # noqa: BLE001
+                import logging
+                logging.getLogger("memory.index_worker").warning(
+                    "[MEMORY] LadybugDB unavailable; deferring dense index "
+                    "(FTS still written, will retry): %s", exc)
+            return LadybugIndexer(store)
         return qi.get_qdrant_indexer(self._qdrant_url, dim=self._emb().dim())
 
     async def process_pending(self, *, now: float, limit: int = 20) -> dict:

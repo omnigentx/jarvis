@@ -197,7 +197,7 @@ async def _run_extraction(owner: str, snippet: str, cfg) -> None:
         from services.memory.fast_extractor import run_fast_extraction
         await run_fast_extraction(owner, snippet, cfg)
     except Exception as exc:  # noqa: BLE001
-        logger.debug("[MEMORY] fast extraction failed: %s", exc)
+        logger.warning("[MEMORY] fast extraction failed: %s", exc)
 
 
 async def _retrieve(owner: str, query: str, targets: set[str], cfg):

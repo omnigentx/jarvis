@@ -95,6 +95,12 @@ class RetrievalOrchestrator:
                                   budget=budget, ledger=ledger, turn=turn, now=now)
 
         fused = await self._fast_round(request, budget)
+        # Recency/authority/freshness ranking on the HAPPY path too — this is the
+        # read-side of ADD-only (a newer fact, e.g. "works at FPT", outranks the
+        # superseded "Techcombank" for "where do I work now"). Previously this
+        # only ran on escalation, so the recency promise never fired on the
+        # common balanced-mode path.
+        fusion.apply_policy(fused, now=now)
         level = LEVEL_FAST
 
         weak = is_weak(fused, thresholds=self.settings.quality_gate_thresholds)
@@ -140,9 +146,10 @@ class RetrievalOrchestrator:
             for ev in selected:
                 ledger.add(ev, turn=turn)
         degraded = not self._dense.is_available()
+        _backend = getattr(self.settings, "vector_backend", "ladybug")
         result = RetrievalResult(
             evidence=selected, level=level, degraded=degraded,
-            degraded_reason="qdrant_unavailable" if degraded else None,
+            degraded_reason=f"{_backend}_unavailable" if degraded else None,
             cache_hit=cache_hit, total_ms=0,
         )
         self._write_telemetry(request, result, tokens, now)

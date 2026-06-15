@@ -59,6 +59,28 @@ async def test_level0_short_circuits(db):
     assert db.query(RetrievalRun).count() == 0
 
 
+async def test_recency_ranks_newer_fact_first_on_happy_path(db):
+    # ADD-only read-side (#3): two facts on the same topic; the NEWER one must
+    # rank first on the FAST/happy path — recency now runs there, not only on
+    # escalation. FTS-only path (Qdrant unreachable), no embeddings needed.
+    NOW = 1_000_000_000.0
+    for rid, content, ca in [("old", "user works at Techcombank office", NOW - 120 * 86400),
+                             ("new", "user works at FPT office", NOW - 1 * 86400)]:
+        db.add(MemoryRecord(id=rid, owner_agent_name="Jarvis", memory_type="semantic",
+                            subject_scope="user", content=content, normalized_content=content,
+                            status="active", authority="user_confirmed", confidence=0.9,
+                            current_version=1, created_at=ca))
+        fts_index.fts_upsert(db, doc_kind=fts_index.KIND_MEMORY, doc_id=rid,
+                             owner_agent_name="Jarvis", content=content)
+    db.commit()
+    orch = RetrievalOrchestrator(db, _settings())
+    res = await orch.retrieve(RetrievalRequest(owner_agent_name="Jarvis", query="office"),
+                              now=NOW, agent_requested=True)
+    ids = [e.record_id for e in res.evidence]
+    assert "new" in ids and "old" in ids
+    assert ids.index("new") < ids.index("old")     # newer (FPT) outranks older (Techcombank)
+
+
 async def test_level1_fts_retrieval_and_telemetry(db):
     orch = RetrievalOrchestrator(db, _settings())
     res = await orch.retrieve(

@@ -1109,11 +1109,17 @@ async def maybe_compact_agent(
             )
             # Slow-lane memory extraction piggybacks compaction: the threshold IS
             # the composite trigger (>50% context + many turns). Synthesize
-            # durable workflows/decisions from the segment BEFORE it's summarized
-            # away. Fire-and-forget; never blocks or breaks compaction.
+            # durable workflows/decisions from the OLDER segment ABOUT TO BE
+            # SUMMARIZED AWAY (history minus the recent kept tail) — not the kept
+            # tail itself. The threshold memo (`_last_attempt_len`) gates re-fires
+            # until history grows, giving disjoint windows across compactions.
+            # Fire-and-forget; never blocks or breaks compaction.
             try:
                 from services.memory.fast_extractor import fire_slow_extraction_from_history
-                fire_slow_extraction_from_history(agent_name, history)
+                keep = max(0, getattr(cfg, "keep_recent_messages", 0))
+                older = history[:-keep] if keep and len(history) > keep else []
+                if older:
+                    fire_slow_extraction_from_history(agent_name, older)
             except Exception as exc:  # noqa: BLE001
                 logger.debug("[COMPACT] slow memory extraction skipped: %s", exc)
 
