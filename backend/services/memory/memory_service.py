@@ -86,12 +86,13 @@ class MemoryService:
         if pinned and sensitivity != Sensitivity.NORMAL.value:
             raise MemoryWriteError("sensitive content cannot be auto-pinned")
 
-        dedupe = _dedupe_key(owner_agent_name, memory_type, subject_scope, content)
+        # Exact-dedup key = owner + normalized_content + subject_scope (spec §7).
+        # NOT memory_type — the same fact extracted once as a preference→semantic
+        # and once as an instruction→pinned must still collapse to one memory.
         existing = (
             self.db.query(MemoryRecord)
             .filter(MemoryRecord.owner_agent_name == owner_agent_name,
                     MemoryRecord.normalized_content == _normalize(content),
-                    MemoryRecord.memory_type == memory_type,
                     MemoryRecord.subject_scope == subject_scope,
                     MemoryRecord.status == MemoryStatus.ACTIVE.value)
             .first()

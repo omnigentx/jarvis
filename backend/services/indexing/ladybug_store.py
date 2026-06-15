@@ -84,9 +84,9 @@ class LadybugStore:
                 "CREATE NODE TABLE IF NOT EXISTS Entity("
                 "id STRING, name STRING, etype STRING, normalized STRING, PRIMARY KEY(id))")
             self._exec("CREATE REL TABLE IF NOT EXISTS MENTIONS(FROM Memory TO Entity)")
-            self._exec(
-                "CREATE REL TABLE IF NOT EXISTS RELATES(FROM Entity TO Entity, "
-                "rtype STRING, valid_from DOUBLE, source_memory STRING)")
+            # (Entity)-[:RELATES]->(Entity) is intentionally NOT created yet —
+            # GraphRAG is MENTIONS-based today; the relations layer lands when the
+            # extractor emits typed relations (spec §4 follow-up).
             # Vector index — created once; ignore "already exists" on re-open.
             try:
                 self._exec(

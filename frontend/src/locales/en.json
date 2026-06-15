@@ -42,7 +42,9 @@
       "curatorApiKey": "Curator API key",
       "curatorApiKeySet": "Already set — type a new key to replace it, or leave blank to keep it.",
       "curatorApiKeyUnset": "Not set. Use this together with a cheaper router base URL.",
-      "apiKeyPlaceholder": "(hidden)"
+      "apiKeyPlaceholder": "(hidden)",
+      "keyStored": "stored · hidden",
+      "keyNotSet": "not set"
     }
   },
   "memory": {

@@ -158,7 +158,7 @@ def _get_token_info(agent) -> Optional[dict]:
 
 
 def _persist_and_broadcast_token_usage(
-    agent_name: str, run_id: str, tokens: Optional[dict]
+    agent_name: str, run_id: str, tokens: Optional[dict], category: str = "agent"
 ):
     """Persist token usage to SQLite and broadcast via activity stream.
     Called once per LLM call (on_after_llm_call) to avoid double-counting."""
@@ -191,6 +191,7 @@ def _persist_and_broadcast_token_usage(
             record = TokenUsageRecord(
                 agent_name=agent_name,
                 run_id=run_id,
+                category=category,
                 model=model,
                 input_tokens=input_t,
                 output_tokens=output_t,

@@ -29,7 +29,10 @@ import vi from '../locales/vi.json' with { type: 'json' }
 // English first so it is always the fallback base.
 const LOCALES = { en, vi }
 
-const lang = ref(localStorage.getItem('jarvis_lang') || 'en')
+// English is the COMPLETE base/fallback locale (keys resolve en → key), but the
+// default UI language stays 'vi' to preserve existing behaviour — flipping the
+// default for new users is a separate product decision, not this PR's scope.
+const lang = ref(localStorage.getItem('jarvis_lang') || 'vi')
 
 function toggleLang() {
   lang.value = lang.value === 'vi' ? 'en' : 'vi'

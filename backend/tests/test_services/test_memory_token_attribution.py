@@ -55,7 +55,7 @@ async def test_extractor_tokens_recorded_under_memory_category(monkeypatch):
     await gen("extract durable facts from this")
 
     db = F()
-    recs = db.query(TokenUsageRecord).filter_by(agent_name="memory:fast").all()
+    recs = db.query(TokenUsageRecord).filter_by(category="memory:fast").all()
     assert len(recs) == 1                                     # tagged separately from real agents
     assert recs[0].total_tokens == 20 and recs[0].model == "test-model"
     db.close()
@@ -83,5 +83,5 @@ async def test_slow_lane_tagged_memory_slow(monkeypatch):
     gen = fx.build_extractor_generate_fn("memory:slow")
     await gen("synthesize")
     db = F()
-    assert db.query(TokenUsageRecord).filter_by(agent_name="memory:slow").count() == 1
+    assert db.query(TokenUsageRecord).filter_by(category="memory:slow").count() == 1
     db.close()

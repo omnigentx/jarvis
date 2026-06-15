@@ -227,8 +227,8 @@ onMounted(load)
           <div class="field">
             <label>
               {{ t('settings.memory.curatorApiKey') }}
-              <span v-if="draft.curator_api_key_set" class="key-status stored">stored · hidden</span>
-              <span v-else class="key-status missing">not set</span>
+              <span v-if="draft.curator_api_key_set" class="key-status stored">{{ t('settings.memory.keyStored') }}</span>
+              <span v-else class="key-status missing">{{ t('settings.memory.keyNotSet') }}</span>
             </label>
             <div class="input-group">
               <input v-model="apiKeyInput" class="pwd-input" :type="showKey ? 'text' : 'password'"

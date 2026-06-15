@@ -27,66 +27,6 @@ TARGET_EXTERNAL = "external"   # fresh info → external provider, NOT memory
 # matches the user message by cosine similarity, so detection works in ANY
 # language without enumerating phrases per language.
 #
-# Two separate concerns:
-#   RECALL  — the user is ASKING about past context → auto-inject retrieval.
-#   CAPTURE — the user is STATING something durable about themselves or how the
-#             agent should behave → auto-capture a candidate.
-# Keeping them separate lets BGE distinguish "what did I like?" (recall) from
-# "I like phở" (capture).
-
-RECALL_PROTOTYPES: dict[str, list[str]] = {
-    TARGET_EPISODIC: [
-        "What did we do last time?",
-        "Have we encountered this before?",
-        "Remind me what happened earlier in our work.",
-    ],
-    TARGET_SEMANTIC: [
-        "What did we decide about this?",
-        "What was our earlier conclusion on this?",
-        # Asking about the USER's own remembered profile / attributes /
-        # preferences ("what's my job/name, where do I live, what do you know
-        # about me"). Without these a self-profile QUESTION scored near the
-        # personal-fact CAPTURE prototype and got stored as a memory instead of
-        # triggering recall — the agent then "didn't know" facts it had.
-        "What do you know about me?",
-        "What is my job?",
-        "What are my preferences and personal details?",
-        "Remind me what you remember about me.",
-    ],
-    TARGET_PROCEDURAL: [
-        "How do we usually handle this?",
-        "What is our standard workflow for this task?",
-    ],
-    TARGET_COMMUNICATIONS: [
-        "What did the email say?",
-        "What was discussed in the meeting?",
-    ],
-}
-
-# Capture intents → the memory_type the captured candidate should use.
-CAPTURE_PROTOTYPES: dict[str, list[str]] = {
-    # Standing instructions for how the agent should behave → pinned.
-    "pinned": [
-        "From now on, always respond this way.",
-        "Please remember my preference for how you answer.",
-        "Always format your answers like this.",
-    ],
-    # Durable personal facts / preferences about the user → semantic.
-    "semantic": [
-        "I like eating this kind of food.",
-        "I prefer tea over coffee.",
-        "My favorite color is blue.",
-        "I am allergic to peanuts.",
-        "I work as a software engineer.",
-        "My name is Alex.",
-        "I live in this city.",
-    ],
-}
-
-# Lexicon-fallback (English substring) capture targets — used only when
-# embeddings are unavailable.
-CAPTURE_TARGETS: frozenset[str] = frozenset({TARGET_PINNED})
-
 # ── English fast-path / degraded fallback lexicon (substring match) ──────
 # Used only when embeddings are unavailable. English-only on purpose.
 _PHRASE_TARGETS: list[tuple[str, str]] = [

@@ -168,36 +168,18 @@ def _persist_from_candidate(db, cand, status, *, now, changed_by="system",
     payload = json.loads(cand.payload_json)
     sources = json.loads(cand.source_refs_json or "[]")
 
-    if cand.candidate_type == "conflict":
-        # A previously-deferred conflict the user just accepted: supersede the
-        # existing memory and create the new one (no re-detection → no loop).
-        svc = MemoryService(db, pinned_token_budget=pinned_token_budget)
-        existing_id = payload.get("conflicts_with")
-        if existing_id:
-            try:
-                svc.supersede_memory(existing_id, owner_agent_name=cand.owner_agent_name,
-                                     now=now, changed_by="user")
-            except Exception:  # noqa: BLE001 — existing may be gone; create proceeds
-                pass
-        svc.create_memory(
-            owner_agent_name=cand.owner_agent_name, memory_type=payload["memory_type"],
-            content=payload["content"], subject_scope=payload["subject_scope"],
-            authority=payload["authority"], sources=sources, changed_by="user",
-            now=now, allow_secret=True)
-    else:
-        # ADD-only (memory v2, following mem0's 2026 algorithm): we DON'T resolve
-        # conflicts at write time with a curator LLM (lossy supersede + a cost
-        # per conflicting write). We just ADD the fact — create_memory already
-        # exact-dedups identical content, so literal dups are no-ops while a
-        # changed fact (Techcombank→FPT) keeps BOTH, dated. Conflicting versions
-        # are resolved at READ time by recency-weighted ranking (temporal). This
-        # is lossless ("where did I used to work?" still answerable) and cheaper.
-        svc = MemoryService(db, pinned_token_budget=pinned_token_budget)
-        svc.create_memory(
-            owner_agent_name=cand.owner_agent_name, memory_type=payload["memory_type"],
-            content=payload["content"], subject_scope=payload["subject_scope"],
-            authority=payload["authority"], sources=sources, changed_by=changed_by,
-            now=now, entities=payload.get("entities"))
+    # ADD-only (memory v2, following mem0's 2026 algorithm): we DON'T resolve
+    # conflicts at write time with a curator LLM (lossy supersede + a cost per
+    # conflicting write). We just ADD the fact — create_memory already exact-
+    # dedups identical content, so literal dups are no-ops while a changed fact
+    # (Techcombank→FPT) keeps BOTH, dated. Conflicting versions are resolved at
+    # READ time by recency-weighted ranking. Lossless + cheaper.
+    svc = MemoryService(db, pinned_token_budget=pinned_token_budget)
+    svc.create_memory(
+        owner_agent_name=cand.owner_agent_name, memory_type=payload["memory_type"],
+        content=payload["content"], subject_scope=payload["subject_scope"],
+        authority=payload["authority"], sources=sources, changed_by=changed_by,
+        now=now, entities=payload.get("entities"))
 
     cand.status = status
     cand.resolved_at = now

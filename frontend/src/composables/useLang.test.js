@@ -9,10 +9,12 @@ globalThis.localStorage = { getItem: () => null, setItem: () => {} }
 
 const { useLang } = await import('./useLang.js')
 
-test('English is the default locale', () => {
+test('default UI locale stays vi; English is the complete fallback base', () => {
   const { lang, t } = useLang()
-  assert.equal(lang.value, 'en')
+  assert.equal(lang.value, 'vi')          // default unchanged (flip is out of scope)
+  lang.value = 'en'                        // English base resolves fully
   assert.equal(t('common.save'), 'Save changes')
+  lang.value = 'vi'
 })
 
 test('toggling to vi uses the Vietnamese value', () => {

@@ -20,6 +20,22 @@ from dataclasses import dataclass, field
 
 logger = logging.getLogger("memory.fast_extractor")
 
+
+def _ctx_with_override(ctx, provider: str, base_url: str | None, api_key: str | None):
+    """A context copy whose ``config.<provider>`` carries the extractor model's
+    own base_url/api_key, so an extractor on a separate endpoint never mutates
+    the main agent's provider config."""
+    import copy as _copy
+    ctx2 = _copy.copy(ctx)
+    ctx2.config = ctx.config.model_copy(deep=True)
+    prov_cfg = getattr(ctx2.config, provider, None)
+    if prov_cfg is not None:
+        if base_url:
+            prov_cfg.base_url = base_url
+        if api_key:
+            prov_cfg.api_key = api_key
+    return ctx2
+
 # kind (LLM vocabulary) → our memory_type taxonomy. Fast-lane kinds (preference/
 # fact/instruction) + slow-lane synthesis kinds (workflow/procedural/episodic/
 # decision).
@@ -164,7 +180,6 @@ def build_extractor_generate_fn(category: str = "memory:fast"):
         if provider and model:
             spec = f"{provider}.{model}"
             api_key = get_curator_api_key()
-            from services.memory.conflict import _ctx_with_override
             use_ctx = (_ctx_with_override(ctx, provider, cfg.curator_base_url, api_key)
                        if (cfg.curator_base_url or "").strip() or api_key else ctx)
         else:                                   # inherit (or provider w/o model)
@@ -199,7 +214,8 @@ def build_extractor_generate_fn(category: str = "memory:fast"):
                                                    _persist_and_broadcast_token_usage)
                 toks = _get_token_info(llm)
                 if toks:
-                    _persist_and_broadcast_token_usage(category, "", toks)
+                    _persist_and_broadcast_token_usage(
+                        "memory-extractor", "", toks, category=category)
             except Exception:  # noqa: BLE001 — never break extraction over telemetry
                 pass
             parts = [getattr(b, "text", "") for b in (getattr(resp, "content", None) or [])]

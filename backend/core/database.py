@@ -194,7 +194,10 @@ class TokenUsageRecord(Base):
     agent_name = Column(String(100), nullable=False, index=True)
     run_id = Column(String(100), nullable=True, index=True)
     model = Column(String(100), nullable=False)
-    
+    # Spend category so non-agent LLM work (memory extraction, compaction) is
+    # filterable separately from normal agent turns. "agent" = a normal turn.
+    category = Column(String(40), nullable=False, default="agent", index=True)
+
     # Token counts (for this specific LLM call)
     input_tokens = Column(Integer, default=0)
     output_tokens = Column(Integer, default=0)
@@ -949,6 +952,7 @@ def init_db():
             # that were already running.
             "ALTER TABLE cron_jobs ADD COLUMN approval_status VARCHAR(20) DEFAULT 'approved'",
             "ALTER TABLE memory_records ADD COLUMN entities_json TEXT",
+            "ALTER TABLE token_usage ADD COLUMN category VARCHAR(40) DEFAULT 'agent'",
         ]
         for sql in migrations:
             try:

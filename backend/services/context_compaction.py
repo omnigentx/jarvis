@@ -662,6 +662,17 @@ async def _llm_one_shot(llm: Any, prompt_text: str) -> str:
         llm.generate([Prompt.user(prompt_text)], request_params=None, tools=None),
         timeout=_COMPACTOR_CALL_TIMEOUT_S,
     )
+    # Attribute the compactor's own spend under a "compaction" category so it's
+    # visible/filterable separately from agent turns (it goes through a raw
+    # generate, so the agent token hook never records it otherwise).
+    try:
+        from services.sse_progress import (_get_token_info,
+                                           _persist_and_broadcast_token_usage)
+        toks = _get_token_info(llm)
+        if toks:
+            _persist_and_broadcast_token_usage("compactor", "", toks, category="compaction")
+    except Exception:  # noqa: BLE001 — never break compaction over telemetry
+        pass
     return _msg_text(response)
 
 

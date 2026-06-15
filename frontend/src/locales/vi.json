@@ -42,7 +42,9 @@
       "curatorApiKey": "API key curator",
       "curatorApiKeySet": "Đã đặt rồi — nhập key mới để thay, hoặc để trống nếu muốn giữ nguyên.",
       "curatorApiKeyUnset": "Chưa đặt. Dùng cùng với base URL của một router rẻ hơn.",
-      "apiKeyPlaceholder": "(đã ẩn)"
+      "apiKeyPlaceholder": "(đã ẩn)",
+      "keyStored": "đã lưu · ẩn",
+      "keyNotSet": "chưa đặt"
     }
   },
   "memory": {

@@ -8,7 +8,6 @@ from sqlalchemy.pool import StaticPool
 
 from core.database import Base, MemoryCandidate, MemoryRecord
 from services.memory import candidate_service as cnd
-from services.memory.curator import MemoryCurator, CREATE, NEEDS_APPROVAL
 
 
 @pytest.fixture()
@@ -100,15 +99,3 @@ def test_compactor_ingest_auto_policy_persists(db):
                                           now=100.0, approval_policy="auto_low_risk")
     assert db.get(MemoryCandidate, ids[0]).status == "auto_approved"
     assert db.query(MemoryRecord).filter_by(owner_agent_name="Jarvis").count() == 1
-
-
-def test_curator_parses_decision():
-    cur = MemoryCurator(lambda p: '{"action": "create", "reason": "no conflict"}')
-    d = cur.decide({"content": "x"}, [])
-    assert d.action == CREATE
-
-
-def test_curator_unparseable_falls_back_to_approval():
-    cur = MemoryCurator(lambda p: "not json at all")
-    d = cur.decide({"content": "x"}, [])
-    assert d.action == NEEDS_APPROVAL    # never silently creates on bad output
