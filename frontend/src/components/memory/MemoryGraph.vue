@@ -33,22 +33,30 @@ function tokenColor(name, fallback) {
   return v || fallback
 }
 
+// Short node caption: first few words, so 17 nodes don't turn into text soup.
+// The full content shows in the detail panel on click.
+function shortLabel(s) {
+  const t = (s || '').replace(/\s+/g, ' ').trim()
+  return t.length > 26 ? `${t.slice(0, 24)}…` : t || '(memory)'
+}
+
 function render(data) {
   const memColor = tokenColor('--primary', '#6c8cff')
   const entColor = '#d9a13b'
   const edgeColor = tokenColor('--border-strong', '#5a5a6a')
+  const simColor = tokenColor('--primary', '#6c8cff')
   const textColor = tokenColor('--text-1', '#e8e8ef')
 
   const elements = [
     ...data.memories.map((m) => ({
-      data: { id: m.id, label: m.content || '(memory)', kind: 'memory',
+      data: { id: m.id, label: shortLabel(m.content), kind: 'memory',
               detail: m.content, sub: m.memory_type },
     })),
     ...data.entities.map((e) => ({
       data: { id: e.id, label: e.name, kind: 'entity', detail: e.etype, sub: e.etype },
     })),
     ...data.edges.map((e, i) => ({
-      data: { id: `e${i}`, source: e.source, target: e.target },
+      data: { id: `e${i}`, source: e.source, target: e.target, kind: e.kind || 'mentions' },
     })),
   ]
 
@@ -58,18 +66,28 @@ function render(data) {
     elements,
     style: [
       { selector: 'node', style: {
-        label: 'data(label)', color: textColor, 'font-size': 9,
-        'text-wrap': 'wrap', 'text-max-width': 90, 'text-valign': 'bottom',
-        'text-margin-y': 3, 'background-color': memColor, width: 18, height: 18 } },
+        label: 'data(label)', color: textColor, 'font-size': 10,
+        'text-wrap': 'wrap', 'text-max-width': 110, 'text-valign': 'bottom',
+        'text-margin-y': 4, 'background-color': memColor,
+        'border-width': 2, 'border-color': tokenColor('--bg-0', '#14141c'),
+        width: 26, height: 26 } },
       { selector: 'node[kind="entity"]', style: {
-        'background-color': entColor, shape: 'round-rectangle', width: 14, height: 14 } },
-      { selector: 'node:selected', style: { 'border-width': 3, 'border-color': textColor } },
+        'background-color': entColor, shape: 'round-rectangle', width: 20, height: 20 } },
+      { selector: 'node:selected', style: {
+        'border-width': 3, 'border-color': textColor, width: 32, height: 32 } },
       { selector: 'edge', style: {
-        width: 1, 'line-color': edgeColor, 'curve-style': 'bezier', opacity: 0.6 } },
+        width: 1.5, 'line-color': edgeColor, 'curve-style': 'bezier', opacity: 0.7 } },
+      { selector: 'edge[kind="similar"]', style: {
+        'line-color': simColor, 'line-style': 'dashed', width: 1, opacity: 0.45 } },
     ],
-    layout: { name: 'cose', animate: false, padding: 20, nodeRepulsion: 6000 },
-    minZoom: 0.2, maxZoom: 3,
+    layout: {
+      name: 'cose', animate: false, fit: true, padding: 36,
+      nodeRepulsion: 7000, idealEdgeLength: 60,
+      componentSpacing: 70, nodeOverlap: 18, gravity: 0.7,
+    },
+    minZoom: 0.2, maxZoom: 3, wheelSensitivity: 0.3,
   })
+  cy.ready(() => cy.fit(undefined, 36))     // ensure every node sits inside the viewport
   cy.on('tap', 'node', (evt) => {
     const d = evt.target.data()
     selected.value = { kind: d.kind, label: d.label, detail: d.detail, sub: d.sub }
@@ -132,7 +150,9 @@ defineExpose({ reload: load })
     <div class="legend" v-show="available && counts.memories">
       <span><i class="dot mem" /> {{ L('Ký ức', 'Memory') }}</span>
       <span><i class="dot ent" /> {{ L('Thực thể', 'Entity') }}</span>
-      <span class="muted">{{ L('Kéo để di chuyển · cuộn để zoom', 'Drag to pan · scroll to zoom') }}</span>
+      <span><i class="line sim" /> {{ L('Liên quan (ngữ nghĩa)', 'Related (semantic)') }}</span>
+      <span class="muted">{{ L('Bấm node để xem · kéo để di chuyển · cuộn để zoom',
+                              'Click a node · drag to pan · scroll to zoom') }}</span>
     </div>
   </div>
 </template>
@@ -142,7 +162,7 @@ defineExpose({ reload: load })
 .graph-head { display: flex; align-items: center; justify-content: space-between; }
 .graph-body { position: relative; }
 .cy {
-  width: 100%; height: 420px;
+  width: 100%; height: 480px;
   background: var(--bg-0, #14141c);
   border: 1px solid var(--border, #2a2a38); border-radius: 10px;
 }
@@ -157,6 +177,8 @@ defineExpose({ reload: load })
 .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
 .dot.mem { background: var(--primary, #6c8cff); }
 .dot.ent { background: #d9a13b; border-radius: 2px; }
+.line { display: inline-block; width: 16px; height: 0; vertical-align: middle; margin-right: 4px;
+  border-top: 1.5px dashed var(--primary, #6c8cff); opacity: 0.7; }
 .err { color: var(--danger, #e0607a); }
 .muted { color: var(--text-2, #9a9ab0); }
 </style>

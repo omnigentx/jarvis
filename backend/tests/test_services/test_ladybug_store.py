@@ -90,8 +90,27 @@ def test_graph_dump_owner_scoped(store):
     mem_ids = {m["id"] for m in g["memories"]}
     assert mem_ids == {"m1", "m2"}                        # Riley's r1 excluded
     assert "ent:fpt" in {e["id"] for e in g["entities"]}
-    assert {"source": "m1", "target": "ent:fpt"} in g["edges"]
-    assert all(e["source"] in mem_ids for e in g["edges"])  # no cross-owner edge leak
+    mentions = [e for e in g["edges"] if e.get("kind") == "mentions"]
+    assert any(e["source"] == "m1" and e["target"] == "ent:fpt" for e in mentions)
+    # no cross-owner leak: every edge endpoint is a Jarvis memory or its entity.
+    allowed = mem_ids | {e["id"] for e in g["entities"]}
+    assert all(e["source"] in allowed and e["target"] in allowed for e in g["edges"])
+
+
+def test_graph_dump_similarity_edges_link_related_memories(store):
+    # Two near-identical memories (same embedding axis) get a "similar" edge even
+    # with NO entities — so the graph has structure out of the box.
+    store.upsert_memory(record_id="a", owner="Jarvis", memory_type="semantic",
+                        subject_scope="user", content="user loves pho",
+                        embedding=_vec(3), authority="user_confirmed", confidence=0.9,
+                        created_at=1.0, valid_from=1.0)
+    store.upsert_memory(record_id="b", owner="Jarvis", memory_type="semantic",
+                        subject_scope="user", content="user really likes pho",
+                        embedding=_vec(3), authority="user_confirmed", confidence=0.9,
+                        created_at=2.0, valid_from=2.0)
+    g = store.graph_dump(owner="Jarvis")
+    sim = [e for e in g["edges"] if e.get("kind") == "similar"]
+    assert any({e["source"], e["target"]} == {"a", "b"} for e in sim)
 
 
 def test_graph_dump_empty_owner(store):

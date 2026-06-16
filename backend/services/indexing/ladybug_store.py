@@ -23,6 +23,43 @@ from dataclasses import dataclass
 logger = logging.getLogger("memory.ladybug")
 
 
+def _similarity_edges(ids: list[str], embs: list, k: int, threshold: float) -> list[dict]:
+    """Undirected memory↔memory edges: each memory linked to its top-``k``
+    nearest neighbours with cosine similarity ≥ ``threshold``. Reuses the node
+    embeddings already in the graph (no model load), so related memories cluster
+    in the UI even when no entities have been extracted yet."""
+    if len(ids) < 2:
+        return []
+    try:
+        import numpy as np
+    except Exception:  # noqa: BLE001 — numpy unavailable → just no similarity edges
+        return []
+    m = np.asarray(embs, dtype="float32")
+    norms = np.linalg.norm(m, axis=1, keepdims=True)
+    norms[norms == 0] = 1.0
+    m = m / norms
+    sim = m @ m.T
+    seen: set = set()
+    out: list[dict] = []
+    for i in range(len(ids)):
+        added = 0
+        for j in np.argsort(-sim[i]):          # most similar first (self is at the top)
+            if added >= k:
+                break
+            if j == i:
+                continue
+            if sim[i, j] < threshold:
+                break                          # sorted desc → nothing further qualifies
+            added += 1
+            a, b = sorted((ids[i], ids[int(j)]))
+            if (a, b) in seen:
+                continue
+            seen.add((a, b))
+            out.append({"source": a, "target": b, "kind": "similar",
+                        "weight": round(float(sim[i, j]), 3)})
+    return out
+
+
 def _wipe_graph_files(path: str) -> None:
     """Remove a LadybugDB graph and its sidecars (``.wal`` / ``.lock`` /
     ``.shadow``). The store is a disposable projection — see ``_open``."""
@@ -262,23 +299,32 @@ class LadybugStore:
                 res = self._exec("MATCH (m:Memory) RETURN count(m)")
             return res.get_next()[0] if res.has_next() else 0
 
-    def graph_dump(self, *, owner: str, limit: int = 200) -> dict:
-        """Owner-scoped snapshot for the UI graph view: the most recent active
-        Memory nodes + the Entity nodes they MENTION + those edges. Memories that
-        share an Entity are visually connected through it (the GraphRAG
-        structure). Capped at ``limit`` memories so a large graph stays
-        renderable; ``content`` is truncated for the node label."""
+    def graph_dump(self, *, owner: str, limit: int = 200,
+                   sim_neighbors: int = 3, sim_threshold: float = 0.55) -> dict:
+        """Owner-scoped snapshot for the UI graph view.
+
+        Returns Memory nodes + (a) the Entity nodes they MENTION ("mentions"
+        edges, the GraphRAG structure) AND (b) memory↔memory "similar" edges:
+        each memory linked to its nearest neighbours by embedding cosine
+        similarity. The similarity edges give the graph real structure —
+        clusters of related memories — even before any entities are extracted
+        (otherwise the view is just disconnected dots). Capped at ``limit``
+        memories; content truncated for the label."""
         with self._lock:
             res = self._exec(
                 "MATCH (m:Memory) WHERE m.owner = $o AND m.status = 'active' "
-                "RETURN m.id, m.content, m.memory_type, m.authority, m.created_at "
+                "RETURN m.id, m.content, m.memory_type, m.authority, m.created_at, m.emb "
                 "ORDER BY m.created_at DESC LIMIT $lim", {"o": owner, "lim": limit})
-            memories, mem_ids = [], []
+            memories, mem_ids, embs = [], [], []
+            for_emb_ids = []
             while res.has_next():
-                mid, content, mt, auth, ca = res.get_next()
-                memories.append({"id": mid, "content": (content or "")[:160],
+                mid, content, mt, auth, ca, emb = res.get_next()
+                memories.append({"id": mid, "content": (content or "")[:200],
                                  "memory_type": mt, "authority": auth, "created_at": ca})
                 mem_ids.append(mid)
+                if emb:
+                    embs.append(emb)
+                    for_emb_ids.append(mid)
             entities, edges = {}, []
             if mem_ids:
                 res = self._exec(
@@ -286,8 +332,9 @@ class LadybugStore:
                     "RETURN m.id, e.id, e.name, e.etype", {"ids": mem_ids})
                 while res.has_next():
                     mid, eid, ename, etype = res.get_next()
-                    edges.append({"source": mid, "target": eid})
+                    edges.append({"source": mid, "target": eid, "kind": "mentions"})
                     entities[eid] = {"id": eid, "name": ename, "etype": etype}
+            edges.extend(_similarity_edges(for_emb_ids, embs, sim_neighbors, sim_threshold))
             return {"memories": memories, "entities": list(entities.values()), "edges": edges}
 
     def close(self) -> None:
