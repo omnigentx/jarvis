@@ -194,7 +194,10 @@ class TokenUsageRecord(Base):
     agent_name = Column(String(100), nullable=False, index=True)
     run_id = Column(String(100), nullable=True, index=True)
     model = Column(String(100), nullable=False)
-    
+    # Spend category so non-agent LLM work (memory extraction, compaction) is
+    # filterable separately from normal agent turns. "agent" = a normal turn.
+    category = Column(String(40), nullable=False, default="agent", index=True)
+
     # Token counts (for this specific LLM call)
     input_tokens = Column(Integer, default=0)
     output_tokens = Column(Integer, default=0)
@@ -722,6 +725,202 @@ class PasskeyCredential(Base):
     )
 
 
+# ──────────────────────────────────────────────────────────────────────
+# Agent memory + adaptive RAG (docs/agent-memory-adaptive-rag-spec.md)
+#
+# SQLite is the source of truth for all memory state; Qdrant is a
+# rebuildable index. Every table keys on ``owner_agent_name`` (the
+# normalized agent name — see helpers/agent_identity.py); there is no
+# team/global memory. Schemas mirror spec §12 exactly.
+# ──────────────────────────────────────────────────────────────────────
+
+
+class MemoryRecord(Base):
+    """A durable memory owned by exactly one agent (pinned/episodic/
+    semantic/procedural). ``content`` is the current text; immutable history
+    lives in ``memory_versions``; provenance in ``memory_sources``."""
+    __tablename__ = "memory_records"
+
+    id = Column(String(100), primary_key=True)
+    owner_agent_name = Column(String(100), nullable=False, index=True)
+    memory_type = Column(String(30), nullable=False, index=True)
+    memory_subtype = Column(String(50), nullable=True)
+    subject_scope = Column(String(120), nullable=False, index=True)
+    content = Column(Text, nullable=False)
+    normalized_content = Column(Text, nullable=False)
+    status = Column(String(20), nullable=False, default="active", index=True)
+    importance = Column(Float, nullable=False, default=0.5)
+    confidence = Column(Float, nullable=False, default=0.5)
+    authority = Column(String(30), nullable=False)
+    sensitivity = Column(String(20), nullable=False, default="normal")
+    pinned = Column(Integer, nullable=False, default=0)
+    valid_from = Column(Float, nullable=True)
+    valid_until = Column(Float, nullable=True)
+    entities_json = Column(Text, nullable=True)   # [{name,etype}] for the graph (memory v2)
+    current_version = Column(Integer, nullable=False, default=1)
+    created_at = Column(Float, nullable=False, default=lambda: datetime.now().timestamp())
+    updated_at = Column(Float, nullable=False, default=lambda: datetime.now().timestamp())
+
+    __table_args__ = (
+        Index("ix_memory_owner_status", "owner_agent_name", "status"),
+        Index("ix_memory_owner_type", "owner_agent_name", "memory_type"),
+        # NOTE: the exact-dedup backstop is a PARTIAL UNIQUE index on
+        # (owner_agent_name, normalized_content, subject_scope) WHERE
+        # status='active'. It is created in init_db() — NOT here — because
+        # existing DBs need a one-time dedup pass first, which create_all()
+        # cannot do (it would crash creating the index over duplicate rows).
+        # The app-level read-then-insert check in MemoryService is the fast
+        # path; this index is the concurrency backstop (two simultaneous
+        # captures of the same fact → one wins, the other gets IntegrityError).
+    )
+
+
+class MemoryVersion(Base):
+    """Immutable version row — one per change to a ``memory_records`` row."""
+    __tablename__ = "memory_versions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    memory_id = Column(String(100), nullable=False, index=True)
+    version = Column(Integer, nullable=False)
+    content = Column(Text, nullable=False)
+    metadata_json = Column(Text, nullable=False, default="{}")
+    change_type = Column(String(30), nullable=False)  # create|update|supersede|archive|rollback
+    changed_by = Column(String(50), nullable=False)
+    reason = Column(Text, nullable=True)
+    created_at = Column(Float, nullable=False, default=lambda: datetime.now().timestamp())
+
+    __table_args__ = (
+        UniqueConstraint("memory_id", "version", name="uq_memory_version"),
+    )
+
+
+class MemorySource(Base):
+    """Provenance edge: which source authorized a memory (version)."""
+    __tablename__ = "memory_sources"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    memory_id = Column(String(100), nullable=False, index=True)
+    memory_version = Column(Integer, nullable=False)
+    source_type = Column(String(40), nullable=False)
+    source_id = Column(String(200), nullable=False)
+    source_agent_name = Column(String(100), nullable=True)
+    source_excerpt = Column(Text, nullable=True)
+    source_hash = Column(String(80), nullable=True)
+    source_timestamp = Column(Float, nullable=True)
+    authority = Column(String(30), nullable=False)
+    created_at = Column(Float, nullable=False, default=lambda: datetime.now().timestamp())
+
+
+class MemoryCandidate(Base):
+    """A proposed memory awaiting deterministic/curator/approval resolution.
+    ``status`` is the ONE authoritative candidate state (approval rows are
+    input events, never a second source of truth)."""
+    __tablename__ = "memory_candidates"
+
+    id = Column(String(100), primary_key=True)
+    owner_agent_name = Column(String(100), nullable=False, index=True)
+    candidate_type = Column(String(40), nullable=False)
+    payload_json = Column(Text, nullable=False)
+    source_refs_json = Column(Text, nullable=False, default="[]")
+    status = Column(String(30), nullable=False, default="pending", index=True)
+    confidence = Column(Float, nullable=False, default=0.5)
+    requires_curator = Column(Integer, nullable=False, default=0)
+    requires_approval = Column(Integer, nullable=False, default=0)
+    dedupe_key = Column(String(120), nullable=True, index=True)
+    created_at = Column(Float, nullable=False, default=lambda: datetime.now().timestamp())
+    resolved_at = Column(Float, nullable=True)
+    resolution_json = Column(Text, nullable=True)
+
+
+class EpisodicDocument(Base):
+    """Immutable, hash-verified, SELF-CONTAINED search projection of
+    authorized historical data. ``content`` is the durable record served to
+    retrieval; it is never re-derived from mutable session files."""
+    __tablename__ = "episodic_documents"
+
+    id = Column(String(100), primary_key=True)
+    owner_agent_name = Column(String(100), nullable=False, index=True)
+    session_id = Column(String(100), nullable=True, index=True)
+    run_id = Column(String(100), nullable=True)
+    document_type = Column(String(40), nullable=False)
+    source_id = Column(String(200), nullable=False)
+    content = Column(Text, nullable=False)
+    metadata_json = Column(Text, nullable=False, default="{}")
+    content_hash = Column(String(80), nullable=False, index=True)
+    created_at = Column(Float, nullable=False, default=lambda: datetime.now().timestamp())
+    indexed_revision = Column(Integer, nullable=False, default=0)
+
+
+class MemoryIndexOutbox(Base):
+    """Transactional outbox: index intents written in the SAME transaction as
+    the domain write, drained by the background index worker. The UNIQUE
+    constraint makes re-enqueue of a revision idempotent."""
+    __tablename__ = "memory_index_outbox"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    event_type = Column(String(40), nullable=False)
+    aggregate_id = Column(String(100), nullable=False)
+    aggregate_revision = Column(Integer, nullable=False)
+    payload_json = Column(Text, nullable=False, default="{}")
+    status = Column(String(20), nullable=False, default="pending", index=True)
+    attempt_count = Column(Integer, nullable=False, default=0)
+    next_attempt_at = Column(Float, nullable=False, default=0.0, index=True)
+    last_error = Column(Text, nullable=True)
+    lease_expires_at = Column(Float, nullable=True)  # in_progress lease for crash recovery
+    created_at = Column(Float, nullable=False, default=lambda: datetime.now().timestamp())
+    completed_at = Column(Float, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "event_type", "aggregate_id", "aggregate_revision",
+            name="uq_outbox_event",
+        ),
+    )
+
+
+class RetrievalRun(Base):
+    """Telemetry per retrieval — level distribution, latency, token cost."""
+    __tablename__ = "retrieval_runs"
+
+    id = Column(String(100), primary_key=True)
+    owner_agent_name = Column(String(100), nullable=False, index=True)
+    session_id = Column(String(100), nullable=True)
+    run_id = Column(String(100), nullable=True)
+    query_hash = Column(String(80), nullable=False)
+    mode = Column(String(20), nullable=False)
+    route_json = Column(Text, nullable=False, default="{}")
+    filters_json = Column(Text, nullable=False, default="{}")
+    result_ids_json = Column(Text, nullable=False, default="[]")
+    used_evidence_ids_json = Column(Text, nullable=True)
+    bm25_ms = Column(Integer, nullable=True)
+    dense_ms = Column(Integer, nullable=True)
+    rerank_ms = Column(Integer, nullable=True)
+    total_ms = Column(Integer, nullable=False, default=0)
+    evidence_tokens = Column(Integer, nullable=False, default=0)
+    planner_input_tokens = Column(Integer, nullable=False, default=0)
+    planner_output_tokens = Column(Integer, nullable=False, default=0)
+    cache_hit = Column(Integer, nullable=False, default=0)
+    status = Column(String(20), nullable=False, default="ok")
+    error_message = Column(Text, nullable=True)
+    created_at = Column(Float, nullable=False, default=lambda: datetime.now().timestamp(), index=True)
+
+
+class CommunicationRecord(Base):
+    """Persisted inter-agent communication (email) so it can be authorized
+    and indexed as an episodic source. Meetings/injections live in their own
+    existing tables; this fills the email gap (spec §14)."""
+    __tablename__ = "communication_records"
+
+    id = Column(String(100), primary_key=True)
+    channel = Column(String(30), nullable=False)  # email | ...
+    sender = Column(String(200), nullable=False)
+    recipients_json = Column(Text, nullable=False, default="[]")
+    subject = Column(Text, nullable=True)
+    body = Column(Text, nullable=False)
+    source_ref = Column(String(200), nullable=True)
+    created_at = Column(Float, nullable=False, default=lambda: datetime.now().timestamp(), index=True)
+
+
 def get_db():
     """Dependency for getting database session."""
     db = SessionLocal()
@@ -760,6 +959,8 @@ def init_db():
             # them to 'approved' so the new gate doesn't silently freeze jobs
             # that were already running.
             "ALTER TABLE cron_jobs ADD COLUMN approval_status VARCHAR(20) DEFAULT 'approved'",
+            "ALTER TABLE memory_records ADD COLUMN entities_json TEXT",
+            "ALTER TABLE token_usage ADD COLUMN category VARCHAR(40) DEFAULT 'agent'",
         ]
         for sql in migrations:
             try:
@@ -768,7 +969,54 @@ def init_db():
             except Exception:
                 # Column already exists, skip
                 conn.rollback()
-    
+
+    # Memory degraded-search index (FTS5). Single virtual table fed from both
+    # episodic_documents.content and memory_records.normalized_content by the
+    # indexing layer. It is the degraded fallback / admin search / consistency
+    # reference — never the production search path (that is Qdrant). Wrapped in
+    # try/except because a stripped SQLite build may lack FTS5; memory then
+    # degrades to Qdrant-only with no SQLite fallback (surfaced at runtime).
+    with engine.connect() as conn:
+        try:
+            conn.execute(text(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5("
+                "doc_kind UNINDEXED, doc_id UNINDEXED, "
+                "owner_agent_name UNINDEXED, content)"
+            ))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            logger.warning("[MEMORY] FTS5 unavailable — SQLite degraded search disabled")
+
+    # Exact-dedup concurrency backstop (memory v2): a partial UNIQUE index on
+    # the dedup tuple, active rows only. Must run AFTER a dedup pass — an
+    # existing DB may already hold duplicate active rows (the app-level check
+    # is racy under concurrent captures), and CREATE UNIQUE INDEX would fail
+    # over them. Collapse dups first (keep newest per tuple, archive the rest),
+    # then create the index. Idempotent: IF NOT EXISTS + the dedup is a no-op
+    # once the index exists.
+    with engine.connect() as conn:
+        try:
+            conn.execute(text(
+                "UPDATE memory_records SET status='archived' "
+                "WHERE status='active' AND id NOT IN ("
+                "  SELECT id FROM ("
+                "    SELECT id, ROW_NUMBER() OVER ("
+                "      PARTITION BY owner_agent_name, normalized_content, subject_scope "
+                "      ORDER BY created_at DESC, id DESC) AS rn "
+                "    FROM memory_records WHERE status='active'"
+                "  ) WHERE rn = 1)"
+            ))
+            conn.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_memory_active_dedup "
+                "ON memory_records (owner_agent_name, normalized_content, subject_scope) "
+                "WHERE status = 'active'"
+            ))
+            conn.commit()
+        except Exception as exc:
+            conn.rollback()
+            logger.warning("[MEMORY] active-dedup unique index migration skipped: %s", exc)
+
     # --- One-time data migration: JSON files → SQLite ---
     _migrate_story_providers(logger)
     _migrate_story_metadata(logger)

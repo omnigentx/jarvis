@@ -160,6 +160,8 @@ async def db_rev_poll_loop(agent_app) -> None:
                     )
 
                     attach_compaction_hooks_to_all(agent_app)
+                    from services.memory.retrieval_hook import attach_memory_hooks_to_all
+                    attach_memory_hooks_to_all(agent_app)
                 except Exception as _e:  # noqa: BLE001
                     logger.warning(
                         "[DYNAMIC] Failed to re-attach compaction hook after reload: %s",

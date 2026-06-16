@@ -25,6 +25,7 @@ import { useAudioPlayerStore } from '../stores/audioPlayer.js'
 import { EVENTS, on } from '../auth/bus.js'
 import { expandToolRequest, expandToolDone } from '../utils/toolEvents.js'
 import { createPlaybackDoneTracker } from './playbackDoneTracker.js'
+import { createWebRtcRecovery } from './webrtcRecovery.js'
 
 const PCM_PLAYBACK_RATE = 24000  // RealtimeTTS engines emit 24 kHz mono
 
@@ -116,6 +117,11 @@ function _createVoiceSession() {
   const pc = shallowRef(null)
   const remoteAudioEl = shallowRef(null)
   let webrtcMode = false
+  // Recovery policy for mid-session ICE death (5G handover, NAT rebind —
+  // routine on mobile). Lives OUTSIDE the per-PC listeners so the retry
+  // budget survives PC rebuilds; created lazily by _startWebRtc, stopped on
+  // stop()/give-up. Decision logic is unit-tested in webrtcRecovery.test.js.
+  let webrtcRecovery = null
 
   function _ensureActiveConversation() {
     if (chatStore.activeConversation) return
@@ -346,7 +352,10 @@ function _createVoiceSession() {
           console.warn('[voice] server webrtc_error', msg.detail)
           error.value = `Voice transport failed on the server: ${msg.detail || 'unknown error'}`
           status.value = 'error'
-          _teardownWebRtc()   // drop the half-open PC + hidden <audio>
+          webrtcRecovery?.stop()   // server-side misconfig — reconnecting won't help
+          webrtcRecovery = null
+          _teardownWebRtc()   // drop the half-open PC
+          _removeAudioEl()    // …and the hidden <audio> (no reconnect coming)
           break
         case 'tts_start':
           status.value = 'speaking'
@@ -515,16 +524,64 @@ function _createVoiceSession() {
     return [{ urls: 'stun:stun.l.google.com:19302' }]
   }
 
+  async function _restartWebRtc(attempt) {
+    // Mid-session ICE death is routine on mobile networks; the /ws/voice
+    // control socket (HTTPS/cloudflared) usually survives the blip. Recovery
+    // = full re-negotiation with a FRESH RTCPeerConnection over that socket:
+    // the server replaces its session on a repeat ``webrtc_offer`` (the same
+    // ws_voice.py path every session start exercises), so no fragile
+    // ICE-restart semantics are involved. The mic MediaStream is reused.
+    if (torn) return
+    if (ws.value?.readyState !== 1 || !stream.value) {
+      _failWebRtc('control socket closed during webrtc reconnect')
+      return
+    }
+    console.warn('[voice] webrtc reconnect attempt', attempt)
+    _teardownWebRtc()
+    try {
+      await _startWebRtc(ws.value, stream.value)
+    } catch (e) {
+      console.warn('[voice] webrtc reconnect attempt failed', e)
+      webrtcRecovery?.onRestartError()
+    }
+  }
+
+  function _failWebRtc(reason) {
+    // Recovery exhausted (or impossible) — surface the original fail-loud
+    // error. The user re-toggles the mic to start a fresh session.
+    console.warn('[voice] webrtc recovery gave up:', reason)
+    error.value = 'Voice connection failed — WebRTC could not connect (NAT/firewall?).'
+    status.value = 'error'
+    webrtcRecovery?.stop()
+    webrtcRecovery = null
+    _teardownWebRtc()
+    _removeAudioEl()
+  }
+
   async function _startWebRtc(sock, ms) {
+    if (!webrtcRecovery) {
+      webrtcRecovery = createWebRtcRecovery({
+        restart: (attempt) => { _restartWebRtc(attempt) },
+        fail: (reason) => _failWebRtc(reason),
+      })
+    }
     const peer = new RTCPeerConnection({ iceServers: await _iceServers() })
     pc.value = peer
 
-    const audioEl = document.createElement('audio')
-    audioEl.autoplay = true
-    audioEl.setAttribute('playsinline', '')   // iOS: play inline, not fullscreen
-    audioEl.style.display = 'none'
-    document.body.appendChild(audioEl)
-    remoteAudioEl.value = audioEl
+    // Reuse ONE hidden <audio> across reconnects: iOS Safari blesses the
+    // element that first played under the mic-click user gesture; a fresh
+    // element created during an automatic ICE reconnect has no gesture, so
+    // its play() would be autoplay-blocked → "reconnected but silent" on
+    // iPhone. Swapping srcObject on the blessed element keeps audio flowing.
+    let audioEl = remoteAudioEl.value
+    if (!audioEl) {
+      audioEl = document.createElement('audio')
+      audioEl.autoplay = true
+      audioEl.setAttribute('playsinline', '')   // iOS: play inline, not fullscreen
+      audioEl.style.display = 'none'
+      document.body.appendChild(audioEl)
+      remoteAudioEl.value = audioEl
+    }
     peer.addEventListener('track', (ev) => {
       audioEl.srcObject = ev.streams[0] || new MediaStream([ev.track])
       // play() may reject if autoplay is gated; the mic click is a user gesture
@@ -534,14 +591,14 @@ function _createVoiceSession() {
     peer.addEventListener('connectionstatechange', () => {
       const st = peer.connectionState
       console.debug('[voice] webrtc connectionState', st)
-      // Fail loud: if the peer connection can't form (ICE/DTLS failed), surface
-      // it rather than sitting silently with no audio. No fallback — the user
-      // re-toggles, or sets a TURN server (see docs/VOICE_WEBRTC_TESTING.md).
-      if (st === 'failed') {
-        error.value = 'Voice connection failed — WebRTC could not connect (NAT/firewall?).'
-        status.value = 'error'
-        _teardownWebRtc()   // drop the dead PC + hidden <audio> now, not next toggle
-      }
+      // Events from a PC we already replaced during a reconnect are stale.
+      if (peer !== pc.value) return
+      // Recovery policy (webrtcRecovery.js): 'disconnected' gets a grace
+      // window to self-heal, 'failed' re-offers immediately, and repeated
+      // consecutive failures give up via _failWebRtc — which surfaces the
+      // same fail-loud error as before. A first transient ICE blip (routine
+      // on 5G) no longer kills the session.
+      webrtcRecovery?.onState(st)
     })
 
     for (const track of ms.getAudioTracks()) peer.addTrack(track, ms)
@@ -557,9 +614,19 @@ function _createVoiceSession() {
   }
 
   function _teardownWebRtc() {
+    // Drops the PC only. The hidden <audio> deliberately survives — it holds
+    // the iOS autoplay blessing needed by automatic reconnects (see
+    // _startWebRtc); _removeAudioEl() disposes it on final teardown paths.
     webrtcMode = false
     try { pc.value?.close() } catch {}
     pc.value = null
+    const el = remoteAudioEl.value
+    if (el) {
+      try { el.srcObject = null } catch {}
+    }
+  }
+
+  function _removeAudioEl() {
     const el = remoteAudioEl.value
     if (el) {
       try { el.srcObject = null; el.remove() } catch {}
@@ -741,7 +808,10 @@ function _createVoiceSession() {
     }
     workletNode.value?.disconnect()
     workletNode.value = null
+    webrtcRecovery?.stop()   // user-initiated teardown — no reconnects after this
+    webrtcRecovery = null
     _teardownWebRtc()
+    _removeAudioEl()
     if (stream.value) {
       stream.value.getTracks().forEach(t => t.stop())
       stream.value = null

@@ -31,9 +31,21 @@ def _set_master_key(monkeypatch):
 def isolated_session_service(tmp_path, monkeypatch):
     """Replace the global session_service with one rooted at tmp_path so
     these tests don't leak into the real ``.fast-agent/sessions/`` dir.
+
+    Per-test ``ENVIRONMENT_DIR`` is what isolates: SessionManager resolves its
+    sessions dir from that env var, NOT from ``cwd=``. The session-level conftest
+    sets one shared ENVIRONMENT_DIR, so without this override every test shares a
+    sessions dir and ``list_sessions`` totals accumulate across the class.
     """
+    # environment_override (EXPLICIT) is what actually isolates: SessionManager
+    # roots its sessions dir there. The cwd= arg is NOT used for it, and the
+    # ENVIRONMENT_DIR env var doesn't help — the session-level conftest sets one
+    # shared ENVIRONMENT_DIR that fast-agent reads at import, so a per-test
+    # monkeypatch.setenv is ignored. Without the explicit override every test
+    # shares one sessions dir and list_sessions totals accumulate across the
+    # class (the pagination/filter asserts then fail).
     svc = SessionService()
-    svc._manager = SessionManager(cwd=tmp_path)
+    svc._manager = SessionManager(cwd=tmp_path, environment_override=str(tmp_path))
     monkeypatch.setattr(shared_state, "session_service", svc)
     monkeypatch.setattr(sessions_routes, "session_service", svc)
     return svc

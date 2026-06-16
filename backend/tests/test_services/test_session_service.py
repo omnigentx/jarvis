@@ -13,13 +13,16 @@ from services.session_service import SessionService
 def isolated_svc(tmp_path):
     """SessionService backed by a tmp session directory.
 
-    Without isolation the service writes through to ``.fast-agent/sessions/``
-    in the repo, leaving cruft after every test run. We swap the underlying
-    SessionManager for one rooted at tmp_path so each test gets a clean slate
-    and tmp_path is auto-cleaned by pytest.
+    The EXPLICIT ``environment_override`` is what isolates: SessionManager roots
+    its sessions dir there (the ``cwd=`` arg is NOT used for it). The session-
+    level conftest sets ONE shared ENVIRONMENT_DIR that fast-agent reads at
+    import, so a per-test ``monkeypatch.setenv`` is ignored — without the
+    explicit override every test writes to the same sessions dir and
+    ``list_sessions`` totals accumulate across the class (the pagination/filter
+    asserts then fail). tmp_path is auto-cleaned by pytest.
     """
     svc = SessionService()
-    svc._manager = SessionManager(cwd=tmp_path)
+    svc._manager = SessionManager(cwd=tmp_path, environment_override=str(tmp_path))
     return svc
 
 
@@ -115,8 +118,10 @@ class TestListSessionsFilterPagination:
 
     @pytest.fixture()
     def isolated_svc(self, tmp_path):
+        # Explicit environment_override isolates the sessions dir per test —
+        # see the module-level isolated_svc docstring.
         svc = SessionService()
-        svc._manager = SessionManager(cwd=tmp_path)
+        svc._manager = SessionManager(cwd=tmp_path, environment_override=str(tmp_path))
         return svc
 
 
