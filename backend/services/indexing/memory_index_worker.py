@@ -32,7 +32,8 @@ def _load_entities(entities_json):
         import json
         v = json.loads(entities_json)
         return v if isinstance(v, list) else []
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[MEMORY] entities_json parse failed (%r…): %s", entities_json[:40], exc)
         return []
 
 

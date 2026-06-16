@@ -16,27 +16,9 @@ function ev(event_type, agent_name = 'Jarvis') {
   return { event_type, agent_name }
 }
 
-test('candidate_created increments pending; approve/reject decrements (floored)', () => {
-  const s = useMemoryStore()
-  assert.equal(s.pendingCount('Jarvis'), 0)
-  s.processMemoryEvent(ev('memory_candidate_created'))
-  s.processMemoryEvent(ev('memory_candidate_created'))
-  assert.equal(s.pendingCount('Jarvis'), 2)
-  s.processMemoryEvent(ev('memory_candidate_approved'))
-  assert.equal(s.pendingCount('Jarvis'), 1)
-  s.processMemoryEvent(ev('memory_candidate_rejected'))
-  s.processMemoryEvent(ev('memory_candidate_rejected')) // already 0 → floored
-  assert.equal(s.pendingCount('Jarvis'), 0)
-})
-
-test('pending is per-agent', () => {
-  const s = useMemoryStore()
-  s.processMemoryEvent(ev('memory_candidate_created', 'Jarvis'))
-  s.processMemoryEvent(ev('memory_candidate_created', 'Riley [SA]'))
-  assert.equal(s.pendingCount('Jarvis'), 1)
-  assert.equal(s.pendingCount('Riley [SA]'), 1)
-  assert.equal(s.pendingCount('Unknown'), 0)
-})
+// Pending-candidate counting moved OUT of this store: the central approvals
+// store (sidebar badge) owns it, so memory_candidate_* events are no longer
+// consumed here (no per-agent count to duplicate).
 
 test('memory_indexed bumps the index tick', () => {
   const s = useMemoryStore()
@@ -56,6 +38,6 @@ test('retrieval_degraded sets flag; retrieval_completed clears it', () => {
 
 test('events without agent_name are ignored', () => {
   const s = useMemoryStore()
-  s.processMemoryEvent({ event_type: 'memory_candidate_created' })
-  assert.deepEqual(s.pendingByAgent, {})
+  s.processMemoryEvent({ event_type: 'retrieval_degraded' })
+  assert.deepEqual(s.degradedByAgent, {})
 })

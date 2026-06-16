@@ -5,6 +5,7 @@ received. Defense-in-depth on top of the owner-scoped episodic projection.
 from __future__ import annotations
 
 import json
+import logging
 
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
@@ -18,6 +19,8 @@ from services.retrieval.contracts import (
     RetrievalRequest,
 )
 
+logger = logging.getLogger("memory.comm_provider")
+
 _EXCERPT_CHARS = 400
 
 
@@ -26,7 +29,10 @@ def _authorized(rec: CommunicationRecord, agent_name: str) -> bool:
         return True
     try:
         return agent_name in (json.loads(rec.recipients_json or "[]") or [])
-    except (ValueError, TypeError):
+    except (ValueError, TypeError) as exc:
+        # Malformed recipients_json → deny (fail-closed), but surface it: a
+        # corrupted row would otherwise silently hide a legitimate comm forever.
+        logger.warning("[MEMORY] comm %s recipients_json unparseable, denying: %s", rec.id, exc)
         return False
 
 

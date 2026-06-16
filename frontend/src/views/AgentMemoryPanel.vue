@@ -54,7 +54,6 @@ async function loadAll() {
     memories.value = mem.items
     total.value = mem.total
     candidates.value = cand.items
-    memStore.setPending(props.agentName, cand.items.length)
     runs.value = rr.items
     indexStatus.value = idx
   } catch (err) {

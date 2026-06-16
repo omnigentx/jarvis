@@ -137,6 +137,12 @@ def _persist_candidates(owner, mems, cfg, candidate_type: str) -> list[str]:
     try:
         for m in mems:
             try:
+                # subject_scope="user" is intentional and asymmetric vs the
+                # compactor lane (which uses "agent:<owner>"): the fast lane
+                # extracts facts/preferences ABOUT THE USER from their messages,
+                # while the slow/compactor lane captures the AGENT's own
+                # observations. Different subjects → exact-dedup (keyed on
+                # subject_scope) correctly does NOT collapse them.
                 cand = cnd.create_candidate(
                     db, owner_agent_name=owner, candidate_type=candidate_type,
                     payload={"memory_type": m.memory_type, "content": m.content,
@@ -216,8 +222,8 @@ def build_extractor_generate_fn(category: str = "memory:fast"):
                 if toks:
                     _persist_and_broadcast_token_usage(
                         "memory-extractor", "", toks, category=category)
-            except Exception:  # noqa: BLE001 — never break extraction over telemetry
-                pass
+            except Exception as exc:  # noqa: BLE001 — never break extraction over telemetry
+                logger.debug("[MEMORY] extractor token telemetry skipped: %s", exc)
             parts = [getattr(b, "text", "") for b in (getattr(resp, "content", None) or [])]
             return "\n".join(p for p in parts if p)
         return generate_fn

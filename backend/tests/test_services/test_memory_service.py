@@ -54,6 +54,15 @@ def test_secret_content_rejected(svc):
         _create(svc, content="the api key is sk-ABCDEF0123456789ABCDEF")
 
 
+def test_pii_is_sensitive_persists_but_not_pinnable(svc):
+    # PII (email) → SENSITIVE: unlike a SECRET it IS persisted, but the
+    # sensitive tier still blocks auto-pinning.
+    rec = _create(svc, content="reach me at jane.doe@example.com")
+    assert rec.sensitivity == "sensitive"
+    with pytest.raises(MemoryWriteError, match="sensitive"):
+        _create(svc, content="card 4111 1111 1111 1111", pinned=True, subject_scope="user")
+
+
 def test_invalid_scope_rejected(svc):
     with pytest.raises(ValueError):
         _create(svc, subject_scope="team:foo")
