@@ -16,6 +16,7 @@ from services.retrieval.contracts import (
     EvidenceSource,
     RetrievalProvider,
     RetrievalRequest,
+    evidence_kind,
 )
 
 
@@ -53,7 +54,8 @@ class LadybugProvider(RetrievalProvider):
             seen.add(h.record_id)
             rank += 1
             evidence.append(Evidence(
-                evidence_id=h.record_id, record_id=h.record_id,
+                evidence_id=f"{evidence_kind(h.memory_type)}:{h.record_id}",
+                record_id=h.record_id,
                 owner_agent_name=request.owner_agent_name, memory_type=h.memory_type,
                 excerpt=h.content,
                 source=EvidenceSource("memory_record", h.record_id, h.created_at),

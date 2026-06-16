@@ -146,3 +146,34 @@ def test_retention_prunes_runs_and_unreferenced_episodic(Session):
     # prune enqueued an index-removal for the dropped doc
     assert db.query(MemoryIndexOutbox).filter_by(event_type=ob.EVENT_EPISODIC_PRUNE).count() == 1
     db.close()
+
+
+async def test_worker_episodic_prune_removes_dense_and_fts(Session, monkeypatch):
+    """B4 regression: draining EVENT_EPISODIC_PRUNE must remove the DENSE node,
+    not just FTS. _index_episodic writes a dense point, so a prune that only
+    deletes FTS leaves the doc permanently dense-searchable (read-after-prune
+    SSoT leak). The retention test above only asserts the outbox row is
+    enqueued — it never drained the worker, which is why this slipped through.
+    """
+    _seed_episodic(Session)
+    worker = MemoryIndexWorker()
+    fake_qd = _FakeQdrant(available=True)
+    monkeypatch.setattr(worker, "_qd", lambda: fake_qd)
+    monkeypatch.setattr(worker, "_emb", lambda: _FakeEmbedding())
+
+    # Index first: a dense point + FTS row now exist.
+    await worker.process_pending(now=200.0)
+    assert len(fake_qd.points) == 1
+    assert fts_index.fts_search(Session(), owner_agent_name="Jarvis", query="compactor")
+
+    # Prune it, then drain the worker.
+    db = Session()
+    ob.enqueue(db, event_type=ob.EVENT_EPISODIC_PRUNE, aggregate_id="doc-1",
+               aggregate_revision=2, now=300.0)
+    db.commit()
+    db.close()
+    await worker.process_pending(now=400.0)
+
+    assert "doc-1" in fake_qd.deleted        # dense removed (the B4 fix)
+    assert not fts_index.fts_search(Session(), owner_agent_name="Jarvis", query="compactor")
+    db.close()

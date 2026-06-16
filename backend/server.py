@@ -451,6 +451,9 @@ async def lifespan(app: FastAPI):
     # model may load here (agents must use the API, never load a model in a
     # spawn subprocess).
     memory_index_task = None
+    _mem_cfg = None  # bind first: the migration block below reads it even if
+    # worker startup raises — an unbound name would NameError and misattribute
+    # the cause in the migration log.
     try:
         os.environ["JARVIS_MAIN_PROCESS"] = "1"
         from services.memory.settings import get_memory_settings
@@ -471,7 +474,7 @@ async def lifespan(app: FastAPI):
     # switching from Qdrant — enqueue a full rebuild so the worker repopulates
     # Ladybug. Best-effort; the index is a disposable projection.
     try:
-        if _mem_cfg.enabled and getattr(_mem_cfg, "vector_backend", "ladybug") == "ladybug":
+        if _mem_cfg and _mem_cfg.enabled and getattr(_mem_cfg, "vector_backend", "ladybug") == "ladybug":
             from services.indexing.ladybug_store import get_ladybug_store
             store = get_ladybug_store(getattr(_mem_cfg, "ladybug_path", "data/memory_graph"))
             if store.count() == 0:

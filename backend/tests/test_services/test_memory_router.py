@@ -23,8 +23,9 @@ def test_classify_targets_english(q, target):
 
 
 def test_lexicon_is_english_only():
-    # Non-English does NOT hit the substring lexicon — the embedding gate is
-    # what makes detection multilingual (see test_intent_gate_* below).
+    # Non-English does NOT hit the substring lexicon — it's an English-only
+    # Level-0/1 hint. memory v2 retrieves via the LLM, so multilingual recall
+    # no longer depends on this classifier.
     assert mt.classify_targets("lần trước mình làm thế nào") == set()
 
 
@@ -46,15 +47,6 @@ def test_level0_external_only():
     # English lexicon: "latest"/"today's" → external only → stays Level 0.
     d = ir.decide_initial("what's the latest gold price today")
     assert d.level == ir.LEVEL_NONE
-
-
-def test_level1_on_gate_targets_multilingual():
-    # The embedding gate supplies targets for ANY language; here a Vietnamese
-    # query is detected by the gate and passed in as gate_targets.
-    d = ir.decide_initial("lần trước chúng ta deploy ra sao",
-                          gate_targets={mt.TARGET_EPISODIC})
-    assert d.level == ir.LEVEL_FAST
-    assert mt.TARGET_EPISODIC in d.targets and d.reason == "intent gate"
 
 
 def test_level1_on_identifier_bm25_first():

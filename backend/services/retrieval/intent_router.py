@@ -36,15 +36,13 @@ def decide_initial(
     continuing_tool_loop: bool = False,
     ledger_has_sufficient: bool = False,
     lexicon_overrides: dict | None = None,
-    gate_targets: set[str] | None = None,
 ) -> RouteDecision:
     """Pick the initial retrieval level for a turn. Level 0 must be the common
     outcome — only escalate to Level 1 on a concrete signal.
 
-    ``gate_targets`` is the MULTILINGUAL signal from the embedding intent gate
-    (services/retrieval/intent_gate.py). When provided it is the primary target
-    source; otherwise the English substring lexicon is the fallback. The
-    identifier regex (language-agnostic) always applies.
+    Targets come from the English substring lexicon (``classify_targets``); the
+    identifier regex (language-agnostic) always applies. (The earlier embedding
+    intent gate is gone — memory v2 retrieves via the LLM, not a gate.)
     """
     # Required evidence already present → no search (spec §7.1).
     if ledger_has_sufficient:
@@ -54,9 +52,8 @@ def decide_initial(
         return RouteDecision(LEVEL_NONE, "continuing current tool loop")
 
     ident = has_exact_identifier(query)
-    targets = (gate_targets if gate_targets is not None
-               else classify_targets(query, overrides=lexicon_overrides))
-    signal = "intent gate" if gate_targets is not None else "lexicon signal"
+    targets = classify_targets(query, overrides=lexicon_overrides)
+    signal = "lexicon signal"
 
     # The agent explicitly asked for memory → always retrieve.
     if agent_requested:

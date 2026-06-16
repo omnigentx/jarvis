@@ -7,7 +7,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from core.database import Base, MemoryRecord
+from core.database import Base, CommunicationRecord, MemoryRecord
 from services.indexing import fts_index
 from services.memory import rpc_handlers
 from services.retrieval.orchestrator import _CACHE
@@ -91,4 +91,23 @@ async def test_fetch_is_owner_scoped(wired):
     assert ok["items"] and ok["items"][0]["content"].startswith("jarvis")
     # Jarvis cannot fetch Riley's memory even with the raw id
     denied = await rpc_handlers.memory_fetch(agent_name="Jarvis", evidence_ids=["memory:r1"])
+    assert denied["items"] == []
+
+
+async def test_fetch_comm_evidence_authorized(wired):
+    """N2 regression: graph/comm evidence uses the canonical comm:{id} scheme;
+    memory_fetch must resolve it (kind 'comm' was previously unhandled → the
+    'view source' fetch returned empty) and re-check participant authorization."""
+    Factory = wired
+    db = Factory()
+    db.add(CommunicationRecord(id="c1", sender="Riley [SA]", recipients_json='["Jarvis"]',
+                               channel="email", subject="Plan", body="ship it Monday",
+                               created_at=1.0))
+    db.commit()
+    db.close()
+
+    ok = await rpc_handlers.memory_fetch(agent_name="Jarvis", evidence_ids=["comm:c1"])
+    assert ok["items"] and "ship it Monday" in ok["items"][0]["content"]
+    # A non-participant cannot fetch it even with the raw id.
+    denied = await rpc_handlers.memory_fetch(agent_name="Mallory", evidence_ids=["comm:c1"])
     assert denied["items"] == []

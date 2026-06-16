@@ -12,7 +12,12 @@ from __future__ import annotations
 import logging
 import time
 
-from core.database import EpisodicDocument, MemoryRecord, get_db_session
+from core.database import (
+    CommunicationRecord,
+    EpisodicDocument,
+    MemoryRecord,
+    get_db_session,
+)
 from services.memory.settings import get_memory_settings
 from services.retrieval.contracts import RetrievalRequest
 from services.retrieval.orchestrator import RetrievalOrchestrator
@@ -32,6 +37,13 @@ def _enabled() -> bool:
         return get_memory_settings().enabled
     except Exception:  # noqa: BLE001
         return False
+
+
+def _comm_authorized(rec: CommunicationRecord, agent_name: str) -> bool:
+    """Single source of comm participant authorization — delegates to the
+    provider's check so the fetch gate can never drift from the search gate."""
+    from services.retrieval.providers.communication_provider import _authorized
+    return _authorized(rec, agent_name)
 
 
 async def memory_search(*, agent_name: str, query: str, types: list | None = None,
@@ -77,6 +89,15 @@ async def memory_fetch(*, agent_name: str, evidence_ids: list) -> dict:
                 rec = db.get(MemoryRecord, rid)
                 if rec and rec.owner_agent_name == agent_name:
                     out.append({"evidence_id": eid, "content": rec.content})
+            elif kind == "comm":
+                # Graph/comm evidence uses the canonical {kind}:{id} scheme too;
+                # re-check participant authorization (sender or recipient), the
+                # same gate communication_provider applies at search time.
+                crec = db.get(CommunicationRecord, rid)
+                if crec and _comm_authorized(crec, agent_name):
+                    out.append({"evidence_id": eid,
+                                "content": f"{crec.subject or ''}\n{crec.body or ''}".strip(),
+                                "source_id": crec.id})
         return {"items": out}
     finally:
         db.close()

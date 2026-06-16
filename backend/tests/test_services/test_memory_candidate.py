@@ -81,6 +81,37 @@ def test_secret_forces_approval(db):
     assert db.query(MemoryRecord).count() == 0
 
 
+def test_approved_secret_persists(db):
+    """B1 regression: a user-approved SECRET must persist. Secrets force
+    approval; on the human-approved path _persist_from_candidate authorizes the
+    write (allow_secret=True) instead of letting MemoryService raise and the
+    error get swallowed — which silently dropped the explicitly-approved secret
+    and diverged candidate/card state."""
+    c = cnd.create_candidate(db, owner_agent_name="Jarvis", candidate_type="fact",
+                             payload=_payload(content="key is sk-ABCDEF0123456789ABCDEF",
+                                              memory_type="semantic", subject_scope="system"),
+                             now=100.0)
+    assert c.status == "pending" and c.requires_approval == 1
+    cnd.approve_candidate(db, c.id, now=200.0)               # must NOT raise
+    assert db.get(MemoryCandidate, c.id).status == "approved"
+    recs = db.query(MemoryRecord).filter_by(owner_agent_name="Jarvis").all()
+    assert len(recs) == 1
+    assert "sk-ABCDEF" in recs[0].content
+    assert recs[0].sensitivity == "secret"
+
+
+def test_compactor_subtype_forwarded_on_persist(db):
+    """B2 regression: the compactor's subtype must survive persistence — it was
+    stored on the candidate but dropped at the create_memory boundary."""
+    cands = [{"type": "semantic", "subtype": "architecture_decision",
+              "content": "We chose Postgres over MySQL.", "subject_scope": "project:jarvis",
+              "confidence": 0.95, "explicit": True}]
+    cnd.ingest_compactor_candidates(db, owner_agent_name="Jarvis", candidates=cands,
+                                    now=100.0, approval_policy="auto_low_risk")
+    rec = db.query(MemoryRecord).filter_by(owner_agent_name="Jarvis").one()
+    assert rec.memory_subtype == "architecture_decision"
+
+
 def test_compactor_ingest_manual_policy_pending(db):
     cands = [{"type": "semantic", "subtype": "architecture_decision",
               "content": "Use a dedicated compactor agent.", "subject_scope": "project:jarvis",

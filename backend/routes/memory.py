@@ -13,7 +13,7 @@ import time
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from core.auth import verify_api_key
 from core.database import (
@@ -121,7 +121,7 @@ class MemorySearchBody(BaseModel):
     query: str
     types: list[str] | None = None
     mode: str = "balanced"
-    limit: int = 5
+    limit: int = Field(5, ge=1, le=50)   # bound POST body like the GET routes (le=200)
 
 
 @router.post("/agents/{name}/memory-search")
@@ -235,7 +235,7 @@ async def reject_candidate(name: str, candidate_id: str) -> dict[str, Any]:
 
 
 class BulkCandidateBody(BaseModel):
-    ids: list[str]
+    ids: list[str] = Field(..., max_length=500)   # cap bulk fan-out per request
 
 
 @router.post("/agents/{name}/memory-candidates/bulk-approve")

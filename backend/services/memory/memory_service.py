@@ -8,13 +8,12 @@ emits an SSE lifecycle event. It must never trust an LLM-supplied owner/scope.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import time
 import uuid
 
-from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from core.database import MemoryRecord, MemorySource, MemoryVersion
@@ -38,11 +37,6 @@ class MemoryWriteError(Exception):
 
 def _normalize(content: str) -> str:
     return " ".join((content or "").split()).lower()
-
-
-def _dedupe_key(owner: str, memory_type: str, scope: str, content: str) -> str:
-    raw = f"{owner}\x1f{memory_type}\x1f{scope}\x1f{_normalize(content)}"
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def _emit(event_type: str, owner: str, now: float, data: dict) -> None:
@@ -119,7 +113,25 @@ class MemoryService:
         self._add_sources(rec, sources, now)
         ob.enqueue(self.db, event_type=ob.EVENT_MEMORY_UPSERT, aggregate_id=rec.id,
                    aggregate_revision=rec.current_version, now=now)
-        self.db.commit()
+        try:
+            self.db.commit()
+        except IntegrityError:
+            # Concurrency backstop: a sibling capture of the SAME fact won the
+            # race and committed between our read-check and this commit. The
+            # partial unique index (uq_memory_active_dedup) rejects the dup —
+            # fall back to the winner instead of surfacing a 500/silent loss.
+            self.db.rollback()
+            winner = (
+                self.db.query(MemoryRecord)
+                .filter(MemoryRecord.owner_agent_name == owner_agent_name,
+                        MemoryRecord.normalized_content == _normalize(content),
+                        MemoryRecord.subject_scope == subject_scope,
+                        MemoryRecord.status == MemoryStatus.ACTIVE.value)
+                .first()
+            )
+            if winner is not None:
+                return winner
+            raise
         _emit("memory_created", owner_agent_name, now,
               {"memory_id": rec.id, "memory_type": memory_type, "pinned": pinned})
         return rec

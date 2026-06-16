@@ -94,7 +94,7 @@ class RetrievalOrchestrator:
             return self._finalize(request, cached, level=LEVEL_FAST, cache_hit=True,
                                   budget=budget, ledger=ledger, turn=turn, now=now)
 
-        fused = await self._fast_round(request, budget)
+        fused, dense_failed = await self._fast_round(request, budget)
         # Recency/authority/freshness ranking on the HAPPY path too — this is the
         # read-side of ADD-only (a newer fact, e.g. "works at FPT", outranks the
         # superseded "Techcombank" for "where do I work now"). Previously this
@@ -114,20 +114,28 @@ class RetrievalOrchestrator:
 
         _CACHE.set(key, fused)
         return self._finalize(request, fused, level=level, cache_hit=False,
-                              budget=budget, ledger=ledger, turn=turn, now=now)
+                              budget=budget, ledger=ledger, turn=turn, now=now,
+                              dense_failed=dense_failed)
 
-    async def _fast_round(self, request: RetrievalRequest, budget) -> list[Evidence]:
+    async def _fast_round(self, request: RetrievalRequest, budget) -> tuple[list[Evidence], bool]:
         cap = budget.max_candidates_per_retriever
+        dense_on = self._dense.is_available()
         tasks = [self._fts.search(request, limit=cap)]
-        if self._dense.is_available():
+        if dense_on:
             tasks.append(self._dense.search(request, limit=cap))
         results = await asyncio.gather(*tasks, return_exceptions=True)
         lists = [r for r in results if isinstance(r, list)]
-        for r in results:
+        # If the dense lane (tasks[1], only added when dense_on) THREW, the
+        # search is degraded even though is_available() said yes — surface it
+        # so the caller doesn't report a silent "0 memories, not degraded".
+        dense_failed = False
+        for i, r in enumerate(results):
             if isinstance(r, Exception):
                 logger.warning("[MEMORY] provider error: %s", r)
+                if dense_on and i == 1:
+                    dense_failed = True
         fused = fusion.rrf_fuse(lists)
-        return fused[: budget.max_fused_candidates]
+        return fused[: budget.max_fused_candidates], dense_failed
 
     async def _corrective_round(self, request: RetrievalRequest, budget) -> list[Evidence]:
         """Bounded corrective pass: bring in authorized communications. (An LLM
@@ -138,18 +146,27 @@ class RetrievalOrchestrator:
             logger.warning("[MEMORY] corrective round error: %s", exc)
             return []
 
-    def _finalize(self, request, fused, *, level, cache_hit, budget, ledger, turn, now) -> RetrievalResult:
+    def _finalize(self, request, fused, *, level, cache_hit, budget, ledger, turn, now,
+                  dense_failed=False) -> RetrievalResult:
         if ledger is not None:
             fused = ledger.dedup(fused, turn=turn)
         selected, tokens = build_evidence(fused, budget)
         if ledger is not None:
             for ev in selected:
                 ledger.add(ev, turn=turn)
-        degraded = not self._dense.is_available()
+        # Degraded = dense lane not serving. Two distinct causes: it's offline
+        # (is_available() False) OR it errored mid-search (dense_failed) — the
+        # latter previously read as a healthy empty result.
         _backend = getattr(self.settings, "vector_backend", "ladybug")
+        if dense_failed:
+            degraded, reason = True, f"{_backend}_error"
+        elif not self._dense.is_available():
+            degraded, reason = True, f"{_backend}_unavailable"
+        else:
+            degraded, reason = False, None
         result = RetrievalResult(
             evidence=selected, level=level, degraded=degraded,
-            degraded_reason=f"{_backend}_unavailable" if degraded else None,
+            degraded_reason=reason,
             cache_hit=cache_hit, total_ms=0,
         )
         self._write_telemetry(request, result, tokens, now)

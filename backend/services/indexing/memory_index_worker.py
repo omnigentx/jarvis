@@ -118,6 +118,12 @@ class MemoryIndexWorker:
         if et == ob.EVENT_EPISODIC_PRUNE:
             fts_index.fts_delete(db, doc_kind=fts_index.KIND_EPISODIC, doc_id=row.aggregate_id)
             db.commit()
+            # _index_episodic writes a dense node too — prune must remove it
+            # symmetrically (same as EVENT_MEMORY_DELETE), else a pruned doc
+            # stays permanently dense-searchable (read-after-prune SSoT leak).
+            qd = self._qd()
+            if qd.is_available():
+                qd.delete_by_record(row.aggregate_id)
             return False
         if et == ob.EVENT_MEMORY_DELETE:
             fts_index.fts_delete(db, doc_kind=fts_index.KIND_MEMORY, doc_id=row.aggregate_id)

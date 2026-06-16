@@ -179,7 +179,12 @@ def _persist_from_candidate(db, cand, status, *, now, changed_by="system",
         owner_agent_name=cand.owner_agent_name, memory_type=payload["memory_type"],
         content=payload["content"], subject_scope=payload["subject_scope"],
         authority=payload["authority"], sources=sources, changed_by=changed_by,
-        now=now, entities=payload.get("entities"))
+        now=now, entities=payload.get("entities"), subtype=payload.get("subtype"),
+        # A SECRET only reaches persistence via EXPLICIT user approval: secrets
+        # force requires_approval=True in create_candidate, so they never hit
+        # AUTO_APPROVED. Authorize the write only on the human-approved path;
+        # auto-approve stays locked so a secret can never persist unattended.
+        allow_secret=(status == CandidateStatus.APPROVED.value))
 
     cand.status = status
     cand.resolved_at = now
@@ -200,11 +205,17 @@ def _create_approval_row(cand: MemoryCandidate) -> None:
     try:
         from services.approval_service import approval_service
         content = json.loads(cand.payload_json).get("content", "")
+        # NEVER render a detected secret on the Approvals page. The card is a
+        # more-visible surface than memory_records; mask the preview so the
+        # cleartext value isn't exposed in the inbox. The real value stays in
+        # the candidate payload until a human authorizes persistence (where
+        # allow_secret is gated in _persist_from_candidate).
+        display = "🔒 hidden secret — approve to store" if has_secret(content) else content
         approval_service.create_approval({
             "approval_type": "memory_candidate",
             "agent_name": cand.owner_agent_name,
-            "title": f"Remember: {content[:80]}",
-            "content": content,
+            "title": f"Remember: {display[:80]}",
+            "content": display,
             "pause": False,
             "metadata": {"candidate_id": cand.id},
         })

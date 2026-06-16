@@ -14,6 +14,7 @@ from services.retrieval.contracts import (
     EvidenceSource,
     RetrievalProvider,
     RetrievalRequest,
+    evidence_kind,
 )
 
 
@@ -50,9 +51,10 @@ class QdrantProvider(RetrievalProvider):
             # Defense in depth: never trust a point whose owner doesn't match.
             if p.get("owner_agent_name") != request.owner_agent_name:
                 continue
+            _rid = str(p.get("record_id", ""))
             evidence.append(Evidence(
-                evidence_id=str(p.get("chunk_id", h.id)),
-                record_id=str(p.get("record_id", "")),
+                evidence_id=f"{evidence_kind(p.get('memory_type', 'semantic'))}:{_rid}",
+                record_id=_rid,
                 owner_agent_name=request.owner_agent_name,
                 memory_type=p.get("memory_type", "semantic"),
                 excerpt=p.get("excerpt", ""),

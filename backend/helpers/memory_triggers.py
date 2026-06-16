@@ -22,13 +22,10 @@ TARGET_PROCEDURAL = "procedural"
 TARGET_COMMUNICATIONS = "communications"
 TARGET_EXTERNAL = "external"   # fresh info → external provider, NOT memory
 
-# ── Embedding prototypes (PRIMARY, multilingual via BGE-M3) ──────────────
-# Canonical English sentences per intent. intent_gate.py embeds these once and
-# matches the user message by cosine similarity, so detection works in ANY
-# language without enumerating phrases per language.
-#
-# ── English fast-path / degraded fallback lexicon (substring match) ──────
-# Used only when embeddings are unavailable. English-only on purpose.
+# ── English lexicon (substring match) ───────────────────────────────────
+# A cheap deterministic hint for the lexicon router. memory v2 retrieves via
+# the LLM, so this is only a Level-0/1 nudge, not the primary signal — and it
+# is English-only on purpose (the prior multilingual embedding gate is gone).
 _PHRASE_TARGETS: list[tuple[str, str]] = [
     ("last time", TARGET_EPISODIC), ("previously", TARGET_EPISODIC),
     ("have we ever", TARGET_EPISODIC), ("earlier you", TARGET_EPISODIC),
@@ -54,9 +51,9 @@ _IDENTIFIER_RES: list[re.Pattern] = [
 
 
 def classify_targets(query: str, *, overrides: dict | None = None) -> set[str]:
-    """English substring fast-path / degraded fallback. Returns retrieval
-    targets a query points at (possibly empty). The embedding gate
-    (intent_gate.py) is the primary, multilingual mechanism."""
+    """English substring classifier. Returns the retrieval targets a query
+    points at (possibly empty). A deterministic Level-0/1 hint only — memory v2
+    retrieves via the LLM, so this never gates the actual recall."""
     q = (query or "").lower()
     targets: set[str] = set()
     for phrase, target in _PHRASE_TARGETS:

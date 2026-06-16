@@ -136,4 +136,16 @@ def test_ledger_dedup():
     led.add(a, turn=1)
     fresh = led.dedup([a, b], turn=2)
     assert [e.record_id for e in fresh] == ["B"]
-    assert led.has("e:A")
+    assert led.has("A")              # keyed on record_id, not evidence_id
+
+
+def test_ledger_dedups_same_record_across_providers():
+    """B3 regression: the SAME memory surfaced via a different provider mix has
+    a different evidence_id but the same record_id. The ledger must still treat
+    it as already-injected, else the fact is injected into context twice."""
+    led = EvidenceLedger()
+    dense_hit = _ev("A")              # evidence_id "e:A", record_id "A"
+    graph_hit = _ev("A")
+    graph_hit.evidence_id = "A"      # bare/graph-style id, SAME record_id
+    led.add(dense_hit, turn=1)
+    assert led.dedup([graph_hit], turn=2) == []   # deduped despite differing evidence_id

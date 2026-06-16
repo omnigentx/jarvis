@@ -764,6 +764,14 @@ class MemoryRecord(Base):
     __table_args__ = (
         Index("ix_memory_owner_status", "owner_agent_name", "status"),
         Index("ix_memory_owner_type", "owner_agent_name", "memory_type"),
+        # NOTE: the exact-dedup backstop is a PARTIAL UNIQUE index on
+        # (owner_agent_name, normalized_content, subject_scope) WHERE
+        # status='active'. It is created in init_db() — NOT here — because
+        # existing DBs need a one-time dedup pass first, which create_all()
+        # cannot do (it would crash creating the index over duplicate rows).
+        # The app-level read-then-insert check in MemoryService is the fast
+        # path; this index is the concurrency backstop (two simultaneous
+        # captures of the same fact → one wins, the other gets IntegrityError).
     )
 
 
@@ -979,6 +987,35 @@ def init_db():
         except Exception:
             conn.rollback()
             logger.warning("[MEMORY] FTS5 unavailable — SQLite degraded search disabled")
+
+    # Exact-dedup concurrency backstop (memory v2): a partial UNIQUE index on
+    # the dedup tuple, active rows only. Must run AFTER a dedup pass — an
+    # existing DB may already hold duplicate active rows (the app-level check
+    # is racy under concurrent captures), and CREATE UNIQUE INDEX would fail
+    # over them. Collapse dups first (keep newest per tuple, archive the rest),
+    # then create the index. Idempotent: IF NOT EXISTS + the dedup is a no-op
+    # once the index exists.
+    with engine.connect() as conn:
+        try:
+            conn.execute(text(
+                "UPDATE memory_records SET status='archived' "
+                "WHERE status='active' AND id NOT IN ("
+                "  SELECT id FROM ("
+                "    SELECT id, ROW_NUMBER() OVER ("
+                "      PARTITION BY owner_agent_name, normalized_content, subject_scope "
+                "      ORDER BY created_at DESC, id DESC) AS rn "
+                "    FROM memory_records WHERE status='active'"
+                "  ) WHERE rn = 1)"
+            ))
+            conn.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_memory_active_dedup "
+                "ON memory_records (owner_agent_name, normalized_content, subject_scope) "
+                "WHERE status = 'active'"
+            ))
+            conn.commit()
+        except Exception as exc:
+            conn.rollback()
+            logger.warning("[MEMORY] active-dedup unique index migration skipped: %s", exc)
 
     # --- One-time data migration: JSON files → SQLite ---
     _migrate_story_providers(logger)

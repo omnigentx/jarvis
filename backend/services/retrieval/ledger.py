@@ -20,24 +20,29 @@ class LedgerEntry:
 
 @dataclass
 class EvidenceLedger:
+    # Keyed by record_id — the stable identity of a memory ACROSS providers.
+    # evidence_id is provider-specific (dense vs FTS vs graph emit different
+    # ids for the same record), so keying on it would let the same fact be
+    # injected twice across turns whenever the winning provider mix changed —
+    # defeating the ledger's "never inject the same evidence twice" invariant.
     entries: dict[str, LedgerEntry] = field(default_factory=dict)
 
-    def has(self, evidence_id: str) -> bool:
-        return evidence_id in self.entries
+    def has(self, record_id: str) -> bool:
+        return record_id in self.entries
 
     def add(self, ev: Evidence, *, turn: int) -> None:
-        self.entries[ev.evidence_id] = LedgerEntry(
+        self.entries[ev.record_id] = LedgerEntry(
             evidence_id=ev.evidence_id, record_id=ev.record_id,
             introduced_at_turn=turn, last_used_at_turn=turn,
         )
 
     def dedup(self, evidence: list[Evidence], *, turn: int) -> list[Evidence]:
-        """Drop evidence already in the ledger; touch the survivors' last-used
-        turn for the ones we keep."""
+        """Drop evidence whose record is already in the ledger; touch the
+        survivors' last-used turn for the ones we keep."""
         fresh: list[Evidence] = []
         for ev in evidence:
-            if ev.evidence_id in self.entries:
-                self.entries[ev.evidence_id].last_used_at_turn = turn
+            if ev.record_id in self.entries:
+                self.entries[ev.record_id].last_used_at_turn = turn
                 continue
             fresh.append(ev)
         return fresh

@@ -73,22 +73,37 @@ async function runSearch() {
   } catch (err) { error.value = err?.message || String(err) }
 }
 
-async function approve(id) {
-  await apiFetch(`${base.value}/memory-candidates/${id}/approve`, { method: 'POST' })
-  await loadAll()
+// Per-row actions mirror bulk(): track an in-flight set so the button can
+// disable (visible <200ms feedback) and surface errors instead of swallowing
+// them — a failed approve/delete used to do nothing on screen.
+const rowBusy = ref(new Set())
+const isRowBusy = (id) => rowBusy.value.has(id)
+
+async function rowAction(id, fn) {
+  if (rowBusy.value.has(id)) return
+  rowBusy.value = new Set(rowBusy.value).add(id) // reassign so Vue tracks it
+  try {
+    await fn()
+    await loadAll()
+  } catch (err) {
+    error.value = err?.message || String(err)
+    toast.error(t('memory.bulkError'), { description: err?.message || String(err) })
+  } finally {
+    const next = new Set(rowBusy.value)
+    next.delete(id)
+    rowBusy.value = next
+  }
 }
-async function reject(id) {
-  await apiFetch(`${base.value}/memory-candidates/${id}/reject`, { method: 'POST' })
-  await loadAll()
-}
-async function archive(id) {
-  await apiFetch(`${base.value}/memories/${id}/archive`, { method: 'POST' })
-  await loadAll()
-}
-async function remove(id) {
+
+const approve = (id) =>
+  rowAction(id, () => apiFetch(`${base.value}/memory-candidates/${id}/approve`, { method: 'POST' }))
+const reject = (id) =>
+  rowAction(id, () => apiFetch(`${base.value}/memory-candidates/${id}/reject`, { method: 'POST' }))
+const archive = (id) =>
+  rowAction(id, () => apiFetch(`${base.value}/memories/${id}/archive`, { method: 'POST' }))
+function remove(id) {
   if (!confirm(t('memory.confirmDelete'))) return
-  await apiFetch(`${base.value}/memories/${id}`, { method: 'DELETE' })
-  await loadAll()
+  return rowAction(id, () => apiFetch(`${base.value}/memories/${id}`, { method: 'DELETE' }))
 }
 
 // Bulk approval — with 20+ pending candidates, one-by-one is painful. Select a
@@ -199,8 +214,8 @@ onMounted(loadAll)
           <span class="content">{{ payloadContent(c) }}</span>
         </div>
         <div class="card-actions">
-          <button class="btn primary" @click="approve(c.id)">{{ t('memory.approve') }}</button>
-          <button class="btn ghost" @click="reject(c.id)">{{ t('memory.reject') }}</button>
+          <button class="btn primary" :disabled="isRowBusy(c.id)" @click="approve(c.id)">{{ t('memory.approve') }}</button>
+          <button class="btn ghost" :disabled="isRowBusy(c.id)" @click="reject(c.id)">{{ t('memory.reject') }}</button>
         </div>
       </div>
     </section>
@@ -229,8 +244,8 @@ onMounted(loadAll)
           <span class="meta">{{ m.authority }} · {{ Math.round(m.confidence * 100) }}%</span>
         </div>
         <div class="card-actions" v-if="statusFilter === 'active'">
-          <button class="btn ghost" @click="archive(m.id)">{{ t('memory.archive') }}</button>
-          <button class="btn danger" @click="remove(m.id)">{{ t('memory.delete') }}</button>
+          <button class="btn ghost" :disabled="isRowBusy(m.id)" @click="archive(m.id)">{{ t('memory.archive') }}</button>
+          <button class="btn danger" :disabled="isRowBusy(m.id)" @click="remove(m.id)">{{ t('memory.delete') }}</button>
         </div>
       </div>
     </section>

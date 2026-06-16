@@ -15,6 +15,15 @@ class RetrievalMode(str, Enum):
     DEEP = "deep"
 
 
+def evidence_kind(memory_type: str) -> str:
+    """Canonical ``evidence_id`` prefix. Every provider MUST agree so the id
+    is stable across dense/FTS/graph, and ``memory_fetch`` can route on it:
+    episodic documents vs durable memory records map to ``episodic`` /
+    ``memory``. The id is then ``f"{evidence_kind(t)}:{record_id}"``.
+    """
+    return "episodic" if memory_type == "episodic" else "memory"
+
+
 @dataclass
 class EvidenceSource:
     type: str
