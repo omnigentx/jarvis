@@ -29,7 +29,11 @@ const selected = ref(null)          // { kind, label, detail } of the clicked no
 let cy = null
 
 function tokenColor(name, fallback) {
-  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+  // Read from the container (inside the themed DOM) so we get the ACTIVE theme's
+  // value — reading document.documentElement returned the dark-theme default and
+  // left light text on a light background (faint labels).
+  const el = container.value || document.documentElement
+  const v = getComputedStyle(el).getPropertyValue(name).trim()
   return v || fallback
 }
 
@@ -45,7 +49,8 @@ function render(data) {
   const entColor = '#d9a13b'
   const edgeColor = tokenColor('--border-strong', '#5a5a6a')
   const simColor = tokenColor('--primary', '#6c8cff')
-  const textColor = tokenColor('--text-1', '#e8e8ef')
+  const textColor = tokenColor('--text', '#0e1019')   // resolves light/dark per active theme
+  const pill = tokenColor('--bg-0', '#ffffff')        // thin halo in the page colour → legible over edges
 
   const elements = [
     ...data.memories.map((m) => ({
@@ -66,10 +71,14 @@ function render(data) {
     elements,
     style: [
       { selector: 'node', style: {
-        label: 'data(label)', color: textColor, 'font-size': 10,
-        'text-wrap': 'wrap', 'text-max-width': 110, 'text-valign': 'bottom',
+        // Theme-aware label colour (read off the themed container) — no
+        // background box; a thin halo in the page colour keeps it legible where
+        // it crosses an edge, without looking like a filled label.
+        label: 'data(label)', color: textColor, 'font-size': 11, 'font-weight': 600,
+        'text-wrap': 'wrap', 'text-max-width': 120, 'text-valign': 'bottom',
         'text-margin-y': 4, 'background-color': memColor,
-        'border-width': 2, 'border-color': tokenColor('--bg-0', '#14141c'),
+        'text-outline-color': pill, 'text-outline-width': 1, 'text-outline-opacity': 0.6,
+        'border-width': 2, 'border-color': pill,
         width: 26, height: 26 } },
       { selector: 'node[kind="entity"]', style: {
         'background-color': entColor, shape: 'round-rectangle', width: 20, height: 20 } },
