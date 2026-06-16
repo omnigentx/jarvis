@@ -21,6 +21,7 @@
     "@simplewebauthn/browser": "^13.3.0",
     "@tanstack/vue-virtual": "^3.13.27",
     "codemirror": "^6.0.2",
+    "cytoscape": "^3.34.0",
     "dompurify": "^3.4.7",
     "highlight.js": "^11.11.1",
     "marked": "^18.0.4",

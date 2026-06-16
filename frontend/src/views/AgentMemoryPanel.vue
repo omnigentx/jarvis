@@ -17,6 +17,7 @@ import { apiFetch } from '../api'
 import { useLang } from '../composables/useLang.js'
 import { useToast } from '../composables/useToast'
 import { useMemoryStore } from '../stores/memory'
+import MemoryGraph from '../components/memory/MemoryGraph.vue'
 
 const props = defineProps({ agentName: { type: String, required: true } })
 const { t } = useLang()
@@ -169,6 +170,14 @@ onMounted(loadAll)
         <span class="stat danger" v-if="indexStatus.outbox?.dead">{{ t('memory.indexDead') }}: {{ indexStatus.outbox.dead }}</span>
       </template>
     </div>
+
+    <!-- Memory graph (LadybugDB GraphRAG view) -->
+    <section class="panel">
+      <div class="panel-header">
+        <h3>{{ t('memory.graph') }}</h3>
+      </div>
+      <MemoryGraph :agent-name="agentName" />
+    </section>
 
     <!-- Search -->
     <section class="panel">

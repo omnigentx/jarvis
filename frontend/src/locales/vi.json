@@ -74,7 +74,8 @@
     "archive": "Lưu trữ",
     "delete": "Xóa",
     "recentRetrievals": "Lần tìm gần đây",
-    "confirmDelete": "Xóa vĩnh viễn ký ức này?"
+    "confirmDelete": "Xóa vĩnh viễn ký ức này?",
+    "graph": "Đồ thị ký ức"
   },
   "chat": {
     "memoryUsed": "ký ức đã dùng"
