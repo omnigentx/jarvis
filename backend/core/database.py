@@ -757,6 +757,11 @@ class MemoryRecord(Base):
     valid_from = Column(Float, nullable=True)
     valid_until = Column(Float, nullable=True)
     entities_json = Column(Text, nullable=True)   # [{name,etype}] for the graph (memory v2)
+    # [{s,p,o}] knowledge-graph triples (subject—predicate—object) extracted from
+    # this memory, e.g. {"s":"Người dùng","p":"thích","o":"phở"}. Projected to
+    # LadybugDB as RELATES edges so the graph view is a real knowledge graph, not
+    # opaque memory blobs. SQLite is the SoT; the graph is rebuilt from this.
+    relations_json = Column(Text, nullable=True)
     current_version = Column(Integer, nullable=False, default=1)
     created_at = Column(Float, nullable=False, default=lambda: datetime.now().timestamp())
     updated_at = Column(Float, nullable=False, default=lambda: datetime.now().timestamp())
@@ -960,6 +965,7 @@ def init_db():
             # that were already running.
             "ALTER TABLE cron_jobs ADD COLUMN approval_status VARCHAR(20) DEFAULT 'approved'",
             "ALTER TABLE memory_records ADD COLUMN entities_json TEXT",
+            "ALTER TABLE memory_records ADD COLUMN relations_json TEXT",
             "ALTER TABLE token_usage ADD COLUMN category VARCHAR(40) DEFAULT 'agent'",
         ]
         for sql in migrations:

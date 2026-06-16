@@ -497,6 +497,24 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("[MEMORY] ladybug migration check failed")
 
+    # Knowledge-graph backfill: extract (subject—predicate—object) triples for
+    # memories that don't have them yet and re-project them as RELATES edges, so
+    # the graph view is a real knowledge graph. Background + best-effort (LLM):
+    # never blocks startup, harmless if no LLM is configured.
+    try:
+        if _mem_cfg and _mem_cfg.enabled:
+            async def _kg_backfill_bg():
+                try:
+                    from services.memory.knowledge_graph import backfill_relations
+                    n = await backfill_relations()
+                    if n:
+                        logger.info("[MEMORY] KG backfill: extracted triples for %d memories", n)
+                except Exception:
+                    logger.exception("[MEMORY] KG backfill failed")
+            asyncio.create_task(_kg_backfill_bg())
+    except Exception:
+        logger.exception("[MEMORY] KG backfill scheduling failed")
+
     # Enable shell execution runtime (equivalent to --shell CLI flag)
     await fast.app.initialize()
     setattr(fast.app.context, "shell_runtime", True)

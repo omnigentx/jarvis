@@ -1,17 +1,18 @@
 <script setup>
 /**
- * MemoryGraph — visualises the agent's LadybugDB memory graph (GraphRAG view).
+ * MemoryGraph — the agent's memory as a KNOWLEDGE GRAPH.
  *
- * Renders the owner-scoped snapshot from GET /api/agents/{name}/memory-graph:
- * Memory nodes + the Entity nodes they MENTION + those edges. Memories that
- * share an entity are connected through it, so clusters of related memories are
- * visible at a glance. cytoscape gives pan / zoom / drag + a force layout.
+ * Renders GET /api/agents/{name}/memory-graph: entity nodes connected by typed
+ * RELATES edges — (Người dùng)-[thích]->(phở), (Người dùng)-[làm việc tại]->
+ * (Techcombank). The user hub ('subject') sits at the centre; leaves are
+ * 'object' entities. Each edge is labelled with its predicate, so the graph
+ * reads like a property-graph DB rather than a blob of memory text.
  *
- * Self-contained: lazy-loads its data on mount (and on demand via Refresh) so
- * opening the Memory tab doesn't pay for the graph unless this section renders.
+ * Triples are extracted by the backend (LLM) and projected as RELATES edges;
+ * the "Trích xuất quan hệ" button forces a rebuild from the current memories.
  * Copy is bilingual off useLang().lang (project English-first rule #7).
  */
-import { onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import cytoscape from 'cytoscape'
 import { apiFetch } from '../../api'
 import { useLang } from '../../composables/useLang.js'
@@ -22,46 +23,33 @@ const L = (vi, en) => (lang.value === 'vi' ? vi : en)
 
 const container = ref(null)
 const loading = ref(false)
+const rebuilding = ref(false)
 const error = ref('')
 const available = ref(true)
-const counts = ref({ memories: 0, entities: 0 })
-const selected = ref(null)          // { kind, label, detail } of the clicked node
+const counts = ref({ nodes: 0, edges: 0 })
+const selected = ref(null)
 let cy = null
 
 function tokenColor(name, fallback) {
-  // Read from the container (inside the themed DOM) so we get the ACTIVE theme's
-  // value — reading document.documentElement returned the dark-theme default and
-  // left light text on a light background (faint labels).
+  // Read off the themed container so we get the ACTIVE theme's value.
   const el = container.value || document.documentElement
   const v = getComputedStyle(el).getPropertyValue(name).trim()
   return v || fallback
 }
 
-// Short node caption: first few words, so 17 nodes don't turn into text soup.
-// The full content shows in the detail panel on click.
-function shortLabel(s) {
-  const t = (s || '').replace(/\s+/g, ' ').trim()
-  return t.length > 26 ? `${t.slice(0, 24)}…` : t || '(memory)'
-}
-
 function render(data) {
-  const memColor = tokenColor('--primary', '#6c8cff')
-  const entColor = '#d9a13b'
+  const hubColor = tokenColor('--primary', '#6c8cff')
+  const objColor = '#d9a13b'
   const edgeColor = tokenColor('--border-strong', '#5a5a6a')
-  const simColor = tokenColor('--primary', '#6c8cff')
-  const textColor = tokenColor('--text', '#0e1019')   // resolves light/dark per active theme
-  const pill = tokenColor('--bg-0', '#ffffff')        // thin halo in the page colour → legible over edges
+  const textColor = tokenColor('--text', '#0e1019')   // resolves light/dark per theme
+  const halo = tokenColor('--bg-0', '#ffffff')        // thin transparent halo, no filled box
 
   const elements = [
-    ...data.memories.map((m) => ({
-      data: { id: m.id, label: shortLabel(m.content), kind: 'memory',
-              detail: m.content, sub: m.memory_type },
-    })),
-    ...data.entities.map((e) => ({
-      data: { id: e.id, label: e.name, kind: 'entity', detail: e.etype, sub: e.etype },
+    ...data.nodes.map((n) => ({
+      data: { id: n.id, label: n.label, kind: n.kind || 'object' },
     })),
     ...data.edges.map((e, i) => ({
-      data: { id: `e${i}`, source: e.source, target: e.target, kind: e.kind || 'mentions' },
+      data: { id: `r${i}`, source: e.source, target: e.target, label: e.predicate || '' },
     })),
   ]
 
@@ -71,35 +59,36 @@ function render(data) {
     elements,
     style: [
       { selector: 'node', style: {
-        // Theme-aware label colour (read off the themed container) — no
-        // background box; a thin halo in the page colour keeps it legible where
-        // it crosses an edge, without looking like a filled label.
         label: 'data(label)', color: textColor, 'font-size': 11, 'font-weight': 600,
-        'text-wrap': 'wrap', 'text-max-width': 120, 'text-valign': 'bottom',
-        'text-margin-y': 4, 'background-color': memColor,
-        'text-outline-color': pill, 'text-outline-width': 1, 'text-outline-opacity': 0.6,
-        'border-width': 2, 'border-color': pill,
-        width: 26, height: 26 } },
-      { selector: 'node[kind="entity"]', style: {
-        'background-color': entColor, shape: 'round-rectangle', width: 20, height: 20 } },
+        'text-wrap': 'wrap', 'text-max-width': 130, 'text-valign': 'bottom', 'text-margin-y': 4,
+        'background-color': objColor, shape: 'round-rectangle',
+        'text-outline-color': halo, 'text-outline-width': 1, 'text-outline-opacity': 0.55,
+        'border-width': 2, 'border-color': halo, width: 22, height: 22 } },
+      // The user hub stands out: primary colour, round, larger.
+      { selector: 'node[kind="subject"]', style: {
+        'background-color': hubColor, shape: 'ellipse', width: 40, height: 40,
+        'font-size': 13 } },
       { selector: 'node:selected', style: {
-        'border-width': 3, 'border-color': textColor, width: 32, height: 32 } },
+        'border-width': 3, 'border-color': textColor } },
       { selector: 'edge', style: {
-        width: 1.5, 'line-color': edgeColor, 'curve-style': 'bezier', opacity: 0.7 } },
-      { selector: 'edge[kind="similar"]', style: {
-        'line-color': simColor, 'line-style': 'dashed', width: 1, opacity: 0.45 } },
+        width: 1.6, 'line-color': edgeColor, 'curve-style': 'bezier', opacity: 0.85,
+        'target-arrow-color': edgeColor, 'target-arrow-shape': 'triangle', 'arrow-scale': 0.9,
+        // predicate ON the edge — this is what makes it read as a knowledge graph.
+        label: 'data(label)', 'font-size': 9, color: textColor,
+        'text-rotation': 'autorotate', 'text-outline-color': halo,
+        'text-outline-width': 2, 'text-outline-opacity': 0.85 } },
     ],
     layout: {
       name: 'cose', animate: false, fit: true, padding: 36,
-      nodeRepulsion: 7000, idealEdgeLength: 60,
-      componentSpacing: 70, nodeOverlap: 18, gravity: 0.7,
+      nodeRepulsion: 9000, idealEdgeLength: 95, componentSpacing: 80,
+      nodeOverlap: 20, gravity: 0.6,
     },
     minZoom: 0.2, maxZoom: 3, wheelSensitivity: 0.3,
   })
-  cy.ready(() => cy.fit(undefined, 36))     // ensure every node sits inside the viewport
+  cy.ready(() => cy.fit(undefined, 36))
   cy.on('tap', 'node', (evt) => {
     const d = evt.target.data()
-    selected.value = { kind: d.kind, label: d.label, detail: d.detail, sub: d.sub }
+    selected.value = { kind: d.kind, label: d.label }
   })
   cy.on('tap', (evt) => { if (evt.target === cy) selected.value = null })
 }
@@ -112,13 +101,29 @@ async function load() {
     const data = await apiFetch(
       `/api/agents/${encodeURIComponent(props.agentName)}/memory-graph`)
     available.value = data.available !== false
-    counts.value = { memories: data.memories.length, entities: data.entities.length }
-    if (available.value && data.memories.length) render(data)
+    counts.value = { nodes: data.nodes.length, edges: data.edges.length }
+    if (available.value && data.nodes.length) render(data)
     else if (cy) { cy.destroy(); cy = null }
   } catch (e) {
     error.value = e?.message || String(e)
   } finally {
     loading.value = false
+  }
+}
+
+async function rebuild() {
+  rebuilding.value = true
+  error.value = ''
+  try {
+    await apiFetch(`/api/agents/${encodeURIComponent(props.agentName)}/memory-graph/rebuild`,
+                   { method: 'POST' })
+    // projection is async (the worker drains the re-index); give it a moment.
+    await new Promise((r) => setTimeout(r, 2500))
+    await load()
+  } catch (e) {
+    error.value = e?.message || String(e)
+  } finally {
+    rebuilding.value = false
   }
 }
 
@@ -131,12 +136,17 @@ defineExpose({ reload: load })
   <div class="graph-wrap">
     <div class="graph-head">
       <span class="muted">
-        {{ counts.memories }} {{ L('ký ức', 'memories') }} ·
-        {{ counts.entities }} {{ L('thực thể', 'entities') }}
+        {{ counts.nodes }} {{ L('thực thể', 'entities') }} ·
+        {{ counts.edges }} {{ L('quan hệ', 'relations') }}
       </span>
-      <button class="btn" :disabled="loading" @click="load">
-        {{ loading ? L('Đang tải…', 'Loading…') : L('Làm mới', 'Refresh') }}
-      </button>
+      <div class="head-actions">
+        <button class="btn" :disabled="rebuilding" @click="rebuild">
+          {{ rebuilding ? L('Đang trích xuất…', 'Extracting…') : L('Trích xuất quan hệ', 'Extract relations') }}
+        </button>
+        <button class="btn" :disabled="loading" @click="load">
+          {{ loading ? L('Đang tải…', 'Loading…') : L('Làm mới', 'Refresh') }}
+        </button>
+      </div>
     </div>
 
     <p v-if="error" class="muted err">{{ error }}</p>
@@ -144,31 +154,32 @@ defineExpose({ reload: load })
       {{ L('Đồ thị chưa sẵn sàng (memory tắt hoặc backend không phải LadybugDB).',
             'Graph unavailable (memory off or backend is not LadybugDB).') }}
     </p>
-    <p v-else-if="!loading && !counts.memories" class="muted">
-      {{ L('Chưa có ký ức nào trong đồ thị.', 'No memories in the graph yet.') }}
+    <p v-else-if="!loading && !counts.nodes" class="muted">
+      {{ L('Chưa có quan hệ nào. Bấm “Trích xuất quan hệ” để dựng đồ thị từ ký ức.',
+            'No relations yet. Click “Extract relations” to build the graph from memories.') }}
     </p>
 
-    <div class="graph-body" v-show="available && counts.memories">
+    <div class="graph-body" v-show="available && counts.nodes">
       <div ref="container" class="cy" />
       <div v-if="selected" class="node-detail">
-        <div class="nd-kind">{{ selected.kind === 'memory'
-          ? L('Ký ức', 'Memory') : L('Thực thể', 'Entity') }} · {{ selected.sub }}</div>
-        <div class="nd-text">{{ selected.detail || selected.label }}</div>
+        <div class="nd-kind">{{ selected.kind === 'subject'
+          ? L('Chủ thể', 'Subject') : L('Thực thể', 'Entity') }}</div>
+        <div class="nd-text">{{ selected.label }}</div>
       </div>
     </div>
-    <div class="legend" v-show="available && counts.memories">
-      <span><i class="dot mem" /> {{ L('Ký ức', 'Memory') }}</span>
-      <span><i class="dot ent" /> {{ L('Thực thể', 'Entity') }}</span>
-      <span><i class="line sim" /> {{ L('Liên quan (ngữ nghĩa)', 'Related (semantic)') }}</span>
-      <span class="muted">{{ L('Bấm node để xem · kéo để di chuyển · cuộn để zoom',
-                              'Click a node · drag to pan · scroll to zoom') }}</span>
+    <div class="legend" v-show="available && counts.nodes">
+      <span><i class="dot hub" /> {{ L('Người dùng (chủ thể)', 'User (subject)') }}</span>
+      <span><i class="dot obj" /> {{ L('Thực thể', 'Entity') }}</span>
+      <span class="muted">{{ L('Nhãn trên mũi tên = quan hệ · bấm node để xem · kéo/zoom',
+                              'Arrow label = relation · click a node · drag/zoom') }}</span>
     </div>
   </div>
 </template>
 
 <style scoped>
 .graph-wrap { display: flex; flex-direction: column; gap: 8px; }
-.graph-head { display: flex; align-items: center; justify-content: space-between; }
+.graph-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.head-actions { display: flex; gap: 6px; }
 .graph-body { position: relative; }
 .cy {
   width: 100%; height: 480px;
@@ -180,14 +191,12 @@ defineExpose({ reload: load })
   background: var(--bg-2, #1e1e2a); border: 1px solid var(--border-strong, #3a3a4a);
   border-radius: 8px; padding: 8px 10px; font-size: 12px;
 }
-.nd-kind { color: var(--text-2, #9a9ab0); font-size: 10px; margin-bottom: 3px; }
-.nd-text { color: var(--text-1, #e8e8ef); line-height: 1.4; }
+.nd-kind { color: var(--text-dim, #9a9ab0); font-size: 10px; margin-bottom: 3px; }
+.nd-text { color: var(--text, #e8e8ef); line-height: 1.4; }
 .legend { display: flex; gap: 14px; align-items: center; font-size: 11px; flex-wrap: wrap; }
-.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
-.dot.mem { background: var(--primary, #6c8cff); }
-.dot.ent { background: #d9a13b; border-radius: 2px; }
-.line { display: inline-block; width: 16px; height: 0; vertical-align: middle; margin-right: 4px;
-  border-top: 1.5px dashed var(--primary, #6c8cff); opacity: 0.7; }
+.dot { display: inline-block; width: 11px; height: 11px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+.dot.hub { background: var(--primary, #6c8cff); }
+.dot.obj { background: #d9a13b; border-radius: 3px; }
 .err { color: var(--danger, #e0607a); }
-.muted { color: var(--text-2, #9a9ab0); }
+.muted { color: var(--text-dim, #9a9ab0); }
 </style>

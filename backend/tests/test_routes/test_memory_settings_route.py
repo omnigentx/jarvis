@@ -100,7 +100,7 @@ def test_memory_graph_route_unavailable_for_non_ladybug(client, monkeypatch):
                         lambda: types.SimpleNamespace(enabled=True, vector_backend="qdrant"))
     r = client.get("/api/agents/Jarvis/memory-graph")
     assert r.status_code == 200, r.text
-    assert r.json() == {"memories": [], "entities": [], "edges": [], "available": False}
+    assert r.json() == {"nodes": [], "edges": [], "available": False}
 
 
 def test_list_memories_empty(client):

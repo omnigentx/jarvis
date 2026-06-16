@@ -212,6 +212,7 @@ class MemoryIndexWorker:
                 "created_at": rec.created_at,
                 "valid_from": rec.valid_from or rec.created_at,
                 "entities": _load_entities(rec.entities_json),   # graph entity linking
+                "relations": _load_entities(rec.relations_json),  # KG triples → RELATES edges
                 "embedding_revision": emb.revision(),
                 "index_revision": revision,
                 "excerpt": chunk,

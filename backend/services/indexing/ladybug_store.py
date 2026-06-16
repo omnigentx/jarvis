@@ -23,41 +23,10 @@ from dataclasses import dataclass
 logger = logging.getLogger("memory.ladybug")
 
 
-def _similarity_edges(ids: list[str], embs: list, k: int, threshold: float) -> list[dict]:
-    """Undirected memory↔memory edges: each memory linked to its top-``k``
-    nearest neighbours with cosine similarity ≥ ``threshold``. Reuses the node
-    embeddings already in the graph (no model load), so related memories cluster
-    in the UI even when no entities have been extracted yet."""
-    if len(ids) < 2:
-        return []
-    try:
-        import numpy as np
-    except Exception:  # noqa: BLE001 — numpy unavailable → just no similarity edges
-        return []
-    m = np.asarray(embs, dtype="float32")
-    norms = np.linalg.norm(m, axis=1, keepdims=True)
-    norms[norms == 0] = 1.0
-    m = m / norms
-    sim = m @ m.T
-    seen: set = set()
-    out: list[dict] = []
-    for i in range(len(ids)):
-        added = 0
-        for j in np.argsort(-sim[i]):          # most similar first (self is at the top)
-            if added >= k:
-                break
-            if j == i:
-                continue
-            if sim[i, j] < threshold:
-                break                          # sorted desc → nothing further qualifies
-            added += 1
-            a, b = sorted((ids[i], ids[int(j)]))
-            if (a, b) in seen:
-                continue
-            seen.add((a, b))
-            out.append({"source": a, "target": b, "kind": "similar",
-                        "weight": round(float(sim[i, j]), 3)})
-    return out
+def _norm(s: str) -> str:
+    """Identity key for an entity name: lowercased + whitespace-collapsed, so
+    'Phở' and 'phở ' collapse to one node."""
+    return " ".join((s or "").strip().lower().split())
 
 
 def _wipe_graph_files(path: str) -> None:
@@ -159,9 +128,12 @@ class LadybugStore:
                 "CREATE NODE TABLE IF NOT EXISTS Entity("
                 "id STRING, name STRING, etype STRING, normalized STRING, PRIMARY KEY(id))")
             self._exec("CREATE REL TABLE IF NOT EXISTS MENTIONS(FROM Memory TO Entity)")
-            # (Entity)-[:RELATES]->(Entity) is intentionally NOT created yet —
-            # GraphRAG is MENTIONS-based today; the relations layer lands when the
-            # extractor emits typed relations (spec §4 follow-up).
+            # Knowledge-graph relations: (subject)-[RELATES {predicate}]->(object),
+            # both Entity nodes. ``owner`` scopes the edge to one agent's user;
+            # ``mem`` is the source memory so a re-projection can replace exactly
+            # that memory's relations (delete-by-mem then re-create).
+            self._exec("CREATE REL TABLE IF NOT EXISTS RELATES("
+                       "FROM Entity TO Entity, predicate STRING, owner STRING, mem STRING)")
             # Vector index — created once; ignore "already exists" on re-open.
             try:
                 self._exec(
@@ -211,6 +183,9 @@ class LadybugStore:
     def delete_memory(self, record_id: str) -> None:
         with self._lock:
             self._exec("MATCH (m:Memory {id: $id}) DETACH DELETE m", {"id": record_id})
+            # RELATES edges live between Entity nodes (not the Memory node), so
+            # deleting the memory won't drop them — remove this memory's triples.
+            self._exec("MATCH ()-[r:RELATES {mem: $id}]->() DELETE r", {"id": record_id})
 
     def link_entity(self, *, record_id: str, entity_id: str, name: str,
                     etype: str, normalized: str) -> None:
@@ -229,6 +204,32 @@ class LadybugStore:
             self._exec(
                 "MATCH (m:Memory {id: $mid}), (e:Entity {id: $eid}) "
                 "MERGE (m)-[:MENTIONS]->(e)", {"mid": record_id, "eid": entity_id})
+
+    def link_relations(self, *, record_id: str, owner: str, triples: list[dict]) -> None:
+        """(Re)write the knowledge-graph triples for one memory: drop the RELATES
+        edges this memory previously contributed, then create fresh ones. Entity
+        ids are owner-namespaced so two users' graphs never merge. Idempotent —
+        re-projecting a memory replaces exactly its own relations."""
+        with self._lock:
+            self._exec("MATCH ()-[r:RELATES {mem: $mid}]->() DELETE r", {"mid": record_id})
+            for t in triples or []:
+                s = (t.get("s") or "").strip()
+                p = (t.get("p") or "").strip()
+                o = (t.get("o") or "").strip()
+                if not (s and p and o):
+                    continue
+                sid, oid = f"kg:{owner}:{_norm(s)}", f"kg:{owner}:{_norm(o)}"
+                for eid, name, etype in ((sid, s, t.get("s_type") or "person"),
+                                         (oid, o, t.get("o_type") or "topic")):
+                    self._exec(
+                        "MERGE (e:Entity {id: $id}) "
+                        "ON CREATE SET e.name = $n, e.etype = $et, e.normalized = $nm "
+                        "ON MATCH SET e.name = $n",
+                        {"id": eid, "n": name, "et": etype, "nm": _norm(name)})
+                self._exec(
+                    "MATCH (s:Entity {id: $s}), (o:Entity {id: $o}) "
+                    "CREATE (s)-[:RELATES {predicate: $p, owner: $ow, mem: $mid}]->(o)",
+                    {"s": sid, "o": oid, "p": p, "ow": owner, "mid": record_id})
 
     # ---- reads (owner-scoped) -------------------------------------------
     def vector_search(self, *, owner: str, query_embedding: list[float], limit: int = 5,
@@ -299,43 +300,32 @@ class LadybugStore:
                 res = self._exec("MATCH (m:Memory) RETURN count(m)")
             return res.get_next()[0] if res.has_next() else 0
 
-    def graph_dump(self, *, owner: str, limit: int = 200,
-                   sim_neighbors: int = 3, sim_threshold: float = 0.55) -> dict:
-        """Owner-scoped snapshot for the UI graph view.
-
-        Returns Memory nodes + (a) the Entity nodes they MENTION ("mentions"
-        edges, the GraphRAG structure) AND (b) memory↔memory "similar" edges:
-        each memory linked to its nearest neighbours by embedding cosine
-        similarity. The similarity edges give the graph real structure —
-        clusters of related memories — even before any entities are extracted
-        (otherwise the view is just disconnected dots). Capped at ``limit``
-        memories; content truncated for the label."""
+    def graph_dump(self, *, owner: str, limit: int = 400) -> dict:
+        """Owner-scoped KNOWLEDGE GRAPH for the UI: entity nodes connected by
+        typed RELATES edges, i.e. (Người dùng)-[thích]->(phở),
+        (Người dùng)-[làm việc tại]->(Techcombank). Built from the triples
+        projected from each memory's ``relations_json``. Returns ``{nodes,
+        edges}``; a node is ``subject`` (the user hub) when it is ever a relation
+        source, else ``object``. Duplicate triples collapse to one edge."""
         with self._lock:
             res = self._exec(
-                "MATCH (m:Memory) WHERE m.owner = $o AND m.status = 'active' "
-                "RETURN m.id, m.content, m.memory_type, m.authority, m.created_at, m.emb "
-                "ORDER BY m.created_at DESC LIMIT $lim", {"o": owner, "lim": limit})
-            memories, mem_ids, embs = [], [], []
-            for_emb_ids = []
+                "MATCH (s:Entity)-[r:RELATES]->(o:Entity) WHERE r.owner = $o "
+                "RETURN s.id, s.name, o.id, o.name, r.predicate LIMIT $lim",
+                {"o": owner, "lim": limit})
+            nodes, edges, subjects, seen = {}, [], set(), set()
             while res.has_next():
-                mid, content, mt, auth, ca, emb = res.get_next()
-                memories.append({"id": mid, "content": (content or "")[:200],
-                                 "memory_type": mt, "authority": auth, "created_at": ca})
-                mem_ids.append(mid)
-                if emb:
-                    embs.append(emb)
-                    for_emb_ids.append(mid)
-            entities, edges = {}, []
-            if mem_ids:
-                res = self._exec(
-                    "MATCH (m:Memory)-[:MENTIONS]->(e:Entity) WHERE m.id IN $ids "
-                    "RETURN m.id, e.id, e.name, e.etype", {"ids": mem_ids})
-                while res.has_next():
-                    mid, eid, ename, etype = res.get_next()
-                    edges.append({"source": mid, "target": eid, "kind": "mentions"})
-                    entities[eid] = {"id": eid, "name": ename, "etype": etype}
-            edges.extend(_similarity_edges(for_emb_ids, embs, sim_neighbors, sim_threshold))
-            return {"memories": memories, "entities": list(entities.values()), "edges": edges}
+                sid, sname, oid, oname, pred = res.get_next()
+                subjects.add(sid)
+                nodes.setdefault(sid, {"id": sid, "label": sname})
+                nodes.setdefault(oid, {"id": oid, "label": oname})
+                key = (sid, oid, pred)
+                if key in seen:
+                    continue
+                seen.add(key)
+                edges.append({"source": sid, "target": oid, "predicate": pred})
+            for nid, n in nodes.items():
+                n["kind"] = "subject" if nid in subjects else "object"
+            return {"nodes": list(nodes.values()), "edges": edges}
 
     def close(self) -> None:
         with self._lock:
@@ -405,6 +395,10 @@ class LadybugIndexer:
                 self._store.link_entity(
                     record_id=rid, entity_id=f"ent:{norm}", name=name,
                     etype=(e.get("etype") or "topic"), normalized=norm)
+            # Knowledge-graph relations: (re)write this memory's RELATES triples.
+            self._store.link_relations(
+                record_id=rid, owner=pl.get("owner_agent_name", ""),
+                triples=pl.get("relations") or [])
 
     def delete_by_record(self, record_id: str) -> None:
         self._store.delete_memory(record_id)

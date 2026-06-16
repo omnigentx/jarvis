@@ -80,41 +80,57 @@ def test_open_self_heals_corrupt_wal(monkeypatch, tmp_path):
         store.close()
 
 
-def test_graph_dump_owner_scoped(store):
-    _seed(store)                                          # m1,m2 = Jarvis; r1 = Riley
-    store.link_entity(record_id="m1", entity_id="ent:fpt", name="FPT",
-                      etype="org", normalized="fpt")
-    store.link_entity(record_id="r1", entity_id="ent:fpt", name="FPT",
-                      etype="org", normalized="fpt")     # Riley's link — must not leak
+def test_graph_dump_knowledge_graph(store):
+    # The graph view is a KNOWLEDGE graph: typed (subject)-[predicate]->(object)
+    # edges, owner-scoped, with the user hub flagged as a 'subject' node.
+    store.link_relations(record_id="m1", owner="Jarvis", triples=[
+        {"s": "Người dùng", "p": "thích", "o": "phở"},
+        {"s": "Người dùng", "p": "làm việc tại", "o": "Techcombank"},
+    ])
+    store.link_relations(record_id="r1", owner="Riley [SA]", triples=[
+        {"s": "Riley", "p": "thích", "o": "trà"}])          # other owner — must not leak
     g = store.graph_dump(owner="Jarvis")
-    mem_ids = {m["id"] for m in g["memories"]}
-    assert mem_ids == {"m1", "m2"}                        # Riley's r1 excluded
-    assert "ent:fpt" in {e["id"] for e in g["entities"]}
-    mentions = [e for e in g["edges"] if e.get("kind") == "mentions"]
-    assert any(e["source"] == "m1" and e["target"] == "ent:fpt" for e in mentions)
-    # no cross-owner leak: every edge endpoint is a Jarvis memory or its entity.
-    allowed = mem_ids | {e["id"] for e in g["entities"]}
-    assert all(e["source"] in allowed and e["target"] in allowed for e in g["edges"])
+    labels = {n["label"] for n in g["nodes"]}
+    assert {"Người dùng", "phở", "Techcombank"} <= labels
+    assert "trà" not in labels                              # Riley's relation excluded
+    preds = {(e["predicate"], e["target"].split(":")[-1]) for e in g["edges"]}
+    assert ("thích", "phở") in preds
+    assert ("làm việc tại", "techcombank") in preds
+    # the user hub is a 'subject' node; leaves are 'object'.
+    kinds = {n["label"]: n["kind"] for n in g["nodes"]}
+    assert kinds["Người dùng"] == "subject" and kinds["phở"] == "object"
 
 
-def test_graph_dump_similarity_edges_link_related_memories(store):
-    # Two near-identical memories (same embedding axis) get a "similar" edge even
-    # with NO entities — so the graph has structure out of the box.
-    store.upsert_memory(record_id="a", owner="Jarvis", memory_type="semantic",
-                        subject_scope="user", content="user loves pho",
-                        embedding=_vec(3), authority="user_confirmed", confidence=0.9,
-                        created_at=1.0, valid_from=1.0)
-    store.upsert_memory(record_id="b", owner="Jarvis", memory_type="semantic",
-                        subject_scope="user", content="user really likes pho",
-                        embedding=_vec(3), authority="user_confirmed", confidence=0.9,
-                        created_at=2.0, valid_from=2.0)
-    g = store.graph_dump(owner="Jarvis")
-    sim = [e for e in g["edges"] if e.get("kind") == "similar"]
-    assert any({e["source"], e["target"]} == {"a", "b"} for e in sim)
+def test_link_relations_replaces_on_reproject(store):
+    # Re-projecting a memory replaces exactly ITS relations (no stale edges).
+    store.link_relations(record_id="m1", owner="Jarvis",
+                         triples=[{"s": "Người dùng", "p": "thích", "o": "phở"}])
+    store.link_relations(record_id="m1", owner="Jarvis",
+                         triples=[{"s": "Người dùng", "p": "thích", "o": "bún"}])
+    labels = {n["label"] for n in store.graph_dump(owner="Jarvis")["nodes"]}
+    assert "bún" in labels and "phở" not in labels         # old triple dropped
 
 
 def test_graph_dump_empty_owner(store):
-    assert store.graph_dump(owner="Nobody") == {"memories": [], "entities": [], "edges": []}
+    assert store.graph_dump(owner="Nobody") == {"nodes": [], "edges": []}
+
+
+def test_indexer_projects_relations_to_graph(store):
+    # The worker adapter writes a memory's relations into the KG on (re)index.
+    idx = LadybugIndexer(store)
+    idx.upsert_points([{
+        "dense": _vec(1),
+        "payload": {"record_id": "m1", "owner_agent_name": "Jarvis",
+                    "memory_type": "semantic", "subject_scope": "user",
+                    "excerpt": "người dùng thích phở", "created_at": 1.0,
+                    "relations": [{"s": "Người dùng", "p": "thích", "o": "phở"}]},
+    }])
+    g = store.graph_dump(owner="Jarvis")
+    assert "phở" in {n["label"] for n in g["nodes"]}
+    assert any(e["predicate"] == "thích" for e in g["edges"])
+    # deleting the memory removes its RELATES triples too.
+    store.delete_memory("m1")
+    assert store.graph_dump(owner="Jarvis") == {"nodes": [], "edges": []}
 
 
 def test_open_reraises_non_corruption_error(monkeypatch, tmp_path):

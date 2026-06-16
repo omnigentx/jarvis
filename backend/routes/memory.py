@@ -325,12 +325,12 @@ async def index_status() -> dict[str, Any]:
 
 
 @router.get("/agents/{name}/memory-graph")
-async def memory_graph(name: str, limit: int = Query(200, ge=1, le=500)) -> dict[str, Any]:
-    """Owner-scoped LadybugDB snapshot for the UI graph view: Memory nodes +
-    the Entity nodes they mention + MENTIONS edges. ``available=False`` (empty
+async def memory_graph(name: str, limit: int = Query(400, ge=1, le=1000)) -> dict[str, Any]:
+    """Owner-scoped LadybugDB KNOWLEDGE GRAPH for the UI: entity nodes connected
+    by typed RELATES edges (subject—predicate—object). ``available=False`` (empty
     payload) when memory is off, the backend isn't LadybugDB, or the graph can't
     be opened — the UI shows an empty-state instead of erroring."""
-    empty = {"memories": [], "entities": [], "edges": [], "available": False}
+    empty = {"nodes": [], "edges": [], "available": False}
     cfg = get_memory_settings()
     if not cfg.enabled or getattr(cfg, "vector_backend", "ladybug") != "ladybug":
         return empty
@@ -343,3 +343,16 @@ async def memory_graph(name: str, limit: int = Query(200, ge=1, le=500)) -> dict
     except Exception as exc:  # noqa: BLE001 — never 500 a read-only viz endpoint
         logger.warning("[MEMORY] memory-graph dump failed: %s", exc)
         return empty
+
+
+@router.post("/agents/{name}/memory-graph/rebuild")
+async def rebuild_memory_graph(name: str, force: bool = False) -> dict[str, Any]:
+    """Extract knowledge-graph triples (LLM) for this agent's memories and
+    re-project them as RELATES edges. ``force`` re-extracts everything; otherwise
+    only memories without triples yet. Returns how many were (re)processed."""
+    cfg = get_memory_settings()
+    if not cfg.enabled:
+        return {"processed": 0, "enabled": False}
+    from services.memory.knowledge_graph import backfill_relations
+    processed = await backfill_relations(name, force=force)
+    return {"processed": processed}

@@ -153,6 +153,10 @@ def create_memory_retrieval_hooks():
                 if cnt >= EXTRACT_EVERY_N:
                     agent._jarvis_extract_turns = 0
                     asyncio.create_task(_run_extraction(owner, _recent_snippet(agent, query), cfg))
+                    # Same debounce: backfill KG triples for any memory that still
+                    # lacks them (cheap no-op when all are filled), so newly
+                    # approved memories enter the knowledge graph over time.
+                    asyncio.create_task(_run_kg_backfill(owner))
                 else:
                     agent._jarvis_extract_turns = cnt
 
@@ -208,6 +212,15 @@ async def _run_extraction(owner: str, snippet: str, cfg) -> None:
         await run_fast_extraction(owner, snippet, cfg)
     except Exception as exc:  # noqa: BLE001
         logger.warning("[MEMORY] fast extraction failed: %s", exc)
+
+
+async def _run_kg_backfill(owner: str) -> None:
+    """Fire-and-forget KG triple backfill for memories missing them (best-effort)."""
+    try:
+        from services.memory.knowledge_graph import backfill_relations
+        await backfill_relations(owner)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[MEMORY] KG backfill failed: %s", exc)
 
 
 async def _retrieve(owner: str, query: str, targets: set[str], cfg):
