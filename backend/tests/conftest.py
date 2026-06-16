@@ -21,9 +21,54 @@ if str(BACKEND_DIR) not in sys.path:
 # and the dashboard's MCP list would go empty (tests still pass because
 # they self-seed). Path mirrors the runtime DB so it sits next to it in
 # data/ for easy inspection / .gitignore (data/ is already ignored).
-_TEST_DB_PATH = BACKEND_DIR / "data" / "jarvis.test.db"
+# Unique DB file PER pytest process so concurrent runs never share one SQLite
+# file. Two `pytest` invocations at once — or pytest-xdist workers — would
+# otherwise stomp the same data/jarvis.test.db: both run the start-of-session
+# wipe below and both write mid-test → cross-run row pollution + write-lock
+# deadlock (a hung suite). xdist exposes PYTEST_XDIST_WORKER; fall back to PID.
+_worker = os.environ.get("PYTEST_XDIST_WORKER") or f"pid{os.getpid()}"
+_TEST_DB_PATH = BACKEND_DIR / "data" / f"jarvis.test.{_worker}.db"
 _TEST_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 os.environ.setdefault("JARVIS_DB_PATH", str(_TEST_DB_PATH))
+
+# Sweep this process's DB files at exit so per-PID files don't accumulate in
+# data/ across runs (all gitignored, but keep it tidy). Best-effort.
+import atexit as _atexit  # noqa: E402
+import re as _re  # noqa: E402
+
+
+def _rm_db_set(stem_path) -> None:
+    for _s in ("", "-wal", "-shm"):
+        try:
+            _p = stem_path.with_name(stem_path.name + _s)
+            if _p.exists():
+                _p.unlink()
+        except OSError:
+            pass
+
+
+def _cleanup_test_db() -> None:
+    _rm_db_set(_TEST_DB_PATH)
+
+
+_atexit.register(_cleanup_test_db)
+
+# atexit only fires on a clean exit — a `kill -9` (or a crash) leaks this
+# process's per-PID file. So at STARTUP also sweep DB files whose owning PID is
+# no longer alive. This is safe under concurrency: a file belonging to another
+# live pytest is left untouched (its PID answers signal 0).
+_pid_re = _re.compile(r"^jarvis\.test\.pid(\d+)\.db$")
+for _f in _TEST_DB_PATH.parent.glob("jarvis.test.pid*.db"):
+    _m = _pid_re.match(_f.name)
+    if not _m:
+        continue
+    _pid = int(_m.group(1))
+    try:
+        os.kill(_pid, 0)          # raises if the PID is dead → safe to remove
+        continue                  # still running (a concurrent run) — leave it
+    except OSError:
+        pass
+    _rm_db_set(_f)
 
 # Isolate fast-agent's environment (sessions/history) to a throwaway dir so any
 # test that calls agent.generate()/resume_and_send() never pollutes the
