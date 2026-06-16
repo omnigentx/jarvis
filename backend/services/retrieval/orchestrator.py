@@ -162,6 +162,8 @@ class RetrievalOrchestrator:
             degraded, reason = True, f"{_backend}_error"
         elif not self._dense.is_available():
             degraded, reason = True, f"{_backend}_unavailable"
+        elif self._dense_unpopulated(fused):
+            degraded, reason = True, f"{_backend}_unpopulated"
         else:
             degraded, reason = False, None
         result = RetrievalResult(
@@ -191,17 +193,41 @@ class RetrievalOrchestrator:
         except Exception:  # noqa: BLE001
             pass
 
+    def _dense_unpopulated(self, fused) -> bool:
+        """True when the dense lane is 'available' yet contributed NOTHING and
+        its graph is empty — i.e. the index was never (re)projected, not a
+        genuine 'no semantic match'. Reported as degraded so the UI/caller knows
+        recall is FTS-only (the silent-failure gap from 2026-06-16: an empty
+        graph read as a healthy result). Cost-bounded: the ``count()`` graph
+        query only runs when dense returned zero ranks (rare once populated)."""
+        if any(getattr(e.scores, "dense_rank", None) is not None for e in fused):
+            return False                      # dense did contribute → populated
+        store = getattr(self._dense, "store", None)
+        if store is None:
+            return False                      # non-graph backend (e.g. Qdrant)
+        try:
+            return store.count() == 0
+        except Exception:  # noqa: BLE001 — never let the check break retrieval
+            return False
+
     def _index_revision(self) -> int:
         # Coarse revision token for cache invalidation. Must change on ANY
         # content OR status change — counting rows alone is NOT enough: an
         # archive/update keeps the row but must invalidate the cache. Summing
         # ``current_version`` covers create (v1), update/archive/delete
         # (version++); episodic count covers new immutable docs.
-        from core.database import EpisodicDocument, MemoryRecord
+        #
+        # ALSO fold in the latest outbox completion: a (re)projection into the
+        # dense/graph index (e.g. the Qdrant→LadybugDB backfill) changes WHAT
+        # dense search returns without touching any SQLite version, so without
+        # this the cache would keep serving the pre-backfill (dense-less) result
+        # for an identical query (the stale-recall bug observed 2026-06-16).
+        from core.database import EpisodicDocument, MemoryIndexOutbox, MemoryRecord
         from sqlalchemy import func
         e = self.db.query(func.count(EpisodicDocument.id)).scalar() or 0
         ver = self.db.query(func.coalesce(func.sum(MemoryRecord.current_version), 0)).scalar() or 0
-        return int(e) + int(ver)
+        oc = self.db.query(func.coalesce(func.max(MemoryIndexOutbox.completed_at), 0.0)).scalar() or 0.0
+        return int(e) + int(ver) + int(oc * 1000)
 
     def _write_telemetry(self, request, result, tokens, now) -> None:
         try:

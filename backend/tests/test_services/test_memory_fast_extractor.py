@@ -129,6 +129,41 @@ async def test_e2e_multi_fact(test_db):
     assert len(ids) == 2 and len(_cands(test_db)) == 2
 
 
+def _seed_memory(Factory, content):
+    from core.database import MemoryRecord
+    db = Factory()
+    db.add(MemoryRecord(id="m1", owner_agent_name="Jarvis", memory_type="semantic",
+                        subject_scope="user", content=content,
+                        normalized_content=content.lower(), status="active",
+                        authority="agent_observed", confidence=0.9,
+                        current_version=1, created_at=1.0, updated_at=1.0))
+    db.commit(); db.close()
+
+
+async def test_known_facts_injected_into_extractor_prompt(test_db):
+    # #3 capture-side dedup: already-stored memories are listed in the prompt so
+    # the LLM doesn't re-propose them (or paraphrases) — no brittle threshold.
+    _seed_memory(test_db, "User already likes pho")
+    captured = {}
+
+    async def capturing_gen(prompt):
+        captured["prompt"] = prompt
+        return "[]"
+    await fx.run_fast_extraction("Jarvis", "user: hi again", _CFG, generate_fn=capturing_gen)
+    assert "ALREADY KNOWN" in captured["prompt"]
+    assert "User already likes pho" in captured["prompt"]
+
+
+async def test_no_known_facts_keeps_base_prompt(test_db):
+    captured = {}
+
+    async def capturing_gen(prompt):
+        captured["prompt"] = prompt
+        return "[]"
+    await fx.run_fast_extraction("Jarvis", "user: hi", _CFG, generate_fn=capturing_gen)
+    assert "ALREADY KNOWN" not in captured["prompt"]      # nothing stored yet
+
+
 async def test_e2e_nothing_durable_no_candidates(test_db):
     ids = await _extract("[]")
     assert ids == [] and _cands(test_db) == []

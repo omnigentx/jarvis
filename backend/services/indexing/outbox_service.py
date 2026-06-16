@@ -43,6 +43,7 @@ def enqueue(
     aggregate_revision: int,
     payload_json: str = "{}",
     now: float,
+    force: bool = False,
 ) -> bool:
     """Add an index intent. MUST be called inside the caller's domain
     transaction (same ``db``) so it commits atomically with the write.
@@ -51,9 +52,17 @@ def enqueue(
     is a no-op (returns False). The UNIQUE constraint is the backstop; we
     query first to avoid poisoning the caller's transaction with an
     IntegrityError.
+
+    ``force=True`` is for re-projection (migration / full rebuild): when a row
+    for this (event, aggregate, revision) already exists — typically status
+    ``done`` from a prior index pass — reset it to PENDING so the worker
+    re-processes it. The UNIQUE constraint forbids a second row, so a plain
+    enqueue would skip it forever; that is exactly why a Qdrant→LadybugDB
+    backend switch left old (already-``done``) memories unprojected. Returns
+    True when it (re)queues work.
     """
     exists = (
-        db.query(MemoryIndexOutbox.id)
+        db.query(MemoryIndexOutbox)
         .filter(
             MemoryIndexOutbox.event_type == event_type,
             MemoryIndexOutbox.aggregate_id == aggregate_id,
@@ -62,7 +71,15 @@ def enqueue(
         .first()
     )
     if exists:
-        return False
+        if not force:
+            return False
+        exists.status = PENDING
+        exists.attempt_count = 0
+        exists.next_attempt_at = now
+        exists.last_error = None
+        exists.lease_expires_at = None
+        exists.completed_at = None
+        return True
     db.add(MemoryIndexOutbox(
         event_type=event_type,
         aggregate_id=aggregate_id,

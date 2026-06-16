@@ -41,6 +41,81 @@ def _seed(store):
                         created_at=1.0, valid_from=1.0)
 
 
+def test_open_self_heals_corrupt_wal(monkeypatch, tmp_path):
+    # Regression (2026-06-16): an ungraceful backend shutdown left a corrupted
+    # WAL, so every restart opened FTS-only and dense recall stayed dead. The
+    # store (a disposable projection) must wipe + recreate on that specific
+    # failure so the startup migration can rebuild from SQLite.
+    import ladybug
+
+    from services.indexing import ladybug_store as ls
+
+    path = str(tmp_path / "graph")
+    real_db = ladybug.Database
+    calls = {"n": 0}
+    wiped = {"n": 0}
+
+    def flaky_db(p=None, **kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("Runtime exception: Corrupted wal file. "
+                               "Read out invalid WAL record type.")
+        return real_db(p, **kw)
+
+    monkeypatch.setattr(ladybug, "Database", flaky_db)
+    real_wipe = ls._wipe_graph_files
+
+    def spy_wipe(p):
+        wiped["n"] += 1
+        real_wipe(p)
+
+    monkeypatch.setattr(ls, "_wipe_graph_files", spy_wipe)
+
+    store = ls.LadybugStore(path)        # first open throws → wipe → retry → ok
+    try:
+        assert calls["n"] == 2           # retried exactly once
+        assert wiped["n"] == 1           # graph was wiped before the retry
+        assert store.count() == 0        # fresh empty graph, usable (no raise)
+    finally:
+        store.close()
+
+
+def test_graph_dump_owner_scoped(store):
+    _seed(store)                                          # m1,m2 = Jarvis; r1 = Riley
+    store.link_entity(record_id="m1", entity_id="ent:fpt", name="FPT",
+                      etype="org", normalized="fpt")
+    store.link_entity(record_id="r1", entity_id="ent:fpt", name="FPT",
+                      etype="org", normalized="fpt")     # Riley's link — must not leak
+    g = store.graph_dump(owner="Jarvis")
+    mem_ids = {m["id"] for m in g["memories"]}
+    assert mem_ids == {"m1", "m2"}                        # Riley's r1 excluded
+    assert "ent:fpt" in {e["id"] for e in g["entities"]}
+    assert {"source": "m1", "target": "ent:fpt"} in g["edges"]
+    assert all(e["source"] in mem_ids for e in g["edges"])  # no cross-owner edge leak
+
+
+def test_graph_dump_empty_owner(store):
+    assert store.graph_dump(owner="Nobody") == {"memories": [], "entities": [], "edges": []}
+
+
+def test_open_reraises_non_corruption_error(monkeypatch, tmp_path):
+    # Self-heal is scoped to WAL corruption; an unrelated open error must
+    # propagate (never silently wipe a graph on, say, a permissions fault).
+    import ladybug
+
+    from services.indexing import ladybug_store as ls
+
+    def boom(*a, **k):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(ladybug, "Database", boom)
+    wiped = {"n": 0}
+    monkeypatch.setattr(ls, "_wipe_graph_files", lambda p: wiped.__setitem__("n", 1))
+    with pytest.raises(RuntimeError, match="disk full"):
+        ls.LadybugStore(str(tmp_path / "graph"))
+    assert wiped["n"] == 0               # did NOT wipe on a non-corruption error
+
+
 def test_vector_search_ranks_and_is_owner_scoped(store):
     _seed(store)
     # query near axis 0 → m1 ("software engineer") ranks first; r1 (same vec but

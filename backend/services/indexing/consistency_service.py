@@ -23,18 +23,24 @@ logger = logging.getLogger("memory.consistency")
 
 def rebuild(db: Session, *, now: float) -> int:
     """Re-enqueue every active memory record and every episodic document for
-    (re)indexing. Idempotent at the outbox level. Returns the number of intents
-    enqueued. The worker drains them into a fresh index."""
+    (re)indexing. Returns the number of intents enqueued. The worker drains
+    them into a fresh index.
+
+    ``force=True``: a rebuild MUST re-process records whose outbox row is
+    already ``done`` (the common case — they were indexed under the previous
+    backend). Without it ``enqueue`` skips them on the UNIQUE constraint and
+    the rebuild silently enqueues 0 (the bug that left pre-LadybugDB memories
+    permanently absent from the graph → recall fell back to FTS-only)."""
     count = 0
     for (rid, rev) in db.query(MemoryRecord.id, MemoryRecord.current_version).filter(
         MemoryRecord.status == "active"
     ):
         if ob.enqueue(db, event_type=ob.EVENT_MEMORY_UPSERT, aggregate_id=rid,
-                      aggregate_revision=rev, now=now):
+                      aggregate_revision=rev, now=now, force=True):
             count += 1
     for (did,) in db.query(EpisodicDocument.id):
         if ob.enqueue(db, event_type=ob.EVENT_EPISODIC_UPSERT, aggregate_id=did,
-                      aggregate_revision=1, now=now):
+                      aggregate_revision=1, now=now, force=True):
             count += 1
     db.commit()
     logger.info("[MEMORY] rebuild enqueued %d index intents", count)

@@ -31,6 +31,30 @@ def test_enqueue_idempotent_on_same_revision(db):
     assert db.query(MemoryIndexOutbox).count() == 2
 
 
+def test_enqueue_force_requeues_done_row(db):
+    # Regression (2026-06-16): a backend switch (Qdrant→LadybugDB) left old
+    # memories whose outbox row was already ``done`` permanently unprojected,
+    # because plain re-enqueue is a no-op on the UNIQUE (event,agg,rev) row.
+    # ``force=True`` (used by consistency_service.rebuild / the v2 migration)
+    # must reset that done row to pending so the worker re-projects it.
+    assert _enq(db, rev=1) is True
+    row = db.query(MemoryIndexOutbox).one()
+    ob.mark_done(db, row.id, now=200.0)
+    db.commit()
+    assert db.get(MemoryIndexOutbox, row.id).status == ob.DONE
+
+    assert _enq(db, rev=1) is False           # plain re-enqueue still a no-op
+    forced = ob.enqueue(db, event_type=ob.EVENT_MEMORY_UPSERT, aggregate_id="rec-1",
+                        aggregate_revision=1, now=300.0, force=True)
+    db.commit()
+    assert forced is True
+    fresh = db.get(MemoryIndexOutbox, row.id)
+    assert fresh.status == ob.PENDING         # re-queued, not skipped
+    assert fresh.next_attempt_at == 300.0
+    assert fresh.completed_at is None
+    assert db.query(MemoryIndexOutbox).count() == 1   # reset in place, not duplicated
+
+
 def test_claim_batch_only_due_pending_ordered(db):
     _enq(db, rev=1, now=100.0)
     _enq(db, rev=2, now=50.0)                  # earlier next_attempt

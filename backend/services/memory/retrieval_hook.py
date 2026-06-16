@@ -37,11 +37,14 @@ EXTRACT_EVERY_N = 4
 MEMORY_MARKER = "⟦memory:recalled⟧"
 PROVENANCE_CHANNEL = "jarvis:provenance"
 PROVENANCE_RECALL = "memory_recall"
-# The change-gate key is stored ON the injected block (this channel) so the gate
-# is derived from HISTORY, not a process-lifetime in-memory attribute — it
-# therefore survives a restart / agent re-creation (otherwise a reloaded
-# conversation would re-inject a duplicate block every restart).
-RECALL_KEY_CHANNEL = "jarvis:recall_key"
+# The record_ids carried by each injected block live in this channel, so the
+# "already recalled?" gate is derived from HISTORY (not a process-lifetime
+# in-memory attribute) → it survives a restart / agent re-creation. Dedup is
+# PER-RECORD_ID (not per whole-set): a turn only injects memories whose id is
+# not already somewhere in the conversation, so a slightly different relevant
+# set no longer re-injects the overlap. record_id is the cheapest, O(1)-compare,
+# restart-stable identity; near-duplicate *content* is the capture side's job.
+RECALL_IDS_CHANNEL = "jarvis:recall_ids"
 # Recall is ALWAYS-ON now (no intent gate): retrieve across these types every
 # turn and let relevance ranking decide what (if anything) is worth injecting.
 RECALL_TYPES = ["episodic", "semantic", "procedural"]
@@ -85,42 +88,42 @@ def _render_block(evidence) -> str:
     return "\n".join(lines)
 
 
-def _evidence_key(evidence) -> str:
-    """Stable identity of the rendered memory set — change-gate compares this to
-    the previously injected set. Keyed on what is actually shown so an identical
-    set produces an identical key (→ skip re-injection, keep the prefix cache)."""
-    return "␟".join(
-        f"{getattr(e, 'memory_type', '')}\x1f{getattr(e, 'excerpt', '')}" for e in evidence)
-
-
-def _block_recall_key(msg) -> str | None:
-    for c in (getattr(msg, "channels", None) or {}).get(RECALL_KEY_CHANNEL) or []:
+def _block_recall_ids(msg) -> list[str]:
+    """The record_ids a recall block carries — one per channel entry (no join/
+    split, so it's robust to any id format)."""
+    out: list[str] = []
+    for c in (getattr(msg, "channels", None) or {}).get(RECALL_IDS_CHANNEL) or []:
         t = getattr(c, "text", None)
-        if t is not None:
-            return t
-    return None
+        if t:
+            out.append(t)
+    return out
 
 
-def _injected_keys(history) -> set[str]:
-    """Keys of every memory block already in this conversation — the change-gate
-    skips re-injecting any set that is already present (no duplicate, no churn)."""
-    return {k for m in history if is_injected_memory(m)
-            and (k := _block_recall_key(m)) is not None}
+def _recalled_ids(history) -> set[str]:
+    """record_ids of every memory already injected somewhere in this
+    conversation. A new turn skips any of these (already in context) and injects
+    only the genuinely-new ones — no duplication, and we never touch the older
+    blocks so the KV prefix cache stays warm."""
+    ids: set[str] = set()
+    for m in history:
+        if is_injected_memory(m):
+            ids.update(_block_recall_ids(m))
+    return ids
 
 
-def _build_block_message(evidence, key: str):
+def _build_block_message(evidence):
     """A memory-recall message: prose in ``content`` (the LLM reads it); the
-    provenance flag + change-gate key in ``channels`` (code reads them, persist
-    through save/load, don't reach the LLM as content). Role stays ``user``
-    framed — the standard cross-provider RAG pattern — never a plain unmarked
-    user message."""
+    provenance flag + this block's record_ids in ``channels`` (code reads them,
+    persist through save/load, don't reach the LLM as content). Role stays
+    ``user`` framed — the standard cross-provider RAG pattern — never a plain
+    unmarked user message."""
     from fast_agent.mcp.helpers.content_helpers import text_content
     from fast_agent.mcp.prompt_message_extended import PromptMessageExtended
     return PromptMessageExtended(
         role="user",
         content=[text_content(_render_block(evidence))],
         channels={PROVENANCE_CHANNEL: [text_content(PROVENANCE_RECALL)],
-                  RECALL_KEY_CHANNEL: [text_content(key)]},
+                  RECALL_IDS_CHANNEL: [text_content(e.record_id) for e in evidence]},
     )
 
 
@@ -153,24 +156,31 @@ def create_memory_retrieval_hooks():
                 else:
                     agent._jarvis_extract_turns = cnt
 
-            # Recall — ALWAYS retrieve (no intent gate); inject only when this
-            # exact set is NOT already in the conversation (change-gate, derived
-            # from history → survives restart). We never strip/move earlier
-            # blocks: mid-history mutation is what breaks the KV prefix cache. A
-            # stable profile yields the same set → already present → no new block
-            # → prefix stays warm. Lingering older blocks are bounded (one per
-            # distinct relevant-set) and the DB stays correct (ADD-only); pruning
-            # stale blocks is handled when slow-lane/compaction integration lands
-            # (they carry the reserved sentinel + channel for that).
+            # Recall — ALWAYS retrieve (no intent gate); inject only the memories
+            # NOT already somewhere in this conversation (per-record_id gate,
+            # derived from history → survives restart). We never strip/move/replace
+            # earlier blocks: mid-history mutation is what breaks the KV prefix
+            # cache. So a memory recalled on an earlier turn is skipped here (no
+            # re-injection, no wasted tokens) and only genuinely-new memories get a
+            # fresh block appended at the tail. If every relevant memory is already
+            # in context, nothing is appended and the prefix stays warm.
             evidence = await _retrieve(owner, query, RECALL_TYPES, cfg)
             if not evidence:
                 return
-            key = _evidence_key(evidence)
-            history = list(getattr(agent, "message_history", []) or [])
-            if key in _injected_keys(history):
-                return                      # this set already in context
-            history.append(_build_block_message(evidence, key))   # append-only at tail
-            agent.load_message_history(history)
+            history = getattr(agent, "message_history", []) or []
+            # Dedup against BOTH committed history AND this turn's delta: a block
+            # appended on an earlier tool-step of the same turn isn't merged into
+            # message_history until the turn commits, so check the live delta too.
+            already = _recalled_ids(history) | _recalled_ids(delta_messages)
+            fresh = [e for e in evidence if e.record_id not in already]
+            if not fresh:
+                return                      # all relevant memory already in context
+            # Append to the DELTA (after the user's current message) so the recall
+            # lands AFTER the user turn, not before it — the delta is the exact
+            # list handed to the LLM step, and is merged into message_history when
+            # the turn commits, so the block persists & dedups exactly as before,
+            # just correctly ordered. Never mutate earlier history → KV cache safe.
+            delta_messages.append(_build_block_message(fresh))
         except Exception as exc:  # noqa: BLE001 — never break the LLM call
             logger.error("[MEMORY] retrieval hook error: %s", exc, exc_info=True)
 

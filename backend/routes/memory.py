@@ -9,6 +9,7 @@ agent's memory through this surface.
 """
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any
 
@@ -30,6 +31,7 @@ from services.memory.settings import get_memory_settings
 from services.retrieval.contracts import RetrievalRequest
 from services.retrieval.orchestrator import RetrievalOrchestrator
 
+logger = logging.getLogger("routes.memory")
 router = APIRouter(prefix="/api", tags=["memory"], dependencies=[Depends(verify_api_key)])
 
 
@@ -320,3 +322,24 @@ async def index_status() -> dict[str, Any]:
     status["qdrant"] = qdrant
     status["enabled"] = cfg.enabled
     return status
+
+
+@router.get("/agents/{name}/memory-graph")
+async def memory_graph(name: str, limit: int = Query(200, ge=1, le=500)) -> dict[str, Any]:
+    """Owner-scoped LadybugDB snapshot for the UI graph view: Memory nodes +
+    the Entity nodes they mention + MENTIONS edges. ``available=False`` (empty
+    payload) when memory is off, the backend isn't LadybugDB, or the graph can't
+    be opened — the UI shows an empty-state instead of erroring."""
+    empty = {"memories": [], "entities": [], "edges": [], "available": False}
+    cfg = get_memory_settings()
+    if not cfg.enabled or getattr(cfg, "vector_backend", "ladybug") != "ladybug":
+        return empty
+    try:
+        from services.indexing.ladybug_store import get_ladybug_store
+        store = get_ladybug_store(getattr(cfg, "ladybug_path", "data/memory_graph"))
+        data = store.graph_dump(owner=name, limit=limit)
+        data["available"] = True
+        return data
+    except Exception as exc:  # noqa: BLE001 — never 500 a read-only viz endpoint
+        logger.warning("[MEMORY] memory-graph dump failed: %s", exc)
+        return empty

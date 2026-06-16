@@ -1,10 +1,10 @@
-"""Reciprocal Rank Fusion + bounded deterministic policy weighting (spec §8.4).
+"""Reciprocal Rank Fusion + bounded deterministic policy re-ranking (spec §8.4).
 
-Fuse BM25 and dense result lists by RANK (never raw-score addition), then
-apply bounded policy multipliers (authority / freshness / confidence /
-status). The multipliers are clamped so a low-relevance result can never
-outrank all genuine retrieval evidence — they nudge, they don't replace
-relevance.
+Fuse BM25 and dense result lists by RANK (never raw-score addition), then nudge
+the order by bounded RANK boosts (authority / recency / confidence). Boosts are
+applied in rank space — not as multipliers on the compressed RRF score — so they
+tune near-ties (a newer same-topic fact rises a couple of positions) without ever
+letting a low-relevance result leapfrog genuinely-more-relevant evidence.
 """
 from __future__ import annotations
 
@@ -14,16 +14,20 @@ from services.retrieval.contracts import Evidence
 
 RRF_K = 60
 
-# Per-factor multiplier bounds (kept tight so relevance dominates).
-_AUTHORITY_WEIGHT = {
-    "tool_verified": 1.15,
-    "user_confirmed": 1.10,
-    "agent_observed": 1.0,
-    "reported_by_agent": 0.95,
-    "external_document": 0.95,
-    "inferred": 0.85,
+# Policy nudges in RANK units (NOT score multipliers). Working in rank space is
+# what keeps the nudge bounded: multiplying the RRF score let a +10% authority
+# bonus flip a rank-7 result past a rank-3 one, because RRF compresses every rank
+# into a ~0.0003-wide band (measured distortion 2026-06-16). A rank boost instead
+# lets a newer / higher-authority same-topic fact climb a FEW positions without
+# ever leapfrogging a clearly-more-relevant result several ranks above it.
+_AUTHORITY_RANK_BOOST = {
+    "tool_verified": 1.0,
+    "user_confirmed": 0.5,
+    "agent_observed": 0.0,
+    "reported_by_agent": -0.3,
+    "external_document": -0.3,
+    "inferred": -0.6,
 }
-_STATUS_WEIGHT = {"active": 1.0, "superseded": 0.6, "archived": 0.5}
 
 
 def rrf_fuse(result_lists: list[list[Evidence]], *, k: int = RRF_K) -> list[Evidence]:
@@ -56,36 +60,43 @@ def rrf_fuse(result_lists: list[list[Evidence]], *, k: int = RRF_K) -> list[Evid
     return out
 
 
-def _freshness_weight(now: float, created_at: float | None) -> float:
-    """Mild recency nudge in [0.9, 1.1]; old but relevant memory still wins."""
+def _recency_rank_boost(now: float, created_at: float | None) -> float:
+    """How many ranks a fact climbs for being recent — the read-side of ADD-only
+    ('works at FPT' should outrank the older 'works at Techcombank' for the same
+    query). Bounded so it tunes near-ties, never overrides clear relevance."""
     if not created_at:
-        return 1.0
+        return 0.0
     age_days = max(0.0, (now - created_at) / 86400.0)
     if age_days <= 7:
-        return 1.1
+        return 1.5
     if age_days <= 90:
-        return 1.0
-    return 0.9
+        return 0.5
+    return 0.0
 
 
 def apply_policy(evidence: list[Evidence], *, now: float) -> list[Evidence]:
-    """Apply bounded policy multipliers to ``scores.final`` and re-sort."""
-    for ev in evidence:
-        w = (
-            _AUTHORITY_WEIGHT.get(ev.authority, 1.0)
-            * _STATUS_WEIGHT.get(_status_of(ev), 1.0)
-            * _freshness_weight(now, ev.source.timestamp)
-            * (0.9 + 0.2 * max(0.0, min(1.0, ev.confidence)))  # confidence in [0.9,1.1]
-        )
-        ev.scores.final = (ev.scores.rrf or 0.0) * w
-    # Newer wins ties: the day-bucketed freshness nudge can't separate two facts
-    # captured in the SAME session (e.g. "works at Techcombank" then "works at
-    # FPT"), so break score ties by recency — the read-side of ADD-only.
-    evidence.sort(key=lambda e: (e.scores.final, e.source.timestamp or 0.0), reverse=True)
+    """Re-rank by relevance, nudged by BOUNDED rank boosts (recency / authority /
+    confidence). The boost (≤ ~3 ranks of climb) lets a newer or higher-authority
+    same-topic fact rise above a marginally-more-relevant older one, while a
+    fresh-but-off-topic memory still cannot leapfrog a result several ranks more
+    relevant — fixing the 2026-06-16 distortion where a rank-7 "user_confirmed"
+    fact outranked a rank-3 "agent_observed" one. ``scores.final`` keeps the
+    relevance value for telemetry; the boosts only change ORDER.
+
+    Supersession is NOT handled here: providers return only ``status='active'``
+    rows (superseded/archived are filtered at query time)."""
+    evidence.sort(key=lambda e: e.scores.rrf or 0.0, reverse=True)   # relevance baseline
+
+    def _boost(e) -> float:
+        return (_recency_rank_boost(now, e.source.timestamp)
+                + _AUTHORITY_RANK_BOOST.get(e.authority, 0.0)
+                + (max(0.0, min(1.0, e.confidence)) - 0.5))          # confidence ±0.5 rank
+
+    ranked = []
+    for i, e in enumerate(evidence):
+        e.scores.final = e.scores.rrf or 0.0
+        ranked.append((i - _boost(e), -(e.source.timestamp or 0.0), i, e))
+    # lower effective rank first; ties → newer first, then original relevance order.
+    ranked.sort(key=lambda t: (t[0], t[1], t[2]))
+    evidence[:] = [t[3] for t in ranked]
     return evidence
-
-
-def _status_of(ev: Evidence) -> str:
-    # status isn't on Evidence directly; default active (providers only return
-    # active records). Hook kept for when superseded items are surfaced.
-    return "active"

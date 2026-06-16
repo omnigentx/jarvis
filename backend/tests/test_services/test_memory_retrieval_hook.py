@@ -53,7 +53,11 @@ async def _run_hook(monkeypatch, *, query, settings, hist=None, evidence=None):
     monkeypatch.setattr(rh, "_retrieve", fake_retrieve)
     agent = _Agent("Jarvis", hist)
     hooks = rh.create_memory_retrieval_hooks()
-    await hooks.before_llm_call(_Runner(agent), [_Msg("user", query)])
+    delta = [_Msg("user", query)]
+    await hooks.before_llm_call(_Runner(agent), delta)
+    # Mirror the framework: the delta (incl. the recall block the hook appended
+    # AFTER the user message) is committed to message_history when the turn ends.
+    agent.load_message_history(list(agent.message_history) + delta)
     return agent
 
 
@@ -63,12 +67,15 @@ async def test_injects_block_on_identifier_signal(monkeypatch):
     texts = [rh._msg_text(m) for m in agent.message_history]
     assert any(rh.MEMORY_MARKER in t for t in texts)
     assert any("dedicated compactor" in t for t in texts)
+    # #1 ordering: the block lands AFTER the user message, never before it.
+    assert not rh.is_injected_memory(agent.message_history[0])
+    assert rh.is_injected_memory(agent.message_history[-1])
 
 
 async def test_no_injection_when_disabled(monkeypatch):
     agent = await _run_hook(monkeypatch, query="what was the fix in backend/server.py",
                             settings=_settings(enabled=False), evidence=[_ev()])
-    assert agent.message_history == []
+    assert not any(rh.is_injected_memory(m) for m in agent.message_history)
 
 
 # NOTE: v1 "Level 0 gating", "self-replacing block" and "strips stale block"

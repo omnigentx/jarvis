@@ -15,10 +15,24 @@ only ever sees its own memory (mirrors the SQLite/Qdrant rules).
 from __future__ import annotations
 
 import logging
+import os
+import shutil
 import threading
 from dataclasses import dataclass
 
 logger = logging.getLogger("memory.ladybug")
+
+
+def _wipe_graph_files(path: str) -> None:
+    """Remove a LadybugDB graph and its sidecars (``.wal`` / ``.lock`` /
+    ``.shadow``). The store is a disposable projection — see ``_open``."""
+    if os.path.isdir(path):
+        shutil.rmtree(path, ignore_errors=True)
+    for p in (path, f"{path}.wal", f"{path}.lock", f"{path}.shadow", f"{path}.tmp"):
+        try:
+            os.remove(p)
+        except OSError:
+            pass
 
 EMBED_DIM = 1024  # BAAI/bge-m3
 _VECTOR_INDEX = "memory_emb_idx"
@@ -52,9 +66,8 @@ class LadybugStore:
     at personal-memory scale)."""
 
     def __init__(self, path: str):
-        import ladybug
-        self._db = ladybug.Database(path)
-        self._con = ladybug.Connection(self._db)
+        self._path = path
+        self._db, self._con = self._open(path)
         # RLock (reentrant): some read methods call others under the lock
         # (vector_search → count); a plain Lock would self-deadlock.
         self._lock = threading.RLock()
@@ -63,6 +76,31 @@ class LadybugStore:
         except Exception:
             self.close()          # don't leak the open file handle/lock on bad bring-up
             raise
+
+    @staticmethod
+    def _open(path: str):
+        """Open the embedded graph, self-healing a corrupted WAL.
+
+        LadybugDB is a DISPOSABLE projection of SQLite (the source of truth). An
+        ungraceful backend shutdown (SIGKILL, container stop) can leave a
+        half-written WAL — the next open then throws "Corrupted wal file" and
+        dense recall stays dead until a human deletes the files. Since the graph
+        is rebuildable, wipe it and recreate empty on that specific failure; the
+        startup migration (count()==0 → consistency_service.rebuild) re-projects
+        every record from SQLite. Any non-corruption error is re-raised."""
+        import ladybug
+        try:
+            db = ladybug.Database(path)
+        except RuntimeError as exc:
+            msg = str(exc).lower()
+            if "wal" not in msg and "corrupt" not in msg:
+                raise
+            logger.warning("[MEMORY] LadybugDB open failed (%s) — wiping the "
+                           "disposable graph; the startup migration rebuilds "
+                           "it from SQLite", exc)
+            _wipe_graph_files(path)
+            db = ladybug.Database(path)   # fresh, empty graph
+        return db, ladybug.Connection(db)
 
     # ---- schema ---------------------------------------------------------
     def _exec(self, query: str, params: dict | None = None):
@@ -223,6 +261,34 @@ class LadybugStore:
             else:
                 res = self._exec("MATCH (m:Memory) RETURN count(m)")
             return res.get_next()[0] if res.has_next() else 0
+
+    def graph_dump(self, *, owner: str, limit: int = 200) -> dict:
+        """Owner-scoped snapshot for the UI graph view: the most recent active
+        Memory nodes + the Entity nodes they MENTION + those edges. Memories that
+        share an Entity are visually connected through it (the GraphRAG
+        structure). Capped at ``limit`` memories so a large graph stays
+        renderable; ``content`` is truncated for the node label."""
+        with self._lock:
+            res = self._exec(
+                "MATCH (m:Memory) WHERE m.owner = $o AND m.status = 'active' "
+                "RETURN m.id, m.content, m.memory_type, m.authority, m.created_at "
+                "ORDER BY m.created_at DESC LIMIT $lim", {"o": owner, "lim": limit})
+            memories, mem_ids = [], []
+            while res.has_next():
+                mid, content, mt, auth, ca = res.get_next()
+                memories.append({"id": mid, "content": (content or "")[:160],
+                                 "memory_type": mt, "authority": auth, "created_at": ca})
+                mem_ids.append(mid)
+            entities, edges = {}, []
+            if mem_ids:
+                res = self._exec(
+                    "MATCH (m:Memory)-[:MENTIONS]->(e:Entity) WHERE m.id IN $ids "
+                    "RETURN m.id, e.id, e.name, e.etype", {"ids": mem_ids})
+                while res.has_next():
+                    mid, eid, ename, etype = res.get_next()
+                    edges.append({"source": mid, "target": eid})
+                    entities[eid] = {"id": eid, "name": ename, "etype": etype}
+            return {"memories": memories, "entities": list(entities.values()), "edges": edges}
 
     def close(self) -> None:
         with self._lock:

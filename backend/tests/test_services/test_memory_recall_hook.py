@@ -60,7 +60,12 @@ async def _run(agent, query, evidence, monkeypatch):
         return evidence
     monkeypatch.setattr(rh, "_retrieve", fake_retrieve)
     hooks = rh.create_memory_retrieval_hooks()
-    await hooks.before_llm_call(_Runner(agent), [_user(query)])
+    delta = [_user(query)]
+    await hooks.before_llm_call(_Runner(agent), delta)
+    # Mirror the framework: the delta (incl. any recall block the hook appended
+    # AFTER the user message) is committed to message_history when the turn ends.
+    agent.message_history.extend(delta)
+    return delta
 
 
 def _injected(agent):
@@ -74,6 +79,18 @@ async def test_always_retrieve_injects_block(wired):
     blk = agent.message_history[-1]
     assert "Software Engineer" in rh._msg_text(blk)
     assert rh.MEMORY_MARKER in rh._msg_text(blk)
+
+
+async def test_block_lands_after_user_message(wired):
+    """#1 fix: the recall block must come AFTER the user's message, not before it
+    (it appended to message_history ahead of the user turn previously)."""
+    agent = _Agent()
+    await _run(agent, "plan my trip", [_ev("semantic", "drives a car")], wired)
+    h = agent.message_history
+    assert len(h) == 2
+    assert not rh.is_injected_memory(h[0])          # user message FIRST
+    assert rh._msg_text(h[0]) == "plan my trip"
+    assert rh.is_injected_memory(h[1])              # recall block AFTER
 
 
 async def test_provenance_channel_and_sentinel(wired):
@@ -103,22 +120,52 @@ async def test_change_gate_appends_on_change_without_stripping(wired):
     assert "pho" in rh._msg_text(inj[1])
 
 
-async def test_no_evidence_leaves_history_untouched(wired):
+async def test_no_evidence_injects_no_block(wired):
     agent = _Agent()
     agent.message_history = [_user("prior turn")]
     await _run(agent, "q", [], wired)
-    assert len(agent.message_history) == 1
-    assert not rh.is_injected_memory(agent.message_history[0])
+    assert len(_injected(agent)) == 0       # no evidence → no recall block at all
 
 
 def test_latest_user_text_ignores_injected_block():
     # An injected memory block must never be mistaken for the user's query.
-    blk = rh._build_block_message([_ev("semantic", "User is a Software Engineer")], "k1")
+    blk = rh._build_block_message([_ev("semantic", "User is a Software Engineer")])
     assert rh._latest_user_text([_user("real question"), blk]) == "real question"
 
 
+async def test_partial_overlap_injects_only_new_ids(wired):
+    """Per-record_id dedup: a turn whose relevant set OVERLAPS an earlier recall
+    must inject ONLY the genuinely-new memories — never re-emit the ones already
+    in context (the duplication that wasted tokens with the old whole-set gate),
+    and never touch the earlier block (KV prefix cache stays warm)."""
+    agent = _Agent()
+    a = _ev("semantic", "AAA likes travel")
+    b = _ev("semantic", "BBB drives a car")
+    c = _ev("semantic", "CCC works at a bank")
+    await _run(agent, "q1", [a, b], wired)            # recall {A, B}
+    await _run(agent, "q2", [b, c], wired)            # recall {B, C} — B overlaps
+    inj = _injected(agent)
+    assert len(inj) == 2                              # second block appended, first intact
+    assert "drives a car" in rh._msg_text(inj[0])     # B was in the FIRST block
+    second = rh._msg_text(inj[1])
+    assert "works at a bank" in second                # only the NEW one (C)
+    assert "drives a car" not in second               # B NOT repeated
+    # The second block's id channel carries only C.
+    assert rh._block_recall_ids(inj[1]) == [c.record_id]
+
+
+async def test_all_overlap_appends_nothing(wired):
+    """If every relevant memory is already in context, no block is appended at
+    all → the prefix cache is fully preserved."""
+    agent = _Agent()
+    ev = [_ev("semantic", "AAA likes travel"), _ev("semantic", "BBB drives a car")]
+    await _run(agent, "q1", ev, wired)
+    await _run(agent, "q2", list(reversed(ev)), wired)   # same ids, different order
+    assert len(_injected(agent)) == 1
+
+
 async def test_change_gate_survives_restart_no_duplicate(wired):
-    """C1 regression: the gate is derived from HISTORY (the block's recall_key
+    """C1 regression: the gate is derived from HISTORY (the block's recall_ids
     channel), not an in-memory attribute. A reloaded conversation that already
     contains the block must NOT get a duplicate when the same set is retrieved
     by a FRESH agent object (the restart case)."""
@@ -146,6 +193,8 @@ async def test_query_falls_back_to_history_when_delta_has_no_text(wired):
         return [_ev("semantic", "Software Engineer")]
     wired.setattr(rh, "_retrieve", fake_retrieve)
     hooks = rh.create_memory_retrieval_hooks()
-    await hooks.before_llm_call(_Runner(agent), [])   # empty delta (e.g. tool turn)
+    delta = []                                        # empty delta (e.g. tool turn)
+    await hooks.before_llm_call(_Runner(agent), delta)
+    agent.message_history.extend(delta)               # framework merges delta after
     assert captured.get("q") == "what is my job?"
     assert len(_injected(agent)) == 1

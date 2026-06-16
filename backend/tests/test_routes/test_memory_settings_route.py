@@ -90,6 +90,19 @@ def test_memory_search_route_degraded(client):
     assert "evidence" in body and body["degraded"] is True
 
 
+def test_memory_graph_route_unavailable_for_non_ladybug(client, monkeypatch):
+    # Non-LadybugDB backend → the route short-circuits to an empty, available=False
+    # payload (never opens a store, never 500s) so the UI shows an empty state.
+    import types
+
+    import routes.memory as rm
+    monkeypatch.setattr(rm, "get_memory_settings",
+                        lambda: types.SimpleNamespace(enabled=True, vector_backend="qdrant"))
+    r = client.get("/api/agents/Jarvis/memory-graph")
+    assert r.status_code == 200, r.text
+    assert r.json() == {"memories": [], "entities": [], "edges": [], "available": False}
+
+
 def test_list_memories_empty(client):
     r = client.get("/api/agents/Jarvis/memories")
     assert r.status_code == 200, r.text

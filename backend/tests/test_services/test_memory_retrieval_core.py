@@ -49,6 +49,40 @@ def test_policy_weights_bounded():
     assert fused[0].record_id == "A"
 
 
+def test_policy_does_not_override_relevance():
+    # Regression (2026-06-16): a clearly-more-relevant but old/low-authority fact
+    # must stay on top of a fresh + trusted but several-ranks-less-relevant one.
+    # The bounded rank boost (≤ ~3) can't climb a 5-rank relevance gap — the
+    # measured cause of an on-topic "ô tô" memory being pushed below off-topic
+    # "user_confirmed" facts for a trip-planning query.
+    now = 1_000_000.0
+    rel = _ev("REL", authority="agent_observed", conf=0.5, ts=0.0)
+    rel.scores.rrf = 0.020                          # most relevant (rank 0)
+    fillers = []
+    for i in range(4):
+        f = _ev(f"F{i}", authority="agent_observed", conf=0.5, ts=0.0)
+        f.scores.rrf = 0.018 - i * 0.001
+        fillers.append(f)
+    noise = _ev("NOISE", authority="user_confirmed", conf=0.9, ts=now)
+    noise.scores.rrf = 0.010                        # rank 5 — far less relevant, but fresh + trusted
+    out = fusion.apply_policy([noise, *fillers, rel], now=now)
+    ids = [e.record_id for e in out]
+    assert ids[0] == "REL"                          # relevance wins; boost can't climb 5 ranks
+    assert ids.index("NOISE") >= 3                  # fresh+trusted noise stays down where relevance put it
+
+
+def test_policy_recency_breaks_near_tie():
+    # The flip side: among NEAR-equal-relevance same-topic facts, the newer one
+    # is promoted (read-side of ADD-only). old=rank0, new=rank1 → new wins.
+    now = 1_000_000.0
+    old = _ev("OLD", authority="user_confirmed", conf=0.9, ts=now - 120 * 86400)
+    old.scores.rrf = 0.0164
+    new = _ev("NEW", authority="user_confirmed", conf=0.9, ts=now - 1 * 86400)
+    new.scores.rrf = 0.0161                         # marginally less relevant, but fresh
+    out = fusion.apply_policy([old, new], now=now)
+    assert out[0].record_id == "NEW"                # recency promotes the newer fact past the near-tie
+
+
 # ── FTS provider ──
 
 @pytest.fixture()
@@ -128,6 +162,54 @@ def test_cache_key_changes_with_revision():
     c.set(k1, [_ev("A")])
     assert c.get(k1) is not None
     assert c.get(k2) is None          # different revision → miss
+
+
+def _orch_settings():
+    import types
+    return types.SimpleNamespace(
+        embedding_model="BAAI/bge-m3", embedding_revision="",
+        vector_backend="qdrant", qdrant_url="http://localhost:59999",
+        evidence_token_budget=2500, trigger_lexicon_overrides={},
+        quality_gate_thresholds={}, mode="balanced")
+
+
+def test_index_revision_bumps_on_projection(db):
+    # C-fix: a (re)projection (outbox row completing) must change the revision
+    # so the cache doesn't keep serving a pre-backfill result for the same query.
+    from core.database import MemoryIndexOutbox
+    from services.retrieval.orchestrator import RetrievalOrchestrator
+    orch = RetrievalOrchestrator(db, _orch_settings())
+    r0 = orch._index_revision()
+    db.add(MemoryIndexOutbox(event_type="memory_upsert", aggregate_id="m1",
+                             aggregate_revision=1, status="done", attempt_count=0,
+                             next_attempt_at=0.0, created_at=0.0, completed_at=1000.0))
+    db.commit()
+    r1 = orch._index_revision()
+    assert r1 != r0                              # projection bumped the token
+    row = db.query(MemoryIndexOutbox).one()
+    row.completed_at = 2000.0
+    db.commit()
+    assert orch._index_revision() != r1          # a later projection bumps again
+
+
+def test_dense_unpopulated_flags_empty_graph_only(db):
+    # A''-fix: dense available but graph empty AND contributed nothing → degraded
+    # ("unpopulated"), but NOT when dense contributed or the graph has nodes.
+    import types
+    from services.retrieval.orchestrator import RetrievalOrchestrator
+    orch = RetrievalOrchestrator(db, _orch_settings())
+
+    def _dense(count):
+        return types.SimpleNamespace(store=types.SimpleNamespace(count=lambda: count))
+
+    orch._dense = _dense(0)
+    assert orch._dense_unpopulated([_ev("A")]) is True       # empty graph, no dense rank
+    orch._dense = _dense(5)
+    assert orch._dense_unpopulated([_ev("A")]) is False      # graph has nodes
+    orch._dense = _dense(0)
+    assert orch._dense_unpopulated([_ev("B", dense=1)]) is False  # dense DID contribute
+    orch._dense = types.SimpleNamespace(store=None)
+    assert orch._dense_unpopulated([_ev("A")]) is False      # non-graph backend
 
 
 def test_ledger_dedup():

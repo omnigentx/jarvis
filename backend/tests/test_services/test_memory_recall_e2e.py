@@ -101,7 +101,9 @@ def wired(monkeypatch):
 async def test_recall_injects_real_orchestrator_result(wired):
     agent = wired.agent
     hooks = rh.create_memory_retrieval_hooks()
-    await hooks.before_llm_call(_Runner(agent), [_user("where is the fpt office")])
+    delta = [_user("where is the fpt office")]
+    await hooks.before_llm_call(_Runner(agent), delta)
+    agent.load_message_history(list(agent.message_history) + delta)   # framework merge
     injected = [m for m in agent.message_history if rh.is_injected_memory(m)]
     assert len(injected) == 1
     blk = rh._msg_text(injected[0])

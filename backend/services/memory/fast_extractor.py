@@ -106,6 +106,37 @@ def parse_extraction(raw: str) -> list[ExtractedMemory]:
     return out
 
 
+def _known_facts(owner: str, limit: int = 60) -> list[str]:
+    """The owner's already-stored active memories (most-recent first, capped),
+    fed to the extractor so it doesn't re-propose facts we already hold. Using
+    the LLM's own judgement of "is this already known" avoids a brittle
+    embedding-similarity threshold that could either miss paraphrases or drop
+    genuinely-distinct facts."""
+    from core.database import MemoryRecord, get_db_session
+    db = get_db_session()
+    try:
+        rows = (db.query(MemoryRecord.content)
+                .filter(MemoryRecord.owner_agent_name == owner,
+                        MemoryRecord.status == "active")
+                .order_by(MemoryRecord.created_at.desc()).limit(limit).all())
+        return [r[0][:120] for r in rows if r[0]]
+    except Exception as exc:  # noqa: BLE001 — best-effort; never block extraction
+        logger.warning("[MEMORY] known-facts lookup failed: %s", exc)
+        return []
+    finally:
+        db.close()
+
+
+def _extraction_prompt(owner: str) -> str:
+    known = _known_facts(owner)
+    if not known:
+        return EXTRACTION_PROMPT
+    return (EXTRACTION_PROMPT
+            + "\n\nALREADY KNOWN about this user — do NOT re-extract these, nor "
+              "any trivial restatement / paraphrase of them:\n"
+            + "\n".join(f"- {k}" for k in known))
+
+
 async def run_fast_extraction(owner: str, snippet: str, cfg, *, generate_fn=None) -> list[str]:
     """Extract durable memories from ``snippet`` and propose them as candidates.
 
@@ -118,7 +149,7 @@ async def run_fast_extraction(owner: str, snippet: str, cfg, *, generate_fn=None
     if generate_fn is None:
         return []
     try:
-        raw = await generate_fn(EXTRACTION_PROMPT + "\n\nConversation snippet:\n" + snippet)
+        raw = await generate_fn(_extraction_prompt(owner) + "\n\nConversation snippet:\n" + snippet)
     except Exception as exc:  # noqa: BLE001 — extractor is best-effort
         logger.warning("[MEMORY] fast extractor LLM failed: %s", exc)
         return []

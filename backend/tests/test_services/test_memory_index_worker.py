@@ -117,8 +117,14 @@ def test_rebuild_enqueues_all(Session):
     n = cs.rebuild(db, now=10.0)
     assert n == 3
     assert db.query(MemoryIndexOutbox).count() == 3
-    # idempotent: second rebuild enqueues nothing new
-    assert cs.rebuild(db, now=11.0) == 0
+    # A rebuild FORCE-requeues (2026-06-16 migration fix): a second rebuild
+    # resets the existing rows to pending so a backend switch re-projects
+    # already-``done`` records — it re-queues the same 3 in place, never
+    # duplicating them. (Previously this returned 0, which is exactly why
+    # pre-LadybugDB memories never reached the graph.)
+    assert cs.rebuild(db, now=11.0) == 3
+    assert db.query(MemoryIndexOutbox).count() == 3
+    assert {r.next_attempt_at for r in db.query(MemoryIndexOutbox)} == {11.0}
     db.close()
 
 
