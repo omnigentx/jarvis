@@ -59,11 +59,15 @@ async def memory_search(*, agent_name: str, query: str, types: list | None = Non
                                types=types or [], mode=mode, limit=limit)
         # The tool was explicitly invoked → always run fast retrieval.
         result = await orch.retrieve(req, now=time.time(), agent_requested=True)
-        return {
-            "level": result.level,
-            "degraded": result.degraded,
-            "evidence": [e.to_dict() for e in result.evidence],
-        }
+        # Compact, agent-facing shape: this lands verbatim in the model's context
+        # window, so return only the content + an id (for memory_fetch) — not the
+        # scoring/source/validity metadata the debug UI needs. ``degraded`` only
+        # when true (recall is partial) so the agent can hedge. The UI route
+        # (routes/memory.py) keeps the full to_dict for its debug panel.
+        out: dict = {"memories": [e.to_agent_dict() for e in result.evidence]}
+        if result.degraded:
+            out["degraded"] = True
+        return out
     finally:
         db.close()
 

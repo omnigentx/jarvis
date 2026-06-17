@@ -81,6 +81,14 @@ class Evidence:
             "validity": {"valid_from": self.valid_from, "valid_until": self.valid_until},
         }
 
+    def to_agent_dict(self) -> dict:
+        """Compact form for the AGENT's context window: just the content it reads
+        and an ``id`` to memory_fetch the full source. The retrieval metadata
+        (scores / source / validity / owner / authority) only matters to the
+        debug UI — dumping it into the prompt is wasted tokens (it lands verbatim
+        in-context on every memory_search call)."""
+        return {"id": self.evidence_id, "type": self.memory_type, "text": self.excerpt}
+
 
 @dataclass
 class RetrievalBudget:

@@ -47,8 +47,9 @@ def _bridge_error(exc: Exception) -> dict:
 def memory_search(query: str, types: list[str] | None = None,
                   mode: str = "balanced", limit: int = 5) -> dict:
     """Search YOUR durable memory (episodic history, decisions, preferences,
-    procedures). Returns ranked evidence with sources. ``types`` optionally
-    restricts to e.g. ["episodic","semantic"]."""
+    procedures). Returns {"memories": [{"id", "type", "text"}, ...]} ordered by
+    relevance — ``text`` is the content to use; pass ``id`` to memory_fetch for
+    the full source. ``types`` optionally restricts to e.g. ["episodic","semantic"]."""
     owner = _owner()
     if not owner:
         return {"error": "no bound agent identity; memory unavailable"}

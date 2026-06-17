@@ -87,9 +87,9 @@ async def test_remember_then_recall_through_full_pipeline(stack):
 
     # 3. the agent searches via the real RPC handler → real orchestrator → FTS
     res = await rpc_handlers.memory_search(agent_name="Jarvis", query="dedicated compactor")
-    ids = {e["record_id"] for e in res["evidence"]}
-    assert rec.id in ids
-    assert res["degraded"] is True                    # Qdrant absent → degraded but works
+    ids = {e["id"] for e in res["memories"]}          # id = "memory:<record_id>"
+    assert any(i.endswith(rec.id) for i in ids)
+    assert res.get("degraded") is True                # Qdrant absent → degraded but works
 
     # 4. progressive disclosure: fetch full content
     full = await rpc_handlers.memory_fetch(agent_name="Jarvis",
@@ -105,7 +105,7 @@ async def test_exact_identifier_recalled_via_bm25(stack):
         subject_scope="project:jarvis", authority="agent_observed", now=100.0)
     await _drain(stack.worker, now=110.0)
     res = await rpc_handlers.memory_search(agent_name="Jarvis", query="backend/services/foo.py")
-    assert rec.id in {e["record_id"] for e in res["evidence"]}
+    assert any(e["id"].endswith(rec.id) for e in res["memories"])
 
 
 async def test_cross_agent_memory_denied_end_to_end(stack):
@@ -116,7 +116,7 @@ async def test_cross_agent_memory_denied_end_to_end(stack):
     await _drain(stack.worker, now=110.0)
     # another agent must not retrieve it
     res = await rpc_handlers.memory_search(agent_name="Riley [SA]", query="architecture caching")
-    assert res["evidence"] == []
+    assert res["memories"] == []
 
 
 async def test_episodic_projection_recall(stack):
@@ -127,7 +127,7 @@ async def test_episodic_projection_recall(stack):
     db.commit(); db.close()
     await _drain(stack.worker, now=110.0)
     res = await rpc_handlers.memory_search(agent_name="Jarvis", query="staged verification deploy")
-    assert any("verification" in e["excerpt"] for e in res["evidence"])
+    assert any("verification" in e["text"] for e in res["memories"])
 
 
 async def test_qdrant_outage_keeps_writes_and_chat(stack):
@@ -144,7 +144,7 @@ async def test_qdrant_outage_keeps_writes_and_chat(stack):
     assert row.status == ob.PENDING and row.attempt_count == 0
     db.close()
     res = await rpc_handlers.memory_search(agent_name="Jarvis", query="resilience outbox")
-    assert rec.id in {e["record_id"] for e in res["evidence"]}
+    assert any(e["id"].endswith(rec.id) for e in res["memories"])
 
 
 async def test_agent_remember_tool_persists_and_recalls(stack):
@@ -155,7 +155,7 @@ async def test_agent_remember_tool_persists_and_recalls(stack):
     assert out["status"] == "auto_approved"
     await _drain(stack.worker, now=110.0)
     res = await rpc_handlers.memory_search(agent_name="Jarvis", query="staging DB host")
-    assert any("db-stage" in e["excerpt"] for e in res["evidence"])
+    assert any("db-stage" in e["text"] for e in res["memories"])
 
 
 async def test_agent_forget_archives_and_drops_from_search(stack):
@@ -164,7 +164,7 @@ async def test_agent_forget_archives_and_drops_from_search(stack):
                             content="temporary note to forget about caching",
                             subject_scope="system", authority="agent_observed", now=100.0)
     await _drain(stack.worker)
-    assert (await rpc_handlers.memory_search(agent_name="Jarvis", query="caching"))["evidence"]
+    assert (await rpc_handlers.memory_search(agent_name="Jarvis", query="caching"))["memories"]
     # forget → archive. Retrieval excludes non-active memory immediately (the
     # provider filters status), and the outbox also queues FTS/Qdrant removal.
     out = await rpc_handlers.memory_forget(agent_name="Jarvis", memory_id=rec.id)
@@ -173,7 +173,7 @@ async def test_agent_forget_archives_and_drops_from_search(stack):
     assert db.get(MemoryRecord, rec.id).status == "archived"     # persisted
     db.close()
     res = await rpc_handlers.memory_search(agent_name="Jarvis", query="caching")
-    assert rec.id not in {e["record_id"] for e in res["evidence"]}
+    assert not any(e["id"].endswith(rec.id) for e in res["memories"])
 
 
 async def test_email_capture_recall_is_participant_scoped(stack):
@@ -186,10 +186,10 @@ async def test_email_capture_recall_is_participant_scoped(stack):
     await _drain(stack.worker, now=110.0)
     # sender recalls it
     jarvis = await rpc_handlers.memory_search(agent_name="Jarvis", query="deploy window staged")
-    assert any("deploy" in e["excerpt"].lower() for e in jarvis["evidence"])
+    assert any("deploy" in e["text"].lower() for e in jarvis["memories"])
     # recipient recalls it
     riley = await rpc_handlers.memory_search(agent_name="Riley [SA]", query="deploy window staged")
-    assert riley["evidence"]
+    assert riley["memories"]
     # a non-participant does not
     other = await rpc_handlers.memory_search(agent_name="Other", query="deploy window staged")
-    assert other["evidence"] == []
+    assert other["memories"] == []

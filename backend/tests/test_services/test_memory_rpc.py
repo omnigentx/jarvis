@@ -55,13 +55,16 @@ def wired(monkeypatch):
 
 
 async def test_search_is_owner_scoped(wired):
+    # Compact agent-facing shape: {"memories": [{"id","type","text"}]} (id is the
+    # evidence id "memory:<record_id>"); no scoring/source metadata in-context.
     jarvis = await rpc_handlers.memory_search(agent_name="Jarvis", query="compactor")
-    ids = {e["record_id"] for e in jarvis["evidence"]}
-    assert "m1" in ids and "r1" not in ids       # never sees Riley's memory
+    ids = {e["id"] for e in jarvis["memories"]}
+    assert {"id", "type", "text"} == set(jarvis["memories"][0].keys())   # nothing extra
+    assert any(i.endswith("m1") for i in ids) and not any(i.endswith("r1") for i in ids)
 
     riley = await rpc_handlers.memory_search(agent_name="Riley [SA]", query="compactor")
-    rids = {e["record_id"] for e in riley["evidence"]}
-    assert "r1" in rids and "m1" not in rids
+    rids = {e["id"] for e in riley["memories"]}
+    assert any(i.endswith("r1") for i in rids) and not any(i.endswith("m1") for i in rids)
 
 
 async def test_search_requires_bound_identity(wired):
