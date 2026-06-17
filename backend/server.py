@@ -497,24 +497,6 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("[MEMORY] ladybug migration check failed")
 
-    # Knowledge-graph backfill: extract (subject—predicate—object) triples for
-    # memories that don't have them yet and re-project them as RELATES edges, so
-    # the graph view is a real knowledge graph. Background + best-effort (LLM):
-    # never blocks startup, harmless if no LLM is configured.
-    try:
-        if _mem_cfg and _mem_cfg.enabled:
-            async def _kg_backfill_bg():
-                try:
-                    from services.memory.knowledge_graph import backfill_relations
-                    n = await backfill_relations()
-                    if n:
-                        logger.info("[MEMORY] KG backfill: extracted triples for %d memories", n)
-                except Exception:
-                    logger.exception("[MEMORY] KG backfill failed")
-            asyncio.create_task(_kg_backfill_bg())
-    except Exception:
-        logger.exception("[MEMORY] KG backfill scheduling failed")
-
     # Enable shell execution runtime (equivalent to --shell CLI flag)
     await fast.app.initialize()
     setattr(fast.app.context, "shell_runtime", True)
@@ -578,6 +560,27 @@ async def lifespan(app: FastAPI):
             logger.info("[MEMORY] Retrieval hook attached to %d agent(s)", _n_mem)
         except Exception as _e:
             logger.warning("[MEMORY] Failed to attach retrieval hook: %s", _e, exc_info=True)
+
+        # Knowledge-graph migration/repair: (re)extract triples for memories that
+        # lack them and re-project them as RELATES edges. MUST run here — AFTER
+        # `state.agent_app = agent` — because the extractor LLM is resolved from
+        # the live agent app; scheduling it before fast.run() (as it was) made
+        # build_extractor_generate_fn return None → the backfill silently no-op'd
+        # and old memories never entered the graph on restart. Background +
+        # best-effort: never blocks startup, harmless if no LLM is configured.
+        try:
+            if _mem_cfg and _mem_cfg.enabled:
+                async def _kg_backfill_bg():
+                    try:
+                        from services.memory.knowledge_graph import backfill_relations
+                        n = await backfill_relations()
+                        if n:
+                            logger.info("[MEMORY] KG backfill: extracted triples for %d memories", n)
+                    except Exception:
+                        logger.exception("[MEMORY] KG backfill failed")
+                asyncio.create_task(_kg_backfill_bg())
+        except Exception:
+            logger.exception("[MEMORY] KG backfill scheduling failed")
 
         # Wire CronScheduler agent references (for agent_turn execution)
         if state.cron_scheduler:
