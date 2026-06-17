@@ -110,3 +110,87 @@ async def test_recall_injects_real_orchestrator_result(wired):
     assert "fpt" in blk.lower()                      # the seeded memory surfaced
     # cross-agent isolation: Riley's memory must NOT be in Jarvis's recall.
     assert "riley" not in blk.lower()
+
+
+# ── GraphRAG co-occurrence + relevance gate (real orchestrator, fake embed) ───
+
+async def test_graphrag_cooccurrence_and_relevance_gate(monkeypatch):
+    """E2E through the REAL orchestrator (LadybugProvider dense + linked_memories
+    + FTS + fusion + gate); only the embedder is faked.
+
+    Proves two behaviours end-to-end:
+    1. GraphRAG co-occurrence — a memory that SHARES an entity with the vector hit
+       is pulled in via MENTIONS even though its OWN embedding is far from the
+       query (the value the dense gate would otherwise miss).
+    2. Relevance gate — an off-topic query (vector-far from everything) injects
+       nothing.
+    """
+    _CACHE.clear()
+    eng = create_engine("sqlite:///:memory:",
+                        connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(eng)
+    with eng.connect() as c:
+        c.execute(text("CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5("
+                       "doc_kind UNINDEXED, doc_id UNINDEXED, owner_agent_name UNINDEXED, content)"))
+        c.commit()
+    F = sessionmaker(bind=eng)
+    store = LadybugStore(f"{tempfile.mkdtemp()}/g")
+
+    class _Emb:
+        def is_available(self): return True
+        def dim(self): return EMBED_DIM
+        def revision(self): return "fake"
+        def _v(self, t):
+            t = (t or "").lower()
+            v = [0.0] * EMBED_DIM
+            v[0 if "trip" in t else 5 if "address" in t else 9] = 1.0
+            return v
+        def embed_documents(self, ts): return [self._v(t) for t in ts]
+        def embed_query(self, q): return self._v(q)
+    emb = _Emb()
+
+    # A is near the query ("trip"); B is far ("address"); BOTH mention "Acme".
+    seed = F()
+    for rid, content in [("A", "trip planning notes"), ("B", "acme office address")]:
+        seed.add(MemoryRecord(id=rid, owner_agent_name="Jarvis", memory_type="semantic",
+                              subject_scope="user", content=content, normalized_content=content,
+                              status="active", authority="user_confirmed", confidence=0.9,
+                              current_version=1, created_at=1.0))
+        fts_index.fts_upsert(seed, doc_kind=fts_index.KIND_MEMORY, doc_id=rid,
+                             owner_agent_name="Jarvis", content=content)
+        store.upsert_memory(record_id=rid, owner="Jarvis", memory_type="semantic",
+                            subject_scope="user", content=content, embedding=emb._v(content),
+                            authority="user_confirmed", confidence=0.9, created_at=1.0, valid_from=1.0)
+        store.link_entity(record_id=rid, entity_id="ent:acme", name="Acme",
+                          etype="org", normalized="acme")     # shared entity → MENTIONS
+    seed.commit(); seed.close()
+
+    import core.database as cd
+    import services.indexing.ladybug_store as lbs
+    import services.memory.settings as ms
+    import services.retrieval.orchestrator as orch_mod
+    monkeypatch.setattr(cd, "get_db_session", lambda: F())
+    monkeypatch.setattr(orch_mod, "get_shared_embedding_provider", lambda *a, **k: emb)
+    monkeypatch.setattr(lbs, "get_ladybug_store", lambda path: store)
+    monkeypatch.setattr(ms, "get_memory_settings", lambda: _cfg())
+
+    import time
+
+    from services.retrieval.contracts import RetrievalRequest
+    from services.retrieval.orchestrator import RetrievalOrchestrator
+
+    # 1. on-topic: vector hits A; B is pulled via shared-entity MENTIONS (Lane C).
+    res = await RetrievalOrchestrator(F(), _cfg()).retrieve(
+        RetrievalRequest(owner_agent_name="Jarvis", query="plan a trip"),
+        now=time.time(), agent_requested=True)
+    ids = {e.record_id for e in res.evidence}
+    assert "A" in ids                      # direct vector hit
+    assert "B" in ids                      # GraphRAG co-occurrence (vector-far, shared entity)
+
+    # 2. off-topic: vector-far from everything → relevance gate → nothing injected.
+    _CACHE.clear()
+    res2 = await RetrievalOrchestrator(F(), _cfg()).retrieve(
+        RetrievalRequest(owner_agent_name="Jarvis", query="quantum chromodynamics lecture"),
+        now=time.time(), agent_requested=True)
+    assert res2.evidence == []
+    store.close()
