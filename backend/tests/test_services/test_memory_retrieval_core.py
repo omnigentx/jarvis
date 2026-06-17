@@ -192,6 +192,37 @@ def test_index_revision_bumps_on_projection(db):
     assert orch._index_revision() != r1          # a later projection bumps again
 
 
+async def test_offtopic_gate_drops_fts_when_dense_returns_nothing(db):
+    # Relevance gate ("retrieve-or-not"): with the dense lane HEALTHY but
+    # returning nothing within the similarity threshold, the query is off-topic,
+    # so the FTS lane's hits are incidental keyword matches — drop them so an
+    # unrelated turn injects no memory. When dense is DOWN (not just empty), keep
+    # FTS-only (degraded) so keyword / exact-identifier recall still works.
+    from services.retrieval.orchestrator import RetrievalOrchestrator
+    orch = RetrievalOrchestrator(db, _orch_settings())
+    budget = build_budget("balanced", evidence_token_budget=2500)
+    req = RetrievalRequest(owner_agent_name="J", query="capital of france")
+
+    class _FtsHit:
+        async def search(self, request, *, limit):
+            return [_ev("spurious", bm25=1)]               # FTS matched a stray keyword
+
+    class _DenseEmpty:
+        def is_available(self): return True
+        async def search(self, request, *, limit): return []   # nothing within threshold
+
+    orch._fts, orch._dense = _FtsHit(), _DenseEmpty()
+    fused, dense_failed = await orch._fast_round(req, budget)
+    assert fused == [] and dense_failed is False           # off-topic → nothing injected
+
+    class _DenseDown:
+        def is_available(self): return False
+        async def search(self, request, *, limit): return []
+    orch._dense = _DenseDown()
+    fused2, _ = await orch._fast_round(req, budget)
+    assert len(fused2) == 1                                 # FTS-only kept when dense is down
+
+
 def test_dense_unpopulated_flags_empty_graph_only(db):
     # A''-fix: dense available but graph empty AND contributed nothing → degraded
     # ("unpopulated"), but NOT when dense contributed or the graph has nodes.

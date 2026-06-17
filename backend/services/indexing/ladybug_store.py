@@ -233,7 +233,8 @@ class LadybugStore:
 
     # ---- reads (owner-scoped) -------------------------------------------
     def vector_search(self, *, owner: str, query_embedding: list[float], limit: int = 5,
-                      oversample: int = 5, max_k: int = 4000) -> list[VectorHit]:
+                      oversample: int = 5, max_k: int = 4000,
+                      max_distance: float | None = None) -> list[VectorHit]:
         """k-NN over Memory.emb, filtered to ``owner`` and active status.
 
         QUERY_VECTOR_INDEX returns the GLOBAL top-K; we over-fetch then filter by
@@ -268,6 +269,12 @@ class LadybugStore:
                 if k >= total or k >= max_k:
                     break                              # index exhausted / capped
                 k = min(k * 4, max_k)
+            # Relevance gate: drop hits beyond the cosine-distance threshold —
+            # AFTER the grow loop (not inside it) so an off-topic query, whose
+            # nearest are all too far, returns [] instead of growing k to max_k
+            # hunting for matches that don't exist.
+            if max_distance is not None:
+                hits = [h for h in hits if h.distance <= max_distance]
             return hits
 
     def linked_memories(self, *, owner: str, record_ids: list[str], limit: int = 5) -> list[VectorHit]:

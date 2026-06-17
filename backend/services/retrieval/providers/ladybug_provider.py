@@ -21,9 +21,13 @@ from services.retrieval.contracts import (
 
 
 class LadybugProvider(RetrievalProvider):
-    def __init__(self, store: LadybugStore, embedding: EmbeddingProvider):
+    def __init__(self, store: LadybugStore, embedding: EmbeddingProvider,
+                 max_distance: float | None = None):
         self.store = store
         self.embedding = embedding
+        # Relevance gate: drop dense hits whose cosine distance exceeds this
+        # (= 1 - recall_min_similarity). None disables the gate.
+        self.max_distance = max_distance
 
     def is_available(self) -> bool:
         return self.store is not None and self.embedding.is_available()
@@ -33,7 +37,8 @@ class LadybugProvider(RetrievalProvider):
             return []
         qvec = self.embedding.embed_query(request.query)
         hits = self.store.vector_search(
-            owner=request.owner_agent_name, query_embedding=qvec, limit=limit)
+            owner=request.owner_agent_name, query_embedding=qvec, limit=limit,
+            max_distance=self.max_distance)
         # One graph hop: memories sharing an entity with the vector hits. The
         # GraphRAG multi-hop signal — pulls in related context a pure-vector
         # search misses (mem0's +23.1 multi-hop class).

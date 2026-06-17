@@ -64,6 +64,24 @@ def test_patch_round_trip_and_coercion(fake_cfg):
     assert fake_cfg.store[("memory", "pinned_token_budget")][0] == "800"
 
 
+def test_recall_gate_and_hops_round_trip_and_validation(fake_cfg):
+    ms.update_memory_settings({"recall_min_similarity": 0.5, "graph_max_hops": 2})
+    s = ms.get_memory_settings()
+    assert s.recall_min_similarity == 0.5 and s.graph_max_hops == 2
+    assert fake_cfg.store[("memory", "recall_min_similarity")][0] == "0.5"   # float coercion
+    # defaults
+    fake_cfg.store.clear()
+    d = ms.get_memory_settings()
+    assert d.recall_min_similarity == 0.44 and d.graph_max_hops == 1
+    # range validation
+    with pytest.raises(ValueError, match="recall_min_similarity"):
+        ms.update_memory_settings({"recall_min_similarity": 1.5})
+    with pytest.raises(ValueError, match="graph_max_hops"):
+        ms.update_memory_settings({"graph_max_hops": 0})
+    with pytest.raises(ValueError, match="graph_max_hops"):
+        ms.update_memory_settings({"graph_max_hops": 5})
+
+
 def test_invalid_mode_rejected(fake_cfg):
     with pytest.raises(ValueError, match="mode must be"):
         ms.update_memory_settings({"mode": "turbo"})

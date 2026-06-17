@@ -44,7 +44,11 @@
       "curatorApiKeyUnset": "Not set. Use this together with a cheaper router base URL.",
       "apiKeyPlaceholder": "(hidden)",
       "keyStored": "stored · hidden",
-      "keyNotSet": "not set"
+      "keyNotSet": "not set",
+      "recallMinSim": "Relevance gate (min similarity)",
+      "recallMinSimHint": "Dense hits below this are dropped → an off-topic turn recalls nothing (0–1, default 0.44).",
+      "graphMaxHops": "GraphRAG depth (hops)",
+      "graphMaxHopsHint": "How far to traverse the relation graph. 1 = precise for the star graph; 2 risks noise (1–3, default 1)."
     }
   },
   "memory": {

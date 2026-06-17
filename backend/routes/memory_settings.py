@@ -40,6 +40,8 @@ class MemorySettingsPatch(BaseModel):
     qdrant_url: str | None = None
     retention_episodic_days: int | None = None
     retention_retrieval_runs_days: int | None = None
+    recall_min_similarity: float | None = None
+    graph_max_hops: int | None = None
     trigger_lexicon_overrides: dict | None = None
     quality_gate_thresholds: dict | None = None
 

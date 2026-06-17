@@ -60,7 +60,11 @@ class RetrievalOrchestrator:
             except Exception as exc:  # noqa: BLE001 — degrade to FTS-only, never break retrieval
                 logger.warning("[MEMORY] LadybugDB unavailable, FTS-only: %s", exc)
                 store = None
-            self._dense = LadybugProvider(store, emb)
+            # Relevance gate: cosine distance = 1 - similarity (LadybugDB cosine
+            # metric, measured 2026-06-17). An off-topic query whose nearest
+            # memory is beyond this distance contributes nothing → no injection.
+            min_sim = getattr(settings, "recall_min_similarity", 0.44)
+            self._dense = LadybugProvider(store, emb, max_distance=1.0 - float(min_sim))
         else:
             self._dense = QdrantProvider(get_qdrant_indexer(settings.qdrant_url), emb)
 
@@ -134,6 +138,15 @@ class RetrievalOrchestrator:
                 logger.warning("[MEMORY] provider error: %s", r)
                 if dense_on and i == 1:
                     dense_failed = True
+        # Relevance gate (agentic "retrieve-or-not"): the dense lane is the best
+        # semantic judge — when it's healthy yet returns NOTHING within the
+        # similarity threshold, the query is off-topic, so the FTS lane's hits are
+        # just incidental keyword matches (function words like "gì"/"là" hitting a
+        # memory). Drop them → no memory is injected for an unrelated turn. Only
+        # when dense is genuinely DOWN do we fall back to FTS-only (degraded), which
+        # also preserves exact-identifier recall.
+        if dense_on and not dense_failed and isinstance(results[1], list) and not results[1]:
+            return [], dense_failed
         fused = fusion.rrf_fuse(lists)
         return fused[: budget.max_fused_candidates], dense_failed
 

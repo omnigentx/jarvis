@@ -44,7 +44,11 @@
       "curatorApiKeyUnset": "Chưa đặt. Dùng cùng với base URL của một router rẻ hơn.",
       "apiKeyPlaceholder": "(đã ẩn)",
       "keyStored": "đã lưu · ẩn",
-      "keyNotSet": "chưa đặt"
+      "keyNotSet": "chưa đặt",
+      "recallMinSim": "Ngưỡng liên quan (similarity tối thiểu)",
+      "recallMinSimHint": "Dense hit dưới ngưỡng này bị bỏ → query lạc đề không recall gì (0–1, mặc định 0.44).",
+      "graphMaxHops": "Độ sâu GraphRAG (hop)",
+      "graphMaxHopsHint": "Số bậc đi trong đồ thị quan hệ. 1 = chính xác cho graph hình sao; 2 dễ nhiễu (1–3, mặc định 1)."
     }
   },
   "memory": {

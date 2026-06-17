@@ -115,6 +115,24 @@ def test_graph_dump_empty_owner(store):
     assert store.graph_dump(owner="Nobody") == {"nodes": [], "edges": []}
 
 
+def test_vector_search_relevance_gate(store):
+    # cosine distance = 1 - similarity (LadybugDB): identical→0, orthogonal→1.
+    store.upsert_memory(record_id="near", owner="J", memory_type="semantic",
+                        subject_scope="user", content="near", embedding=_vec(0),
+                        authority="user_confirmed", confidence=0.9, created_at=1.0, valid_from=1.0)
+    store.upsert_memory(record_id="far", owner="J", memory_type="semantic",
+                        subject_scope="user", content="far", embedding=_vec(50),
+                        authority="user_confirmed", confidence=0.9, created_at=1.0, valid_from=1.0)
+    # query == near's vector: near dist 0, far dist 1.0
+    q = _vec(0)
+    assert {h.record_id for h in store.vector_search(owner="J", query_embedding=q, limit=5)} == {"near", "far"}
+    # gate at 0.5 drops the orthogonal 'far' (1.0 > 0.5), keeps 'near' (0.0)
+    gated = store.vector_search(owner="J", query_embedding=q, limit=5, max_distance=0.5)
+    assert {h.record_id for h in gated} == {"near"}
+    # off-topic query (orthogonal to BOTH) → nearest are all far → [] (no spin to max_k)
+    assert store.vector_search(owner="J", query_embedding=_vec(99), limit=5, max_distance=0.5) == []
+
+
 def test_indexer_projects_relations_to_graph(store):
     # The worker adapter writes a memory's relations into the KG on (re)index.
     idx = LadybugIndexer(store)

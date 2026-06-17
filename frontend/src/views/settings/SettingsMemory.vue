@@ -36,6 +36,8 @@ const NUMBER_FIELDS = [
   { key: 'evidence_token_budget', labelKey: 'settings.memory.evidenceBudget', min: 0, max: 100000, step: 100 },
   { key: 'retention_episodic_days', labelKey: 'settings.memory.retentionEpisodic', min: 1, max: 3650, step: 1 },
   { key: 'retention_retrieval_runs_days', labelKey: 'settings.memory.retentionRuns', min: 1, max: 365, step: 1 },
+  { key: 'recall_min_similarity', labelKey: 'settings.memory.recallMinSim', min: 0, max: 1, step: 0.01 },
+  { key: 'graph_max_hops', labelKey: 'settings.memory.graphMaxHops', min: 1, max: 3, step: 1 },
 ]
 
 // Curator provider is a known choice (mirrors the LLM Provider screen), not
@@ -197,6 +199,16 @@ onMounted(load)
       <div class="row">
         <div class="row-info"><h3>{{ t(NUMBER_FIELDS[3].labelKey) }}</h3></div>
         <input v-model="draft.retention_retrieval_runs_days" class="num-input" type="number" min="1" max="365" step="1" />
+      </div>
+      <div class="row">
+        <div class="row-info"><h3>{{ t(NUMBER_FIELDS[4].labelKey) }}</h3>
+          <p class="hint">{{ t('settings.memory.recallMinSimHint') }}</p></div>
+        <input v-model="draft.recall_min_similarity" class="num-input" type="number" min="0" max="1" step="0.01" />
+      </div>
+      <div class="row">
+        <div class="row-info"><h3>{{ t(NUMBER_FIELDS[5].labelKey) }}</h3>
+          <p class="hint">{{ t('settings.memory.graphMaxHopsHint') }}</p></div>
+        <input v-model="draft.graph_max_hops" class="num-input" type="number" min="1" max="3" step="1" />
       </div>
 
       <!-- Curator / embedding / Qdrant — labelled fields, like the LLM Provider screen -->

@@ -48,6 +48,16 @@ class MemorySettings:
     # Retention (days)
     retention_episodic_days: int = 90
     retention_retrieval_runs_days: int = 30
+    # Recall relevance gate: drop a dense hit whose cosine similarity to the
+    # query is below this (distance = 1 - similarity). Calibrated 2026-06-17 on
+    # real BGE-M3 distances: on-topic queries match ≤0.53 distance, off-topic
+    # ≥0.59 — so 0.44 similarity (≤0.56 distance) keeps on-topic, drops off-topic
+    # (→ no memory injected for an unrelated turn).
+    recall_min_similarity: float = 0.44
+    # GraphRAG traversal depth for RELATES expansion. 1 is the sweet spot for the
+    # star-shaped personal graph (the user hub is a super-node — 2 hops through it
+    # pulls the whole profile = noise). Bump to 2 only with hop-decay.
+    graph_max_hops: int = 1
     # Tuning overrides (JSON)
     trigger_lexicon_overrides: dict = field(default_factory=dict)
     quality_gate_thresholds: dict = field(default_factory=dict)
@@ -72,6 +82,8 @@ _SCHEMA: dict[str, tuple[str, Any]] = {
     "qdrant_url": ("str", "http://localhost:6333"),
     "retention_episodic_days": ("int", 90),
     "retention_retrieval_runs_days": ("int", 30),
+    "recall_min_similarity": ("float", 0.44),
+    "graph_max_hops": ("int", 1),
     "trigger_lexicon_overrides": ("json", {}),
     "quality_gate_thresholds": ("json", {}),
 }
@@ -87,6 +99,11 @@ def _coerce_read(kind: str, raw: str | None, default: Any) -> Any:
             return int(raw)
         except ValueError:
             return default
+    if kind == "float":
+        try:
+            return float(raw)
+        except ValueError:
+            return default
     if kind == "json":
         try:
             return json.loads(raw)
@@ -100,6 +117,8 @@ def _coerce_write(kind: str, value: Any) -> str:
         return "true" if value else "false"
     if kind == "int":
         return str(int(value))
+    if kind == "float":
+        return str(float(value))
     if kind == "json":
         return json.dumps(value, ensure_ascii=False)
     return str(value)
@@ -130,6 +149,14 @@ def validate_settings_updates(updates: dict[str, Any]) -> list[str]:
               "retention_episodic_days", "retention_retrieval_runs_days"):
         if k in updates and (not isinstance(updates[k], int) or updates[k] < 0):
             errors.append(f"{k} must be a non-negative integer")
+    if "recall_min_similarity" in updates:
+        v = updates["recall_min_similarity"]
+        if not isinstance(v, (int, float)) or not (0.0 <= float(v) <= 1.0):
+            errors.append("recall_min_similarity must be a number in [0, 1]")
+    if "graph_max_hops" in updates:
+        v = updates["graph_max_hops"]
+        if not isinstance(v, int) or isinstance(v, bool) or not (1 <= v <= 3):
+            errors.append("graph_max_hops must be an integer in [1, 3]")
     unknown = set(updates) - set(_SCHEMA) - {_CURATOR_API_KEY}
     if unknown:
         errors.append(f"unknown settings: {sorted(unknown)}")

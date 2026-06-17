@@ -41,8 +41,16 @@ def fts_delete(db: Session, *, doc_kind: str, doc_id: str) -> None:
 def _safe_match_expr(query: str) -> str | None:
     """Build a safe FTS5 MATCH expression from arbitrary user text. Raw text
     can contain FTS5 operators that raise a syntax error; we extract word
-    tokens and OR them as quoted phrases (recall-friendly, never crashes)."""
-    tokens = re.findall(r"\w+", query, flags=re.UNICODE)
+    tokens and OR them as quoted phrases (recall-friendly, never crashes).
+
+    Drop pure-number and single-character tokens: in an OR-match they fire on
+    incidental digits/letters in memories (query "2 cộng 2" → token "2" →
+    matches "...2km...") and inject off-topic hits. They carry no retrieval
+    signal here; the dense lane carries semantic relevance. Language-agnostic
+    (no stopword list). If nothing meaningful remains, FTS returns nothing and
+    the dense lane decides."""
+    tokens = [t for t in re.findall(r"\w+", query, flags=re.UNICODE)
+              if len(t) > 1 and not t.isdigit()]
     if not tokens:
         return None
     return " OR ".join(f'"{t}"' for t in tokens)
