@@ -11,10 +11,10 @@ from services.memory import knowledge_graph as kg
 
 
 def test_parse_triples_tolerant():
-    raw = '[{"s":"Người dùng","p":"thích","o":"phở"},{"s":"Người dùng","p":"làm việc tại","o":"Techcombank"}]'
+    raw = '[{"s":"user","p":"likes","o":"pho"},{"s":"user","p":"works at","o":"Acme"}]'
     assert kg.parse_triples(raw) == [
-        {"s": "Người dùng", "p": "thích", "o": "phở"},
-        {"s": "Người dùng", "p": "làm việc tại", "o": "Techcombank"}]
+        {"s": "user", "p": "likes", "o": "pho"},
+        {"s": "user", "p": "works at", "o": "Acme"}]
     assert kg.parse_triples("```json\n[{\"s\":\"a\",\"p\":\"b\",\"o\":\"c\"}]\n```") == [
         {"s": "a", "p": "b", "o": "c"}]
     assert kg.parse_triples("not json") == []
@@ -30,9 +30,9 @@ def _fixed_fn(payload):
 @pytest.mark.asyncio
 async def test_extract_triples_uses_llm():
     out = await kg.extract_triples(
-        "người dùng thích ăn phở",
-        generate_fn=_fixed_fn('[{"s":"Người dùng","p":"thích","o":"phở"}]'))
-    assert out == [{"s": "Người dùng", "p": "thích", "o": "phở"}]
+        "user likes pho",
+        generate_fn=_fixed_fn('[{"s":"user","p":"likes","o":"pho"}]'))
+    assert out == [{"s": "user", "p": "likes", "o": "pho"}]
 
 
 @pytest.fixture()
@@ -54,18 +54,18 @@ def test_db(monkeypatch):
 async def test_backfill_populates_relations_and_reindexes(test_db):
     db = test_db()
     db.add(MemoryRecord(id="m1", owner_agent_name="Jarvis", memory_type="semantic",
-                        subject_scope="user", content="người dùng thích ăn phở",
-                        normalized_content="người dùng thích ăn phở", status="active",
+                        subject_scope="user", content="user likes pho",
+                        normalized_content="user likes pho", status="active",
                         authority="agent_observed", confidence=0.9, current_version=1,
                         created_at=1.0, updated_at=1.0))
     db.commit(); db.close()
 
     n = await kg.backfill_relations(
-        "Jarvis", generate_fn=_fixed_fn('[{"s":"Người dùng","p":"thích","o":"phở"}]'))
+        "Jarvis", generate_fn=_fixed_fn('[{"s":"user","p":"likes","o":"pho"}]'))
     assert n == 1
     db = test_db()
     rec = db.query(MemoryRecord).one()
-    assert json.loads(rec.relations_json) == [{"s": "Người dùng", "p": "thích", "o": "phở"}]
+    assert json.loads(rec.relations_json) == [{"s": "user", "p": "likes", "o": "pho"}]
     # a re-index intent was enqueued (force) so the worker projects RELATES.
     assert db.query(MemoryIndexOutbox).filter_by(aggregate_id="m1").count() == 1
     db.close()

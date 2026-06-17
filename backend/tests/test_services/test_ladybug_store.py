@@ -84,31 +84,31 @@ def test_graph_dump_knowledge_graph(store):
     # The graph view is a KNOWLEDGE graph: typed (subject)-[predicate]->(object)
     # edges, owner-scoped, with the user hub flagged as a 'subject' node.
     store.link_relations(record_id="m1", owner="Jarvis", triples=[
-        {"s": "Người dùng", "p": "thích", "o": "phở"},
-        {"s": "Người dùng", "p": "làm việc tại", "o": "Techcombank"},
+        {"s": "user", "p": "likes", "o": "pho"},
+        {"s": "user", "p": "works at", "o": "Acme"},
     ])
     store.link_relations(record_id="r1", owner="Riley [SA]", triples=[
-        {"s": "Riley", "p": "thích", "o": "trà"}])          # other owner — must not leak
+        {"s": "Riley", "p": "likes", "o": "tea"}])          # other owner — must not leak
     g = store.graph_dump(owner="Jarvis")
     labels = {n["label"] for n in g["nodes"]}
-    assert {"Người dùng", "phở", "Techcombank"} <= labels
-    assert "trà" not in labels                              # Riley's relation excluded
+    assert {"user", "pho", "Acme"} <= labels
+    assert "tea" not in labels                              # Riley's relation excluded
     preds = {(e["predicate"], e["target"].split(":")[-1]) for e in g["edges"]}
-    assert ("thích", "phở") in preds
-    assert ("làm việc tại", "techcombank") in preds
+    assert ("likes", "pho") in preds
+    assert ("works at", "acme") in preds
     # the user hub is a 'subject' node; leaves are 'object'.
     kinds = {n["label"]: n["kind"] for n in g["nodes"]}
-    assert kinds["Người dùng"] == "subject" and kinds["phở"] == "object"
+    assert kinds["user"] == "subject" and kinds["pho"] == "object"
 
 
 def test_link_relations_replaces_on_reproject(store):
     # Re-projecting a memory replaces exactly ITS relations (no stale edges).
     store.link_relations(record_id="m1", owner="Jarvis",
-                         triples=[{"s": "Người dùng", "p": "thích", "o": "phở"}])
+                         triples=[{"s": "user", "p": "likes", "o": "pho"}])
     store.link_relations(record_id="m1", owner="Jarvis",
-                         triples=[{"s": "Người dùng", "p": "thích", "o": "bún"}])
+                         triples=[{"s": "user", "p": "likes", "o": "noodles"}])
     labels = {n["label"] for n in store.graph_dump(owner="Jarvis")["nodes"]}
-    assert "bún" in labels and "phở" not in labels         # old triple dropped
+    assert "noodles" in labels and "pho" not in labels         # old triple dropped
 
 
 def test_graph_dump_empty_owner(store):
@@ -140,12 +140,12 @@ def test_indexer_projects_relations_to_graph(store):
         "dense": _vec(1),
         "payload": {"record_id": "m1", "owner_agent_name": "Jarvis",
                     "memory_type": "semantic", "subject_scope": "user",
-                    "excerpt": "người dùng thích phở", "created_at": 1.0,
-                    "relations": [{"s": "Người dùng", "p": "thích", "o": "phở"}]},
+                    "excerpt": "user likes pho", "created_at": 1.0,
+                    "relations": [{"s": "user", "p": "likes", "o": "pho"}]},
     }])
     g = store.graph_dump(owner="Jarvis")
-    assert "phở" in {n["label"] for n in g["nodes"]}
-    assert any(e["predicate"] == "thích" for e in g["edges"])
+    assert "pho" in {n["label"] for n in g["nodes"]}
+    assert any(e["predicate"] == "likes" for e in g["edges"])
     # deleting the memory removes its RELATES triples too.
     store.delete_memory("m1")
     assert store.graph_dump(owner="Jarvis") == {"nodes": [], "edges": []}
