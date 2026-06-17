@@ -277,14 +277,31 @@ class LadybugStore:
                 hits = [h for h in hits if h.distance <= max_distance]
             return hits
 
-    def linked_memories(self, *, owner: str, record_ids: list[str], limit: int = 5) -> list[VectorHit]:
-        """Entity-linking boost: memories that share an entity with the given
-        seed memories (one graph hop), owner-scoped. The multi-hop signal."""
+    def linked_memories(self, *, owner: str, record_ids: list[str], limit: int = 5,
+                        max_hops: int = 1) -> list[VectorHit]:
+        """Entity-linking boost: memories reachable from the seed memories through
+        shared entities, owner-scoped — the GraphRAG co-occurrence signal.
+
+        ``max_hops`` is the number of memory→memory steps through a shared entity:
+        hop 1 = "shares an entity with a vector hit" (seed-[MENTIONS]->e<-[MENTIONS]-m);
+        hop 2 also reaches a memory that shares an entity with THOSE, and so on.
+        The Memory↔Entity graph is bipartite, so a memory→memory walk is always an
+        even number of MENTIONS edges → ``max_hops`` memory steps = up to
+        ``2*max_hops`` undirected edges; the ``(m:Memory)`` endpoint label drops the
+        odd-length paths that land on an entity. Hop 1 keeps the explicit two-edge
+        query (the hot path, no recursion); >1 uses a bounded recursive pattern."""
         if not record_ids:
             return []
+        hops = max(1, int(max_hops))
+        if hops == 1:
+            pattern = ("MATCH (seed:Memory)-[:MENTIONS]->(e:Entity)<-[:MENTIONS]-(m:Memory) ")
+        else:
+            # Bounded recursive walk over the bipartite MENTIONS graph; even lengths
+            # land back on a Memory, which the (m:Memory) label enforces.
+            pattern = (f"MATCH (seed:Memory)-[:MENTIONS*2..{2 * hops}]-(m:Memory) ")
         with self._lock:
             res = self._exec(
-                "MATCH (seed:Memory)-[:MENTIONS]->(e:Entity)<-[:MENTIONS]-(m:Memory) "
+                pattern +
                 "WHERE seed.id IN $ids AND m.owner = $owner AND m.status = 'active' "
                 "AND NOT m.id IN $ids "
                 "RETURN DISTINCT m.id, m.owner, m.memory_type, m.content, "

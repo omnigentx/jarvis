@@ -22,12 +22,15 @@ from services.retrieval.contracts import (
 
 class LadybugProvider(RetrievalProvider):
     def __init__(self, store: LadybugStore, embedding: EmbeddingProvider,
-                 max_distance: float | None = None):
+                 max_distance: float | None = None, max_hops: int = 1):
         self.store = store
         self.embedding = embedding
         # Relevance gate: drop dense hits whose cosine distance exceeds this
         # (= 1 - recall_min_similarity). None disables the gate.
         self.max_distance = max_distance
+        # GraphRAG expansion depth (memory→memory steps through shared entities);
+        # user-configurable via settings.graph_max_hops.
+        self.max_hops = max_hops
 
     def is_available(self) -> bool:
         return self.store is not None and self.embedding.is_available()
@@ -44,7 +47,7 @@ class LadybugProvider(RetrievalProvider):
         # search misses (mem0's +23.1 multi-hop class).
         linked = self.store.linked_memories(
             owner=request.owner_agent_name,
-            record_ids=[h.record_id for h in hits], limit=limit)
+            record_ids=[h.record_id for h in hits], limit=limit, max_hops=self.max_hops)
 
         evidence: list[Evidence] = []
         seen: set[str] = set()

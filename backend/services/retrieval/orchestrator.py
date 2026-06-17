@@ -64,7 +64,9 @@ class RetrievalOrchestrator:
             # metric, measured 2026-06-17). An off-topic query whose nearest
             # memory is beyond this distance contributes nothing → no injection.
             min_sim = getattr(settings, "recall_min_similarity", 0.44)
-            self._dense = LadybugProvider(store, emb, max_distance=1.0 - float(min_sim))
+            max_hops = int(getattr(settings, "graph_max_hops", 1) or 1)
+            self._dense = LadybugProvider(store, emb, max_distance=1.0 - float(min_sim),
+                                          max_hops=max_hops)
         else:
             self._dense = QdrantProvider(get_qdrant_indexer(settings.qdrant_url), emb)
 

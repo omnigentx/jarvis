@@ -207,6 +207,25 @@ def test_entity_linking_multi_hop(store):
     assert "m1" not in [h.record_id for h in linked]   # seed excluded
 
 
+def test_linked_memories_respects_max_hops(store):
+    # Chain A —shares X— B —shares Y— C. A and C share NO entity, so they are
+    # reachable only at 2 memory hops. hop=1 (default) must NOT leak C; hop=2 must.
+    for rid, vi in (("A", 0), ("B", 1), ("C", 2)):
+        store.upsert_memory(record_id=rid, owner="Jarvis", memory_type="semantic",
+                            subject_scope="user", content=rid, embedding=_vec(vi),
+                            authority="user_confirmed", confidence=0.9,
+                            created_at=1.0, valid_from=1.0)
+    store.link_entity(record_id="A", entity_id="X", name="X", etype="topic", normalized="x")
+    store.link_entity(record_id="B", entity_id="X", name="X", etype="topic", normalized="x")
+    store.link_entity(record_id="B", entity_id="Y", name="Y", etype="topic", normalized="y")
+    store.link_entity(record_id="C", entity_id="Y", name="Y", etype="topic", normalized="y")
+
+    hop1 = {h.record_id for h in store.linked_memories(owner="Jarvis", record_ids=["A"], limit=10, max_hops=1)}
+    hop2 = {h.record_id for h in store.linked_memories(owner="Jarvis", record_ids=["A"], limit=10, max_hops=2)}
+    assert hop1 == {"B"}            # one hop: only the directly-shared-entity memory
+    assert hop2 == {"B", "C"}       # two hops: C reached via B's entity Y
+
+
 def test_delete(store):
     _seed(store)
     store.delete_memory("m2")
