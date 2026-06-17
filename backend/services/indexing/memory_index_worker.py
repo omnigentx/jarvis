@@ -39,6 +39,11 @@ def _load_entities(entities_json):
 
 class MemoryIndexWorker:
     DEGRADED_DEFER_S = 60.0
+    BATCH_LIMIT = 20
+    # Idle backstop ONLY: when nothing is pending/in_progress the worker waits
+    # for a notify; this just bounds the worst case if a notify were ever lost
+    # (it isn't, single-process). NOT a poll — a long idle re-check, not 2s.
+    SAFETY_WATCHDOG_S = 300.0
 
     def __init__(self, *, qdrant_url: str = "http://localhost:6333",
                  embedding_model: str = "BAAI/bge-m3", embedding_revision: str = ""):
@@ -48,6 +53,8 @@ class MemoryIndexWorker:
         self._embedding = None
         self._qdrant = None
         self._running = False
+        self._wake: "asyncio.Event | None" = None
+        self._loop: "asyncio.AbstractEventLoop | None" = None
 
     # Lazy providers — re-instantiate Qdrant probe each batch so an outage
     # that ends is detected without a restart.
@@ -222,17 +229,56 @@ class MemoryIndexWorker:
         db.commit()
         return False
 
-    async def run_loop(self, *, interval_s: float = 2.0):
-        """Continuous low-priority drain. Started in the FastAPI lifespan when
-        memory is enabled."""
+    async def run_loop(self):
+        """EVENT-DRIVEN drain (no fixed polling). Wakes on ``ob.notify()`` — fired
+        post-commit by any transaction that enqueued an intent — and at the next
+        retry/lease deadline. The outbox stays the durable source of truth: the
+        first iteration is the startup drain, and a (theoretically) lost notify is
+        recovered by the deadline path, so nothing is ever lost.
+
+        Loop: clear the wake flag, drain a batch; if the batch was full there is
+        more backlog → drain again immediately; otherwise sleep until a notify or
+        the next deadline (whichever first)."""
         self._running = True
-        logger.info("[MEMORY] index worker loop started")
-        while self._running:
-            try:
-                await self.process_pending(now=time.time())
-            except Exception as exc:  # noqa: BLE001
-                logger.error("[MEMORY] index loop error: %s", exc, exc_info=True)
-            await asyncio.sleep(interval_s)
+        self._wake = asyncio.Event()
+        self._loop = asyncio.get_running_loop()
+        # Thread-safe wake: notify() runs in a sync commit which may not be on the
+        # event-loop thread.
+        ob.set_notifier(lambda: self._loop.call_soon_threadsafe(self._wake.set))
+        logger.info("[MEMORY] index worker started (event-driven)")
+        try:
+            while self._running:
+                self._wake.clear()                    # clear BEFORE draining → no lost-notify window
+                try:
+                    stats = await self.process_pending(now=time.time(), limit=self.BATCH_LIMIT)
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("[MEMORY] index loop error: %s", exc, exc_info=True)
+                    stats = {}
+                if sum(stats.values()) >= self.BATCH_LIMIT:
+                    continue                           # full batch → backlog → keep draining
+                try:
+                    await asyncio.wait_for(self._wake.wait(),
+                                           timeout=self._sleep_delay(now=time.time()))
+                except asyncio.TimeoutError:
+                    pass                               # deadline/watchdog → re-drain
+        finally:
+            ob.set_notifier(None)
+            logger.info("[MEMORY] index worker stopped")
+
+    def _sleep_delay(self, *, now: float) -> float:
+        """Seconds until the worker must wake absent a notify: the nearest
+        retry/lease deadline, else the idle safety watchdog."""
+        db = SessionLocal()
+        try:
+            deadline = ob.next_deadline(db, now=now)
+        finally:
+            db.close()
+        if deadline is None:
+            return self.SAFETY_WATCHDOG_S
+        return max(0.0, deadline - now)
 
     def stop(self):
         self._running = False
+        # Unblock the wait so shutdown is immediate (don't sit on the watchdog).
+        if self._loop is not None and self._wake is not None:
+            self._loop.call_soon_threadsafe(self._wake.set)

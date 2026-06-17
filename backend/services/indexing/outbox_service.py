@@ -9,13 +9,64 @@ drains pending rows; idempotency comes from the
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Callable, Optional
 
+from sqlalchemy import event, func
 from sqlalchemy.orm import Session
 
 from core.database import MemoryIndexOutbox, SessionLocal
 
 logger = logging.getLogger("memory.outbox")
+
+# ── post-commit notify (event-driven worker wake) ────────────────────────────
+# The notify is a best-effort ACCELERATOR only: the durable outbox is the source
+# of truth, so a lost notify never loses work (the worker's startup drain + the
+# retry/lease deadlines recover it). We wake AFTER a successful commit (never on
+# rollback, never pre-commit) so the worker — which drains on its own SQLite
+# connection — can't observe a not-yet-committed row.
+_notifier: Optional[Callable[[], None]] = None
+_DIRTY = "_outbox_dirty"          # session.info flag: this txn enqueued an intent
+
+
+def set_notifier(fn: Callable[[], None] | None) -> None:
+    """Register the worker's wake callback (idempotent; pass None to clear)."""
+    global _notifier
+    _notifier = fn
+
+
+def notify() -> None:
+    fn = _notifier
+    if fn is None:
+        return
+    try:
+        fn()
+    except Exception as exc:  # noqa: BLE001 — a wake must never break a commit
+        logger.warning("[MEMORY] outbox notify failed: %s", exc)
+
+
+@event.listens_for(Session, "after_commit")
+def _outbox_after_commit(session) -> None:
+    if session.info.pop(_DIRTY, False):
+        notify()
+
+
+@event.listens_for(Session, "after_rollback")
+def _outbox_after_rollback(session) -> None:
+    session.info.pop(_DIRTY, False)
+
+
+def next_deadline(db: Session, *, now: float) -> float | None:
+    """Earliest time the worker MUST wake even without a notify: the next pending
+    retry (``next_attempt_at``) or an expired-lease reclaim (``lease_expires_at``
+    of an in_progress row left by a crash). ``None`` when nothing is outstanding
+    → the worker idles until the next notify (or a safety watchdog)."""
+    pend = (db.query(func.min(MemoryIndexOutbox.next_attempt_at))
+            .filter(MemoryIndexOutbox.status == PENDING).scalar())
+    lease = (db.query(func.min(MemoryIndexOutbox.lease_expires_at))
+             .filter(MemoryIndexOutbox.status == IN_PROGRESS,
+                     MemoryIndexOutbox.lease_expires_at.isnot(None)).scalar())
+    cands = [t for t in (pend, lease) if t is not None]
+    return min(cands) if cands else None
 
 # Event types.
 EVENT_MEMORY_UPSERT = "memory_upsert"
@@ -79,6 +130,7 @@ def enqueue(
         exists.last_error = None
         exists.lease_expires_at = None
         exists.completed_at = None
+        db.info[_DIRTY] = True            # wake the worker after this txn commits
         return True
     db.add(MemoryIndexOutbox(
         event_type=event_type,
@@ -90,6 +142,7 @@ def enqueue(
         next_attempt_at=now,
         created_at=now,
     ))
+    db.info[_DIRTY] = True                # wake the worker after this txn commits
     return True
 
 

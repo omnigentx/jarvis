@@ -31,6 +31,40 @@ def test_enqueue_idempotent_on_same_revision(db):
     assert db.query(MemoryIndexOutbox).count() == 2
 
 
+def test_next_deadline_min_of_pending_retry_and_lease(db):
+    # The event-driven worker sleeps until the nearest deadline absent a notify:
+    # the next pending retry OR an expired-lease reclaim of a stuck in_progress row.
+    db.add(MemoryIndexOutbox(event_type="memory_upsert", aggregate_id="a", aggregate_revision=1,
+                             status=ob.PENDING, attempt_count=0, next_attempt_at=500.0, created_at=0.0))
+    db.add(MemoryIndexOutbox(event_type="memory_upsert", aggregate_id="b", aggregate_revision=1,
+                             status=ob.IN_PROGRESS, attempt_count=0, next_attempt_at=0.0,
+                             lease_expires_at=300.0, created_at=0.0))
+    db.commit()
+    assert ob.next_deadline(db, now=100.0) == 300.0      # lease reclaim is sooner
+    db.query(MemoryIndexOutbox).filter_by(aggregate_id="b").delete(); db.commit()
+    assert ob.next_deadline(db, now=100.0) == 500.0      # only the pending retry remains
+    db.query(MemoryIndexOutbox).delete(); db.commit()
+    assert ob.next_deadline(db, now=100.0) is None        # nothing outstanding → idle
+
+
+def test_notify_fires_after_commit_only_never_on_rollback(db):
+    fired = []
+    ob.set_notifier(lambda: fired.append(1))
+    try:
+        ob.enqueue(db, event_type=ob.EVENT_MEMORY_UPSERT, aggregate_id="x",
+                   aggregate_revision=1, now=1.0)
+        assert fired == []                  # pre-commit: NOT yet (worker mustn't see uncommitted)
+        db.commit()
+        assert fired == [1]                 # post-commit → exactly one wake
+
+        ob.enqueue(db, event_type=ob.EVENT_MEMORY_UPSERT, aggregate_id="y",
+                   aggregate_revision=1, now=1.0)
+        db.rollback()
+        assert fired == [1]                 # rolled back → no phantom wake
+    finally:
+        ob.set_notifier(None)
+
+
 def test_enqueue_force_requeues_done_row(db):
     # Regression (2026-06-16): a backend switch (Qdrant→LadybugDB) left old
     # memories whose outbox row was already ``done`` permanently unprojected,

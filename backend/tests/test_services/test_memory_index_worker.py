@@ -183,3 +183,72 @@ async def test_worker_episodic_prune_removes_dense_and_fts(Session, monkeypatch)
     assert "doc-1" in fake_qd.deleted        # dense removed (the B4 fix)
     assert not fts_index.fts_search(Session(), owner_agent_name="Jarvis", query="compactor")
     db.close()
+
+
+# ── event-driven loop (no fixed polling) ──────────────────────────────────────
+
+async def test_worker_is_event_driven_not_polling(monkeypatch):
+    """A huge sleep delay means the ONLY thing that can trigger a second drain is
+    a notify — proving the loop is event-driven, not a 2s poll."""
+    import asyncio
+    w = MemoryIndexWorker()
+    calls = []
+
+    async def fake_pp(*, now, limit):
+        calls.append(now)
+        return {"done": 0, "deferred": 0, "failed": 0}
+    monkeypatch.setattr(w, "process_pending", fake_pp)
+    monkeypatch.setattr(w, "_sleep_delay", lambda *, now: 9999.0)
+
+    task = asyncio.create_task(w.run_loop())
+    await asyncio.sleep(0.05)
+    assert len(calls) == 1                      # startup drain, then it WAITS (no poll)
+    ob.notify()                                 # post-commit wake
+    await asyncio.sleep(0.05)
+    assert len(calls) >= 2                      # woke within ms — not after 9999s
+    w.stop()
+    await asyncio.wait_for(task, timeout=1.0)
+
+
+async def test_worker_drains_backlog_continuously(monkeypatch):
+    """Full batches mean more backlog → the worker keeps draining back-to-back
+    WITHOUT waiting for the next notify."""
+    import asyncio
+    w = MemoryIndexWorker()
+    seq = [w.BATCH_LIMIT, w.BATCH_LIMIT, 0]     # two full batches, then drained
+    calls = []
+
+    async def fake_pp(*, now, limit):
+        n = seq[min(len(calls), len(seq) - 1)]
+        calls.append(n)
+        return {"done": n, "deferred": 0, "failed": 0}
+    monkeypatch.setattr(w, "process_pending", fake_pp)
+    monkeypatch.setattr(w, "_sleep_delay", lambda *, now: 9999.0)
+
+    task = asyncio.create_task(w.run_loop())
+    await asyncio.sleep(0.05)
+    assert len(calls) >= 3                       # 2 full batches drained without a wait
+    w.stop()
+    await asyncio.wait_for(task, timeout=1.0)
+
+
+async def test_worker_wakes_at_retry_deadline_when_no_notify(monkeypatch):
+    """A deferred/retry row due soon wakes the worker via the deadline path
+    (not a notify) — recovers even if a notify were ever lost."""
+    import asyncio
+    w = MemoryIndexWorker()
+    calls = []
+
+    async def fake_pp(*, now, limit):
+        calls.append(now)
+        return {"done": 0, "deferred": 0, "failed": 0}
+    monkeypatch.setattr(w, "process_pending", fake_pp)
+    # nearest deadline ~80ms out, no notify will be sent
+    import time as _t
+    monkeypatch.setattr(w, "_sleep_delay", lambda *, now: 0.08)
+
+    task = asyncio.create_task(w.run_loop())
+    await asyncio.sleep(0.25)                    # > one deadline window
+    assert len(calls) >= 2                        # re-drained at the deadline, no notify
+    w.stop()
+    await asyncio.wait_for(task, timeout=1.0)
