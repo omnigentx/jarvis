@@ -40,7 +40,9 @@ function tokenColor(name, fallback) {
 function render(data) {
   const hubColor = tokenColor('--primary', '#6c8cff')
   const objColor = '#d9a13b'
-  const edgeColor = tokenColor('--border-strong', '#5a5a6a')
+  // --text-dim contrasts on BOTH themes (dark slate on light, light grey on dark);
+  // --border-strong was too faint on the light theme's white canvas.
+  const edgeColor = tokenColor('--text-dim', '#6b7185')
   const textColor = tokenColor('--text', '#0e1019')   // resolves light/dark per theme
   const halo = tokenColor('--bg-0', '#ffffff')        // thin transparent halo, no filled box
 
@@ -71,8 +73,8 @@ function render(data) {
       { selector: 'node:selected', style: {
         'border-width': 3, 'border-color': textColor } },
       { selector: 'edge', style: {
-        width: 1.6, 'line-color': edgeColor, 'curve-style': 'bezier', opacity: 0.85,
-        'target-arrow-color': edgeColor, 'target-arrow-shape': 'triangle', 'arrow-scale': 0.9,
+        width: 1, 'line-color': edgeColor, 'curve-style': 'bezier', opacity: 0.9,
+        'target-arrow-color': edgeColor, 'target-arrow-shape': 'triangle', 'arrow-scale': 0.8,
         // predicate ON the edge — this is what makes it read as a knowledge graph.
         label: 'data(label)', 'font-size': 9, color: textColor,
         'text-rotation': 'autorotate', 'text-outline-color': halo,
