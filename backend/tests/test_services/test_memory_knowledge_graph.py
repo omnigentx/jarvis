@@ -27,6 +27,16 @@ def _fixed_fn(payload):
     return gen
 
 
+def test_entities_from_triples_excludes_user_hub():
+    triples = [{"s": "user", "p": "works at", "o": "Acme"},
+               {"s": "user", "p": "likes", "o": "pho"},
+               {"s": "Acme", "p": "located in", "o": "Hanoi"}]
+    names = {e["name"] for e in kg._entities_from_triples(triples)}
+    # objects + the non-generic subject "Acme"; the user super-node is excluded
+    # so two memories link only when they share a REAL entity.
+    assert names == {"Acme", "pho", "Hanoi"}
+
+
 @pytest.mark.asyncio
 async def test_extract_triples_uses_llm():
     out = await kg.extract_triples(
@@ -66,7 +76,10 @@ async def test_backfill_populates_relations_and_reindexes(test_db):
     db = test_db()
     rec = db.query(MemoryRecord).one()
     assert json.loads(rec.relations_json) == [{"s": "user", "p": "likes", "o": "pho"}]
-    # a re-index intent was enqueued (force) so the worker projects RELATES.
+    # entities (for MENTIONS) are derived from the triples — the object "pho",
+    # with the user subject excluded.
+    assert json.loads(rec.entities_json) == [{"name": "pho", "etype": "topic"}]
+    # a re-index intent was enqueued (force) so the worker projects RELATES + MENTIONS.
     assert db.query(MemoryIndexOutbox).filter_by(aggregate_id="m1").count() == 1
     db.close()
 

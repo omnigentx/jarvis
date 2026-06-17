@@ -57,6 +57,30 @@ def parse_triples(raw: str) -> list[dict]:
     return out
 
 
+# The user is the implicit subject of almost every personal memory — a super-node.
+# Excluding it from MENTIONS keeps co-occurrence meaningful: two memories are
+# "related" because they share a real entity (Acme, pho), not because both are
+# about the user (which would link the entire graph into one noisy cluster).
+_GENERIC_SUBJECTS = {"user", "người dùng", "nguoi dung", "the user"}
+
+
+def _entities_from_triples(triples: list[dict]) -> list[dict]:
+    """Entities a memory MENTIONS, derived from its triples: the objects + any
+    non-generic subject (the user super-node is excluded — see above)."""
+    seen: set[str] = set()
+    out: list[dict] = []
+    for t in triples or []:
+        for v in (t.get("o"), t.get("s")):
+            v = (v or "").strip()
+            if not v or v.lower() in _GENERIC_SUBJECTS:
+                continue
+            k = v.lower()
+            if k not in seen:
+                seen.add(k)
+                out.append({"name": v, "etype": "topic"})
+    return out
+
+
 async def extract_triples(content: str, *, generate_fn=None) -> list[dict]:
     """Triples for ONE memory statement (best-effort)."""
     if not (content or "").strip():
@@ -114,8 +138,13 @@ async def backfill_relations(owner: str | None = None, *, force: bool = False,
         now = time.time()
         for rec, triples in results:
             rec.relations_json = json.dumps(triples, ensure_ascii=False)
+            # Also derive the ENTITIES this memory mentions from its triples, so
+            # the worker builds MENTIONS edges → two memories sharing an entity
+            # become graph-connected (the GraphRAG co-occurrence signal that
+            # LadybugProvider.linked_memories expands at recall time).
+            rec.entities_json = json.dumps(_entities_from_triples(triples), ensure_ascii=False)
             # force re-index so the worker re-projects this memory (writing the
-            # RELATES edges) even though its outbox row is already 'done'.
+            # RELATES + MENTIONS edges) even though its outbox row is already 'done'.
             ob.enqueue(db, event_type=ob.EVENT_MEMORY_UPSERT, aggregate_id=rec.id,
                        aggregate_revision=rec.current_version, now=now, force=True)
         db.commit()
