@@ -101,6 +101,8 @@ const reject = (id) =>
   rowAction(id, () => apiFetch(`${base.value}/memory-candidates/${id}/reject`, { method: 'POST' }))
 const archive = (id) =>
   rowAction(id, () => apiFetch(`${base.value}/memories/${id}/archive`, { method: 'POST' }))
+const restore = (id) =>
+  rowAction(id, () => apiFetch(`${base.value}/memories/${id}/restore`, { method: 'POST' }))
 function remove(id) {
   if (!confirm(t('memory.confirmDelete'))) return
   return rowAction(id, () => apiFetch(`${base.value}/memories/${id}`, { method: 'DELETE' }))
@@ -251,8 +253,11 @@ onMounted(loadAll)
           <span class="content">{{ m.content }}</span>
           <span class="meta">{{ m.authority }} · {{ Math.round(m.confidence * 100) }}%</span>
         </div>
-        <div class="card-actions" v-if="statusFilter === 'active'">
-          <button class="btn ghost" :disabled="isRowBusy(m.id)" @click="archive(m.id)">{{ t('memory.archive') }}</button>
+        <div class="card-actions">
+          <button v-if="statusFilter === 'active'" class="btn ghost" :disabled="isRowBusy(m.id)"
+                  @click="archive(m.id)">{{ t('memory.archive') }}</button>
+          <button v-else class="btn ghost" :disabled="isRowBusy(m.id)"
+                  @click="restore(m.id)">{{ t('memory.restore') }}</button>
           <button class="btn danger" :disabled="isRowBusy(m.id)" @click="remove(m.id)">{{ t('memory.delete') }}</button>
         </div>
       </div>

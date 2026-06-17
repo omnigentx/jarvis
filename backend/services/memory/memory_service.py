@@ -160,6 +160,23 @@ class MemoryService:
         return self._set_status(memory_id, MemoryStatus.ARCHIVED.value, "memory_archived",
                                 owner_agent_name, changed_by, now)
 
+    def restore_memory(self, memory_id: str, *, owner_agent_name: str,
+                       now: float | None = None, changed_by: str = "user") -> MemoryRecord:
+        """Reverse of archive: bring a memory back to ACTIVE. Unlike the other
+        status changes this enqueues an UPSERT (not DELETE) so the worker
+        re-projects it into the search index + graph."""
+        now = time.time() if now is None else now
+        rec = self._owned(memory_id, owner_agent_name)
+        rec.status = MemoryStatus.ACTIVE.value
+        rec.current_version += 1
+        rec.updated_at = now
+        self._add_version(rec, rec.content, "memory_restored", changed_by, None, now)
+        ob.enqueue(self.db, event_type=ob.EVENT_MEMORY_UPSERT, aggregate_id=rec.id,
+                   aggregate_revision=rec.current_version, now=now)
+        self.db.commit()
+        _emit("memory_restored", owner_agent_name, now, {"memory_id": rec.id})
+        return rec
+
     def supersede_memory(self, memory_id: str, *, owner_agent_name: str,
                          now: float | None = None, changed_by: str = "curator") -> MemoryRecord:
         """Mark a memory superseded by a newer one (conflict resolution). The

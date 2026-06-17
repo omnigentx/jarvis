@@ -75,7 +75,8 @@
     "delete": "Delete",
     "recentRetrievals": "Recent searches",
     "confirmDelete": "Permanently delete this memory?",
-    "graph": "Memory graph"
+    "graph": "Memory graph",
+    "restore": "Restore"
   },
   "chat": {
     "memoryUsed": "memories used"

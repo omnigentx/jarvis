@@ -164,6 +164,19 @@ async def archive_memory(name: str, memory_id: str) -> dict[str, Any]:
         db.close()
 
 
+@router.post("/agents/{name}/memories/{memory_id}/restore")
+async def restore_memory(name: str, memory_id: str) -> dict[str, Any]:
+    """Un-archive: bring an archived memory back to active (re-indexed)."""
+    db = get_db_session()
+    try:
+        rec = _svc(db).restore_memory(memory_id, owner_agent_name=name)
+        return _memory_dict(rec)
+    except MemoryWriteError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    finally:
+        db.close()
+
+
 @router.post("/agents/{name}/memories/{memory_id}/rollback")
 async def rollback_memory(name: str, memory_id: str, body: RollbackBody) -> dict[str, Any]:
     db = get_db_session()

@@ -96,6 +96,19 @@ def test_archive_sets_status_and_enqueues_delete(svc, db):
     assert db.query(MemoryIndexOutbox).filter_by(event_type=ob.EVENT_MEMORY_DELETE).count() == 1
 
 
+def test_restore_reactivates_and_reindexes(svc, db):
+    # Restore is the reverse of archive: status → active AND an UPSERT (not DELETE)
+    # so the worker re-projects it into the search index + graph.
+    rec = _create(svc)
+    svc.archive_memory(rec.id, owner_agent_name="Jarvis", now=200.0)
+    svc.restore_memory(rec.id, owner_agent_name="Jarvis", now=300.0)
+    assert db.get(MemoryRecord, rec.id).status == "active"
+    # the most recent intent for this record is an UPSERT (re-index), not a delete.
+    last = (db.query(MemoryIndexOutbox).filter_by(aggregate_id=rec.id)
+            .order_by(MemoryIndexOutbox.id.desc()).first())
+    assert last.event_type == ob.EVENT_MEMORY_UPSERT
+
+
 def test_rollback_restores_old_content(svc, db):
     rec = _create(svc)
     svc.update_content(rec.id, "v2 content", owner_agent_name="Jarvis", now=200.0)
