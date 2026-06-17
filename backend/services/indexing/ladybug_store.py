@@ -411,13 +411,17 @@ class LadybugIndexer:
                 status=pl.get("status", "active"))
             # Entity linking (GraphRAG): re-link this memory's entities. upsert
             # replaced the node (edges dropped) so we (re)create them every index.
+            # Entity ids share the RELATES namespace (kg:{owner}:{norm}) so a
+            # MENTIONS entity and the SAME entity used as a triple subject/object
+            # are ONE node — the graph view and co-occurrence see a unified graph.
+            owner = pl.get("owner_agent_name", "")
             for e in (pl.get("entities") or []):
                 name = (e.get("name") or "").strip() if isinstance(e, dict) else ""
                 if not name:
                     continue
-                norm = name.lower()
+                norm = _norm(name)
                 self._store.link_entity(
-                    record_id=rid, entity_id=f"ent:{norm}", name=name,
+                    record_id=rid, entity_id=f"kg:{owner}:{norm}", name=name,
                     etype=(e.get("etype") or "topic"), normalized=norm)
             # Knowledge-graph relations: (re)write this memory's RELATES triples.
             self._store.link_relations(

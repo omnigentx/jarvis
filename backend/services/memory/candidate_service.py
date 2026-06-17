@@ -25,9 +25,17 @@ from services.memory.sensitivity import has_secret
 logger = logging.getLogger("memory.candidate")
 
 
-def _dedupe_key(owner: str, candidate_type: str, content: str) -> str:
+def _dedupe_key(owner: str, content: str, subject_scope: str = "user") -> str:
+    # Dedup ACROSS lanes: the same fact proposed by the agent's `remember` tool
+    # (candidate_type="agent_remember") and the background extractor
+    # (candidate_type="extracted") must collapse to ONE card. candidate_type is
+    # therefore NOT part of the key — only (owner, subject_scope, normalized
+    # content), mirroring the active-record unique index
+    # (owner, normalized_content, subject_scope) so candidate dedup and record
+    # dedup agree. subject_scope IS keyed: a user-fact and an agent-observation
+    # of the same text are genuinely different memories.
     norm = " ".join((content or "").split()).lower()
-    return hashlib.sha256(f"{owner}\x1f{candidate_type}\x1f{norm}".encode()).hexdigest()
+    return hashlib.sha256(f"{owner}\x1f{subject_scope}\x1f{norm}".encode()).hexdigest()
 
 
 def create_candidate(
@@ -41,7 +49,7 @@ def create_candidate(
     immediately (auto_approved)."""
     now = time.time() if now is None else now
     content = payload.get("content", "")
-    dedupe = _dedupe_key(owner_agent_name, candidate_type, content)
+    dedupe = _dedupe_key(owner_agent_name, content, payload.get("subject_scope", "user"))
 
     existing = (
         db.query(MemoryCandidate)
@@ -175,7 +183,7 @@ def _persist_from_candidate(db, cand, status, *, now, changed_by="system",
     # (Techcombank→FPT) keeps BOTH, dated. Conflicting versions are resolved at
     # READ time by recency-weighted ranking. Lossless + cheaper.
     svc = MemoryService(db, pinned_token_budget=pinned_token_budget)
-    svc.create_memory(
+    rec = svc.create_memory(
         owner_agent_name=cand.owner_agent_name, memory_type=payload["memory_type"],
         content=payload["content"], subject_scope=payload["subject_scope"],
         authority=payload["authority"], sources=sources, changed_by=changed_by,
@@ -190,6 +198,15 @@ def _persist_from_candidate(db, cand, status, *, now, changed_by="system",
     cand.resolved_at = now
     db.commit()
     _emit("memory_candidate_approved", cand)
+
+    # SINGLE-SOURCE graph projection: extract this memory's triples (→ RELATES +
+    # MENTIONS) off the hot path, for EVERY lane incl. the agent's free-text
+    # `remember`. Deterministic per-memory, not a debounced owner-wide rescan.
+    # create_memory exact-dedups (may return an existing record); only graph when
+    # triples are still missing, so re-approving a duplicate doesn't re-extract.
+    if rec is not None and not rec.relations_json:
+        from services.memory.knowledge_graph import schedule_extract_and_store
+        schedule_extract_and_store(rec.id)
 
 
 def _create_approval_row(cand: MemoryCandidate) -> None:

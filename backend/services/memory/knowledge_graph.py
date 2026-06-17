@@ -96,17 +96,68 @@ async def extract_triples(content: str, *, generate_fn=None) -> list[dict]:
     return parse_triples(raw)
 
 
+async def extract_and_store(record_id: str, *, generate_fn=None) -> bool:
+    """AUTHORITATIVE projection of a memory's graph: extract its triples and write
+    BOTH ``relations_json`` (the triples) and ``entities_json`` (entities DERIVED
+    from those triples), then force a re-index so the worker rebuilds RELATES +
+    MENTIONS. This is the single deterministic writer — it ALWAYS overwrites with
+    the triple-derived value, so even though the capture lane may seed
+    ``entities_json`` first, the final state is one well-defined source (no
+    conditional clobber → RC3 fixed). The capture seed survives only as a
+    fallback if extraction fails.
+
+    Called fire-and-forget right after a memory is persisted (every lane,
+    including the agent's free-text `remember`), so every memory enters the
+    knowledge graph deterministically — NOT via a debounced owner-wide rescan.
+    Best-effort: a missing/failed LLM leaves the memory un-graphed (retried by
+    the startup migration); never raises into the caller. Returns True if
+    triples were stored."""
+    import time
+
+    from core.database import MemoryRecord, get_db_session
+    from services.indexing import outbox_service as ob
+
+    generate_fn = generate_fn or build_extractor_generate_fn("memory:kg")
+    if generate_fn is None:
+        return False
+    db = get_db_session()
+    try:
+        rec = db.get(MemoryRecord, record_id)
+        if rec is None or rec.status != "active":
+            return False
+        triples = await extract_triples(rec.content, generate_fn=generate_fn)
+        rec.relations_json = json.dumps(triples, ensure_ascii=False)
+        rec.entities_json = json.dumps(_entities_from_triples(triples), ensure_ascii=False)
+        ob.enqueue(db, event_type=ob.EVENT_MEMORY_UPSERT, aggregate_id=rec.id,
+                   aggregate_revision=rec.current_version, now=time.time(), force=True)
+        db.commit()
+        return bool(triples)
+    except Exception as exc:  # noqa: BLE001 — best-effort graph projection
+        logger.warning("[MEMORY] KG extract_and_store(%s) failed: %s", record_id, exc)
+        return False
+    finally:
+        db.close()
+
+
+def schedule_extract_and_store(record_id: str) -> None:
+    """Fire-and-forget ``extract_and_store`` on the running loop, if any. Safe to
+    call from sync persistence code: in a request/worker context it schedules the
+    extraction off the hot path; in tests / sync migrations (no loop) it's a
+    no-op (the startup migration backfills those)."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    loop.create_task(extract_and_store(record_id))
+
+
 async def backfill_relations(owner: str | None = None, *, force: bool = False,
                              generate_fn=None, concurrency: int = 5) -> int:
-    """Extract + store triples for active memories, then re-index so the worker
-    projects RELATES edges. By default only fills memories that have no
-    ``relations_json`` yet (so it's cheap to call repeatedly / on every new
-    memory); ``force=True`` re-extracts everything. Returns the number of
-    memories (re)processed.
-
-    Concurrency-bounded LLM calls so a backfill of N memories takes ~ceil(N/k)
-    round-trips, not N sequential ones.
-    """
+    """MIGRATION / repair only (startup + manual rebuild): (re)extract triples for
+    active memories that lack them. Steady-state graphing is per-memory via
+    ``extract_and_store`` at persist time, so this is NOT on the hot path. By
+    default only fills memories with no ``relations_json`` yet; ``force=True``
+    re-extracts everything. Concurrency-bounded. Returns the count (re)processed."""
     import time
 
     from core.database import MemoryRecord, get_db_session
@@ -137,14 +188,10 @@ async def backfill_relations(owner: str | None = None, *, force: bool = False,
         results = await asyncio.gather(*[_one(r) for r in rows])
         now = time.time()
         for rec, triples in results:
+            # SAME single-source rule as extract_and_store: triples → relations_json,
+            # entities DERIVED from triples → entities_json.
             rec.relations_json = json.dumps(triples, ensure_ascii=False)
-            # Also derive the ENTITIES this memory mentions from its triples, so
-            # the worker builds MENTIONS edges → two memories sharing an entity
-            # become graph-connected (the GraphRAG co-occurrence signal that
-            # LadybugProvider.linked_memories expands at recall time).
             rec.entities_json = json.dumps(_entities_from_triples(triples), ensure_ascii=False)
-            # force re-index so the worker re-projects this memory (writing the
-            # RELATES + MENTIONS edges) even though its outbox row is already 'done'.
             ob.enqueue(db, event_type=ob.EVENT_MEMORY_UPSERT, aggregate_id=rec.id,
                        aggregate_revision=rec.current_version, now=now, force=True)
         db.commit()

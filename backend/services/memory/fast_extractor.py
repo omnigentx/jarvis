@@ -107,19 +107,42 @@ def parse_extraction(raw: str) -> list[ExtractedMemory]:
 
 
 def _known_facts(owner: str, limit: int = 60) -> list[str]:
-    """The owner's already-stored active memories (most-recent first, capped),
-    fed to the extractor so it doesn't re-propose facts we already hold. Using
-    the LLM's own judgement of "is this already known" avoids a brittle
-    embedding-similarity threshold that could either miss paraphrases or drop
+    """Facts we already hold OR have already proposed, fed to the extractor so it
+    doesn't re-propose them. Two sources, both required:
+    - active ``memory_records`` (already persisted), and
+    - open ``memory_candidates`` (PENDING/AUTO_APPROVED/APPROVED) — a fact the
+      agent's `remember` tool just proposed, or a previous extractor run in this
+      same debounce window, is NOT yet an active record, so omitting it let the
+      lanes re-propose the same fact (the duplicate-cards bug).
+    Using the LLM's own "is this already known" judgement avoids a brittle
+    embedding-similarity threshold that could miss paraphrases or drop
     genuinely-distinct facts."""
-    from core.database import MemoryRecord, get_db_session
+    import json as _json
+
+    from core.database import MemoryCandidate, MemoryRecord, get_db_session
+    from services.memory.models import CandidateStatus
     db = get_db_session()
     try:
         rows = (db.query(MemoryRecord.content)
                 .filter(MemoryRecord.owner_agent_name == owner,
                         MemoryRecord.status == "active")
                 .order_by(MemoryRecord.created_at.desc()).limit(limit).all())
-        return [r[0][:120] for r in rows if r[0]]
+        facts = [r[0][:120] for r in rows if r[0]]
+        open_cands = (db.query(MemoryCandidate.payload_json)
+                      .filter(MemoryCandidate.owner_agent_name == owner,
+                              MemoryCandidate.status.in_([
+                                  CandidateStatus.PENDING.value,
+                                  CandidateStatus.AUTO_APPROVED.value,
+                                  CandidateStatus.APPROVED.value]))
+                      .order_by(MemoryCandidate.created_at.desc()).limit(limit).all())
+        for (pj,) in open_cands:
+            try:
+                c = (_json.loads(pj) or {}).get("content", "")
+            except (ValueError, TypeError):
+                c = ""
+            if c:
+                facts.append(c[:120])
+        return facts
     except Exception as exc:  # noqa: BLE001 — best-effort; never block extraction
         logger.warning("[MEMORY] known-facts lookup failed: %s", exc)
         return []

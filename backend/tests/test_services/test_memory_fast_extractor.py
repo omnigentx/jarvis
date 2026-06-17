@@ -154,6 +154,31 @@ async def test_known_facts_injected_into_extractor_prompt(test_db):
     assert "User already likes pho" in captured["prompt"]
 
 
+async def test_known_facts_includes_pending_candidates(test_db):
+    # RC1/RC2: a fact already PROPOSED (the agent's `remember` tool or a prior
+    # extractor run, still pending approval) must also count as "known", so the
+    # extractor doesn't re-propose it as a second card before it's approved.
+    import json as _json
+
+    from core.database import MemoryCandidate
+    db = test_db()
+    db.add(MemoryCandidate(id="c1", owner_agent_name="Jarvis",
+                           candidate_type="agent_remember",
+                           payload_json=_json.dumps({"content": "user commutes at 6:50"}),
+                           source_refs_json="[]", status="pending", confidence=0.9,
+                           requires_curator=0, requires_approval=1, dedupe_key="k1",
+                           created_at=1.0))
+    db.commit(); db.close()
+    captured = {}
+
+    async def capturing_gen(prompt):
+        captured["prompt"] = prompt
+        return "[]"
+    await fx.run_fast_extraction("Jarvis", "user: morning", _CFG, generate_fn=capturing_gen)
+    assert "ALREADY KNOWN" in captured["prompt"]
+    assert "user commutes at 6:50" in captured["prompt"]
+
+
 async def test_no_known_facts_keeps_base_prompt(test_db):
     captured = {}
 

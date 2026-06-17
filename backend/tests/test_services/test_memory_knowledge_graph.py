@@ -85,6 +85,35 @@ async def test_backfill_populates_relations_and_reindexes(test_db):
 
 
 @pytest.mark.asyncio
+async def test_extract_and_store_single_writer(test_db):
+    # Per-memory graph projection (the steady-state path): one extraction writes
+    # BOTH relations_json (triples) and entities_json (DERIVED from triples) and
+    # enqueues a forced re-index. Single source, single writer — no dual-source.
+    db = test_db()
+    db.add(MemoryRecord(id="m1", owner_agent_name="Jarvis", memory_type="semantic",
+                        subject_scope="user", content="user has a son",
+                        normalized_content="user has a son", status="active",
+                        authority="agent_observed", confidence=0.9, current_version=1,
+                        created_at=1.0, updated_at=1.0))
+    db.commit(); db.close()
+
+    stored = await kg.extract_and_store(
+        "m1", generate_fn=_fixed_fn('[{"s":"user","p":"has","o":"son"}]'))
+    assert stored is True
+    db = test_db()
+    rec = db.query(MemoryRecord).one()
+    assert json.loads(rec.relations_json) == [{"s": "user", "p": "has", "o": "son"}]
+    assert json.loads(rec.entities_json) == [{"name": "son", "etype": "topic"}]
+    assert db.query(MemoryIndexOutbox).filter_by(aggregate_id="m1").count() == 1
+    db.close()
+
+
+@pytest.mark.asyncio
+async def test_extract_and_store_skips_missing(test_db):
+    assert await kg.extract_and_store("nope", generate_fn=_fixed_fn("[]")) is False
+
+
+@pytest.mark.asyncio
 async def test_backfill_skips_already_filled_unless_forced(test_db):
     db = test_db()
     db.add(MemoryRecord(id="m1", owner_agent_name="Jarvis", memory_type="semantic",

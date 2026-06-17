@@ -72,6 +72,33 @@ def test_dedupe_returns_existing(db):
     assert db.query(MemoryCandidate).count() == 1
 
 
+def test_dedupe_collapses_across_lanes(db):
+    # RC1: the same fact proposed by the agent's `remember` tool and by the
+    # background extractor must collapse to ONE card — candidate_type is NOT
+    # part of the dedupe key, only (owner, subject_scope, normalized content).
+    a = cnd.create_candidate(db, owner_agent_name="Jarvis", candidate_type="agent_remember",
+                             payload=_payload(content="user commutes at 6:50"), now=100.0,
+                             requires_approval=True)
+    b = cnd.create_candidate(db, owner_agent_name="Jarvis", candidate_type="extracted",
+                             payload=_payload(content="user commutes at 6:50"), now=200.0,
+                             requires_approval=True)
+    assert a.id == b.id
+    assert db.query(MemoryCandidate).count() == 1
+
+
+def test_dedupe_keeps_distinct_subject_scope(db):
+    # A user-fact and an agent-observation of the same text are different
+    # memories → different scope → NOT collapsed.
+    a = cnd.create_candidate(db, owner_agent_name="Jarvis", candidate_type="fact",
+                             payload=_payload(content="likes pho", subject_scope="user"),
+                             now=100.0, requires_approval=True)
+    b = cnd.create_candidate(db, owner_agent_name="Jarvis", candidate_type="fact",
+                             payload=_payload(content="likes pho", subject_scope="agent:Jarvis"),
+                             now=200.0, requires_approval=True)
+    assert a.id != b.id
+    assert db.query(MemoryCandidate).count() == 2
+
+
 def test_secret_forces_approval(db):
     c = cnd.create_candidate(db, owner_agent_name="Jarvis", candidate_type="fact",
                              payload=_payload(content="key is sk-ABCDEF0123456789ABCDEF",
