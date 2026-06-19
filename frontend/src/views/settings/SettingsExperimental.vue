@@ -14,6 +14,9 @@
  */
 import { onMounted, ref } from 'vue'
 import { apiFetch, ApiError } from '../../api'
+import { useLang } from '../../composables/useLang'
+
+const { t } = useLang()
 
 const CATEGORY = 'experimental'
 
@@ -22,11 +25,8 @@ const CATEGORY = 'experimental'
 const features = ref([
   {
     key: 'SELF_IMPROVING_ENABLED',
-    label: 'Self-improving Jarvis',
-    description:
-      'Lets Jarvis author, edit, attach, and delete skills at runtime via the skill_server MCP tools. ' +
-      'Toggle takes effect on the next tool call — no restart required. ' +
-      'Every state change writes a notification so you can review what the agent did.',
+    labelKey: 'settings.experimental.selfImprovingLabel',
+    descKey: 'settings.experimental.selfImprovingDesc',
     requiresRestart: false,
     value: false,
     saving: false,
@@ -40,14 +40,8 @@ const features = ref([
     category: 'scheduler',
     default: true,
     danger: true,
-    label: 'Require approval for agent-created schedules',
-    description:
-      'When ON (recommended), any schedule an AGENT creates that runs an agent turn ' +
-      'is held for your approval before it can fire — your defence against a ' +
-      'prompt-injected cron running unsupervised. Schedules YOU create on the ' +
-      'dashboard are never gated. ' +
-      'Turn this OFF to let agent-created schedules run immediately without approval — ' +
-      '⚠ use at your own risk.',
+    labelKey: 'settings.experimental.requireApprovalLabel',
+    descKey: 'settings.experimental.requireApprovalDesc',
     requiresRestart: false,
     value: true,
     saving: false,
@@ -109,7 +103,7 @@ function _coerceBool(v) {
 function _friendly(err) {
   if (err instanceof ApiError && err.body && typeof err.body === 'object') {
     const detail = err.body.detail
-    if (detail && typeof detail === 'object') return detail.message || 'Request failed.'
+    if (detail && typeof detail === 'object') return detail.message || t('settings.experimental.requestFailed')
     if (typeof detail === 'string') return detail
   }
   return err?.message || String(err)
@@ -121,23 +115,22 @@ onMounted(loadAll)
 <template>
   <div class="exp">
     <div class="warn-banner">
-      <strong>⚠ Experimental features.</strong>
-      These flags expose preview functionality that may change, regress, or be
-      removed without notice. Enable only if you're comfortable with that.
+      <strong>{{ t('settings.experimental.bannerTitle') }}</strong>
+      {{ t('settings.experimental.bannerBody') }}
     </div>
 
-    <p v-if="loading" class="muted">Loading…</p>
+    <p v-if="loading" class="muted">{{ t('settings.experimental.loading') }}</p>
     <p v-if="loadError" class="error">{{ loadError }}</p>
 
     <div class="feature-list">
       <div v-for="f in features" :key="f.key" class="feature-row">
         <div class="feature-info">
           <div class="feature-title-row">
-            <h3>{{ f.label }}</h3>
-            <span v-if="f.requiresRestart" class="pill">Requires Restart</span>
-            <span v-if="f.danger && !f.value" class="pill pill-danger">⚠ Approval off — at your own risk</span>
+            <h3>{{ t(f.labelKey) }}</h3>
+            <span v-if="f.requiresRestart" class="pill">{{ t('settings.experimental.requiresRestart') }}</span>
+            <span v-if="f.danger && !f.value" class="pill pill-danger">{{ t('settings.experimental.approvalOff') }}</span>
           </div>
-          <p class="feature-desc">{{ f.description }}</p>
+          <p class="feature-desc">{{ t(f.descKey) }}</p>
           <p v-if="f.error" class="error">{{ f.error }}</p>
         </div>
         <button

@@ -18,6 +18,9 @@
  */
 import { ref, computed, watch } from 'vue'
 import { useVoiceSession } from '../../composables/useVoiceSession.js'
+import { useLang } from '../../composables/useLang'
+
+const { t } = useLang()
 
 const props = defineProps({
   selectedNames: { type: Array, default: () => [] },
@@ -56,7 +59,7 @@ async function toggleMic() {
     try {
       await voice.start?.()
     } catch (e) {
-      feedback.value = `mic error: ${e?.message || String(e)}`
+      feedback.value = t('bulkInject.micError', { msg: e?.message || String(e) })
       setTimeout(() => (feedback.value = ''), 4000)
     }
   }
@@ -94,7 +97,7 @@ async function submit() {
   const t = text.value.trim()
   if (!t && !files.value.length) return
   if (!props.selectedNames.length) {
-    feedback.value = 'No agents selected'
+    feedback.value = t('bulkInject.noAgents')
     setTimeout(() => (feedback.value = ''), 3000)
     return
   }
@@ -109,10 +112,10 @@ async function submit() {
     const okCount = Array.isArray(results)
       ? results.filter(r => r?.status === 'fulfilled').length
       : props.selectedNames.length
-    feedback.value = `injected to ${okCount}/${props.selectedNames.length}`
+    feedback.value = t('bulkInject.injectedTo', { ok: okCount, total: props.selectedNames.length })
     setTimeout(() => (feedback.value = ''), 4000)
   } catch (e) {
-    feedback.value = `error: ${e?.message || String(e)}`
+    feedback.value = t('bulkInject.error', { msg: e?.message || String(e) })
     setTimeout(() => (feedback.value = ''), 5000)
   } finally {
     busy.value = false
@@ -135,11 +138,11 @@ const canSubmit = computed(
   <div class="bulk-inject" :class="{ 'mic-active': micActive }" @paste="onPaste">
     <!-- Header line: target chip + voice status -->
     <div class="bi-header">
-      <span class="bi-mono">INJECT TO</span>
-      <span class="bi-target-pill">{{ selectedNames.length }} agent{{ selectedNames.length === 1 ? '' : 's' }}</span>
+      <span class="bi-mono">{{ t('bulkInject.injectTo') }}</span>
+      <span class="bi-target-pill">{{ t('bulkInject.agentCount', { n: selectedNames.length }) }}</span>
       <span v-if="micActive" class="bi-mic-status">
         <span class="bi-mic-dot" />
-        MIC · shared /ws/voice
+        {{ t('bulkInject.micShared') }}
       </span>
       <span v-if="feedback" class="bi-feedback">{{ feedback }}</span>
     </div>
@@ -152,7 +155,7 @@ const canSubmit = computed(
         </span>
         <span class="bi-chip-name">{{ f.name }}</span>
         <span class="bi-chip-size">{{ fileSize(f) }}</span>
-        <button class="bi-chip-x" type="button" @click="removeFile(i)" aria-label="Remove file">×</button>
+        <button class="bi-chip-x" type="button" @click="removeFile(i)" :aria-label="t('bulkInject.removeFile')">×</button>
       </span>
     </div>
 
@@ -163,7 +166,7 @@ const canSubmit = computed(
       <button
         class="bi-icon-btn"
         type="button"
-        title="Attach file"
+        :title="t('bulkInject.attachFile')"
         @click="chooseFile"
       >
         <svg width="16" height="16" viewBox="0 0 16 14" fill="none">
@@ -178,7 +181,7 @@ const canSubmit = computed(
         :class="{ active: micActive }"
         type="button"
         :aria-pressed="micActive"
-        :title="micActive ? 'Stop voice input' : 'Voice input (shared with Chat)'"
+        :title="micActive ? t('bulkInject.stopVoice') : t('bulkInject.voiceInput')"
         @click="toggleMic"
       >
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -192,7 +195,7 @@ const canSubmit = computed(
         v-model="text"
         class="bi-textarea"
         rows="1"
-        placeholder="Type a prompt · paste an image (⌘V) · attach a file · press the mic — broadcasts to all selected"
+        :placeholder="t('bulkInject.textareaPlaceholder')"
         :disabled="busy"
         @keydown.enter.exact.prevent="submit"
       />
@@ -201,11 +204,11 @@ const canSubmit = computed(
         class="bi-send"
         type="button"
         :disabled="!canSubmit"
-        :title="`Send to ${selectedNames.length} agent(s)`"
+        :title="t('bulkInject.sendTitle', { n: selectedNames.length })"
         @click="submit"
       >
         <span v-if="busy">…</span>
-        <span v-else>Send <span class="bi-send-count">{{ selectedNames.length }}</span></span>
+        <span v-else>{{ t('common.send') }} <span class="bi-send-count">{{ selectedNames.length }}</span></span>
       </button>
     </div>
   </div>

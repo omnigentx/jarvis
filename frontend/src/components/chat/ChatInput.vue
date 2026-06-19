@@ -2,6 +2,7 @@
 import { ref, computed, nextTick, watch } from 'vue'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import { useDictationSession } from '../../composables/useDictationSession'
+import { useLang } from '../../composables/useLang'
 
 /**
  * ChatInput — restyled compose row.
@@ -23,6 +24,7 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['send', 'stop'])
+const { t } = useLang()
 const inputText = ref('')
 const inputRef = ref(null)
 const attachedFiles = ref([])
@@ -158,7 +160,7 @@ async function toggleRecording() {
     await dictation.start()
   } catch (err) {
     console.error('[ChatInput] Dictation start failed:', err)
-    alert('Mic access denied or voice session failed to start. Check Settings → Voice and browser permissions.')
+    alert(t('chat.micAccessFailed'))
   }
 }
 </script>
@@ -182,7 +184,7 @@ async function toggleRecording() {
           <span>{{ preview.name }}</span>
         </div>
         <span v-else class="preview-name">{{ preview.name }}</span>
-        <button class="preview-remove" @click="removeFile(idx)" aria-label="Remove">
+        <button class="preview-remove" @click="removeFile(idx)" :aria-label="t('chat.remove')">
           <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
             <path d="M1 1L7 7M7 1L1 7" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
           </svg>
@@ -205,7 +207,7 @@ async function toggleRecording() {
       <button
         class="icon-btn"
         :class="{ active: attachedFiles.some(f => f.type.startsWith('image/')) }"
-        title="Attach image"
+        :title="t('chat.attachImage')"
         @click="triggerFilePicker"
       >
         <svg width="16" height="16" viewBox="0 0 16 14" fill="none">
@@ -218,7 +220,7 @@ async function toggleRecording() {
       <button
         class="icon-btn"
         :class="{ recording: isRecording }"
-        :title="isRecording ? 'Stop dictation' : 'Dictate — speak to fill the text box'"
+        :title="isRecording ? t('chat.stopDictation') : t('chat.dictate')"
         data-testid="chat-mic"
         @click="toggleRecording"
       >
@@ -234,7 +236,7 @@ async function toggleRecording() {
         <textarea
           ref="inputRef"
           v-model="inputText"
-          placeholder="Type a message, paste image (⌘V), or hit mic — Shift+⏎ for new line"
+          :placeholder="t('chat.inputPlaceholder')"
           :disabled="isStreaming"
           rows="1"
           class="textarea"
@@ -250,9 +252,9 @@ async function toggleRecording() {
       <button
         v-if="isStreaming"
         class="send-btn stop-btn"
-        aria-label="Stop generation"
+        :aria-label="t('chat.stopGeneration')"
         data-testid="chat-stop"
-        title="Stop generation. Tools already called are NOT undone. Shift-click to also force-terminate running subagents."
+        :title="t('chat.stopGenerationTitle')"
         @click.exact="handleStop('soft')"
         @click.shift="handleStop('hard')"
       >
@@ -263,7 +265,7 @@ async function toggleRecording() {
       <button
         v-else
         class="send-btn"
-        aria-label="Send message"
+        :aria-label="t('chat.sendMessage')"
         data-testid="chat-send"
         @click="handleSend"
       >

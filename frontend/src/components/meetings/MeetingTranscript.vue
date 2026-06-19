@@ -2,6 +2,9 @@
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import MarkdownRenderer from '../MarkdownRenderer.vue'
 import { normalizeTs } from '../../utils/timeFormat.js'
+import { useLang } from '../../composables/useLang'
+
+const { t } = useLang()
 
 const props = defineProps({
   meeting: { type: Object, default: null },
@@ -61,10 +64,10 @@ const lastActionAgo = computed(() => {
   }
   if (!ts) return ''
   const sec = Math.max(0, nowSec.value - Math.floor(Number(ts)))
-  if (sec < 5) return 'just now'
-  if (sec < 60) return `${sec}s ago`
-  if (sec < 3600) return `${Math.floor(sec / 60)}m ${sec % 60}s ago`
-  return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m ago`
+  if (sec < 5) return t('meetings.justNow')
+  if (sec < 60) return t('meetings.agoSeconds', { s: sec })
+  if (sec < 3600) return t('meetings.agoMinutesSeconds', { m: Math.floor(sec / 60), s: sec % 60 })
+  return t('meetings.agoHoursMinutes', { h: Math.floor(sec / 3600), m: Math.floor((sec % 3600) / 60) })
 })
 
 // Bottleneck warning — flag turns that have been waiting longer than 60s.
@@ -170,10 +173,10 @@ function isLong(message) {
 
 // Connection status
 const connectionLabel = computed(() => {
-  if (props.meetingState?.ended) return 'Meeting Ended'
-  if (props.isConnecting) return 'Connecting...'
-  if (props.isConnected) return 'Live'
-  return 'Disconnected'
+  if (props.meetingState?.ended) return t('meetings.connMeetingEnded')
+  if (props.isConnecting) return t('meetings.connConnecting')
+  if (props.isConnected) return t('meetings.connLive')
+  return t('meetings.connDisconnected')
 })
 
 const connectionColor = computed(() => {
@@ -190,12 +193,12 @@ const connectionColor = computed(() => {
     <div class="transcript-header">
       <!-- Row 1: back + title + connection + actions -->
       <div class="transcript-header-row1">
-        <button class="back-btn" @click="emit('close')" title="Back to list">
+        <button class="back-btn" @click="emit('close')" :title="t('meetings.backToList')">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <path d="M19 12H5"/><polyline points="12 19 5 12 12 5"/>
           </svg>
         </button>
-        <h3 class="transcript-title" :title="meeting?.agenda">{{ meeting?.agenda || 'Meeting' }}</h3>
+        <h3 class="transcript-title" :title="meeting?.agenda">{{ meeting?.agenda || t('meetings.meetingFallback') }}</h3>
         <span class="connection-badge" :style="{ background: connectionColor + '20', color: connectionColor, borderColor: connectionColor + '40' }">
           <span class="connection-dot" :style="{ background: connectionColor }"></span>
           {{ connectionLabel }}
@@ -205,7 +208,7 @@ const connectionColor = computed(() => {
           class="header-icon-btn"
           :class="{ active: showDetails }"
           @click="showDetails = !showDetails"
-          :title="showDetails ? 'Hide details' : 'Show full details (description)'"
+          :title="showDetails ? t('meetings.hideDetails') : t('meetings.showFullDetails')"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="9"/><path d="M12 8v4"/><circle cx="12" cy="16" r="0.5" fill="currentColor"/>
@@ -215,7 +218,7 @@ const connectionColor = computed(() => {
           class="header-icon-btn"
           :class="{ active: expandAll }"
           @click="expandAll = !expandAll"
-          :title="expandAll ? 'Collapse all messages' : 'Expand all messages'"
+          :title="expandAll ? t('meetings.collapseAll') : t('meetings.expandAll')"
         >
           {{ expandAll ? '⊟' : '⊞' }}
         </button>
@@ -224,16 +227,16 @@ const connectionColor = computed(() => {
       <!-- Row 2: live meta + bottleneck indicator + participants -->
       <div class="transcript-header-row2">
         <span class="meta-pill">R{{ meetingState.current_round || meeting?.current_round || 1 }}<span v-if="meeting?.max_rounds">/{{ meeting.max_rounds }}</span></span>
-        <span class="meta-pill">{{ transcript.length }} msgs</span>
+        <span class="meta-pill">{{ t('meetings.msgsCount', { n: transcript.length }) }}</span>
         <span v-if="currentSpeaker" class="meta-pill speaking-pill" :class="{ 'pill-stalled': isStalled }">
           🎙️ {{ currentSpeaker }}
           <span v-if="lastActionAgo" class="pill-time">· {{ lastActionAgo }}</span>
         </span>
         <span v-if="meetingState.ended" class="meta-pill ended-pill">
-          ✅ ended<span v-if="meetingState.outcome"> · {{ meetingState.outcome }}</span>
+          ✅ {{ t('meetings.endedLower') }}<span v-if="meetingState.outcome"> · {{ meetingState.outcome }}</span>
         </span>
 
-        <div class="participant-strip" aria-label="Participants">
+        <div class="participant-strip" :aria-label="t('meetings.participants')">
           <div
             v-for="p in (meetingState.participants || meeting?.participants || [])"
             :key="p"
@@ -254,34 +257,33 @@ const connectionColor = computed(() => {
       <div v-if="showDetails" class="details-drawer">
         <div class="details-header">
           <span class="details-icon">📋</span>
-          <span class="details-title">Meeting details</span>
-          <button class="details-close" @click="showDetails = false" title="Close">×</button>
+          <span class="details-title">{{ t('meetings.detailsTitle') }}</span>
+          <button class="details-close" @click="showDetails = false" :title="t('meetings.close')">×</button>
         </div>
         <div class="details-body">
           <div class="details-block">
-            <div class="details-label">Agenda</div>
-            <div class="details-value">{{ meeting?.agenda || '(no agenda)' }}</div>
+            <div class="details-label">{{ t('meetings.agendaLabel') }}</div>
+            <div class="details-value">{{ meeting?.agenda || t('meetings.noAgendaParen') }}</div>
           </div>
           <div v-if="meeting?.description" class="details-block">
-            <div class="details-label">Description</div>
+            <div class="details-label">{{ t('meetings.descriptionLabel') }}</div>
             <div class="details-value details-markdown">
               <MarkdownRenderer :content="meeting.description" content-type="markdown" />
             </div>
           </div>
           <div v-else class="details-block">
-            <div class="details-label">Description</div>
+            <div class="details-label">{{ t('meetings.descriptionLabel') }}</div>
             <div class="details-value details-empty">
-              No description was provided. Tip: pass <code>description="…"</code>
-              to <code>create_meeting</code> for long-form context (links, scope,
-              deliverables) — keeps agenda short for the dashboard title.
+              {{ t('meetings.noDescriptionPrefix') }} <code>description="…"</code>
+              {{ t('meetings.noDescriptionMid') }} <code>create_meeting</code> {{ t('meetings.noDescriptionSuffix') }}
             </div>
           </div>
           <div v-if="meeting?.created_by" class="details-block">
-            <div class="details-label">Created by</div>
+            <div class="details-label">{{ t('meetings.createdByLabel') }}</div>
             <div class="details-value">{{ meeting.created_by }}</div>
           </div>
           <div v-if="meeting?.meeting_id" class="details-block">
-            <div class="details-label">Meeting ID</div>
+            <div class="details-label">{{ t('meetings.meetingIdLabel') }}</div>
             <div class="details-value details-mono">{{ meeting.meeting_id }}</div>
           </div>
         </div>
@@ -300,11 +302,11 @@ const connectionColor = computed(() => {
           <span class="dot"></span>
           <span class="dot"></span>
         </div>
-        <p>Waiting for participants to join...</p>
+        <p>{{ t('meetings.waitingParticipants') }}</p>
       </div>
 
       <div v-else-if="!transcript.length && meetingState.ended" class="transcript-empty">
-        <p>No transcript available</p>
+        <p>{{ t('meetings.noTranscript') }}</p>
       </div>
 
       <template v-else>
@@ -347,7 +349,7 @@ const connectionColor = computed(() => {
                 class="expand-btn"
                 @click="toggleExpand(entry.turn)"
               >
-                {{ expandedEntries.has(entry.turn) ? '↑ Show less' : '↓ Show more' }}
+                {{ expandedEntries.has(entry.turn) ? t('meetings.showLess') : t('meetings.showMore') }}
               </button>
             </div>
           </div>
@@ -360,16 +362,16 @@ const connectionColor = computed(() => {
       v-if="!autoScroll && transcript.length > 5"
       class="scroll-fab"
       @click="scrollToBottom"
-      title="Scroll to latest"
+      :title="t('meetings.scrollToLatest')"
     >
-      ↓ New messages
+      {{ t('meetings.newMessages') }}
     </button>
 
     <!-- Meeting outcome footer -->
     <div v-if="meetingState.ended" class="outcome-footer">
       <span class="outcome-icon">{{ meetingState.outcome === 'consensus' ? '🎯' : '🔔' }}</span>
       <span class="outcome-text">
-        Meeting ended — {{ meetingState.outcome === 'consensus' ? 'Consensus reached' : meetingState.outcome || 'Completed' }}
+        {{ t('meetings.meetingEndedDash') }} {{ meetingState.outcome === 'consensus' ? t('meetings.consensusReached') : meetingState.outcome || t('meetings.completed') }}
       </span>
     </div>
   </div>

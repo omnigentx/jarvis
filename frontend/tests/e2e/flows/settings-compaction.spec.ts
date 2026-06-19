@@ -42,7 +42,7 @@ test('loads config, save sends only changed keys, success shows', async ({
   await expect(versionsRow.locator('input')).toHaveValue('3')
 
   // Save disabled until dirty.
-  const saveBtn = page.getByRole('button', { name: /Save Changes/ })
+  const saveBtn = page.getByRole('button', { name: /Save changes/ })
   await expect(saveBtn).toBeDisabled()
 
   await ratioRow.locator('input').fill('0.8')
@@ -82,7 +82,7 @@ test('backend 422 surfaces the validation message inline', async ({ page }) => {
 
   const ratioRow = page.locator('.row', { hasText: 'Compaction threshold' })
   await ratioRow.locator('input').fill('0.2')
-  await page.getByRole('button', { name: /Save Changes/ }).click()
+  await page.getByRole('button', { name: /Save changes/ }).click()
 
   await expect(
     page.getByText('compact_at_ratio must be between 0.3 and 0.95'),

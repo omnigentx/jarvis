@@ -18,10 +18,12 @@ import { useSettingsStore } from '../../stores/settings'
 import { generateApiKey } from '../../stores/setup'
 import { useConfirm } from '../../composables/useConfirm'
 import { useAuthStore } from '../../stores/auth'
+import { useLang } from '../../composables/useLang'
 
 const store = useSettingsStore()
 const auth = useAuthStore()
 const { confirm } = useConfirm()
+const { t } = useLang()
 
 const LOG_LEVELS = ['DEBUG', 'INFO', 'WARNING', 'ERROR']
 const SUPPORTED_TIMEZONES = Intl.supportedValuesOf('timeZone')
@@ -40,8 +42,8 @@ const rotationErrors = computed(() => {
   const k = newKey.value.trim()
   const c = confirmKey.value.trim()
   if (!k && !c) return errs
-  if (k.length < MIN_LEN) errs.push(`Key must be at least ${MIN_LEN} characters.`)
-  if (k && c && k !== c) errs.push('Keys do not match.')
+  if (k.length < MIN_LEN) errs.push(t('settings.general.auth.errMinLen', { n: MIN_LEN }))
+  if (k && c && k !== c) errs.push(t('settings.general.auth.errMismatch'))
   return errs
 })
 
@@ -62,10 +64,9 @@ async function onRotate() {
   if (!canRotate.value) return
   if (
     !(await confirm({
-      title: 'Rotate master API key',
-      message:
-        'Every stored secret will be re-encrypted under the new key. This browser session seamlessly picks up the new bearer.',
-      confirmText: 'Rotate Key',
+      title: t('settings.general.auth.rotateTitle'),
+      message: t('settings.general.auth.rotateMsg'),
+      confirmText: t('settings.general.auth.rotateConfirm'),
       variant: 'warning',
     }))
   ) {
@@ -99,9 +100,7 @@ async function onRotate() {
       result = await auth.login(requestedKey)
     }
     if (!result.ok) {
-      throw new Error(
-        'Key rotated but session refresh failed — reload the page and log in with the new key.',
-      )
+      throw new Error(t('settings.general.auth.errSessionRefresh'))
     }
     // Session cookie was just minted by ``auth.login(requestedKey)``
     // above; no localStorage mirror needed.
@@ -172,7 +171,7 @@ async function saveLogLevel() {
 async function saveTimezone() {
   const tz = timezone.value.trim()
   if (!tz) {
-    systemError.value = 'Timezone cannot be empty.'
+    systemError.value = t('settings.general.system.errTzEmpty')
     return
   }
   systemSaving.value = true
@@ -192,7 +191,7 @@ async function saveTimezone() {
 async function saveSessionWindow() {
   const n = parseInt(sessionWindow.value, 10)
   if (!Number.isFinite(n) || n < 10 || n > 10000) {
-    systemError.value = 'Session window must be between 10 and 10000.'
+    systemError.value = t('settings.general.system.errSessionRange')
     return
   }
   systemSaving.value = true
@@ -235,10 +234,9 @@ async function doExport() {
     if (
       includeSecretsInExport.value &&
       !(await confirm({
-        title: 'Export with plaintext secrets',
-        message:
-          'The file will contain plaintext API keys and tokens. Only do this if the file will be stored securely.',
-        confirmText: 'Export Anyway',
+        title: t('settings.general.data.exportSecretsTitle'),
+        message: t('settings.general.data.exportSecretsMsg'),
+        confirmText: t('settings.general.data.exportSecretsConfirm'),
         variant: 'warning',
       }))
     ) {
@@ -262,7 +260,7 @@ async function doExport() {
     a.click()
     document.body.removeChild(a)
     URL.revokeObjectURL(url)
-    _flashSuccess(`Exported ${body.items.length} items → ${filename}`)
+    _flashSuccess(t('settings.general.data.exportDone', { n: body.items.length, file: filename }))
   } catch (err) {
     _flashError(store.lastMutationError || err?.message || String(err))
   } finally {
@@ -284,12 +282,10 @@ async function onImportFileChosen(ev) {
     const text = await file.text()
     const payload = JSON.parse(text)
     if (!payload || typeof payload !== 'object' || !Array.isArray(payload.items)) {
-      throw new Error('File is not a valid settings export (missing items).')
+      throw new Error(t('settings.general.data.errInvalidFile'))
     }
     if (payload.version !== 1) {
-      throw new Error(
-        `Unsupported export version: ${payload.version}. Expected 1.`,
-      )
+      throw new Error(t('settings.general.data.errVersion', { v: payload.version }))
     }
     pendingImport.value = { filename: file.name, ...payload }
   } catch (err) {
@@ -302,11 +298,15 @@ async function confirmImport() {
   if (!p) return
   const replacing = importReplace.value
   const ok = await confirm({
-    title: replacing ? 'Replace settings from file' : 'Merge settings from file',
+    title: replacing
+      ? t('settings.general.data.replaceTitle')
+      : t('settings.general.data.mergeTitle'),
     message: replacing
-      ? 'Replace mode DELETES any key in a category present in the file but missing from it.'
-      : 'Merge mode only adds or updates keys from the file. Existing keys not in the file stay untouched.',
-    confirmText: replacing ? 'Replace' : 'Merge',
+      ? t('settings.general.data.replaceMsg')
+      : t('settings.general.data.mergeMsg'),
+    confirmText: replacing
+      ? t('settings.general.data.replaceConfirm')
+      : t('settings.general.data.mergeConfirm'),
     variant: replacing ? 'danger' : 'info',
   })
   if (!ok) return
@@ -318,10 +318,10 @@ async function confirmImport() {
       replace: importReplace.value,
     })
     const skipped = (res?.skipped_secrets || []).length
-    const parts = [`applied ${res?.applied ?? 0}`]
-    if (res?.deleted) parts.push(`deleted ${res.deleted}`)
-    if (skipped) parts.push(`skipped ${skipped} secret placeholder(s)`)
-    _flashSuccess(`Import complete — ${parts.join(', ')}.`)
+    const parts = [t('settings.general.data.importApplied', { n: res?.applied ?? 0 })]
+    if (res?.deleted) parts.push(t('settings.general.data.importDeleted', { n: res.deleted }))
+    if (skipped) parts.push(t('settings.general.data.importSkipped', { n: skipped }))
+    _flashSuccess(t('settings.general.data.importDone', { parts: parts.join(', ') }))
     pendingImport.value = null
     await refreshSystem()
   } catch (err) {
@@ -338,10 +338,9 @@ function cancelImport() {
 async function doRestart() {
   if (
     !(await confirm({
-      title: 'Restart backend',
-      message:
-        'The process will exit and your container/process manager will bring it back up. API calls will fail for a few seconds.',
-      confirmText: 'Restart',
+      title: t('settings.general.data.restartTitle'),
+      message: t('settings.general.data.restartMsg'),
+      confirmText: t('settings.general.data.restartConfirm'),
       variant: 'warning',
     }))
   ) {
@@ -352,13 +351,13 @@ async function doRestart() {
   dataSuccess.value = ''
   try {
     await store.restartBackend()
-    _flashSuccess('Restart signal sent. Backend is shutting down…')
+    _flashSuccess(t('settings.general.data.restartSent'))
   } catch (err) {
     // A restart may drop the connection mid-response; don't treat a network
     // error as a hard failure.
     const msg = err?.message || String(err)
     if (/network|failed to fetch|load failed/i.test(msg)) {
-      _flashSuccess('Restart signal sent (connection dropped as expected).')
+      _flashSuccess(t('settings.general.data.restartSentDropped'))
     } else {
       _flashError(msg)
     }
@@ -425,19 +424,19 @@ onMounted(refreshSystem)
           </svg>
         </div>
         <div>
-          <h2>Authentication</h2>
-          <p>The master API key protects the entire API surface and doubles as the encryption master for stored secrets.</p>
+          <h2>{{ t('settings.general.auth.title') }}</h2>
+          <p>{{ t('settings.general.auth.desc') }}</p>
         </div>
       </header>
 
       <div class="field">
-        <label>Change API Key / Password</label>
+        <label>{{ t('settings.general.auth.changeLabel') }}</label>
         <div class="input-group">
           <input
             class="pwd-input"
             :type="revealNew ? 'text' : 'password'"
             autocomplete="new-password"
-            placeholder="Enter new master key"
+            :placeholder="t('settings.general.auth.newPlaceholder')"
             v-model="newKey"
           />
           <button type="button" class="icon-btn" @click="revealNew = !revealNew">
@@ -456,7 +455,7 @@ onMounted(refreshSystem)
           class="pwd-input"
           :type="revealNew ? 'text' : 'password'"
           autocomplete="new-password"
-          placeholder="Confirm new key"
+          :placeholder="t('settings.general.auth.confirmPlaceholder')"
           v-model="confirmKey"
           style="margin-top: 8px;"
         />
@@ -464,10 +463,10 @@ onMounted(refreshSystem)
 
       <div class="action-row">
         <button type="button" class="btn ghost" @click="generateRotation">
-          Generate
+          {{ t('settings.general.auth.generate') }}
         </button>
         <button type="button" class="btn primary" :disabled="!canRotate" @click="onRotate">
-          {{ rotating ? 'Rotating...' : 'Update Key' }}
+          {{ rotating ? t('settings.general.auth.rotating') : t('settings.general.auth.updateKey') }}
         </button>
       </div>
 
@@ -475,7 +474,7 @@ onMounted(refreshSystem)
         <div v-for="e in rotationErrors" :key="e">{{ e }}</div>
       </div>
       <div v-if="rotationError" class="error-msg">{{ rotationError }}</div>
-      <div v-if="rotationSuccess" class="success-msg">Master key rotated. New bearer token is active.</div>
+      <div v-if="rotationSuccess" class="success-msg">{{ t('settings.general.auth.rotateSuccess') }}</div>
     </section>
 
     <!-- System ─────────────────────────────────────────────── -->
@@ -495,17 +494,17 @@ onMounted(refreshSystem)
           </svg>
         </div>
         <div>
-          <h2>System Settings</h2>
-          <p>Runtime toggles that apply without a full restart (unless marked).</p>
+          <h2>{{ t('settings.general.system.title') }}</h2>
+          <p>{{ t('settings.general.system.desc') }}</p>
         </div>
       </header>
 
       <!-- Log level -->
       <div class="setting-row">
         <div class="setting-meta">
-          <label>Console Log Level</label>
-          <span class="hint pill hot">Hot Reload</span>
-          <span class="hint">Changes apply immediately without restart.</span>
+          <label>{{ t('settings.general.system.logLevel') }}</label>
+          <span class="hint pill hot">{{ t('settings.general.system.hotReload') }}</span>
+          <span class="hint">{{ t('settings.general.system.logLevelHint') }}</span>
         </div>
         <div class="setting-control">
           <select v-model="logLevel">
@@ -517,7 +516,7 @@ onMounted(refreshSystem)
             :disabled="!logDirty || systemSaving"
             @click="saveLogLevel"
           >
-            Save
+            {{ t('common.saveShort') }}
           </button>
         </div>
       </div>
@@ -525,9 +524,9 @@ onMounted(refreshSystem)
       <!-- Timezone -->
       <div class="setting-row">
         <div class="setting-meta">
-          <label>Timezone</label>
-          <span class="hint pill warn">Requires Restart</span>
-          <span class="hint">IANA timezone used by all time tools (e.g. Asia/Ho_Chi_Minh, America/New_York, Europe/London). Takes effect after backend restart.</span>
+          <label>{{ t('settings.general.system.timezone') }}</label>
+          <span class="hint pill warn">{{ t('settings.general.system.requiresRestart') }}</span>
+          <span class="hint">{{ t('settings.general.system.timezoneHint') }}</span>
         </div>
         <div class="setting-control">
           <select v-model="timezone" style="min-width: 200px;">
@@ -539,7 +538,7 @@ onMounted(refreshSystem)
             :disabled="!timezoneDirty || systemSaving"
             @click="saveTimezone"
           >
-            Save
+            {{ t('common.saveShort') }}
           </button>
         </div>
       </div>
@@ -547,9 +546,9 @@ onMounted(refreshSystem)
       <!-- Session window -->
       <div class="setting-row">
         <div class="setting-meta">
-          <label>Session History Window</label>
-          <span class="hint pill warn">Requires Restart</span>
-          <span class="hint">messages per agent session — needs backend restart to take effect.</span>
+          <label>{{ t('settings.general.system.sessionWindow') }}</label>
+          <span class="hint pill warn">{{ t('settings.general.system.requiresRestart') }}</span>
+          <span class="hint">{{ t('settings.general.system.sessionWindowHint') }}</span>
         </div>
         <div class="setting-control">
           <input
@@ -565,13 +564,13 @@ onMounted(refreshSystem)
             :disabled="!sessionDirty || systemSaving"
             @click="saveSessionWindow"
           >
-            Save
+            {{ t('common.saveShort') }}
           </button>
         </div>
       </div>
 
       <div v-if="systemError" class="error-msg">{{ systemError }}</div>
-      <div v-if="systemSuccess" class="success-msg">Saved.</div>
+      <div v-if="systemSuccess" class="success-msg">{{ t('settings.general.system.saved') }}</div>
     </section>
 
     <!-- Data management ─────────────────────────────────────── -->
@@ -585,24 +584,24 @@ onMounted(refreshSystem)
           </svg>
         </div>
         <div>
-          <h2>Data Management</h2>
-          <p>Back up, restore, audit, and restart. Exports mask secrets by default — opt in only when you need a true backup.</p>
+          <h2>{{ t('settings.general.data.title') }}</h2>
+          <p>{{ t('settings.general.data.desc') }}</p>
         </div>
       </header>
 
       <!-- Export -->
       <div class="setting-row">
         <div class="setting-meta">
-          <label>Export Configuration</label>
-          <span class="hint">Download a JSON snapshot of every stored setting. Safe to share unless you include secrets.</span>
+          <label>{{ t('settings.general.data.exportLabel') }}</label>
+          <span class="hint">{{ t('settings.general.data.exportHint') }}</span>
           <label class="checkbox-inline">
             <input type="checkbox" v-model="includeSecretsInExport" />
-            <span>Include plaintext secrets <strong>(dangerous)</strong></span>
+            <span>{{ t('settings.general.data.includeSecrets') }} <strong>{{ t('settings.general.data.dangerous') }}</strong></span>
           </label>
         </div>
         <div class="setting-control">
           <button type="button" class="btn primary small" :disabled="dataBusy" @click="doExport">
-            {{ dataBusy ? 'Working…' : 'Download JSON' }}
+            {{ dataBusy ? t('settings.general.data.working') : t('settings.general.data.downloadJson') }}
           </button>
         </div>
       </div>
@@ -610,11 +609,11 @@ onMounted(refreshSystem)
       <!-- Import -->
       <div class="setting-row">
         <div class="setting-meta">
-          <label>Import Configuration</label>
-          <span class="hint">Apply a previously exported JSON file. Merge (default) or replace per category.</span>
+          <label>{{ t('settings.general.data.importLabel') }}</label>
+          <span class="hint">{{ t('settings.general.data.importHint') }}</span>
           <label class="checkbox-inline">
             <input type="checkbox" v-model="importReplace" />
-            <span>Replace mode — delete keys missing from file</span>
+            <span>{{ t('settings.general.data.replaceMode') }}</span>
           </label>
         </div>
         <div class="setting-control">
@@ -626,7 +625,7 @@ onMounted(refreshSystem)
             @change="onImportFileChosen"
           />
           <button type="button" class="btn ghost small" :disabled="dataBusy" @click="triggerImportPick">
-            Choose file…
+            {{ t('settings.general.data.chooseFile') }}
           </button>
         </div>
       </div>
@@ -636,17 +635,18 @@ onMounted(refreshSystem)
         <div class="import-preview-head">
           <strong>{{ pendingImport.filename }}</strong>
           <span class="hint">
-            version {{ pendingImport.version }} · {{ pendingImport.items.length }} item(s) ·
-            mode: <em>{{ importReplace ? 'replace' : 'merge' }}</em>
+            {{ t('settings.general.data.previewMeta', { v: pendingImport.version, n: pendingImport.items.length }) }} ·
+            {{ t('settings.general.data.previewMode') }}
+            <em>{{ importReplace ? t('settings.general.data.modeReplace') : t('settings.general.data.modeMerge') }}</em>
             <template v-if="pendingImport.includes_secrets">
-              · <span class="warn-text">plaintext secrets</span>
+              · <span class="warn-text">{{ t('settings.general.data.plaintextSecrets') }}</span>
             </template>
           </span>
         </div>
         <div class="import-preview-actions">
-          <button type="button" class="btn ghost small" @click="cancelImport" :disabled="dataBusy">Cancel</button>
+          <button type="button" class="btn ghost small" @click="cancelImport" :disabled="dataBusy">{{ t('common.cancel') }}</button>
           <button type="button" class="btn primary small" @click="confirmImport" :disabled="dataBusy">
-            {{ dataBusy ? 'Applying…' : 'Apply Import' }}
+            {{ dataBusy ? t('settings.general.data.applying') : t('settings.general.data.applyImport') }}
           </button>
         </div>
       </div>
@@ -654,24 +654,24 @@ onMounted(refreshSystem)
       <!-- History -->
       <div class="setting-row">
         <div class="setting-meta">
-          <label>Change History</label>
-          <span class="hint">Every setting change is logged. Use this to audit when a value was modified and by what action.</span>
+          <label>{{ t('settings.general.history.title') }}</label>
+          <span class="hint">{{ t('settings.general.history.hint') }}</span>
         </div>
         <div class="setting-control">
-          <button type="button" class="btn ghost small" @click="openHistory">View History</button>
+          <button type="button" class="btn ghost small" @click="openHistory">{{ t('settings.general.history.view') }}</button>
         </div>
       </div>
 
       <!-- Restart -->
       <div class="setting-row">
         <div class="setting-meta">
-          <label>Restart Backend</label>
-          <span class="hint pill warn">Disruptive</span>
-          <span class="hint">Requests a graceful shutdown. Only works when running under a process manager (docker-compose, systemd, PM2).</span>
+          <label>{{ t('settings.general.data.restartLabel') }}</label>
+          <span class="hint pill warn">{{ t('settings.general.data.disruptive') }}</span>
+          <span class="hint">{{ t('settings.general.data.restartRowHint') }}</span>
         </div>
         <div class="setting-control">
           <button type="button" class="btn danger small" :disabled="dataBusy" @click="doRestart">
-            Restart
+            {{ t('settings.general.data.restartConfirm') }}
           </button>
         </div>
       </div>
@@ -685,8 +685,8 @@ onMounted(refreshSystem)
   <div v-if="historyOpen" class="modal-backdrop" @click.self="closeHistory">
     <div class="modal">
       <header class="modal-head">
-        <h3>Change History</h3>
-        <button type="button" class="icon-btn" @click="closeHistory" aria-label="Close">
+        <h3>{{ t('settings.general.history.title') }}</h3>
+        <button type="button" class="icon-btn" @click="closeHistory" :aria-label="t('common.close')">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="18" y1="6" x2="6" y2="18" />
             <line x1="6" y1="6" x2="18" y2="18" />
@@ -694,10 +694,10 @@ onMounted(refreshSystem)
         </button>
       </header>
       <div class="modal-filters">
-        <input type="text" placeholder="Category filter" v-model="historyFilterCategory" />
-        <input type="text" placeholder="Key filter" v-model="historyFilterKey" />
+        <input type="text" :placeholder="t('settings.general.history.categoryFilter')" v-model="historyFilterCategory" />
+        <input type="text" :placeholder="t('settings.general.history.keyFilter')" v-model="historyFilterKey" />
         <button type="button" class="btn ghost small" @click="loadHistory" :disabled="historyLoading">
-          {{ historyLoading ? 'Loading…' : 'Apply' }}
+          {{ historyLoading ? t('common.loading') : t('settings.general.history.apply') }}
         </button>
       </div>
       <div v-if="historyError" class="error-msg">{{ historyError }}</div>
@@ -705,13 +705,13 @@ onMounted(refreshSystem)
         <table v-if="historyItems.length" class="history-table">
           <thead>
             <tr>
-              <th>When</th>
-              <th>Category</th>
-              <th>Key</th>
-              <th>Action</th>
-              <th>Old</th>
-              <th>New</th>
-              <th>By</th>
+              <th>{{ t('settings.general.history.colWhen') }}</th>
+              <th>{{ t('settings.general.history.colCategory') }}</th>
+              <th>{{ t('settings.general.history.colKey') }}</th>
+              <th>{{ t('settings.general.history.colAction') }}</th>
+              <th>{{ t('settings.general.history.colOld') }}</th>
+              <th>{{ t('settings.general.history.colNew') }}</th>
+              <th>{{ t('settings.general.history.colBy') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -728,7 +728,7 @@ onMounted(refreshSystem)
             </tr>
           </tbody>
         </table>
-        <div v-else-if="!historyLoading" class="empty-state">No history entries match these filters.</div>
+        <div v-else-if="!historyLoading" class="empty-state">{{ t('settings.general.history.empty') }}</div>
       </div>
     </div>
   </div>

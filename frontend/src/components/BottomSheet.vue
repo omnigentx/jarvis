@@ -17,6 +17,9 @@
  * Emits: `update:open` so parents can use `v-model:open`.
  */
 import { watch, onBeforeUnmount } from 'vue'
+import { useLang } from '../composables/useLang'
+
+const { t } = useLang()
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -47,7 +50,7 @@ onBeforeUnmount(() => {
     <Transition name="sheet">
       <div v-if="open" class="sheet-overlay jv" @click.self="close" role="dialog" aria-modal="true">
         <div class="sheet" role="document">
-          <button v-if="dismissible" class="sheet__grab" @click="close" aria-label="Close">
+          <button v-if="dismissible" class="sheet__grab" @click="close" :aria-label="t('common.close')">
             <span class="sheet__grab-bar" />
           </button>
           <div v-if="title" class="sheet__title mono-label">{{ title }}</div>

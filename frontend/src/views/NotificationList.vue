@@ -10,7 +10,9 @@ import { useRouter } from 'vue-router'
 import { useBreakpoint } from '../composables/useBreakpoint'
 import { apiFetch, buildSSEUrl } from '../api'
 import { useSSEConnection } from '../composables/useSSEConnection.js'
+import { useLang } from '../composables/useLang'
 
+const { t } = useLang()
 const router = useRouter()
 const { isMobile } = useBreakpoint()
 
@@ -25,10 +27,10 @@ const typeFilter = ref('all')
 const unreadOnly = ref(false)
 
 const typeChips = [
-  { value: 'all',          label: 'All' },
-  { value: 'reminder',     label: 'Reminders' },
-  { value: 'agent_result', label: 'Agent' },
-  { value: 'error',        label: 'Failed' },
+  { value: 'all',          labelKey: 'notifications.chipAll' },
+  { value: 'reminder',     labelKey: 'notifications.chipReminders' },
+  { value: 'agent_result', labelKey: 'notifications.chipAgent' },
+  { value: 'error',        labelKey: 'notifications.chipFailed' },
 ]
 
 const hasMore = computed(() => offset.value + limit < total.value)
@@ -86,9 +88,9 @@ function toggleUnreadOnly() { unreadOnly.value = !unreadOnly.value; fetchNotific
 function relativeTime(ts) {
   if (!ts) return ''
   const seconds = Math.floor(Date.now() / 1000 - ts)
-  if (seconds < 60) return 'just now'
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`
+  if (seconds < 60) return t('notifications.justNow')
+  if (seconds < 3600) return t('notifications.minutesAgo', { n: Math.floor(seconds / 60) })
+  if (seconds < 86400) return t('notifications.hoursAgo', { n: Math.floor(seconds / 3600) })
   const d = new Date(ts * 1000)
   return d.toLocaleDateString([], { day: '2-digit', month: '2-digit' })
 }
@@ -141,7 +143,7 @@ onMounted(() => { fetchNotifications(true) })
             class="notif-mobile__chip"
             :class="{ 'notif-mobile__chip--active': typeFilter === chip.value }"
             @click="setTypeFilter(chip.value)"
-          >{{ chip.label }}</button>
+          >{{ t(chip.labelKey) }}</button>
         </div>
         <button
           class="notif-mobile__unread"
@@ -149,13 +151,13 @@ onMounted(() => { fetchNotifications(true) })
           @click="toggleUnreadOnly"
         >
           <span class="notif-mobile__unread-dot"></span>
-          {{ unreadCount > 0 ? unreadCount : '0' }} unread
+          {{ t('notifications.unreadCount', { n: unreadCount > 0 ? unreadCount : 0 }) }}
         </button>
       </div>
 
       <div class="notif-mobile__list">
-        <div v-if="loading" class="notif-mobile__state">Loading…</div>
-        <div v-else-if="notifications.length === 0" class="notif-mobile__state">No notifications</div>
+        <div v-if="loading" class="notif-mobile__state">{{ t('common.loadingEllipsis') }}</div>
+        <div v-else-if="notifications.length === 0" class="notif-mobile__state">{{ t('notifications.emptyShort') }}</div>
 
         <TransitionGroup v-else name="notif-list" tag="div">
           <div
@@ -176,18 +178,18 @@ onMounted(() => { fetchNotifications(true) })
                 <span class="notif-mobile__title" :class="{ 'notif-mobile__title--unread': !n.is_read }">{{ n.title }}</span>
                 <span class="notif-mobile__time">{{ relativeTime(n.created_at) }}</span>
               </div>
-              <span class="notif-mobile__preview">{{ n.preview || 'No content' }}</span>
+              <span class="notif-mobile__preview">{{ n.preview || t('notifications.noContent') }}</span>
             </div>
             <div class="notif-mobile__actions">
               <span v-if="!n.is_read" class="notif-mobile__dot"></span>
-              <button class="btn btn-icon btn-ghost notif-mobile__delete" @click.stop="deleteNotification(n.id, $event)" title="Delete">×</button>
+              <button class="btn btn-icon btn-ghost notif-mobile__delete" @click.stop="deleteNotification(n.id, $event)" :title="t('common.delete')">×</button>
             </div>
           </div>
         </TransitionGroup>
 
         <div v-if="hasMore && !loading" class="notif-mobile__load-more">
           <button class="btn btn-secondary" @click="loadMore" :disabled="loadingMore">
-            {{ loadingMore ? 'Loading…' : 'Load more' }}
+            {{ loadingMore ? t('common.loadingEllipsis') : t('notifications.loadMore') }}
           </button>
         </div>
       </div>
@@ -197,13 +199,13 @@ onMounted(() => { fetchNotifications(true) })
     <div v-else class="notif-desktop">
       <!-- Filter rail -->
       <aside class="notif-desktop__rail">
-        <div class="mono-label" style="padding: 4px 10px 10px;">FILTERS</div>
+        <div class="mono-label" style="padding: 4px 10px 10px;">{{ t('notifications.filters') }}</div>
         <button
           class="notif-desktop__filter"
           :class="{ 'notif-desktop__filter--active': !unreadOnly && typeFilter === 'all' }"
           @click="unreadOnly = false; typeFilter = 'all'; fetchNotifications(true)"
         >
-          <span>All</span>
+          <span>{{ t('notifications.chipAll') }}</span>
           <span class="notif-desktop__filter-count">{{ total }}</span>
         </button>
         <button
@@ -211,7 +213,7 @@ onMounted(() => { fetchNotifications(true) })
           :class="{ 'notif-desktop__filter--active': unreadOnly }"
           @click="unreadOnly = true; fetchNotifications(true)"
         >
-          <span><span class="notif-desktop__filter-dot" style="background: var(--primary);"></span> Unread</span>
+          <span><span class="notif-desktop__filter-dot" style="background: var(--primary);"></span> {{ t('notifications.unread') }}</span>
           <span class="notif-desktop__filter-count">{{ unreadCount }}</span>
         </button>
         <button
@@ -219,11 +221,11 @@ onMounted(() => { fetchNotifications(true) })
           :class="{ 'notif-desktop__filter--active': typeFilter === 'error' }"
           @click="typeFilter = 'error'; fetchNotifications(true)"
         >
-          <span><span class="notif-desktop__filter-dot" style="background: var(--danger);"></span> Errors</span>
+          <span><span class="notif-desktop__filter-dot" style="background: var(--danger);"></span> {{ t('notifications.errors') }}</span>
           <span class="notif-desktop__filter-count">{{ actionableCount }}</span>
         </button>
 
-        <div class="mono-label" style="padding: 16px 10px 10px;">BY TYPE</div>
+        <div class="mono-label" style="padding: 16px 10px 10px;">{{ t('notifications.byType') }}</div>
         <button
           v-for="chip in typeChips.filter(c => c.value !== 'all')"
           :key="chip.value"
@@ -231,7 +233,7 @@ onMounted(() => { fetchNotifications(true) })
           :class="{ 'notif-desktop__filter--active': typeFilter === chip.value && !unreadOnly }"
           @click="unreadOnly = false; setTypeFilter(chip.value)"
         >
-          <span>{{ chip.label }}</span>
+          <span>{{ t(chip.labelKey) }}</span>
         </button>
       </aside>
 
@@ -239,19 +241,19 @@ onMounted(() => { fetchNotifications(true) })
       <section class="notif-desktop__list-wrap">
         <div class="notif-desktop__list-head">
           <h2 class="notif-desktop__title">
-            Notifications
-            <span v-if="unreadCount > 0" class="notif-desktop__unread-pill">{{ unreadCount }} unread</span>
+            {{ t('notifications.title') }}
+            <span v-if="unreadCount > 0" class="notif-desktop__unread-pill">{{ t('notifications.unreadCount', { n: unreadCount }) }}</span>
           </h2>
-          <button class="btn btn-ghost" @click="markAllRead" :disabled="unreadCount === 0">Mark all read</button>
+          <button class="btn btn-ghost" @click="markAllRead" :disabled="unreadCount === 0">{{ t('notifications.markAllRead') }}</button>
         </div>
 
         <div class="notif-desktop__list">
-          <div v-if="loading" class="notif-desktop__empty">Loading notifications…</div>
+          <div v-if="loading" class="notif-desktop__empty">{{ t('notifications.loadingList') }}</div>
 
           <div v-else-if="notifications.length === 0" class="notif-desktop__empty">
             <span style="font-size: 28px;">📭</span>
-            <span>No notifications yet</span>
-            <span class="notif-desktop__empty-sub">They appear when scheduler jobs complete.</span>
+            <span>{{ t('notifications.emptyTitle') }}</span>
+            <span class="notif-desktop__empty-sub">{{ t('notifications.emptySub') }}</span>
           </div>
 
           <TransitionGroup v-else name="notif-list" tag="div">
@@ -285,7 +287,7 @@ onMounted(() => { fetchNotifications(true) })
 
               <div class="notif-desktop__actions">
                 <span v-if="!n.is_read" class="notif-desktop__dot"></span>
-                <button class="btn btn-icon btn-ghost" @click.stop="deleteNotification(n.id, $event)" title="Delete">
+                <button class="btn btn-icon btn-ghost" @click.stop="deleteNotification(n.id, $event)" :title="t('common.delete')">
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <polyline points="3 6 5 6 21 6"/>
                     <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
@@ -297,7 +299,7 @@ onMounted(() => { fetchNotifications(true) })
 
           <div v-if="hasMore && !loading" class="notif-desktop__load-more">
             <button class="btn btn-secondary" @click="loadMore" :disabled="loadingMore">
-              {{ loadingMore ? 'Loading…' : 'Load more' }}
+              {{ loadingMore ? t('common.loadingEllipsis') : t('notifications.loadMore') }}
             </button>
           </div>
         </div>

@@ -27,30 +27,32 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
 import { useConfirm } from '../../composables/useConfirm'
 import { apiFetch } from '../../api'
+import { useLang } from '../../composables/useLang'
 
 const store = useSettingsStore()
 const { confirm } = useConfirm()
+const { t } = useLang()
 
 const PROVIDERS = [
   {
     ui: 'openai',
     slot: 'openai',
     label: 'OpenAI',
-    sub: 'Official API or OpenAI-compatible proxy',
+    subKey: 'settings.llm.openai.sub',
     defaultModel: 'gpt-4o',
     defaultBase: '',
     keyPrefix: 'sk-…',
-    hint: 'Pick this for api.openai.com OR any OpenAI-wire proxy (9router, CLIProxyAPI, LiteLLM). Models are addressed as openai.{model}.',
+    hintKey: 'settings.llm.openai.hint',
   },
   {
     ui: 'anthropic',
     slot: 'anthropic',
     label: 'Anthropic',
-    sub: 'Claude 3.5 / 4',
+    subKey: 'settings.llm.anthropic.sub',
     defaultModel: 'claude-sonnet-4-20250514',
     defaultBase: '',
     keyPrefix: 'sk-ant-api03-…',
-    hint: 'Official Anthropic API. Models are addressed as anthropic.{model}.',
+    hintKey: 'settings.llm.anthropic.hint',
   },
   {
     ui: 'custom',
@@ -60,11 +62,11 @@ const PROVIDERS = [
     // slot there without clobbering a genuine api.openai.com setup.
     slot: 'generic',
     label: 'Generic / Local',
-    sub: 'Ollama, llama.cpp, LM Studio',
+    subKey: 'settings.llm.custom.sub',
     defaultModel: '',
     defaultBase: 'http://localhost:11434/v1',
     keyPrefix: '(often empty for local)',
-    hint: 'Self-hosted models addressed as generic.{model}. Remember to update default_model in fastagent.config.yaml if you want this slot to boot by default.',
+    hintKey: 'settings.llm.custom.hint',
   },
 ]
 const SLOT_BY_UI = Object.fromEntries(PROVIDERS.map((p) => [p.ui, p.slot]))
@@ -98,6 +100,11 @@ const restartPending = ref(false)
 const restarting = ref(false)
 
 const meta = computed(() => META_BY_UI[activeUi.value] || META_BY_UI.custom)
+// "Generic / Local" is the only translatable provider label; OpenAI /
+// Anthropic are proper names kept as-is. Used in field labels + Save button.
+const metaLabel = computed(() =>
+  activeUi.value === 'custom' ? t('settings.llm.custom.label') : meta.value.label,
+)
 const activeBuf = computed(() => buffers.value[activeUi.value])
 
 const dirty = computed(() => {
@@ -201,7 +208,7 @@ async function onSave() {
       body: JSON.stringify({ items }),
     })
     await refresh()
-    success.value = `${META_BY_UI[ui].label} settings saved.`
+    success.value = t('settings.llm.savedFor', { label: META_BY_UI[ui].label })
     restartPending.value = true
   } catch (err) {
     error.value = err?.body?.detail || err?.message || String(err)
@@ -216,9 +223,9 @@ async function onClearKey() {
   const label = META_BY_UI[ui].label
   if (
     !(await confirm({
-      title: `Clear ${label} API key`,
-      message: `Remove the stored ${label} API key? Jarvis will fail to reach ${label} until you save a new one.`,
-      confirmText: 'Clear Key',
+      title: t('settings.llm.clearKeyTitle', { label }),
+      message: t('settings.llm.clearKeyMsg', { label }),
+      confirmText: t('settings.llm.clearKeyConfirm'),
       variant: 'danger',
     }))
   ) {
@@ -230,7 +237,7 @@ async function onClearKey() {
   try {
     await apiFetch(`/api/settings/llm/${slot}_api_key`, { method: 'DELETE' })
     await refresh()
-    success.value = `${label} API key removed.`
+    success.value = t('settings.llm.keyRemoved', { label })
   } catch (err) {
     error.value = err?.body?.detail || err?.message || String(err)
   } finally {
@@ -242,10 +249,9 @@ async function onRestart() {
   if (restarting.value) return
   if (
     !(await confirm({
-      title: 'Restart backend',
-      message:
-        'Any in-progress chats will be interrupted. Your new LLM credentials take effect when the process comes back (~5–10s under docker-compose).',
-      confirmText: 'Restart Now',
+      title: t('settings.llm.restartTitle'),
+      message: t('settings.llm.restartMsg'),
+      confirmText: t('settings.llm.restartConfirm'),
       variant: 'warning',
     }))
   ) {
@@ -257,7 +263,7 @@ async function onRestart() {
     await store.restartBackend()
     // We won't actually see a clean response — the backend sends SIGTERM to
     // itself immediately. Treat network errors here as expected.
-    success.value = 'Restart requested — backend will be back in a few seconds.'
+    success.value = t('settings.llm.restartRequested')
     restartPending.value = false
   } catch (err) {
     // ``/api/system/restart`` returns before the SIGTERM fires, so a
@@ -266,10 +272,10 @@ async function onRestart() {
     // or the server died cleanly mid-response — surface both kindly.
     const msg = err?.body?.detail || err?.message || String(err)
     if (/NetworkError|Failed to fetch|ECONNREFUSED|aborted/i.test(msg)) {
-      success.value = 'Restart signal sent — backend going down now.'
+      success.value = t('settings.llm.restartSignalSent')
       restartPending.value = false
     } else {
-      error.value = `Restart failed: ${msg}`
+      error.value = t('settings.llm.restartFailed', { msg })
     }
   } finally {
     restarting.value = false
@@ -300,12 +306,12 @@ onMounted(refresh)
           </svg>
         </div>
         <div>
-          <h2>LLM Provider</h2>
+          <h2>{{ t('settings.llm.title') }}</h2>
           <p>
-            Each provider has its own credentials — switching tabs swaps the stored key and
-            base URL independently. The <strong>active</strong> provider (highlighted) is the
-            one Jarvis boots with; other providers stay configured and can be referenced by
-            fully-qualified model aliases (e.g. <code>openai.gpt-4o</code>).
+            {{ t('settings.llm.descPre') }}
+            <strong>{{ t('settings.llm.descActive') }}</strong>
+            {{ t('settings.llm.descPost') }}
+            <code>openai.gpt-4o</code>).
           </p>
         </div>
       </header>
@@ -320,17 +326,17 @@ onMounted(refresh)
           @click="pickProvider(p.ui)"
         >
           <span class="provider-title">
-            {{ p.label }}
-            <span v-if="buffers[p.ui].hasStoredKey" class="mini-dot" title="Key stored"></span>
+            {{ p.ui === 'custom' ? t('settings.llm.custom.label') : p.label }}
+            <span v-if="buffers[p.ui].hasStoredKey" class="mini-dot" :title="t('settings.llm.keyStored')"></span>
           </span>
-          <span class="provider-sub">{{ p.sub }}</span>
+          <span class="provider-sub">{{ t(p.subKey) }}</span>
         </button>
       </div>
 
-      <div v-if="meta.hint" class="provider-hint">{{ meta.hint }}</div>
+      <div v-if="meta.hintKey" class="provider-hint">{{ t(meta.hintKey) }}</div>
 
       <div class="field">
-        <label for="llm-model">Default Model</label>
+        <label for="llm-model">{{ t('settings.llm.defaultModel') }}</label>
         <input
           id="llm-model"
           class="text-input"
@@ -339,31 +345,31 @@ onMounted(refresh)
           v-model="model"
         />
         <span class="hint">
-          FastAgent format: <code>provider.model[.effort]</code> or a model alias (e.g.
+          {{ t('settings.llm.modelHintPre') }} <code>provider.model[.effort]</code> {{ t('settings.llm.modelHintPost') }}
           <code>sonnet</code>, <code>gpt-4o</code>, <code>openai.coding-agent</code>).
         </span>
       </div>
 
       <div class="field">
-        <label :for="`llm-base-${activeUi}`">{{ meta.label }} Base URL</label>
+        <label :for="`llm-base-${activeUi}`">{{ t('settings.llm.baseUrlLabel', { label: metaLabel }) }}</label>
         <input
           :id="`llm-base-${activeUi}`"
           class="text-input"
           type="url"
-          :placeholder="meta.defaultBase || 'Leave blank to use provider default'"
+          :placeholder="meta.defaultBase || t('settings.llm.baseUrlPlaceholder')"
           v-model="activeBuf.baseUrl"
         />
         <span class="hint">
-          Required when pointing at a proxy or local endpoint. Leave blank to use the provider
-          default. Stored under <code>llm.{{ SLOT_BY_UI[activeUi] }}_base_url</code>.
+          {{ t('settings.llm.baseUrlHint') }}
+          <code>llm.{{ SLOT_BY_UI[activeUi] }}_base_url</code>.
         </span>
       </div>
 
       <div class="field">
         <label :for="`llm-key-${activeUi}`">
-          {{ meta.label }} API Key
-          <span v-if="activeBuf.hasStoredKey" class="key-status stored">stored · hidden</span>
-          <span v-else class="key-status missing">not set</span>
+          {{ t('settings.llm.apiKeyLabel', { label: metaLabel }) }}
+          <span v-if="activeBuf.hasStoredKey" class="key-status stored">{{ t('settings.common.storedHidden') }}</span>
+          <span v-else class="key-status missing">{{ t('settings.common.notSet') }}</span>
         </label>
         <div class="input-group">
           <input
@@ -371,14 +377,14 @@ onMounted(refresh)
             class="pwd-input"
             :type="activeBuf.reveal ? 'text' : 'password'"
             autocomplete="off"
-            :placeholder="activeBuf.hasStoredKey ? 'Leave blank to keep current key' : meta.keyPrefix || 'Paste API key'"
+            :placeholder="activeBuf.hasStoredKey ? t('settings.llm.keyKeepPlaceholder') : meta.keyPrefix || t('settings.common.pasteApiKey')"
             v-model="activeBuf.apiKey"
           />
           <button
             type="button"
             class="icon-btn"
             @click="activeBuf.reveal = !activeBuf.reveal"
-            :title="activeBuf.reveal ? 'Hide' : 'Reveal'"
+            :title="activeBuf.reveal ? t('settings.common.hide') : t('settings.common.reveal')"
           >
             <svg v-if="activeBuf.reveal" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
@@ -391,8 +397,8 @@ onMounted(refresh)
           </button>
         </div>
         <span class="hint">
-          Keys are encrypted with <code>JARVIS_API_KEY</code> before touching disk and synced
-          to <code>fastagent.secrets.yaml</code> so fast-agent subprocesses pick them up.
+          {{ t('settings.llm.keyHintPre') }} <code>JARVIS_API_KEY</code> {{ t('settings.llm.keyHintMid') }}
+          <code>fastagent.secrets.yaml</code> {{ t('settings.llm.keyHintPost') }}
         </span>
       </div>
 
@@ -404,10 +410,10 @@ onMounted(refresh)
           :disabled="savingSlot !== null"
           @click="onClearKey"
         >
-          Clear Stored Key
+          {{ t('settings.llm.clearStoredKey') }}
         </button>
         <button type="button" class="btn primary" :disabled="!canSave" @click="onSave">
-          {{ savingSlot === SLOT_BY_UI[activeUi] ? 'Saving…' : `Save ${meta.label}` }}
+          {{ savingSlot === SLOT_BY_UI[activeUi] ? t('settings.common.saving') : t('settings.llm.saveLabel', { label: metaLabel }) }}
         </button>
       </div>
 
@@ -416,11 +422,8 @@ onMounted(refresh)
 
       <div v-if="restartPending" class="restart-banner">
         <div class="restart-copy">
-          <strong>Restart required</strong>
-          <span>
-            LLM credentials are cached inside fast-agent's in-memory clients at boot, so your
-            changes won't reach the model until the backend process restarts.
-          </span>
+          <strong>{{ t('settings.llm.restartRequired') }}</strong>
+          <span>{{ t('settings.llm.restartBannerMsg') }}</span>
         </div>
         <button
           type="button"
@@ -428,7 +431,7 @@ onMounted(refresh)
           :disabled="restarting"
           @click="onRestart"
         >
-          {{ restarting ? 'Restarting…' : 'Restart Backend Now' }}
+          {{ restarting ? t('settings.llm.restarting') : t('settings.llm.restartNow') }}
         </button>
       </div>
     </section>

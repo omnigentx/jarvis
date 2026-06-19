@@ -7,22 +7,27 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSetupStore } from '../../stores/setup'
+import { useLang } from '../../composables/useLang'
 import WizardCard from './WizardCard.vue'
 import './wizard.css'
 
+const { t } = useLang()
 const router = useRouter()
 const setupStore = useSetupStore()
 
-const PRESETS = {
+// User-facing copy (label/sub/hint/placeholders/examples) is resolved via t()
+// so it follows the active locale; the non-visible config (defaultModel,
+// baseUrl) stays plain. Built as a computed so labels re-render on toggle.
+const PRESETS = computed(() => ({
   openai: {
     label: 'OpenAI',
-    sub: 'compatible · sk-…',
+    sub: t('setup.llm.openaiSub'),
     defaultModel: 'gpt-4o',
     baseUrl: '',
     keyPrefix: 'sk-…',
-    baseUrlPlaceholder: 'https://api.openai.com/v1 (leave blank for default)',
-    modelExamples: 'gpt-4o, gpt-4o-mini, o1-mini — or whatever alias your proxy exposes',
-    hint: 'Use this for api.openai.com OR any OpenAI-compatible proxy (9router, CLIProxyAPI, LiteLLM — they speak OpenAI wire format). Models are addressed as openai.{model}.',
+    baseUrlPlaceholder: t('setup.llm.openaiBasePlaceholder'),
+    modelExamples: t('setup.llm.openaiExamples'),
+    hint: t('setup.llm.openaiHint'),
   },
   anthropic: {
     label: 'Anthropic',
@@ -30,28 +35,28 @@ const PRESETS = {
     defaultModel: 'claude-sonnet-4-20250514',
     baseUrl: '',
     keyPrefix: 'sk-ant-api03-…',
-    baseUrlPlaceholder: 'https://api.anthropic.com (leave blank for default)',
+    baseUrlPlaceholder: t('setup.llm.anthropicBasePlaceholder'),
     modelExamples: 'claude-sonnet-4-20250514, claude-3-5-haiku-20241022, claude-opus-4-20250514',
-    hint: 'Official Anthropic API. Models will be addressed as anthropic.{model}.',
+    hint: t('setup.llm.anthropicHint'),
   },
   custom: {
-    label: 'Generic / Local',
+    label: t('setup.llm.customLabel'),
     sub: 'ollama · llama.cpp',
     defaultModel: '',
     baseUrl: 'http://localhost:11434/v1',
-    keyPrefix: '(often empty for local)',
+    keyPrefix: t('setup.llm.customKeyPrefix'),
     baseUrlPlaceholder: 'http://localhost:11434/v1 (Ollama) · http://localhost:1234/v1 (LM Studio)',
     modelExamples: 'llama3.1:8b, qwen2.5-coder:7b, mistral-nemo',
-    hint: 'For self-hosted models behind OpenAI-compatible endpoints. Models will be addressed as generic.{model} — remember to update default_model in fastagent.config.yaml.',
+    hint: t('setup.llm.customHint'),
   },
-}
+}))
 
 // UI "custom" → fast-agent "generic" slot; that's the namespace used for
 // per-provider storage (`llm.{slot}_api_key`).
 const SLOT_BY_UI = { openai: 'openai', anthropic: 'anthropic', custom: 'generic' }
 
 const provider = ref('anthropic')
-const model = ref(PRESETS.anthropic.defaultModel)
+const model = ref(PRESETS.value.anthropic.defaultModel)
 const apiKey = ref('')
 const baseUrl = ref('')
 const reveal = ref(false)
@@ -68,7 +73,7 @@ onMounted(async () => {
     await setupStore.fetchStatus()
     const step = setupStore.stepByName('llm')
     const data = step?.data || {}
-    if (data.provider && PRESETS[data.provider]) {
+    if (data.provider && PRESETS.value[data.provider]) {
       provider.value = data.provider
     }
     if (data.model) model.value = data.model
@@ -84,14 +89,14 @@ onMounted(async () => {
   }
 })
 
-const preset = computed(() => PRESETS[provider.value] || PRESETS.custom)
+const preset = computed(() => PRESETS.value[provider.value] || PRESETS.value.custom)
 
 function pickProvider(name) {
   provider.value = name
-  const p = PRESETS[name]
+  const p = PRESETS.value[name]
   apiKey.value = ''
   baseUrl.value = p.baseUrl
-  if (!model.value || Object.values(PRESETS).some((x) => x.defaultModel === model.value)) {
+  if (!model.value || Object.values(PRESETS.value).some((x) => x.defaultModel === model.value)) {
     model.value = p.defaultModel
   }
 }
@@ -130,9 +135,9 @@ function onBack() {
 
 <template>
   <WizardCard
-    title="LLM provider configuration"
-    subtitle="Configure the AI model provider that powers Jarvis. Use OpenAI, Anthropic, or any OpenAI-compatible API."
-    step-label="STEP 02 / 05 · LLM"
+    :title="t('setup.llm.title')"
+    :subtitle="t('setup.llm.subtitle')"
+    :step-label="t('setup.llm.stepLabel')"
   >
     <div class="wizard-choice-grid">
       <button
@@ -166,8 +171,8 @@ function onBack() {
 
     <div class="wizard-field">
       <label for="llm-key">
-        API KEY
-        <span v-if="hasStoredKey" class="field-hint">· already stored, leave blank to keep</span>
+        {{ t('setup.llm.apiKey') }}
+        <span v-if="hasStoredKey" class="field-hint">{{ t('setup.llm.alreadyStored') }}</span>
       </label>
       <div class="wizard-input-group">
         <input
@@ -175,13 +180,13 @@ function onBack() {
           class="wizard-input"
           :type="reveal ? 'text' : 'password'"
           autocomplete="off"
-          :placeholder="hasStoredKey ? '•••••••• (stored — leave blank to keep)' : (preset.keyPrefix || 'Paste provider API key')"
+          :placeholder="hasStoredKey ? t('setup.llm.keyStoredPlaceholder') : (preset.keyPrefix || t('setup.llm.keyPlaceholder'))"
           v-model="apiKey"
         />
         <button
           type="button"
           class="icon-btn"
-          :title="reveal ? 'Hide' : 'Reveal'"
+          :title="reveal ? t('setup.llm.hide') : t('setup.llm.reveal')"
           @click="reveal = !reveal"
         >
           <svg v-if="reveal" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -197,7 +202,7 @@ function onBack() {
     </div>
 
     <div class="wizard-field">
-      <label for="llm-base">BASE URL <span class="field-hint">· optional · override</span></label>
+      <label for="llm-base">{{ t('setup.llm.baseUrl') }} <span class="field-hint">{{ t('setup.llm.baseUrlHint') }}</span></label>
       <input
         id="llm-base"
         class="wizard-input mono"
@@ -208,7 +213,7 @@ function onBack() {
     </div>
 
     <div class="wizard-field">
-      <label for="llm-model">MODEL <span class="field-hint">· default · streaming</span></label>
+      <label for="llm-model">{{ t('setup.llm.model') }} <span class="field-hint">{{ t('setup.llm.modelHint') }}</span></label>
       <input
         id="llm-model"
         class="wizard-input mono"
@@ -216,7 +221,7 @@ function onBack() {
         :placeholder="preset.defaultModel || 'e.g. gpt-4o'"
         v-model="model"
       />
-      <div v-if="preset.modelExamples" class="wizard-help">Examples: {{ preset.modelExamples }}</div>
+      <div v-if="preset.modelExamples" class="wizard-help">{{ t('setup.llm.examples') }} {{ preset.modelExamples }}</div>
     </div>
 
     <div v-if="setupStore.lastSubmitError" class="wizard-error">
@@ -229,7 +234,7 @@ function onBack() {
           <line x1="19" y1="12" x2="5" y2="12" />
           <polyline points="12 19 5 12 12 5" />
         </svg>
-        Back
+        {{ t('common.back') }}
       </button>
     </template>
     <template #footer-right>
@@ -239,7 +244,7 @@ function onBack() {
         :disabled="!canSubmit"
         @click="onSubmit"
       >
-        {{ submitting ? 'Saving…' : 'Continue' }}
+        {{ submitting ? t('common.saving') : t('common.continue') }}
         <svg v-if="!submitting" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <line x1="5" y1="12" x2="19" y2="12" />
           <polyline points="12 5 19 12 12 19" />

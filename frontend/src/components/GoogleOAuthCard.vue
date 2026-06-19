@@ -23,7 +23,9 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { apiFetch } from '../api'
 import { useConfirm } from '../composables/useConfirm'
+import { useLang } from '../composables/useLang'
 
+const { t } = useLang()
 const { confirm } = useConfirm()
 
 const googleStatus = ref({
@@ -63,7 +65,7 @@ const clientError = ref('')
 
 async function saveClient() {
   if (!clientId.value.trim() || !clientSecret.value.trim()) {
-    clientError.value = 'Both client_id and client_secret are required.'
+    clientError.value = t('googleOauth.errBothRequired')
     return
   }
   clientSaving.value = true
@@ -110,7 +112,7 @@ async function onMessage(event) {
   }
   if (popupWatcher) clearInterval(popupWatcher)
   if (error) {
-    connectError.value = `Google error: ${error}`
+    connectError.value = t('googleOauth.errGoogle', { error })
     connecting.value = false
     return
   }
@@ -140,7 +142,7 @@ async function startConnect() {
     })
     const popup = window.open(url, 'jarvis-google-oauth', 'width=520,height=640')
     if (!popup) {
-      connectError.value = 'Popup blocked — please allow popups for this site.'
+      connectError.value = t('googleOauth.errPopupBlocked')
       connecting.value = false
       return
     }
@@ -151,7 +153,7 @@ async function startConnect() {
         if (connecting.value) {
           connecting.value = false
           if (!connectSuccess.value && !connectError.value) {
-            connectError.value = 'OAuth window closed before completing.'
+            connectError.value = t('googleOauth.errWindowClosed')
           }
         }
       }
@@ -165,9 +167,9 @@ async function startConnect() {
 async function disconnect() {
   if (
     !(await confirm({
-      title: 'Disconnect Google',
-      message: 'Gmail and Calendar tools will stop working until you reconnect.',
-      confirmText: 'Disconnect',
+      title: t('googleOauth.disconnectConfirmTitle'),
+      message: t('googleOauth.disconnectConfirmMessage'),
+      confirmText: t('googleOauth.disconnect'),
       variant: 'danger',
     }))
   ) {
@@ -212,7 +214,7 @@ async function submitPastedUrl() {
   pasteLoading.value = true
   try {
     const raw = pastedUrl.value.trim()
-    if (!raw) throw new Error('Paste the URL from your browser address bar.')
+    if (!raw) throw new Error(t('googleOauth.errPasteUrl'))
     let params
     try {
       params = new URL(raw).searchParams
@@ -223,10 +225,10 @@ async function submitPastedUrl() {
     const code = params.get('code')
     const state = params.get('state')
     if (!code || !state) {
-      throw new Error('URL missing code or state — make sure you copied the full redirected URL.')
+      throw new Error(t('googleOauth.errUrlMissing'))
     }
     if (pastedState && state !== pastedState) {
-      throw new Error('State mismatch — restart the flow and paste the URL from this session.')
+      throw new Error(t('googleOauth.errStateMismatch'))
     }
     await apiFetch('/api/oauth/google/callback', {
       method: 'POST',
@@ -247,10 +249,9 @@ async function submitPastedUrl() {
 async function resetCredentials() {
   if (
     !(await confirm({
-      title: 'Reset Google credentials',
-      message:
-        'Your saved Client ID & Secret (and any connected tokens) will be removed. You will need to paste new credentials and re-connect.',
-      confirmText: 'Reset',
+      title: t('googleOauth.resetConfirmTitle'),
+      message: t('googleOauth.resetConfirmMessage'),
+      confirmText: t('googleOauth.reset'),
       variant: 'danger',
     }))
   ) {
@@ -270,10 +271,10 @@ const expiresText = computed(() => {
   const ts = googleStatus.value.expires_at
   if (!ts) return null
   const diffMs = ts * 1000 - Date.now()
-  if (diffMs <= 0) return 'Expired — will refresh on next use.'
+  if (diffMs <= 0) return t('googleOauth.expired')
   const mins = Math.round(diffMs / 60000)
-  if (mins < 60) return `Renews in ~${mins}m`
-  return `Renews in ~${Math.round(mins / 60)}h`
+  if (mins < 60) return t('googleOauth.renewsMinutes', { n: mins })
+  return t('googleOauth.renewsHours', { n: Math.round(mins / 60) })
 })
 
 onMounted(() => {
@@ -291,20 +292,19 @@ onBeforeUnmount(() => {
   <div class="google-oauth-card" data-testid="google-oauth-card">
     <header class="card-head">
       <div class="title-block">
-        <h3>Google (Gmail + Calendar)</h3>
+        <h3>{{ t('googleOauth.heading') }}</h3>
         <p class="muted">
-          Connect once. Your agents will use the stored refresh token — no
-          browser pop-up needed for subsequent calls.
+          {{ t('googleOauth.intro') }}
         </p>
       </div>
       <span
         class="badge"
         :class="{ on: googleStatus.connected, off: !googleStatus.connected }"
         :data-testid="googleStatus.connected ? 'google-badge-connected' : 'google-badge-not-connected'"
-      >{{ googleStatus.connected ? 'Connected' : 'Not Connected' }}</span>
+      >{{ googleStatus.connected ? t('googleOauth.connected') : t('googleOauth.notConnected') }}</span>
     </header>
 
-    <div v-if="loading" class="muted">Loading…</div>
+    <div v-if="loading" class="muted">{{ t('common.loading') }}</div>
     <div v-else-if="statusError" class="error-msg">{{ statusError }}</div>
 
     <!-- A) No credentials on file (or user clicked "Change credentials") -->
@@ -314,28 +314,28 @@ onBeforeUnmount(() => {
       data-testid="google-credentials-form"
     >
       <p class="muted">
-        Paste Google OAuth credentials from the
-        <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud Console</a>.
-        Pick the client type that matches what you created there.
+        {{ t('googleOauth.pasteCredsPre') }}
+        <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">{{ t('googleOauth.cloudConsole') }}</a>.
+        {{ t('googleOauth.pasteCredsPost') }}
       </p>
       <div class="client-type-row">
         <label class="radio-pill">
           <input type="radio" value="desktop" v-model="clientTypeChoice" />
           <span>
-            <strong>Desktop app</strong>
-            <em>No redirect URI to configure — easiest for a self-hosted Jarvis.</em>
+            <strong>{{ t('googleOauth.desktopApp') }}</strong>
+            <em>{{ t('googleOauth.desktopAppHint') }}</em>
           </span>
         </label>
         <label class="radio-pill">
           <input type="radio" value="web" v-model="clientTypeChoice" />
           <span>
-            <strong>Web application</strong>
-            <em>Add <code>{{ redirectUri() }}</code> to the client's authorised redirect URIs.</em>
+            <strong>{{ t('googleOauth.webApp') }}</strong>
+            <em>{{ t('googleOauth.webAppHintPre') }} <code>{{ redirectUri() }}</code> {{ t('googleOauth.webAppHintPost') }}</em>
           </span>
         </label>
       </div>
-      <input class="text-input" placeholder="Client ID" v-model="clientId" data-testid="google-client-id" />
-      <input class="text-input" placeholder="Client Secret" type="password" v-model="clientSecret" data-testid="google-client-secret" />
+      <input class="text-input" :placeholder="t('googleOauth.clientIdPlaceholder')" v-model="clientId" data-testid="google-client-id" />
+      <input class="text-input" :placeholder="t('googleOauth.clientSecretPlaceholder')" type="password" v-model="clientSecret" data-testid="google-client-secret" />
       <div class="action-row">
         <button
           type="button"
@@ -343,16 +343,16 @@ onBeforeUnmount(() => {
           :disabled="clientSaving"
           data-testid="google-save-credentials"
           @click="saveClient"
-        >{{ clientSaving ? 'Saving…' : 'Save credentials' }}</button>
+        >{{ clientSaving ? t('googleOauth.saving') : t('googleOauth.saveCredentials') }}</button>
         <button
           v-if="showCredentialsForm && googleStatus.client_type !== 'none'"
           type="button"
           class="btn"
           @click="showCredentialsForm = false"
-        >Cancel</button>
+        >{{ t('common.cancel') }}</button>
       </div>
       <div v-if="clientError" class="error-msg" data-testid="google-client-error">{{ clientError }}</div>
-      <div v-if="clientSaved" class="success-msg">Credentials saved.</div>
+      <div v-if="clientSaved" class="success-msg">{{ t('googleOauth.credentialsSaved') }}</div>
     </div>
 
     <!-- B) Desktop client saved & not yet connected -->
@@ -361,22 +361,22 @@ onBeforeUnmount(() => {
       class="bundled-flow"
     >
       <ol class="steps">
-        <li>Click <strong>Open Google consent</strong>. A new tab opens on Google.</li>
+        <li>{{ t('googleOauth.step1Pre') }} <strong>{{ t('googleOauth.openConsent') }}</strong>. {{ t('googleOauth.step1Post') }}</li>
         <li>
-          Pick your account and allow access. Google sends you to a page that shows
-          <em>"This site can't be reached"</em> — <strong>that's expected</strong>. The URL
-          (starts with <code>{{ googleStatus.desktop_redirect_uri || 'http://localhost' }}/…</code>) is what we need.
+          {{ t('googleOauth.step2Pre') }}
+          <em>{{ t('googleOauth.step2Quote') }}</em> — <strong>{{ t('googleOauth.step2Expected') }}</strong>. {{ t('googleOauth.step2UrlPre') }}
+          <code>{{ googleStatus.desktop_redirect_uri || 'http://localhost' }}/…</code>{{ t('googleOauth.step2UrlPost') }}
         </li>
-        <li>Copy that full URL, paste below, then press <strong>Complete</strong>.</li>
+        <li>{{ t('googleOauth.step3Pre') }} <strong>{{ t('googleOauth.complete') }}</strong>.</li>
       </ol>
       <div class="action-row">
         <button type="button" class="btn primary" @click="startDesktopConsent" data-testid="google-open-consent">
-          {{ consentUrlOpen ? 'Re-open consent tab' : 'Open Google consent' }}
+          {{ consentUrlOpen ? t('googleOauth.reopenConsent') : t('googleOauth.openConsent') }}
         </button>
       </div>
       <input
         class="text-input"
-        placeholder="Paste URL (http://localhost/?code=…&state=…)"
+        :placeholder="t('googleOauth.pasteUrlPlaceholder')"
         v-model="pastedUrl"
         data-testid="google-paste-url"
         @keydown.enter="submitPastedUrl"
@@ -388,11 +388,11 @@ onBeforeUnmount(() => {
           :disabled="pasteLoading || !pastedUrl.trim()"
           data-testid="google-complete-paste"
           @click="submitPastedUrl"
-        >{{ pasteLoading ? 'Completing…' : 'Complete' }}</button>
+        >{{ pasteLoading ? t('googleOauth.completing') : t('googleOauth.complete') }}</button>
       </div>
       <div v-if="pasteError" class="error-msg">{{ pasteError }}</div>
       <div class="muted" style="font-size: 12px;">
-        <a href="#" @click.prevent="showCredentialsForm = true">Change credentials</a>
+        <a href="#" @click.prevent="showCredentialsForm = true">{{ t('googleOauth.changeCredentials') }}</a>
       </div>
     </div>
 
@@ -402,35 +402,35 @@ onBeforeUnmount(() => {
       class="connection-row"
     >
       <div class="meta muted">
-        Using your Web-application OAuth client. Click "Connect Google" to open the consent popup.
+        {{ t('googleOauth.webClientHint') }}
       </div>
       <div class="controls">
-        <button type="button" class="btn" @click="showCredentialsForm = true">Change credentials</button>
+        <button type="button" class="btn" @click="showCredentialsForm = true">{{ t('googleOauth.changeCredentials') }}</button>
         <button
           type="button"
           class="btn primary"
           :disabled="connecting"
           data-testid="google-connect-btn"
           @click="startConnect"
-        >{{ connecting ? 'Waiting for consent…' : 'Connect Google' }}</button>
+        >{{ connecting ? t('googleOauth.waitingConsent') : t('googleOauth.connectGoogle') }}</button>
       </div>
     </div>
 
     <!-- D) Connected -->
     <div v-if="!loading && googleStatus.connected" class="connection-row">
       <div class="meta meta-info">
-        <div>Scopes: {{ googleStatus.scopes.length }} granted</div>
+        <div>{{ t('googleOauth.scopesGranted', { n: googleStatus.scopes.length }) }}</div>
         <div v-if="expiresText" class="muted">{{ expiresText }}</div>
         <div v-if="!googleStatus.has_refresh_token" class="warn-msg">
-          No refresh token on file — you'll need to reconnect when the access token expires.
+          {{ t('googleOauth.noRefreshToken') }}
         </div>
         <div class="muted" style="font-size: 12px;">
-          Client type: <strong>{{ googleStatus.client_type }}</strong>
-          <a href="#" style="margin-left: 8px;" @click.prevent="resetCredentials">Reset credentials</a>
+          {{ t('googleOauth.clientTypeLabel') }} <strong>{{ googleStatus.client_type }}</strong>
+          <a href="#" style="margin-left: 8px;" @click.prevent="resetCredentials">{{ t('googleOauth.resetCredentials') }}</a>
         </div>
       </div>
       <div class="controls">
-        <button type="button" class="btn ghost-danger" @click="disconnect">Disconnect</button>
+        <button type="button" class="btn ghost-danger" @click="disconnect">{{ t('googleOauth.disconnect') }}</button>
       </div>
     </div>
 
@@ -440,10 +440,9 @@ onBeforeUnmount(() => {
       class="api-enable-panel"
     >
       <div class="api-enable-header">
-        <strong>Enable these APIs in Google Cloud Console</strong>
+        <strong>{{ t('googleOauth.enableApisHeading') }}</strong>
         <span class="muted" style="font-size: 12px;">
-          One-time per project. OAuth consent alone is not enough — Gmail/Calendar
-          calls fail with 403 until the API is enabled.
+          {{ t('googleOauth.enableApisHint') }}
         </span>
       </div>
       <ul class="api-enable-list">
@@ -456,13 +455,12 @@ onBeforeUnmount(() => {
         </li>
       </ul>
       <div v-if="!googleStatus.project_number" class="muted" style="font-size: 12px;">
-        Couldn't parse a project number from your client_id — links open without a
-        pre-selected project, so pick the right one on the Console page.
+        {{ t('googleOauth.noProjectNumber') }}
       </div>
     </div>
 
     <div v-if="connectError" class="error-msg" data-testid="google-connect-error">{{ connectError }}</div>
-    <div v-if="connectSuccess" class="success-msg" data-testid="google-connect-success">Google connected.</div>
+    <div v-if="connectSuccess" class="success-msg" data-testid="google-connect-success">{{ t('googleOauth.googleConnected') }}</div>
   </div>
 </template>
 

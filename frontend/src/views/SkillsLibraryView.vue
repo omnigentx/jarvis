@@ -10,9 +10,11 @@ import { ref, computed, onMounted } from 'vue'
 import { apiFetch, ApiError } from '../api'
 import { useAgentsStore } from '../stores/agents'
 import { useConfirm } from '../composables/useConfirm'
+import { useLang } from '../composables/useLang'
 import SkillEditorModal from '../components/agent/SkillEditorModal.vue'
 import SkillDeleteModal from '../components/agent/SkillDeleteModal.vue'
 
+const { t } = useLang()
 const store = useAgentsStore()
 const { confirm } = useConfirm()
 
@@ -106,7 +108,7 @@ async function loadSkills() {
 function _friendly(err) {
   if (err instanceof ApiError && err.body && typeof err.body === 'object') {
     const detail = err.body.detail
-    if (detail && typeof detail === 'object') return detail.message || 'Request failed.'
+    if (detail && typeof detail === 'object') return detail.message || t('skillsLib.requestFailed')
     if (typeof detail === 'string') return detail
   }
   return err?.message || String(err)
@@ -142,12 +144,9 @@ function toggleAttachMenu(name) {
 async function attachToAgent(skill, agent) {
   if (!agent.is_card_based) {
     const proceed = await confirm({
-      title: `Attach to ${agent.name}?`,
-      message:
-        `${agent.name} is defined in code (agent.py), so this attachment is ` +
-        `runtime-only — it will revert on backend restart unless you also ` +
-        `add '${skill.name}' to ${agent.name}'s get_skills(...) call.`,
-      confirmText: 'Attach (runtime only)',
+      title: t('skillsLib.attachConfirmTitle', { agent: agent.name }),
+      message: t('skillsLib.attachConfirmMsg', { agent: agent.name, skill: skill.name }),
+      confirmText: t('skillsLib.attachRuntimeOnly'),
       variant: 'warning',
     })
     if (!proceed) return
@@ -160,13 +159,13 @@ async function attachToAgent(skill, agent) {
       { method: 'PUT' },
     )
     attachToast.value = res.persisted
-      ? `Attached '${skill.name}' to ${agent.name}.`
-      : `Attached '${skill.name}' to ${agent.name} — runtime only, will revert on restart.`
+      ? t('skillsLib.toastAttached', { skill: skill.name, agent: agent.name })
+      : t('skillsLib.toastAttachedRuntime', { skill: skill.name, agent: agent.name })
     attachOpenFor.value = ''
     await loadSkills()
     setTimeout(() => (attachToast.value = ''), 4000)
   } catch (err) {
-    attachToast.value = `Attach failed: ${_friendly(err)}`
+    attachToast.value = t('skillsLib.toastAttachFailed', { err: _friendly(err) })
   } finally {
     attachBusy.value = false
   }
@@ -174,9 +173,9 @@ async function attachToAgent(skill, agent) {
 
 async function detachFromAgent(skill, agentName) {
   const proceed = await confirm({
-    title: `Detach from ${agentName}?`,
-    message: `'${skill.name}' will be removed from ${agentName}. The skill itself stays in the library.`,
-    confirmText: 'Detach',
+    title: t('skillsLib.detachConfirmTitle', { agent: agentName }),
+    message: t('skillsLib.detachConfirmMsg', { skill: skill.name, agent: agentName }),
+    confirmText: t('skillsLib.detach'),
     variant: 'warning',
   })
   if (!proceed) return
@@ -187,7 +186,7 @@ async function detachFromAgent(skill, agentName) {
     )
     await loadSkills()
   } catch (err) {
-    attachToast.value = `Detach failed: ${_friendly(err)}`
+    attachToast.value = t('skillsLib.toastDetachFailed', { err: _friendly(err) })
     setTimeout(() => (attachToast.value = ''), 4000)
   }
 }
@@ -211,17 +210,16 @@ onMounted(() => {
     <!-- ─── Header ─── -->
     <div class="skills__header">
       <div class="skills__heading">
-        <div class="eyebrow">SYSTEM · SKILLS LIBRARY</div>
+        <div class="eyebrow">{{ t('skillsLib.eyebrow') }}</div>
         <h1 class="skills__title">
-          <span class="grad" style="font-style: italic;">{{ stats.total }}</span> skills
+          <span class="grad" style="font-style: italic;">{{ stats.total }}</span> {{ t('skillsLib.skillsWord') }}
           <span class="skills__title-sub">
-            · {{ stats.builtin }} built-in · {{ stats.user }} user · {{ stats.orphan }} orphan
+            · {{ t('skillsLib.statBuiltin', { n: stats.builtin }) }} · {{ t('skillsLib.statUser', { n: stats.user }) }} · {{ t('skillsLib.statOrphan', { n: stats.orphan }) }}
           </span>
         </h1>
         <p class="skills__desc">
-          Markdown files in <code class="skills__inline-code">.fast-agent/skills/</code>.
-          Editing here updates every agent that references the skill.
-          Built-ins are editable but cannot be deleted.
+          {{ t('skillsLib.descLead') }} <code class="skills__inline-code">.fast-agent/skills/</code>.
+          {{ t('skillsLib.descRest') }}
         </p>
       </div>
       <div class="skills__header-actions">
@@ -230,7 +228,7 @@ onMounted(() => {
             <line x1="12" y1="5" x2="12" y2="19"/>
             <line x1="5" y1="12" x2="19" y2="12"/>
           </svg>
-          New skill
+          {{ t('skillsLib.newSkill') }}
         </button>
       </div>
     </div>
@@ -245,21 +243,21 @@ onMounted(() => {
         <input
           v-model="search"
           type="search"
-          placeholder="Search skills…"
+          :placeholder="t('skillsLib.searchPlaceholder')"
           class="skills__search-input"
         />
       </div>
       <div class="seg">
-        <button :class="{ 'is-active': filterMode === 'all' }" @click="filterMode = 'all'">All</button>
-        <button :class="{ 'is-active': filterMode === 'builtin' }" @click="filterMode = 'builtin'">Built-in</button>
-        <button :class="{ 'is-active': filterMode === 'user' }" @click="filterMode = 'user'">User</button>
-        <button :class="{ 'is-active': filterMode === 'orphan' }" @click="filterMode = 'orphan'">Orphan</button>
+        <button :class="{ 'is-active': filterMode === 'all' }" @click="filterMode = 'all'">{{ t('skillsLib.filterAll') }}</button>
+        <button :class="{ 'is-active': filterMode === 'builtin' }" @click="filterMode = 'builtin'">{{ t('skillsLib.filterBuiltin') }}</button>
+        <button :class="{ 'is-active': filterMode === 'user' }" @click="filterMode = 'user'">{{ t('skillsLib.filterUser') }}</button>
+        <button :class="{ 'is-active': filterMode === 'orphan' }" @click="filterMode = 'orphan'">{{ t('skillsLib.filterOrphan') }}</button>
       </div>
     </div>
 
     <!-- ─── Category chips ─── -->
     <div class="skills__categories">
-      <span class="mono-label">FILTER</span>
+      <span class="mono-label">{{ t('skillsLib.filterLabel') }}</span>
       <button
         v-for="c in categories"
         :key="c"
@@ -275,18 +273,18 @@ onMounted(() => {
     <p v-if="attachToast" class="skills__toast">{{ attachToast }}</p>
     <p v-if="loadError" class="skills__error">
       {{ loadError }}
-      <button class="btn btn-secondary btn-icon" @click="loadSkills">Retry</button>
+      <button class="btn btn-secondary btn-icon" @click="loadSkills">{{ t('common.retry') }}</button>
     </p>
 
     <!-- ─── List ─── -->
-    <div v-if="loading" class="skills__empty">Loading skills…</div>
+    <div v-if="loading" class="skills__empty">{{ t('skillsLib.loadingSkills') }}</div>
     <div v-else-if="!filtered.length" class="skills__empty">
       <span v-if="search || filterMode !== 'all' || categoryFilter !== 'All'">
-        No skills match the current filter.
+        {{ t('skillsLib.noMatch') }}
       </span>
       <span v-else>
-        Library is empty.
-        <button class="skills__link" @click="openCreate">Create your first skill →</button>
+        {{ t('skillsLib.empty') }}
+        <button class="skills__link" @click="openCreate">{{ t('skillsLib.createFirst') }}</button>
       </span>
     </div>
 
@@ -302,16 +300,16 @@ onMounted(() => {
         <div class="skill-row__body">
           <div class="skill-row__title">
             <code class="skill-row__name">{{ s.name }}</code>
-            <span v-if="s.is_builtin" class="skill-row__pill skill-row__pill--muted">🔒 BUILTIN</span>
-            <span v-else class="skill-row__pill skill-row__pill--primary">USER</span>
-            <span v-if="isOrphan(s)" class="skill-row__pill skill-row__pill--warn">○ ORPHAN</span>
+            <span v-if="s.is_builtin" class="skill-row__pill skill-row__pill--muted">🔒 {{ t('skillsLib.pillBuiltin') }}</span>
+            <span v-else class="skill-row__pill skill-row__pill--primary">{{ t('skillsLib.pillUser') }}</span>
+            <span v-if="isOrphan(s)" class="skill-row__pill skill-row__pill--warn">○ {{ t('skillsLib.pillOrphan') }}</span>
             <span v-if="s.parse_error" class="skill-row__pill skill-row__pill--danger" :title="s.parse_error">
-              PARSE ERROR
+              {{ t('skillsLib.pillParseError') }}
             </span>
           </div>
 
           <div class="skill-row__desc">
-            {{ s.description || (s.parse_error ? '(unparseable frontmatter)' : '—') }}
+            {{ s.description || (s.parse_error ? t('skillsLib.unparseable') : '—') }}
           </div>
 
           <div class="skill-row__meta">
@@ -319,7 +317,7 @@ onMounted(() => {
             <template v-if="(s.used_by || []).length">
               <span class="skill-row__sep">·</span>
               <span class="skill-row__used">
-                ● {{ (s.used_by || []).length }} agent{{ (s.used_by || []).length > 1 ? 's' : '' }}
+                ● {{ t('skillsLib.usedByAgents', { n: (s.used_by || []).length }) }}
               </span>
               <template v-if="(s.used_by || []).length <= 3 && s.used_by[0] !== '*'">
                 <span class="skill-row__sep">·</span>
@@ -330,13 +328,13 @@ onMounted(() => {
                 :key="a"
                 type="button"
                 class="skill-row__detach"
-                :title="`Detach from ${a}`"
+                :title="t('skillsLib.detachFrom', { agent: a })"
                 @click="detachFromAgent(s, a)"
               >× {{ a }}</button>
             </template>
             <template v-else>
               <span class="skill-row__sep">·</span>
-              <span class="skill-row__used-warn">○ no agents · safe to delete</span>
+              <span class="skill-row__used-warn">○ {{ t('skillsLib.noAgentsSafe') }}</span>
             </template>
           </div>
         </div>
@@ -344,11 +342,11 @@ onMounted(() => {
         <div class="skill-row__actions">
           <div class="skill-row__attach">
             <button class="btn btn-ghost skill-row__attach-trigger" @click="toggleAttachMenu(s.name)">
-              + Attach…
+              {{ t('skillsLib.attachTrigger') }}
             </button>
             <div v-if="attachOpenFor === s.name" class="skill-row__attach-menu" @click.stop>
               <div v-if="!unattachedAgents(s).length" class="skill-row__attach-empty">
-                Already attached to all agents.
+                {{ t('skillsLib.alreadyAllAgents') }}
               </div>
               <button
                 v-for="a in unattachedAgents(s)"
@@ -359,13 +357,13 @@ onMounted(() => {
               >
                 <span>{{ a.name }}</span>
                 <span v-if="!a.is_card_based" class="skill-row__attach-warn"
-                  title="Code-based agent — change reverts on restart">
-                  runtime
+                  :title="t('skillsLib.codeAgentRevert')">
+                  {{ t('skillsLib.runtime') }}
                 </span>
               </button>
             </div>
           </div>
-          <button class="btn btn-icon btn-ghost" :title="`Edit ${s.name}`" @click="openEdit(s)">
+          <button class="btn btn-icon btn-ghost" :title="t('skillsLib.editSkill', { name: s.name })" @click="openEdit(s)">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
               <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
               <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
@@ -373,7 +371,7 @@ onMounted(() => {
           </button>
           <button
             class="btn btn-icon btn-ghost skill-row__delete"
-            :title="s.is_builtin ? 'Built-in skills cannot be deleted' : `Delete ${s.name}`"
+            :title="s.is_builtin ? t('skillsLib.builtinNoDelete') : t('skillsLib.deleteSkill', { name: s.name })"
             :disabled="s.is_builtin"
             @click="openDelete(s)"
           >

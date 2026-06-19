@@ -458,6 +458,11 @@ onMounted(() => {
   background: transparent;
   border: none;
   padding: 0;
+  /* Plain text sits on the normal (light/dark) card, not the dark code window,
+     so reset the inherited `.md-content pre` colour (#e3e6ef, a fixed light for
+     the dark window) to a themed token — otherwise it renders light-on-light
+     and is invisible in light theme. */
+  color: var(--text-dim);
 }
 
 .md-content .md-mermaid-block {

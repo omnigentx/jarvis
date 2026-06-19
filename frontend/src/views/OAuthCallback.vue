@@ -9,8 +9,10 @@
  * /api/oauth/google/callback.
  */
 import { onMounted, ref } from 'vue'
+import { useLang } from '../composables/useLang'
 
-const message = ref('Completing Google sign-in...')
+const { t } = useLang()
+const message = ref(t('oauth.completing'))
 const error = ref('')
 
 onMounted(() => {
@@ -20,7 +22,7 @@ onMounted(() => {
   const errParam = url.searchParams.get('error')
 
   if (errParam) {
-    error.value = `Google returned error: ${errParam}`
+    error.value = t('oauth.googleError', { err: errParam })
     if (window.opener) {
       window.opener.postMessage(
         { type: 'jarvis:oauth:google', error: errParam },
@@ -31,14 +33,13 @@ onMounted(() => {
   }
 
   if (!code || !state) {
-    error.value = 'Missing code/state in redirect. Please restart the flow.'
+    error.value = t('oauth.missingCodeState')
     return
   }
 
   if (!window.opener) {
     // User refreshed / navigated here manually — nothing to post to.
-    error.value =
-      'No opener window. Close this tab and restart the flow from Settings → Services.'
+    error.value = t('oauth.noOpener')
     return
   }
 
@@ -46,7 +47,7 @@ onMounted(() => {
     { type: 'jarvis:oauth:google', code, state },
     window.location.origin,
   )
-  message.value = 'You can close this window now.'
+  message.value = t('oauth.canClose')
   // Small delay so the opener has time to receive the message before we close.
   setTimeout(() => window.close(), 400)
 })
@@ -55,7 +56,7 @@ onMounted(() => {
 <template>
   <div class="cb-page">
     <div class="cb-card">
-      <h1>Google OAuth</h1>
+      <h1>{{ t('oauth.title') }}</h1>
       <p v-if="!error">{{ message }}</p>
       <p v-else class="error">{{ error }}</p>
     </div>

@@ -11,8 +11,11 @@ import { apiFetch } from '../api'
 import { useAudioPlayerStore } from '../stores/audioPlayer'
 import { useToast } from '../composables/useToast'
 import { useBreakpoint } from '../composables/useBreakpoint'
+import { useLang } from '../composables/useLang'
 import StoryCard from '../components/stories/StoryCard.vue'
 import ChapterList from '../components/stories/ChapterList.vue'
+
+const { t } = useLang()
 
 const route = useRoute()
 const router = useRouter()
@@ -85,12 +88,12 @@ async function handleDelete(storyId) {
       method: 'DELETE',
     })
     stories.value = stories.value.filter(s => s.id !== storyId)
-    toast.success('Story deleted')
+    toast.success(t('stories.storyDeleted'))
     if (selectedStoryId.value === storyId) {
       router.push({ name: 'Stories' })
     }
   } catch (e) {
-    toast.error('Delete failed', { description: e.message })
+    toast.error(t('stories.deleteFailed'), { description: e.message })
   }
 }
 
@@ -115,16 +118,16 @@ watch(
     <!-- ─── Header ─── -->
     <div class="stories__header">
       <div class="stories__heading">
-        <div class="eyebrow">WORKSPACE · STORIES</div>
+        <div class="eyebrow">{{ t('stories.eyebrow') }}</div>
         <h1 class="stories__title">
-          <span class="grad" style="font-style: italic;">{{ stories.length }}</span> stories
+          <span class="grad" style="font-style: italic;">{{ stories.length }}</span> {{ t('stories.titleSuffix') }}
           <span class="stories__title-sub" v-if="stories.length">
-            · {{ doneCount }} done · {{ inProgressCount }} in progress
+            · {{ t('stories.titleStats', { done: doneCount, inProgress: inProgressCount }) }}
           </span>
         </h1>
         <p class="stories__desc">
-          Library managed via
-          <code class="stories__inline-code">local_list_stories</code>; TTS pregen runs in the background.
+          {{ t('stories.descBefore') }}
+          <code class="stories__inline-code">local_list_stories</code>{{ t('stories.descAfter') }}
         </p>
       </div>
     </div>
@@ -140,7 +143,7 @@ watch(
     <div v-else-if="error" class="stories__body stories__body--full stories__body--center">
       <div class="stories__error">
         <p>{{ error }}</p>
-        <button @click="fetchStories" class="btn btn-secondary">Retry</button>
+        <button @click="fetchStories" class="btn btn-secondary">{{ t('common.retry') }}</button>
       </div>
     </div>
 
@@ -151,8 +154,8 @@ watch(
           <path d="M4 19.5A2.5 2.5 0 016.5 17H20" stroke="currentColor" stroke-width="1.5"/>
           <path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z" stroke="currentColor" stroke-width="1.5"/>
         </svg>
-        <p class="stories__empty-title">No stories yet</p>
-        <p class="stories__empty-sub">Ask the AI to crawl stories from the web to fill your library.</p>
+        <p class="stories__empty-title">{{ t('stories.emptyTitle') }}</p>
+        <p class="stories__empty-sub">{{ t('stories.emptySub') }}</p>
       </div>
     </div>
 
@@ -172,19 +175,19 @@ watch(
             <input
               v-model="search"
               type="search"
-              placeholder="Filter library…"
+              :placeholder="t('stories.filterPlaceholder')"
               class="stories__search-input"
             />
           </div>
           <div class="seg stories__seg">
             <button :class="{ 'is-active': filterMode === 'all' }" @click="filterMode = 'all'">
-              All {{ stories.length }}
+              {{ t('stories.filterAll', { n: stories.length }) }}
             </button>
             <button :class="{ 'is-active': filterMode === 'in_progress' }" @click="filterMode = 'in_progress'">
-              In progress
+              {{ t('stories.filterInProgress') }}
             </button>
             <button :class="{ 'is-active': filterMode === 'done' }" @click="filterMode = 'done'">
-              Done
+              {{ t('stories.filterDone') }}
             </button>
           </div>
         </div>
@@ -199,7 +202,7 @@ watch(
             @delete="handleDelete"
           />
           <div v-if="!filteredStories.length" class="stories__empty-filter">
-            No stories match your filter.
+            {{ t('stories.noFilterMatch') }}
           </div>
         </div>
       </aside>
@@ -211,7 +214,7 @@ watch(
             <svg viewBox="0 0 24 24" fill="none" width="14" height="14">
               <path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
-            Library
+            {{ t('stories.library') }}
           </button>
         </div>
         <ChapterList
@@ -222,9 +225,9 @@ watch(
 
       <section v-else class="stories__placeholder">
         <div class="stories__placeholder-inner">
-          <div class="mono-label" style="font-size: 10px;">SELECT A STORY</div>
+          <div class="mono-label" style="font-size: 10px;">{{ t('stories.selectStory') }}</div>
           <p class="stories__placeholder-text">
-            Pick a story from the library to view its chapter list.
+            {{ t('stories.selectStoryHint') }}
           </p>
         </div>
       </section>

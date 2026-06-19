@@ -50,6 +50,19 @@ export async function mockBackend(
     paths.map((p) => ({ path: p, fx: validateFixture(p, yamlLoad(readFileSync(p, 'utf-8'))) }))
   )
 
+  // Pin the UI locale to English before the app boots. Flow specs assert
+  // English copy, but the app defaults to Vietnamese (jarvis_lang), so without
+  // this every text locator would miss once i18n landed. Runs on every
+  // navigation, ahead of app scripts; specs that exercise the toggle itself
+  // still change it at runtime after load.
+  await page.addInitScript(() => {
+    try {
+      localStorage.setItem('jarvis_lang', 'en')
+    } catch {
+      /* storage unavailable in this context — ignore */
+    }
+  })
+
   const matchedCounts = new Map<string, number>()
   for (const key of Object.keys(fixture.responses)) matchedCounts.set(key, 0)
 

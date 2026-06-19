@@ -19,9 +19,11 @@
 import { computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useSetupStore } from '../../stores/setup'
+import { useLang } from '../../composables/useLang'
 import WizardStepper from './WizardStepper.vue'
 import '../../assets/tokens.css'
 
+const { t } = useLang()
 const store = useSetupStore()
 const route = useRoute()
 const router = useRouter()
@@ -96,7 +98,7 @@ const currentStepName = computed(() => {
     <header class="brand-strip">
       <div class="brand">
         <div class="logo">J</div>
-        <span>Jarvis Setup</span>
+        <span>{{ t('setup.wizard.brand') }}</span>
       </div>
     </header>
 

@@ -19,6 +19,7 @@
  * Emits navigation via the wrapping view; we just render + interact.
  */
 import { ref, computed, nextTick, onMounted, watch } from 'vue'
+import { useLang } from '../../composables/useLang'
 import { formatTimestamp } from '../../composables/useActivityStream'
 import {
   buildRenderRows,
@@ -41,6 +42,8 @@ const props = defineProps({
   onInject: { type: Function, default: null },
   onOpenFullscreen: { type: Function, default: null },
 })
+
+const { t } = useLang()
 
 // ── Auto-scroll: stick to bottom unless user scrolled up ──
 const scrollEl = ref(null)
@@ -207,29 +210,29 @@ const canTogglePause = computed(() =>
           :class="{ 'is-paused': isPaused, 'is-transition': isPauseTransitioning }"
           :disabled="isPauseTransitioning"
           :title="
-            agent.status === 'pausing'  ? 'Pausing… (waiting for current step to finish)' :
-            agent.status === 'resuming' ? 'Resuming…' :
-            isPaused                    ? 'Resume' :
-            'Pause'
+            agent.status === 'pausing'  ? t('terminal.pausing') :
+            agent.status === 'resuming' ? t('terminal.resuming') :
+            isPaused                    ? t('terminal.resume') :
+            t('terminal.pause')
           "
           @click="onPauseToggle"
         >{{ isPaused ? '▶' : '⏸' }}</button>
         <button
           class="ctrl-btn"
-          title="Toggle inject"
+          :title="t('terminal.toggleInject')"
           :class="{ active: injectOpen }"
           @click="injectOpen = !injectOpen"
         >✎</button>
         <button
           v-if="onOpenFullscreen"
           class="ctrl-btn"
-          title="Fullscreen"
+          :title="t('terminal.fullscreen')"
           @click="onOpenFullscreen"
         >⤢</button>
         <button
           v-if="onDelete"
           class="ctrl-btn ctrl-danger"
-          title="Remove agent"
+          :title="t('terminal.removeAgent')"
           @click="onDelete"
         >🗑</button>
       </div>
@@ -237,8 +240,8 @@ const canTogglePause = computed(() =>
 
     <!-- Body -->
     <div class="term-body" ref="scrollEl" @scroll="onScroll">
-      <div v-if="loading && !turns.length" class="term-empty">Loading history…</div>
-      <div v-else-if="!turns.length" class="term-empty">No conversation yet.</div>
+      <div v-if="loading && !turns.length" class="term-empty">{{ t('terminal.loadingHistory') }}</div>
+      <div v-else-if="!turns.length" class="term-empty">{{ t('terminal.noConversation') }}</div>
 
       <template v-else>
         <template v-for="row in renderRows" :key="row.key">
@@ -264,7 +267,7 @@ const canTogglePause = computed(() =>
                 row.turn.role === 'assistant' ? '◀' : '▷'
               }}</span>
               <span class="turn-role-label">{{
-                row.turn.role === 'assistant' ? 'ASSISTANT' : 'USER'
+                row.turn.role === 'assistant' ? t('terminal.roleAssistant') : t('terminal.roleUser')
               }}</span>
               <span class="turn-time">{{ turnTime(row.turn) }}</span>
             </header>
@@ -281,7 +284,7 @@ const canTogglePause = computed(() =>
                 class="expand-btn"
                 @click="expandTurn(row.turn.turn_idx)"
               >
-                {{ expandedTurns.has(row.turn.turn_idx) ? 'Collapse' : '+ Show full' }}
+                {{ expandedTurns.has(row.turn.turn_idx) ? t('terminal.collapse') : t('terminal.showFull') }}
               </button>
 
               <!-- Tool calls (assistant) -->
@@ -313,8 +316,8 @@ const canTogglePause = computed(() =>
                     @click="expandTurn(row.turn.turn_idx)"
                   >
                     {{ expandedTurns.has(row.turn.turn_idx)
-                        ? 'Collapse'
-                        : `+ Show full (${Math.round(tr.fullSize / 1024)} KB)` }}
+                        ? t('terminal.collapse')
+                        : t('terminal.showFullKb', { kb: Math.round(tr.fullSize / 1024) }) }}
                   </button>
                 </li>
               </ul>
@@ -328,7 +331,7 @@ const canTogglePause = computed(() =>
         v-if="newCount > 0 && !stickToBottom"
         class="new-pill"
         @click="scrollToBottom"
-      >↓ {{ newCount }} new</button>
+      >{{ t('terminal.newPill', { n: newCount }) }}</button>
     </div>
 
     <!-- Inject bar (collapsible) -->
@@ -340,12 +343,12 @@ const canTogglePause = computed(() =>
         </span>
       </div>
       <div class="inject-row">
-        <button class="ctrl-btn" title="Image" @click="attachFile('image')">📎</button>
-        <button class="ctrl-btn" title="Audio" @click="attachFile('audio')">🎤</button>
+        <button class="ctrl-btn" :title="t('terminal.image')" @click="attachFile('image')">📎</button>
+        <button class="ctrl-btn" :title="t('terminal.audio')" @click="attachFile('audio')">🎤</button>
         <input
           v-model="injectText"
           class="inject-input"
-          placeholder="Type a message…"
+          :placeholder="t('terminal.injectPlaceholder')"
           :disabled="injectBusy"
           @keydown.enter="submitInject"
         />

@@ -15,6 +15,9 @@
  */
 import { ref, computed, watch } from 'vue'
 import { apiFetch, ApiError } from '../../api'
+import { useLang } from '../../composables/useLang'
+
+const { t } = useLang()
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
@@ -59,7 +62,7 @@ async function onDelete() {
 function _friendly(err) {
   if (err instanceof ApiError && err.body && typeof err.body === 'object') {
     const detail = err.body.detail
-    if (detail && typeof detail === 'object') return detail.message || 'Delete failed'
+    if (detail && typeof detail === 'object') return detail.message || t('skillEditor.deleteFailed')
     if (typeof detail === 'string') return detail
   }
   return err?.message || String(err)
@@ -79,18 +82,18 @@ function _friendly(err) {
               <line x1="14" y1="11" x2="14" y2="17"/>
             </svg>
           </div>
-          <h3 class="sd-title">Delete skill</h3>
+          <h3 class="sd-title">{{ t('skillEditor.deleteSkillTitle') }}</h3>
           <p class="sd-desc">
-            This will remove <strong>{{ skillName }}</strong> permanently.
+            {{ t('skillEditor.deleteDescPre') }} <strong>{{ skillName }}</strong> {{ t('skillEditor.deleteDescPost') }}
           </p>
           <p v-if="usedBy.length" class="sd-warn">
-            It is currently referenced by {{ usedBy.length }} agent{{ usedBy.length === 1 ? '' : 's' }}:
+            {{ t('skillEditor.deleteReferencedBy', { n: usedBy.length }) }}
             <strong>{{ usedBy.join(', ') }}</strong>.
-            Those references will be cleaned up automatically.
+            {{ t('skillEditor.deleteRefsCleanup') }}
           </p>
 
           <label class="sd-label">
-            Type <code>{{ skillName }}</code> to confirm
+            {{ t('skillEditor.typeToConfirmPre') }} <code>{{ skillName }}</code> {{ t('skillEditor.typeToConfirmPost') }}
             <input
               v-model="typed"
               type="text"
@@ -106,11 +109,11 @@ function _friendly(err) {
 
           <div class="sd-actions">
             <button class="sd-btn sd-btn-cancel" @click="emit('close')" :disabled="deleting">
-              Cancel
+              {{ t('skillEditor.cancel') }}
             </button>
             <button class="sd-btn sd-btn-delete" :disabled="!canDelete" @click="onDelete">
               <span v-if="deleting" class="sd-spinner"></span>
-              {{ deleting ? 'Deleting…' : 'Delete' }}
+              {{ deleting ? t('skillEditor.deleting') : t('skillEditor.delete') }}
             </button>
           </div>
         </div>

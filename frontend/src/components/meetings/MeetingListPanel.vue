@@ -8,6 +8,9 @@
  */
 import { computed } from 'vue'
 import { normalizeTs } from '../../utils/timeFormat.js'
+import { useLang } from '../../composables/useLang'
+
+const { t } = useLang()
 
 const props = defineProps({
   meetings: { type: Array, default: () => [] },
@@ -20,34 +23,34 @@ const props = defineProps({
 
 const emit = defineEmits(['select', 'retry', 'update:view-mode'])
 
-const tabs = [
-  { key: 'all',    label: 'All' },
-  { key: 'active', label: 'Active' },
-  { key: 'ended',  label: 'Ended' },
-]
+const tabs = computed(() => [
+  { key: 'all',    label: t('meetings.tabAll') },
+  { key: 'active', label: t('meetings.tabActive') },
+  { key: 'ended',  label: t('meetings.tabEnded') },
+])
 
 function statusInfo(m) {
   if (m.ended) {
-    if (m.outcome === 'consensus')  return { color: 'var(--success)', label: 'Consensus', icon: '✓' }
-    if (m.outcome === 'max_rounds') return { color: 'var(--text-muted)', label: 'Max rounds', icon: '◼' }
-    return { color: 'var(--text-muted)', label: 'Ended', icon: '◼' }
+    if (m.outcome === 'consensus')  return { color: 'var(--success)', label: t('meetings.statusConsensus'), icon: '✓' }
+    if (m.outcome === 'max_rounds') return { color: 'var(--text-muted)', label: t('meetings.statusMaxRoundsShort'), icon: '◼' }
+    return { color: 'var(--text-muted)', label: t('meetings.statusEnded'), icon: '◼' }
   }
-  if (m.started) return { color: 'var(--success)', label: 'Live', icon: '●' }
-  return { color: 'var(--warning)', label: 'Waiting', icon: '○' }
+  if (m.started) return { color: 'var(--success)', label: t('meetings.statusLive'), icon: '●' }
+  return { color: 'var(--warning)', label: t('meetings.statusWaiting'), icon: '○' }
 }
 
 function formatTime(ts) {
   const ms = normalizeTs(ts)
   if (ms === null) return ''
   const diff = Date.now() - ms
-  if (diff < 60_000) return 'just now'
+  if (diff < 60_000) return t('meetings.justNow')
   if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m`
   if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h`
   return `${Math.floor(diff / 86_400_000)}d`
 }
 
 function truncate(s, n = 60) {
-  if (!s) return 'No agenda'
+  if (!s) return t('meetings.noAgenda')
   return s.length > n ? s.slice(0, n) + '…' : s
 }
 
@@ -72,8 +75,8 @@ const hasMeetings = computed(() => props.meetings.length > 0)
     <!-- Head -->
     <div class="ml-head">
       <div class="ml-head-top">
-        <h2 class="ml-title">📋 Meetings</h2>
-        <span v-if="activeCount > 0" class="ml-active">{{ activeCount }} active</span>
+        <h2 class="ml-title">📋 {{ t('meetings.listTitle') }}</h2>
+        <span v-if="activeCount > 0" class="ml-active">{{ t('meetings.activeCount', { n: activeCount }) }}</span>
       </div>
       <div class="ml-seg">
         <button
@@ -92,16 +95,16 @@ const hasMeetings = computed(() => props.meetings.length > 0)
     <!-- Body -->
     <div v-if="isLoading && !meetings.length" class="ml-state">
       <div class="ml-spinner" />
-      <span>Loading meetings…</span>
+      <span>{{ t('meetings.loadingList') }}</span>
     </div>
     <div v-else-if="error" class="ml-state error">
       <span>⚠ {{ error }}</span>
-      <button class="ml-retry" @click="emit('retry')">Retry</button>
+      <button class="ml-retry" @click="emit('retry')">{{ t('meetings.retry') }}</button>
     </div>
     <div v-else-if="!hasMeetings" class="ml-state">
       <span class="ml-state-icon">📭</span>
-      <span>No meetings</span>
-      <span class="ml-state-hint">Agents create them via the create_meeting tool.</span>
+      <span>{{ t('meetings.noMeetings') }}</span>
+      <span class="ml-state-hint">{{ t('meetings.noMeetingsHint') }}</span>
     </div>
 
     <div v-else class="ml-list">
@@ -139,7 +142,7 @@ const hasMeetings = computed(() => props.meetings.length > 0)
                 class="ml-avatar ml-avatar-more"
               >+{{ m.participants.length - 4 }}</span>
             </div>
-            <span class="ml-pcount">{{ (m.participants || []).length }} participants</span>
+            <span class="ml-pcount">{{ t('meetings.participantsCount', { n: (m.participants || []).length }) }}</span>
           </div>
 
           <!-- Footer line: status badge, round counter, current speaker -->
@@ -155,7 +158,7 @@ const hasMeetings = computed(() => props.meetings.length > 0)
             <span v-if="m.current_round" class="ml-round">
               R{{ m.current_round }}<span v-if="m.max_rounds">/{{ m.max_rounds }}</span>
             </span>
-            <span v-if="m.turn_count" class="ml-turncount">{{ m.turn_count }} turns</span>
+            <span v-if="m.turn_count" class="ml-turncount">{{ t('meetings.turnsCount', { n: m.turn_count }) }}</span>
             <span v-if="m.current_speaker && !m.ended" class="ml-speaker">
               🎙 {{ String(m.current_speaker).split(' ')[0] }}
             </span>

@@ -9,7 +9,10 @@ import { apiFetch } from '../../api'
 import { useAudioPlayerStore } from '../../stores/audioPlayer'
 import { useToast } from '../../composables/useToast'
 import { usePregenStream } from '../../composables/usePregenStream'
+import { useLang } from '../../composables/useLang'
 import ChapterRow from './ChapterRow.vue'
+
+const { t } = useLang()
 
 const props = defineProps({
   storyId: { type: String, required: true },
@@ -65,7 +68,7 @@ async function handlePlay(filename) {
       chapterFiles.value,
     )
   } catch (e) {
-    toast.error('Unable to play audio', { description: e.message })
+    toast.error(t('stories.unablePlayAudio'), { description: e.message })
   }
 }
 
@@ -115,12 +118,12 @@ watch(
     <!-- Header -->
     <div class="chapter-list__header">
       <div class="chapter-list__heading">
-        <div class="mono-label" style="font-size: 10px;">CHAPTERS</div>
+        <div class="mono-label" style="font-size: 10px;">{{ t('stories.chaptersLabel') }}</div>
         <h3 class="chapter-list__title">{{ storyTitle || storyId }}</h3>
       </div>
       <div class="chapter-list__counts" v-if="chapters.length">
-        <span class="chapter-list__count">{{ chapters.length }} chapters</span>
-        <span class="chapter-list__count chapter-list__count--ok">{{ readyCount }} ready</span>
+        <span class="chapter-list__count">{{ t('stories.nChapters', { n: chapters.length }) }}</span>
+        <span class="chapter-list__count chapter-list__count--ok">{{ t('stories.nReady', { n: readyCount }) }}</span>
       </div>
     </div>
 
@@ -132,12 +135,12 @@ watch(
     <!-- Error -->
     <div v-else-if="error" class="chapter-list__error">
       <p>{{ error }}</p>
-      <button @click="fetchChapters" class="btn btn-secondary">Retry</button>
+      <button @click="fetchChapters" class="btn btn-secondary">{{ t('common.retry') }}</button>
     </div>
 
     <!-- Empty -->
     <div v-else-if="chapters.length === 0" class="chapter-list__empty">
-      <p>No chapters yet</p>
+      <p>{{ t('stories.noChapters') }}</p>
     </div>
 
     <!-- Body -->

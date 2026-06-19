@@ -13,6 +13,9 @@
  */
 import { computed, onMounted, ref } from 'vue'
 import { apiFetch, ApiError } from '../../api'
+import { useLang } from '../../composables/useLang'
+
+const { t } = useLang()
 
 const loading = ref(true)
 const saving = ref(false)
@@ -22,50 +25,50 @@ const saveSuccess = ref(false)
 const config = ref(null) // server truth
 const draft = ref(null)  // form state
 
-const NUMBER_FIELDS = [
+const NUMBER_FIELDS = computed(() => [
   {
     key: 'compact_at_ratio',
-    label: 'Compaction threshold (ratio of context window)',
-    hint: 'Compact when the context reaches this fraction of the limit. 0.3–0.95.',
+    label: t('settings.compaction.compactAtRatioLabel'),
+    hint: t('settings.compaction.compactAtRatioHint'),
     min: 0.3, max: 0.95, step: 0.05,
   },
   {
     key: 'max_context_tokens',
-    label: 'Max context tokens',
-    hint: '0 = auto-detect from the model’s context window (recommended).',
+    label: t('settings.compaction.maxContextTokensLabel'),
+    hint: t('settings.compaction.maxContextTokensHint'),
     min: 0, max: 2000000, step: 1000,
   },
   {
     key: 'keep_recent_messages',
-    label: 'Recent messages kept verbatim',
-    hint: 'The newest N messages are never summarized. 2–100.',
+    label: t('settings.compaction.keepRecentLabel'),
+    hint: t('settings.compaction.keepRecentHint'),
     min: 2, max: 100, step: 1,
   },
   {
     key: 'max_tool_result_tokens_in_context',
-    label: 'Max tool-result tokens kept in context',
-    hint: 'Older oversized tool outputs are truncated beyond this (full text stays in the raw snapshot).',
+    label: t('settings.compaction.maxToolResultLabel'),
+    hint: t('settings.compaction.maxToolResultHint'),
     min: 100, max: 100000, step: 100,
   },
   {
     key: 'min_savings_ratio',
-    label: 'Minimum savings to accept a compaction',
-    hint: 'Plans saving less than this fraction are rejected. 0–0.9.',
+    label: t('settings.compaction.minSavingsLabel'),
+    hint: t('settings.compaction.minSavingsHint'),
     min: 0, max: 0.9, step: 0.01,
   },
   {
     key: 'compactor_input_ratio',
-    label: 'Compactor input budget (ratio of compactor window)',
-    hint: 'Fraction of the compactor model’s window one summary call may read. Larger = fewer calls (faster) but riskier. 0.1–0.9.',
+    label: t('settings.compaction.compactorInputLabel'),
+    hint: t('settings.compaction.compactorInputHint'),
     min: 0.1, max: 0.9, step: 0.05,
   },
   {
     key: 'snapshot_versions_visible',
-    label: 'Versions shown in the dashboard',
-    hint: 'Default number of compaction versions listed on the agent’s Context Versions tab.',
+    label: t('settings.compaction.snapshotVersionsLabel'),
+    hint: t('settings.compaction.snapshotVersionsHint'),
     min: 1, max: 50, step: 1,
   },
-]
+])
 
 const dirtyKeys = computed(() => {
   if (!config.value || !draft.value) return []
@@ -119,7 +122,7 @@ function _friendly(err) {
   if (err instanceof ApiError && err.body && typeof err.body === 'object') {
     const detail = err.body.detail
     if (typeof detail === 'string') return detail
-    if (detail && typeof detail === 'object') return detail.message || 'Request failed.'
+    if (detail && typeof detail === 'object') return detail.message || t('settings.compaction.requestFailed')
   }
   return err?.message || String(err)
 }
@@ -130,22 +133,18 @@ onMounted(load)
 <template>
   <div class="compaction">
     <div class="intro">
-      When an agent's context grows past the threshold, the backend snapshots
-      the raw history (never deleted), summarizes the older middle section,
-      and reloads the compacted context so the agent continues seamlessly.
-      Inspect every compaction on the agent's <strong>Context Versions</strong> tab.
+      {{ t('settings.compaction.intro') }}
     </div>
 
-    <p v-if="loading" class="muted">Loading…</p>
+    <p v-if="loading" class="muted">{{ t('settings.compaction.loading') }}</p>
     <p v-if="error" class="error">{{ error }}</p>
 
     <template v-if="draft">
       <div class="row">
         <div class="row-info">
-          <h3>Enable automatic compaction</h3>
+          <h3>{{ t('settings.compaction.enableTitle') }}</h3>
           <p class="desc">
-            When off, contexts grow until the model's own limit — no
-            snapshots or summaries are produced.
+            {{ t('settings.compaction.enableDesc') }}
           </p>
         </div>
         <button
@@ -160,10 +159,9 @@ onMounted(load)
 
       <div class="row">
         <div class="row-info">
-          <h3>Live status events</h3>
+          <h3>{{ t('settings.compaction.liveStatusTitle') }}</h3>
           <p class="desc">
-            Emit context_compaction_* events on the activity stream
-            (toasts + live banner). Compaction itself is unaffected.
+            {{ t('settings.compaction.liveStatusDesc') }}
           </p>
         </div>
         <button
@@ -193,10 +191,9 @@ onMounted(load)
 
       <div class="row">
         <div class="row-info">
-          <h3>Compactor model</h3>
+          <h3>{{ t('settings.compaction.compactorModelTitle') }}</h3>
           <p class="desc">
-            Dedicated compactor agent's model (e.g. a large-window model so one
-            call can summarize more history). Empty = use each agent's own model.
+            {{ t('settings.compaction.compactorModelDesc') }}
           </p>
         </div>
         <input
@@ -209,10 +206,10 @@ onMounted(load)
 
       <div class="actions">
         <button class="save-btn" :disabled="!dirtyKeys.length || saving" @click="save">
-          {{ saving ? 'Saving…' : 'Save Changes' }}
+          {{ saving ? t('settings.compaction.saving') : t('common.saveChanges') }}
         </button>
-        <span v-if="saveSuccess" class="success-msg">Saved · live now (no restart needed)</span>
-        <span v-else-if="dirtyKeys.length" class="muted">{{ dirtyKeys.length }} unsaved change(s)</span>
+        <span v-if="saveSuccess" class="success-msg">{{ t('settings.compaction.savedLive') }}</span>
+        <span v-else-if="dirtyKeys.length" class="muted">{{ t('settings.compaction.unsavedChanges', { n: dirtyKeys.length }) }}</span>
       </div>
     </template>
   </div>

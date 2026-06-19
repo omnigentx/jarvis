@@ -13,7 +13,9 @@ import { useConfirm } from '../composables/useConfirm'
 import { useToast } from '../composables/useToast'
 import { useSSEConnection } from '../composables/useSSEConnection.js'
 import { useBreakpoint } from '../composables/useBreakpoint'
+import { useLang } from '../composables/useLang'
 
+const { t } = useLang()
 const { isMobile } = useBreakpoint()
 
 const agentsStore = useAgentsStore()
@@ -237,7 +239,7 @@ async function revealSecret(idx) {
     row.value = data.value
     row.revealed = true
   } catch (err) {
-    pushToast({ type: 'error', message: 'Failed to reveal secret: ' + _friendly(err) })
+    pushToast({ type: 'error', message: t('mcp.toastRevealFailed', { err: _friendly(err) }) })
   }
 }
 
@@ -278,7 +280,7 @@ async function saveServer() {
     if (editing.isCreate) {
       const payload = { name: editing.name, ..._buildPayload() }
       await apiFetch('/api/mcp/servers', { method: 'POST', body: JSON.stringify(payload) })
-      pushToast({ type: 'success', message: `Created ${editing.name}` })
+      pushToast({ type: 'success', message: t('mcp.toastCreated', { name: editing.name }) })
     } else {
       const payload = _buildPayload()
       const resp = await apiFetch(`/api/mcp/servers/${editing.name}`, {
@@ -287,9 +289,9 @@ async function saveServer() {
       })
       if (resp.fanout && !resp.fanout.all_ok) {
         const failures = resp.fanout.agents.filter((a) => !a.ok).map((a) => `${a.agent}: ${a.error}`).join('; ')
-        pushToast({ type: 'warning', message: `Saved with reconnect failures — ${failures}` })
+        pushToast({ type: 'warning', message: t('mcp.toastSavedReconnectFail', { failures }) })
       } else {
-        pushToast({ type: 'success', message: `Updated ${editing.name}` })
+        pushToast({ type: 'success', message: t('mcp.toastUpdated', { name: editing.name }) })
       }
     }
     closeEditor()
@@ -320,10 +322,10 @@ async function testCurrent() {
       : await apiFetch(`/api/mcp/servers/${editing.name}/test`, { method: 'POST' })
     if (result.ok) {
       editing.smokeStatus = 'ok'
-      editing.smokeError = `OK — ${(result.tools || []).length} tools discovered`
+      editing.smokeError = t('mcp.smokeOk', { n: (result.tools || []).length })
     } else {
       editing.smokeStatus = 'fail'
-      editing.smokeError = result.error || 'unknown error'
+      editing.smokeError = result.error || t('mcp.unknownError')
     }
   } catch (err) {
     editing.smokeStatus = 'fail'
@@ -341,11 +343,11 @@ async function refreshTools(server) {
     if (result.ok) {
       pushToast({
         type: 'success',
-        message: `Connected to ${server.name} — ${(result.tools || []).length} tools refreshed`,
+        message: t('mcp.toastConnected', { name: server.name, n: (result.tools || []).length }),
       })
       await loadServerDetail(server.name)
     } else {
-      pushToast({ type: 'error', message: `Test failed: ${result.error || 'unknown'}` })
+      pushToast({ type: 'error', message: t('mcp.toastTestFailed', { err: result.error || t('mcp.unknown') }) })
     }
   } catch (err) {
     pushToast({ type: 'error', message: _friendly(err) })
@@ -356,17 +358,17 @@ async function refreshTools(server) {
 
 async function deleteServer(server) {
   const ok = await confirm({
-    title: `Delete ${server.name}?`,
+    title: t('mcp.deleteTitle', { name: server.name }),
     message: server.attached_agents?.length
-      ? `Will detach from ${server.attached_agents.length} agent(s) and delete the server. Any in-flight tool calls will be interrupted.`
-      : 'Server will be removed from the catalog.',
-    confirmText: 'Delete',
+      ? t('mcp.deleteMsgAttached', { n: server.attached_agents.length })
+      : t('mcp.deleteMsgCatalog'),
+    confirmText: t('common.delete'),
     variant: 'danger',
   })
   if (!ok) return
   try {
     await apiFetch(`/api/mcp/servers/${server.name}`, { method: 'DELETE' })
-    pushToast({ type: 'success', message: `Deleted ${server.name}` })
+    pushToast({ type: 'success', message: t('mcp.toastDeleted', { name: server.name }) })
     if (selectedName.value === server.name) selectedName.value = ''
     await loadServers()
     await loadEvents()
@@ -384,11 +386,11 @@ async function attachToAgent(server, agent) {
   try {
     const result = await apiFetch(path, { method: 'POST' })
     if (result.warning) {
-      pushToast({ type: 'warning', message: `Persisted but runtime: ${result.warning}` })
+      pushToast({ type: 'warning', message: t('mcp.toastPersistedRuntime', { warning: result.warning }) })
     } else {
       pushToast({
         type: 'success',
-        message: `Attached ${server.name} → ${agent.name} (+${result.tools_added?.length || 0} tools)`,
+        message: t('mcp.toastAttached', { server: server.name, agent: agent.name, n: result.tools_added?.length || 0 }),
       })
     }
     await loadServers()
@@ -405,7 +407,7 @@ async function detachFromAgent(server, agentName) {
   const path = `/api/mcp/servers/${server.name}/agents/${encodeURIComponent(agentName)}`
   try {
     await apiFetch(path, { method: 'DELETE' })
-    pushToast({ type: 'success', message: `Detached ${server.name} from ${agentName}` })
+    pushToast({ type: 'success', message: t('mcp.toastDetached', { server: server.name, agent: agentName }) })
     await loadServers()
     await loadEvents()
   } catch (err) {
@@ -464,16 +466,16 @@ function fmtTime(ts) {
     <!-- ─── Header ─── -->
     <div class="mcp__header">
       <div class="mcp__heading">
-        <div class="eyebrow">SYSTEM · MCP SERVERS</div>
+        <div class="eyebrow">{{ t('mcp.eyebrow') }}</div>
         <h1 class="mcp__title">
-          <span class="grad" style="font-style: italic;">{{ statusCounts.total }}</span> MCP servers
+          <span class="grad" style="font-style: italic;">{{ statusCounts.total }}</span> {{ t('mcp.serversWord') }}
           <span class="mcp__title-sub">
-            · {{ statusCounts.running }} running · {{ statusCounts.stopped }} stopped · {{ statusCounts.error }} error
+            · {{ t('mcp.statRunning', { n: statusCounts.running }) }} · {{ t('mcp.statStopped', { n: statusCounts.stopped }) }} · {{ t('mcp.statError', { n: statusCounts.error }) }}
           </span>
         </h1>
         <p class="mcp__desc">
-          DB-backed catalog. Built-ins seeded from
-          <code class="mcp__inline-code">fastagent.config.yaml</code> on first boot — editable but not deletable.
+          {{ t('mcp.descLead') }}
+          <code class="mcp__inline-code">fastagent.config.yaml</code> {{ t('mcp.descRest') }}
         </p>
       </div>
       <button class="btn btn-primary" @click="openCreate">
@@ -481,7 +483,7 @@ function fmtTime(ts) {
           <line x1="12" y1="5" x2="12" y2="19"/>
           <line x1="5" y1="12" x2="19" y2="12"/>
         </svg>
-        New server
+        {{ t('mcp.newServer') }}
       </button>
     </div>
 
@@ -492,11 +494,11 @@ function fmtTime(ts) {
           <circle cx="11" cy="11" r="7"/>
           <line x1="21" y1="21" x2="16.65" y2="16.65" stroke-linecap="round"/>
         </svg>
-        <input v-model="search" placeholder="Filter by name, command, or url…" class="mcp__search-input" />
+        <input v-model="search" :placeholder="t('mcp.searchPlaceholder')" class="mcp__search-input" />
       </div>
       <div class="seg">
         <button :class="{ 'is-active': filterMode === 'all' }" @click="filterMode = 'all'">
-          All {{ statusCounts.total }}
+          {{ t('mcp.filterAll', { n: statusCounts.total }) }}
         </button>
         <button :class="{ 'is-active': filterMode === 'running' }" @click="filterMode = 'running'">
           ● {{ statusCounts.running }}
@@ -508,18 +510,18 @@ function fmtTime(ts) {
           ! {{ statusCounts.error }}
         </button>
       </div>
-      <button class="btn btn-secondary mcp__refresh" @click="loadServers" :disabled="loading" title="Refresh" aria-label="Refresh">
+      <button class="btn btn-secondary mcp__refresh" @click="loadServers" :disabled="loading" :title="t('common.refresh')" :aria-label="t('common.refresh')">
         <svg class="mcp__refresh-ico" :class="{ spin: loading }" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <polyline points="23 4 23 10 17 10"/>
           <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
         </svg>
-        <span class="btn-label">{{ loading ? 'Loading…' : 'Refresh' }}</span>
+        <span class="btn-label">{{ loading ? t('common.loading') : t('common.refresh') }}</span>
       </button>
     </div>
 
     <div v-if="loadError" class="mcp__error">
       {{ loadError }}
-      <button class="btn btn-secondary" @click="loadServers">Retry</button>
+      <button class="btn btn-secondary" @click="loadServers">{{ t('common.retry') }}</button>
     </div>
 
     <!-- ─── Two-pane layout ───
@@ -549,12 +551,12 @@ function fmtTime(ts) {
           </div>
           <div class="mcp-row__meta">
             <span>{{ s.transport }}</span>
-            <span>· {{ (s.tools || []).length || '—' }} tools</span>
-            <span>· {{ (s.attached_agents || []).length }} agents</span>
+            <span>· {{ t('mcp.rowTools', { n: (s.tools || []).length || '—' }) }}</span>
+            <span>· {{ t('mcp.rowAgents', { n: (s.attached_agents || []).length }) }}</span>
             <span v-if="s.is_builtin" class="mcp-row__lock">· 🔒</span>
           </div>
         </button>
-        <div v-if="!filtered.length && !loading" class="mcp__empty">No servers match.</div>
+        <div v-if="!filtered.length && !loading" class="mcp__empty">{{ t('mcp.noMatch') }}</div>
       </aside>
 
       <!-- Right: detail -->
@@ -564,12 +566,12 @@ function fmtTime(ts) {
           v-if="isMobile"
           class="mcp-back-btn"
           @click="clearMobileSelection"
-          aria-label="Back to list"
+          :aria-label="t('mcp.backToList')"
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
             <path d="M19 12H5M12 19l-7-7 7-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
-          <span>Servers</span>
+          <span>{{ t('mcp.serversBack') }}</span>
         </button>
         <header class="mcp-detail__head">
           <div class="mcp-detail__head-main">
@@ -578,34 +580,34 @@ function fmtTime(ts) {
               <span class="mcp-detail__pill-dot"></span>
               {{ selected.status }}
             </span>
-            <span v-if="selected.is_builtin" class="mcp-detail__builtin">🔒 BUILTIN</span>
+            <span v-if="selected.is_builtin" class="mcp-detail__builtin">🔒 {{ t('mcp.builtinBadge') }}</span>
           </div>
           <div class="mcp-detail__actions">
             <button
               class="btn btn-secondary mcp-detail__act"
               :disabled="refreshingTools"
               @click="refreshTools(selected)"
-              :title="refreshingTools ? 'Testing…' : 'Test & refresh'"
-              aria-label="Test & refresh"
+              :title="refreshingTools ? t('mcp.testing') : t('mcp.testRefresh')"
+              :aria-label="t('mcp.testRefresh')"
             >
               <svg class="mcp-detail__act-ico" :class="{ spin: refreshingTools }" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <polyline points="23 4 23 10 17 10"/>
                 <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
               </svg>
-              <span class="btn-label">{{ refreshingTools ? 'Testing…' : 'Test & refresh' }}</span>
+              <span class="btn-label">{{ refreshingTools ? t('mcp.testing') : t('mcp.testRefresh') }}</span>
             </button>
-            <button class="btn btn-secondary mcp-detail__act" @click="openEdit(selected)" title="Edit" aria-label="Edit">
+            <button class="btn btn-secondary mcp-detail__act" @click="openEdit(selected)" :title="t('common.edit')" :aria-label="t('common.edit')">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
                 <path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
               </svg>
-              <span class="btn-label">Edit</span>
+              <span class="btn-label">{{ t('common.edit') }}</span>
             </button>
             <button
               class="btn btn-icon btn-ghost mcp-detail__delete"
               @click="deleteServer(selected)"
               :disabled="selected.is_builtin"
-              :title="selected.is_builtin ? 'Built-in servers cannot be deleted' : 'Delete'"
+              :title="selected.is_builtin ? t('mcp.builtinNoDelete') : t('common.delete')"
             >
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
                 <polyline points="3 6 5 6 21 6"/>
@@ -616,11 +618,11 @@ function fmtTime(ts) {
         </header>
 
         <nav class="mcp-tabs">
-          <button :class="{ 'is-active': tab === 'config' }" @click="tab = 'config'">Config</button>
+          <button :class="{ 'is-active': tab === 'config' }" @click="tab = 'config'">{{ t('mcp.tabConfig') }}</button>
           <button :class="{ 'is-active': tab === 'agents' }" @click="tab = 'agents'">
-            Agents <span class="mcp-tabs__count">{{ (selected.attached_agents || []).length }}</span>
+            {{ t('mcp.tabAgents') }} <span class="mcp-tabs__count">{{ (selected.attached_agents || []).length }}</span>
           </button>
-          <button :class="{ 'is-active': tab === 'events' }" @click="tab = 'events'">Events</button>
+          <button :class="{ 'is-active': tab === 'events' }" @click="tab = 'events'">{{ t('mcp.tabEvents') }}</button>
         </nav>
 
         <!-- Config tab -->
@@ -642,7 +644,7 @@ function fmtTime(ts) {
                 <span class="mcp-config__eq">=</span>
                 <code class="mcp-config__env-v" :class="{ 'mcp-config__env-v--secret': v === '••••' }">{{ v }}</code>
               </div>
-              <div v-if="!Object.keys(selected.env || {}).length" class="mcp-config__none">(no env vars)</div>
+              <div v-if="!Object.keys(selected.env || {}).length" class="mcp-config__none">{{ t('mcp.noEnvVars') }}</div>
             </div>
           </div>
 
@@ -650,15 +652,15 @@ function fmtTime(ts) {
           <div class="mcp-section">
             <div class="mcp-section__head">
               <h3 class="mcp-section__title">
-                Tools <span class="mcp-section__subcount">({{ (selected.tools || []).length }} discovered)</span>
+                {{ t('mcp.toolsTitle') }} <span class="mcp-section__subcount">{{ t('mcp.toolsDiscovered', { n: (selected.tools || []).length }) }}</span>
               </h3>
               <button
                 class="btn btn-ghost mcp-section__action"
                 :disabled="refreshingTools"
-                :title="`Re-run smoke test for ${selected.name}`"
+                :title="t('mcp.rerunSmoke', { name: selected.name })"
                 @click="refreshTools(selected)"
               >
-                {{ refreshingTools ? 'Refreshing…' : '↻ Refresh tools' }}
+                {{ refreshingTools ? t('mcp.refreshing') : t('mcp.refreshTools') }}
               </button>
             </div>
             <div class="mcp-tool-list">
@@ -667,7 +669,7 @@ function fmtTime(ts) {
                 <span v-if="t.description" class="mcp-tool__desc">{{ t.description }}</span>
               </div>
               <div v-if="!(selected.tools || []).length" class="mcp-tool mcp-tool--empty">
-                (none discovered — click <em>Refresh tools</em> to fetch from a live connection)
+                {{ t('mcp.toolsEmptyLead') }} <em>{{ t('mcp.refreshTools') }}</em> {{ t('mcp.toolsEmptyTail') }}
               </div>
             </div>
           </div>
@@ -676,7 +678,7 @@ function fmtTime(ts) {
         <!-- Agents tab -->
         <div v-if="tab === 'agents'" class="mcp-tab">
           <div class="mcp-section">
-            <h3 class="mcp-section__title">Currently attached</h3>
+            <h3 class="mcp-section__title">{{ t('mcp.currentlyAttached') }}</h3>
             <div v-if="(selected.attached_agents || []).length" class="mcp-attached">
               <span
                 v-for="a in selected.attached_agents"
@@ -687,18 +689,18 @@ function fmtTime(ts) {
                 <button
                   class="mcp-agent-chip__detach"
                   type="button"
-                  :title="`Detach from ${a}`"
+                  :title="t('mcp.detachFrom', { agent: a })"
                   :disabled="attaching"
                   @click="detachFromAgent(selected, a)"
                 >×</button>
               </span>
             </div>
-            <p v-else class="mcp-section__muted">Not attached to any agent.</p>
+            <p v-else class="mcp-section__muted">{{ t('mcp.notAttached') }}</p>
 
-            <h3 class="mcp-section__title" style="margin-top: 18px;">Add to agent</h3>
+            <h3 class="mcp-section__title" style="margin-top: 18px;">{{ t('mcp.addToAgent') }}</h3>
             <div class="mcp-attach-wrap">
               <button ref="attachTriggerRef" class="btn btn-secondary" @click.stop="toggleAttachMenu">
-                + Attach to…
+                {{ t('mcp.attachToTrigger') }}
               </button>
             </div>
           </div>
@@ -718,7 +720,7 @@ function fmtTime(ts) {
             @click.stop
           >
             <div v-if="!unattachedAgents(selected).length" class="mcp-attach-menu__empty">
-              Already attached to all agents.
+              {{ t('mcp.alreadyAllAgents') }}
             </div>
             <button
               v-for="a in unattachedAgents(selected)"
@@ -728,8 +730,8 @@ function fmtTime(ts) {
               @click="attachToAgent(selected, a)"
             >
               <span>{{ a.name }}</span>
-              <span v-if="!a.is_card_based" class="mcp-attach-menu__warn" title="Code-based agent — change reverts on restart">
-                runtime
+              <span v-if="!a.is_card_based" class="mcp-attach-menu__warn" :title="t('mcp.codeAgentRevert')">
+                {{ t('mcp.runtime') }}
               </span>
             </button>
           </div>
@@ -737,7 +739,7 @@ function fmtTime(ts) {
 
         <!-- Events tab -->
         <div v-if="tab === 'events'" class="mcp-tab">
-          <p class="mcp-section__muted">Live + history, newest first. Filtered to this server.</p>
+          <p class="mcp-section__muted">{{ t('mcp.eventsHint') }}</p>
           <div class="mcp-event-list">
             <div
               v-for="ev in events.filter(e => e.server === selected.name)"
@@ -750,19 +752,19 @@ function fmtTime(ts) {
               <span class="mcp-event__outcome" :class="`mcp-event__outcome--${ev.outcome}`">{{ ev.outcome }}</span>
               <span v-if="ev.duration_ms != null" class="mcp-event__duration">{{ ev.duration_ms }}ms</span>
               <details v-if="ev.detail && Object.keys(ev.detail).length" class="mcp-event__detail">
-                <summary>detail</summary>
+                <summary>{{ t('mcp.eventDetail') }}</summary>
                 <pre>{{ JSON.stringify(ev.detail, null, 2) }}</pre>
               </details>
             </div>
             <div v-if="!events.filter(e => e.server === selected.name).length" class="mcp-event mcp-event--empty">
-              (no events yet)
+              {{ t('mcp.noEvents') }}
             </div>
           </div>
         </div>
       </section>
 
       <section v-else class="mcp__detail mcp__detail--empty">
-        <p class="mcp-section__muted">Select a server on the left, or create a new one.</p>
+        <p class="mcp-section__muted">{{ t('mcp.selectOrCreate') }}</p>
       </section>
     </div>
 
@@ -771,16 +773,16 @@ function fmtTime(ts) {
       <div v-if="editing.open" class="mcp-modal-overlay jv" @click.self="closeEditor">
         <div class="mcp-modal">
           <header class="mcp-modal__head">
-            <h3>{{ editing.isCreate ? 'New MCP Server' : `Edit ${editing.name}` }}</h3>
-            <button class="btn btn-icon btn-ghost" @click="closeEditor" aria-label="Close">×</button>
+            <h3>{{ editing.isCreate ? t('mcp.modalNewTitle') : t('mcp.modalEditTitle', { name: editing.name }) }}</h3>
+            <button class="btn btn-icon btn-ghost" @click="closeEditor" :aria-label="t('common.close')">×</button>
           </header>
           <div class="mcp-modal__body">
             <label class="mcp-field">
-              <span>Name</span>
+              <span>{{ t('mcp.fieldName') }}</span>
               <input v-model="editing.name" :disabled="!editing.isCreate" placeholder="my-tool" class="mcp-input" />
             </label>
             <label class="mcp-field">
-              <span>Transport</span>
+              <span>{{ t('mcp.fieldTransport') }}</span>
               <select v-model="editing.transport" class="mcp-input">
                 <option value="stdio">stdio</option>
                 <option value="http">http</option>
@@ -789,29 +791,29 @@ function fmtTime(ts) {
             </label>
             <template v-if="editing.transport === 'stdio'">
               <label class="mcp-field">
-                <span>Command</span>
+                <span>{{ t('mcp.fieldCommand') }}</span>
                 <input v-model="editing.command" placeholder="python" class="mcp-input" />
               </label>
               <label class="mcp-field">
-                <span>Args (one per line)</span>
+                <span>{{ t('mcp.fieldArgs') }}</span>
                 <textarea v-model="editing.argsText" rows="4" class="mcp-input mcp-input--mono" placeholder="-m&#10;my_module" />
               </label>
             </template>
             <template v-else>
               <label class="mcp-field">
-                <span>URL</span>
+                <span>{{ t('mcp.fieldUrl') }}</span>
                 <input v-model="editing.url" placeholder="https://example.com/mcp" class="mcp-input" />
               </label>
             </template>
             <div class="mcp-field">
-              <span>Env vars</span>
+              <span>{{ t('mcp.fieldEnvVars') }}</span>
               <div class="mcp-env-table" v-if="editing.envRows.length">
                 <div class="mcp-env-row" v-for="(row, idx) in editing.envRows" :key="idx">
-                  <input v-model="row.key" placeholder="KEY" class="mcp-input mcp-input--mono" />
+                  <input v-model="row.key" :placeholder="t('mcp.envKeyPlaceholder')" class="mcp-input mcp-input--mono" />
                   <input
                     v-model="row.value"
                     :type="row.masked && !row.revealed ? 'password' : 'text'"
-                    placeholder="value"
+                    :placeholder="t('mcp.envValuePlaceholder')"
                     class="mcp-input mcp-input--mono"
                     :readonly="row.masked && !row.revealed"
                   />
@@ -819,29 +821,29 @@ function fmtTime(ts) {
                        (no eye) keep the value width + the remove × aligned with
                        secret rows that do show the toggle. -->
                   <span class="mcp-env-row__eye">
-                    <button v-if="row.masked && !row.revealed" type="button" class="btn btn-icon btn-ghost" @click="revealSecret(idx)" title="Reveal">
+                    <button v-if="row.masked && !row.revealed" type="button" class="btn btn-icon btn-ghost" @click="revealSecret(idx)" :title="t('mcp.reveal')">
                       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
                     </button>
-                    <button v-else-if="row.masked && row.revealed" type="button" class="btn btn-icon btn-ghost" @click="hideSecret(idx)" title="Hide">
+                    <button v-else-if="row.masked && row.revealed" type="button" class="btn btn-icon btn-ghost" @click="hideSecret(idx)" :title="t('mcp.hide')">
                       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
                     </button>
                   </span>
-                  <button type="button" class="btn btn-icon btn-ghost mcp-env-row__remove" @click="removeEnvRow(idx)" title="Remove">
+                  <button type="button" class="btn btn-icon btn-ghost mcp-env-row__remove" @click="removeEnvRow(idx)" :title="t('common.remove')">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                   </button>
                 </div>
               </div>
-              <button type="button" class="btn btn-ghost mcp-env-add" @click="addEnvRow">+ Add env var</button>
+              <button type="button" class="btn btn-ghost mcp-env-add" @click="addEnvRow">{{ t('mcp.addEnvVar') }}</button>
             </div>
 
             <div v-if="editing.smokeStatus === 'ok'" class="mcp-banner mcp-banner--success">{{ editing.smokeError }}</div>
-            <div v-if="editing.smokeStatus === 'fail'" class="mcp-banner mcp-banner--error">Smoke test failed: {{ editing.smokeError }}</div>
+            <div v-if="editing.smokeStatus === 'fail'" class="mcp-banner mcp-banner--error">{{ t('mcp.smokeFailedPrefix') }} {{ editing.smokeError }}</div>
             <div v-if="editing.error" class="mcp-banner mcp-banner--error">{{ editing.error }}</div>
           </div>
           <footer class="mcp-modal__foot">
-            <button class="btn btn-secondary" @click="testCurrent" :disabled="editing.saving">Test connection</button>
+            <button class="btn btn-secondary" @click="testCurrent" :disabled="editing.saving">{{ t('mcp.testConnection') }}</button>
             <button class="btn btn-primary" @click="saveServer" :disabled="editing.saving">
-              {{ editing.saving ? 'Saving…' : 'Save' }}
+              {{ editing.saving ? t('mcp.saving') : t('common.save') }}
             </button>
           </footer>
         </div>

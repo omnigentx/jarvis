@@ -22,10 +22,12 @@ import { EditorState } from '@codemirror/state'
 import { defaultKeymap, indentWithTab, history, historyKeymap } from '@codemirror/commands'
 import { useSetupStore } from '../../stores/setup'
 import { useConfirm } from '../../composables/useConfirm'
+import { useLang } from '../../composables/useLang'
 import { apiFetch, ApiError } from '../../api'
 import WizardCard from './WizardCard.vue'
 import './wizard.css'
 
+const { t } = useLang()
 const router = useRouter()
 const store = useSetupStore()
 const { confirm } = useConfirm()
@@ -74,9 +76,9 @@ async function selectFile(name) {
   if (activeName.value === name) return
   if (dirty.value) {
     const ok = await confirm({
-      title: 'Discard unsaved changes',
-      message: 'You have unsaved changes in the current file. Discard them and switch?',
-      confirmText: 'Discard & Switch',
+      title: t('setup.yaml.discardTitle'),
+      message: t('setup.yaml.discardMessage'),
+      confirmText: t('setup.yaml.discardConfirm'),
       variant: 'warning',
     })
     if (!ok) return
@@ -118,7 +120,7 @@ async function onSaveFile() {
     savedContent.value = fresh.content
     exists.value = true
     sizeBytes.value = res?.size ?? fresh.size
-    editorSuccess.value = `${fresh.filename} saved (${sizeBytes.value} bytes).`
+    editorSuccess.value = t('setup.yaml.savedMsg', { file: fresh.filename, bytes: sizeBytes.value })
     refreshList().catch(() => {})
   } catch (err) {
     editorError.value = _friendly(err)
@@ -131,9 +133,9 @@ async function onRevert() {
   if (!dirty.value) return
   if (
     !(await confirm({
-      title: 'Revert changes',
-      message: 'Discard unsaved changes and revert to last saved content?',
-      confirmText: 'Revert',
+      title: t('setup.yaml.revertTitle'),
+      message: t('setup.yaml.revertMessage'),
+      confirmText: t('setup.yaml.revert'),
       variant: 'warning',
     }))
   ) {
@@ -146,7 +148,7 @@ function _friendly(err) {
   if (err instanceof ApiError && err.body && typeof err.body === 'object') {
     const detail = err.body.detail
     if (detail && typeof detail === 'object') {
-      return `${detail.message || 'Save failed'} — ${detail.error || ''}`.trim()
+      return `${detail.message || t('setup.yaml.saveFailed')} — ${detail.error || ''}`.trim()
     }
     if (typeof detail === 'string') return detail
   }
@@ -156,9 +158,9 @@ function _friendly(err) {
 async function onContinue() {
   if (dirty.value) {
     const ok = await confirm({
-      title: 'Continue without saving',
-      message: 'You have unsaved YAML edits. Continue without saving them?',
-      confirmText: 'Continue Anyway',
+      title: t('setup.yaml.continueTitle'),
+      message: t('setup.yaml.continueMessage'),
+      confirmText: t('setup.yaml.continueConfirm'),
       variant: 'warning',
     })
     if (!ok) return
@@ -187,9 +189,9 @@ async function onSkip() {
 async function onBack() {
   if (dirty.value) {
     const ok = await confirm({
-      title: 'Leave without saving',
-      message: 'You have unsaved YAML edits. Leave without saving?',
-      confirmText: 'Leave',
+      title: t('setup.yaml.leaveTitle'),
+      message: t('setup.yaml.leaveMessage'),
+      confirmText: t('setup.yaml.leave'),
       variant: 'warning',
     })
     if (!ok) return
@@ -215,9 +217,9 @@ watch(content, () => { editorSuccess.value = '' })
 
 <template>
   <WizardCard
-    title="Advanced configuration (optional)"
-    subtitle="Review and customize your YAML config files. Defaults work for most setups — you can skip this step."
-    step-label="STEP 04 / 05 · YAML"
+    :title="t('setup.yaml.title')"
+    :subtitle="t('setup.yaml.subtitle')"
+    :step-label="t('setup.yaml.stepLabel')"
     width="960px"
   >
     <div class="wizard-callout">
@@ -227,16 +229,16 @@ watch(content, () => { editorSuccess.value = '' })
         <line x1="12" y1="16" x2="12.01" y2="16" />
       </svg>
       <div>
-        Edit <code>fastagent.config.yaml</code> or <code>fastagent.secrets.yaml</code>
-        for non-default MCP servers / provider overrides. Saves are validated with
-        <code>yaml.safe_load</code> and written atomically with a <code>.bak</code>
-        rollback. Revisit later from <strong>Settings → YAML Config</strong>.
+        {{ t('setup.yaml.calloutEdit') }} <code>fastagent.config.yaml</code> {{ t('setup.yaml.calloutOr') }} <code>fastagent.secrets.yaml</code>
+        {{ t('setup.yaml.calloutBody1') }}
+        <code>yaml.safe_load</code> {{ t('setup.yaml.calloutBody2') }} <code>.bak</code>
+        {{ t('setup.yaml.calloutBody3') }} <strong>{{ t('setup.yaml.calloutSettings') }}</strong>.
       </div>
     </div>
 
     <div class="yaml-wrap">
       <aside class="file-list">
-        <header>CONFIG FILES</header>
+        <header>{{ t('setup.yaml.configFiles') }}</header>
         <button
           v-for="f in files"
           :key="f.name"
@@ -250,7 +252,7 @@ watch(content, () => { editorSuccess.value = '' })
             <polyline points="14 2 14 8 20 8" />
           </svg>
           <span class="name">{{ f.filename }}</span>
-          <span v-if="!f.exists" class="hint">NEW</span>
+          <span v-if="!f.exists" class="hint">{{ t('setup.yaml.new') }}</span>
         </button>
       </aside>
 
@@ -267,15 +269,15 @@ watch(content, () => { editorSuccess.value = '' })
             <span class="desc" v-if="activeDescription">{{ activeDescription }}</span>
           </div>
           <div class="editor-actions">
-            <span v-if="dirty" class="status-pill dirty">● UNSAVED</span>
-            <span v-else-if="exists && activeName" class="status-pill clean">✓ SAVED</span>
+            <span v-if="dirty" class="status-pill dirty">{{ t('setup.yaml.unsaved') }}</span>
+            <span v-else-if="exists && activeName" class="status-pill clean">{{ t('setup.yaml.saved') }}</span>
             <button
               type="button"
               class="wizard-btn ghost small"
               :disabled="!dirty || saving"
               @click="onRevert"
             >
-              Revert
+              {{ t('setup.yaml.revert') }}
             </button>
             <button
               type="button"
@@ -283,29 +285,29 @@ watch(content, () => { editorSuccess.value = '' })
               :disabled="!dirty || saving || !activeName"
               @click="onSaveFile"
             >
-              {{ saving ? 'Saving…' : 'Save' }}
+              {{ saving ? t('common.saving') : t('common.save') }}
               <span v-if="!saving" class="shortcut">⌘S</span>
             </button>
           </div>
         </header>
 
         <div class="editor-shell">
-          <div v-if="loading" class="overlay">Loading…</div>
+          <div v-if="loading" class="overlay">{{ t('common.loading') }}</div>
           <Codemirror
             v-else-if="activeName"
             v-model="content"
             :extensions="extensions"
             :style="{ height: '100%' }"
-            placeholder="File is empty. Start typing YAML…"
+            :placeholder="t('setup.yaml.editorPlaceholder')"
           />
-          <div v-else class="overlay">Select a file to edit.</div>
+          <div v-else class="overlay">{{ t('setup.yaml.selectFile') }}</div>
         </div>
 
         <footer class="editor-footer">
           <span v-if="editorError" class="msg error">{{ editorError }}</span>
           <span v-else-if="editorSuccess" class="msg ok">{{ editorSuccess }}</span>
           <span v-else-if="activeName" class="msg muted">
-            {{ exists ? `${sizeBytes} bytes on disk` : 'File does not exist yet — save to create it.' }}
+            {{ exists ? t('setup.yaml.bytesOnDisk', { bytes: sizeBytes }) : t('setup.yaml.fileNotExist') }}
           </span>
         </footer>
       </section>
@@ -321,12 +323,12 @@ watch(content, () => { editorSuccess.value = '' })
           <line x1="19" y1="12" x2="5" y2="12" />
           <polyline points="12 19 5 12 12 5" />
         </svg>
-        Back
+        {{ t('common.back') }}
       </button>
     </template>
     <template #footer-right>
       <button type="button" class="wizard-btn ghost" :disabled="submitting" @click="onSkip">
-        Skip for now
+        {{ t('setup.yaml.skipForNow') }}
       </button>
       <button
         type="button"
@@ -334,7 +336,7 @@ watch(content, () => { editorSuccess.value = '' })
         :disabled="submitting"
         @click="onContinue"
       >
-        {{ submitting ? 'Saving…' : 'Accept & Continue' }}
+        {{ submitting ? t('common.saving') : t('setup.yaml.acceptContinue') }}
         <svg v-if="!submitting" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <line x1="5" y1="12" x2="19" y2="12" />
           <polyline points="12 5 19 12 12 19" />

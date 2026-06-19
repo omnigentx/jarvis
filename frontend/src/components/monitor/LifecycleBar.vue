@@ -10,7 +10,9 @@
  */
 import { computed } from 'vue'
 import { useAgentsStore } from '../../stores/agents'
+import { useLang } from '../../composables/useLang'
 
+const { t } = useLang()
 const store = useAgentsStore()
 
 const LIFECYCLE_TYPES = new Set([
@@ -19,7 +21,9 @@ const LIFECYCLE_TYPES = new Set([
   'error', 'result', 'agent_added', 'agent_removed',
 ])
 
-const TYPE_LABEL = {
+// event_type → i18n key suffix under `lifecycle.*`. Resolved via t() in the
+// template so a language toggle re-renders the labels.
+const TYPE_LABEL_KEY = {
   started: 'started',
   agent_paused: 'paused',
   agent_resumed: 'resumed',
@@ -62,12 +66,12 @@ function ts(t) {
 </script>
 
 <template>
-  <div class="lifecycle-bar" aria-label="Lifecycle events">
+  <div class="lifecycle-bar" :aria-label="t('lifecycle.ariaLabel')">
     <span class="lc-header">
       <span class="lc-pulse" />
-      <span class="lc-label">LIFECYCLE</span>
+      <span class="lc-label">{{ t('lifecycle.label') }}</span>
     </span>
-    <div v-if="!items.length" class="lc-empty">no recent events</div>
+    <div v-if="!items.length" class="lc-empty">{{ t('lifecycle.empty') }}</div>
     <div v-else class="lc-ticker">
       <span
         v-for="(e, i) in items"
@@ -78,7 +82,7 @@ function ts(t) {
         <span class="lc-time">{{ ts(e.timestamp) }}</span>
         <span class="lc-agent">{{ e.agent_name }}</span>
         <span class="lc-type" :style="{ color: TYPE_COLOR[e.event_type] || 'var(--text-muted)' }">
-          {{ TYPE_LABEL[e.event_type] || e.event_type }}
+          {{ TYPE_LABEL_KEY[e.event_type] ? t('lifecycle.' + TYPE_LABEL_KEY[e.event_type]) : e.event_type }}
         </span>
       </span>
     </div>

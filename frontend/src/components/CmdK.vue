@@ -12,6 +12,9 @@
  */
 import { ref, computed, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
+import { useLang } from '../composables/useLang'
+
+const { t } = useLang()
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -115,7 +118,7 @@ function onOverlayClick(e) {
       class="cmdk-overlay jv"
       role="dialog"
       aria-modal="true"
-      aria-label="Command palette"
+      :aria-label="t('cmdk.ariaLabel')"
       @click="onOverlayClick"
       @keydown="onKeydown"
     >
@@ -129,7 +132,7 @@ function onOverlayClick(e) {
             ref="inputEl"
             v-model="query"
             class="cmdk-input"
-            placeholder="Go to agent, page, or setting…"
+            :placeholder="t('cmdk.placeholder')"
             autocomplete="off"
             spellcheck="false"
           />
@@ -153,20 +156,20 @@ function onOverlayClick(e) {
             </span>
             <div class="cmdk-row__body">
               <div class="cmdk-row__label">{{ item.label }}</div>
-              <div class="cmdk-row__sub mono-label">PAGE · {{ item.path }}</div>
+              <div class="cmdk-row__sub mono-label">{{ t('cmdk.pageLabel') }} · {{ item.path }}</div>
             </div>
             <kbd v-if="cursor === i" class="cmdk-kbd">⏎</kbd>
           </div>
 
           <div v-if="filtered.length === 0" class="cmdk-empty">
-            No matches for &ldquo;{{ query }}&rdquo;
+            {{ t('cmdk.noMatches', { query }) }}
           </div>
         </div>
 
         <div class="cmdk-footer">
-          <span>↑↓ NAVIGATE</span>
-          <span>⏎ OPEN</span>
-          <span class="cmdk-footer__count">{{ filtered.length }} RESULT{{ filtered.length === 1 ? '' : 'S' }}</span>
+          <span>↑↓ {{ t('cmdk.navigate') }}</span>
+          <span>⏎ {{ t('cmdk.open') }}</span>
+          <span class="cmdk-footer__count">{{ t('cmdk.results', { n: filtered.length }) }}</span>
         </div>
       </div>
     </div>

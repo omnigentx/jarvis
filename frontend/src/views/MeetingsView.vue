@@ -15,6 +15,7 @@ import { useMeetingList } from '../composables/useMeetingList'
 import { useMeetingStream } from '../composables/useMeetingStream'
 import { useRoute, useRouter } from 'vue-router'
 import { useBreakpoint } from '../composables/useBreakpoint'
+import { useLang } from '../composables/useLang'
 import MeetingListPanel from '../components/meetings/MeetingListPanel.vue'
 import MeetingTranscriptPanel from '../components/meetings/MeetingTranscriptPanel.vue'
 import MeetingsEmpty from '../components/meetings/MeetingsEmpty.vue'
@@ -22,6 +23,7 @@ import MeetingsEmpty from '../components/meetings/MeetingsEmpty.vue'
 defineOptions({ name: 'Meetings' })
 
 const { isMobile } = useBreakpoint()
+const { t } = useLang()
 const route = useRoute()
 const router = useRouter()
 
@@ -62,13 +64,13 @@ function clearSelection() { selectedMeetingId.value = null }
   <div class="meetings-root jv" :class="{ 'meetings-root-mobile': isMobile }">
     <!-- Page header -->
     <header class="meetings-pagehead">
-      <div class="eyebrow">WORKSPACE</div>
-      <h1 class="meetings-title">Meeting Room</h1>
+      <div class="eyebrow">{{ t('meetings.eyebrow') }}</div>
+      <h1 class="meetings-title">{{ t('meetings.title') }}</h1>
       <span v-if="activeMeetings.length" class="meetings-active-pill">
-        {{ activeMeetings.length }} ACTIVE
+        {{ t('meetings.activeCountPill', { n: activeMeetings.length }) }}
       </span>
       <span class="meetings-hint">
-        Agents create meetings via <code>create_meeting</code>; PM ends with VERDICT.
+        {{ t('meetings.hintPrefix') }} <code>create_meeting</code>{{ t('meetings.hintSuffix') }}
       </span>
     </header>
 

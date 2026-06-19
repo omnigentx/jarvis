@@ -10,7 +10,9 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { apiFetch } from '../api'
 import { useAgentsStore } from '../stores/agents'
+import { useLang } from '../composables/useLang'
 
+const { t } = useLang()
 const route = useRoute()
 const store = useAgentsStore()
 
@@ -160,29 +162,29 @@ const chartMax = computed(() => {
 
 const kpis = computed(() => [
   {
-    label: 'TOTAL TOKENS',
+    label: t('tokens.kpiTotalTokens'),
     value: fmtTokens(totals.value.total_tokens),
-    sub: `${totals.value.llm_calls || 0} llm calls`,
+    sub: t('tokens.llmCalls', { n: totals.value.llm_calls || 0 }),
   },
   {
-    label: 'EST COST',
+    label: t('tokens.kpiEstCost'),
     value: fmtCost(totals.value.est_cost),
-    sub: period.value === 'all' ? 'all time' : `last ${period.value}`,
+    sub: period.value === 'all' ? t('tokens.allTime') : t('tokens.lastPeriod', { p: period.value }),
   },
   {
-    label: 'INPUT',
+    label: t('tokens.kpiInput'),
     value: fmtTokens(totals.value.input_tokens),
-    sub: 'prompt context',
+    sub: t('tokens.promptContext'),
   },
   {
-    label: 'OUTPUT',
+    label: t('tokens.kpiOutput'),
     value: fmtTokens(totals.value.output_tokens),
-    sub: 'model responses',
+    sub: t('tokens.modelResponses'),
   },
   {
-    label: 'CACHED',
+    label: t('tokens.kpiCached'),
     value: fmtPercent(cacheHitRate.value),
-    sub: `${fmtTokens(totals.value.cached_tokens || 0)} cached`,
+    sub: t('tokens.cachedSub', { n: fmtTokens(totals.value.cached_tokens || 0) }),
   },
 ])
 </script>
@@ -192,17 +194,16 @@ const kpis = computed(() => [
     <!-- ─── Header ─── -->
     <div class="tokens__header">
       <div class="tokens__heading">
-        <div class="eyebrow">OPERATIONS · TOKEN USAGE</div>
+        <div class="eyebrow">{{ t('tokens.eyebrow') }}</div>
         <h1 class="tokens__title">
           <span class="grad" style="font-style: italic;">{{ fmtTokens(totals.total_tokens) }}</span>
-          tokens · {{ fmtCost(totals.est_cost) }}
+          {{ t('tokens.titleTokens') }} · {{ fmtCost(totals.est_cost) }}
           <span class="tokens__title-sub">
-            · {{ period === 'all' ? 'all time' : `last ${period}` }} · live
+            · {{ period === 'all' ? t('tokens.allTime') : t('tokens.lastPeriod', { p: period }) }} · {{ t('tokens.live') }}
           </span>
         </h1>
         <p class="tokens__desc">
-          Aggregated from <code class="tokens__inline-code">token_usage</code> SSE events.
-          Mono-numeric breakdown by agent / model / tool.
+          {{ t('tokens.descLead') }} <code class="tokens__inline-code">token_usage</code> {{ t('tokens.descTail') }}
         </p>
       </div>
       <div class="seg tokens__period">
@@ -211,7 +212,7 @@ const kpis = computed(() => [
           :key="p.value"
           :class="{ 'is-active': period === p.value }"
           @click="period = p.value"
-        >{{ p.label }}</button>
+        >{{ p.value === 'all' ? t('tokens.periodAll') : p.label }}</button>
       </div>
     </div>
 
@@ -228,16 +229,16 @@ const kpis = computed(() => [
     <div class="tokens__body">
       <div class="card tokens__chart-card">
         <div class="tokens__panel-head">
-          <h2 class="tokens__panel-title">Agent token distribution</h2>
+          <h2 class="tokens__panel-title">{{ t('tokens.agentDistribution') }}</h2>
           <div class="tokens__legend">
-            <span><i class="tokens__legend-dot" style="background: var(--primary);"></i> Input</span>
-            <span><i class="tokens__legend-dot" style="background: var(--accent);"></i> Output</span>
-            <span><i class="tokens__legend-dot" style="background: var(--success);"></i> Cached</span>
+            <span><i class="tokens__legend-dot" style="background: var(--primary);"></i> {{ t('tokens.legendInput') }}</span>
+            <span><i class="tokens__legend-dot" style="background: var(--accent);"></i> {{ t('tokens.legendOutput') }}</span>
+            <span><i class="tokens__legend-dot" style="background: var(--success);"></i> {{ t('tokens.legendCached') }}</span>
           </div>
         </div>
 
         <div v-if="!agentsList.length && !isLoading" class="tokens__empty">
-          <span>📉 No token data for this period</span>
+          <span>📉 {{ t('tokens.noTokenData') }}</span>
         </div>
 
         <div v-else class="tokens__bars">
@@ -273,8 +274,8 @@ const kpis = computed(() => [
 
       <!-- By model -->
       <div class="card tokens__model-card">
-        <h2 class="tokens__panel-title">By model</h2>
-        <div v-if="!modelsList.length && !isLoading" class="tokens__empty tokens__empty--small">No data</div>
+        <h2 class="tokens__panel-title">{{ t('tokens.byModel') }}</h2>
+        <div v-if="!modelsList.length && !isLoading" class="tokens__empty tokens__empty--small">{{ t('tokens.noData') }}</div>
         <div v-for="(model, i) in modelsList" :key="model.model" class="tokens__model-row">
           <div class="tokens__model-head">
             <span class="tokens__model-name">{{ model.model }}</span>
@@ -294,8 +295,8 @@ const kpis = computed(() => [
             ></div>
           </div>
           <div class="tokens__model-meta">
-            <span>{{ fmtTokens(model.total_tokens) }} tokens</span>
-            <span>{{ model.llm_calls }} calls</span>
+            <span>{{ t('tokens.tokensSuffix', { n: fmtTokens(model.total_tokens) }) }}</span>
+            <span>{{ t('tokens.callsSuffix', { n: model.llm_calls }) }}</span>
           </div>
         </div>
       </div>
@@ -304,29 +305,29 @@ const kpis = computed(() => [
     <!-- ─── Breakdown tabs + table ─── -->
     <div class="card tokens__table-card">
       <div class="tokens__panel-head">
-        <h2 class="tokens__panel-title">Breakdown</h2>
+        <h2 class="tokens__panel-title">{{ t('tokens.breakdown') }}</h2>
         <div class="seg">
-          <button :class="{ 'is-active': breakdownTab === 'agent' }" @click="breakdownTab = 'agent'">By agent</button>
-          <button :class="{ 'is-active': breakdownTab === 'model' }" @click="breakdownTab = 'model'">By model</button>
-          <button :class="{ 'is-active': breakdownTab === 'tool' }" @click="breakdownTab = 'tool'">By tool</button>
+          <button :class="{ 'is-active': breakdownTab === 'agent' }" @click="breakdownTab = 'agent'">{{ t('tokens.byAgent') }}</button>
+          <button :class="{ 'is-active': breakdownTab === 'model' }" @click="breakdownTab = 'model'">{{ t('tokens.byModel') }}</button>
+          <button :class="{ 'is-active': breakdownTab === 'tool' }" @click="breakdownTab = 'tool'">{{ t('tokens.byTool') }}</button>
         </div>
       </div>
 
       <!-- By agent -->
       <template v-if="breakdownTab === 'agent'">
         <div class="tokens__row tokens__row--head">
-          <span>Agent</span>
-          <span class="tokens__num">Input</span>
-          <span class="tokens__num">Output</span>
-          <span class="tokens__num">Total</span>
-          <span class="tokens__num">Cached</span>
-          <span class="tokens__num">Cost</span>
+          <span>{{ t('tokens.colAgent') }}</span>
+          <span class="tokens__num">{{ t('tokens.colInput') }}</span>
+          <span class="tokens__num">{{ t('tokens.colOutput') }}</span>
+          <span class="tokens__num">{{ t('tokens.colTotal') }}</span>
+          <span class="tokens__num">{{ t('tokens.colCached') }}</span>
+          <span class="tokens__num">{{ t('tokens.colCost') }}</span>
         </div>
-        <div v-if="!agentsList.length && !isLoading" class="tokens__empty">No agent usage for this period.</div>
+        <div v-if="!agentsList.length && !isLoading" class="tokens__empty">{{ t('tokens.noAgentUsage') }}</div>
         <div v-for="agent in agentsList" :key="agent.agent_name" class="tokens__row">
           <span class="tokens__row-name">
             {{ agent.agent_name }}
-            <span class="tokens__calls">{{ agent.llm_calls }} calls</span>
+            <span class="tokens__calls">{{ t('tokens.callsSuffix', { n: agent.llm_calls }) }}</span>
           </span>
           <span class="tokens__num">{{ fmtTokens(agent.input_tokens) }}</span>
           <span class="tokens__num">{{ fmtTokens(agent.output_tokens) }}</span>
@@ -339,14 +340,14 @@ const kpis = computed(() => [
       <!-- By model -->
       <template v-else-if="breakdownTab === 'model'">
         <div class="tokens__row tokens__row--head">
-          <span>Model</span>
-          <span class="tokens__num">Input</span>
-          <span class="tokens__num">Output</span>
-          <span class="tokens__num">Total</span>
-          <span class="tokens__num">Calls</span>
-          <span class="tokens__num">Cost</span>
+          <span>{{ t('tokens.colModel') }}</span>
+          <span class="tokens__num">{{ t('tokens.colInput') }}</span>
+          <span class="tokens__num">{{ t('tokens.colOutput') }}</span>
+          <span class="tokens__num">{{ t('tokens.colTotal') }}</span>
+          <span class="tokens__num">{{ t('tokens.colCalls') }}</span>
+          <span class="tokens__num">{{ t('tokens.colCost') }}</span>
         </div>
-        <div v-if="!modelsList.length && !isLoading" class="tokens__empty">No model usage for this period.</div>
+        <div v-if="!modelsList.length && !isLoading" class="tokens__empty">{{ t('tokens.noModelUsage') }}</div>
         <div v-for="model in modelsList" :key="model.model" class="tokens__row">
           <span class="tokens__row-name">{{ model.model }}</span>
           <span class="tokens__num">{{ fmtTokens(model.input_tokens) }}</span>
@@ -360,11 +361,11 @@ const kpis = computed(() => [
       <!-- By tool -->
       <template v-else>
         <div class="tokens__row tokens__row--head">
-          <span>Tool</span>
-          <span class="tokens__num">Calls</span>
-          <span class="tokens__num">Cost</span>
+          <span>{{ t('tokens.colTool') }}</span>
+          <span class="tokens__num">{{ t('tokens.colCalls') }}</span>
+          <span class="tokens__num">{{ t('tokens.colCost') }}</span>
         </div>
-        <div v-if="!toolsList.length && !isLoading" class="tokens__empty">No per-tool breakdown available for this period.</div>
+        <div v-if="!toolsList.length && !isLoading" class="tokens__empty">{{ t('tokens.noToolBreakdown') }}</div>
         <div v-for="tool in toolsList" :key="tool.name" class="tokens__row">
           <span class="tokens__row-name tokens__row-name--mono">{{ tool.name }}</span>
           <span class="tokens__num">{{ tool.calls || 0 }}</span>

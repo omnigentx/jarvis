@@ -10,6 +10,7 @@
 import { ref, computed, onMounted, onUnmounted, watch, shallowRef } from 'vue'
 import { useApprovalsStore } from '../stores/approvals'
 import { useBreakpoint } from '../composables/useBreakpoint'
+import { useLang } from '../composables/useLang'
 import { Codemirror } from 'vue-codemirror'
 import { markdown } from '@codemirror/lang-markdown'
 import { oneDark } from '@codemirror/theme-one-dark'
@@ -18,6 +19,7 @@ import MarkdownRenderer from '../components/MarkdownRenderer.vue'
 
 const viewMode = ref('preview')
 
+const { t } = useLang()
 const store = useApprovalsStore()
 const { isMobile } = useBreakpoint()
 
@@ -71,10 +73,10 @@ function formatDuration(s) {
 function formatTimeAgo(ts) {
   if (!ts) return ''
   const diff = Math.floor(Date.now() / 1000 - ts)
-  if (diff < 60) return 'just now'
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
-  return `${Math.floor(diff / 86400)}d ago`
+  if (diff < 60) return t('approvals.justNow')
+  if (diff < 3600) return t('approvals.minutesAgo', { n: Math.floor(diff / 60) })
+  if (diff < 86400) return t('approvals.hoursAgo', { n: Math.floor(diff / 3600) })
+  return t('approvals.daysAgo', { n: Math.floor(diff / 86400) })
 }
 
 function handleMobileBack() {
@@ -216,8 +218,8 @@ async function doResolve(decision) {
 }
 
 function getCommentLocation(c) {
-  if (c.line_number) return `Line ${c.line_number}`
-  if (c.selection) return `Lines ${c.selection.start_line}–${c.selection.end_line}`
+  if (c.line_number) return t('approvals.lineN', { n: c.line_number })
+  if (c.selection) return t('approvals.linesRange', { from: c.selection.start_line, to: c.selection.end_line })
   return ''
 }
 
@@ -237,16 +239,16 @@ watch(() => store.selectedId, () => {
   editingCommentId.value = null
 })
 
-const typeLabels = {
-  team_plan: 'Team Plan',
-  architecture: 'Architecture',
-  implementation_plan: 'Impl Plan',
-  budget: 'Budget',
-  deploy: 'Deploy',
-  brd: 'BRD',
-  memory_candidate: 'Memory',
-  custom: 'Custom',
-}
+const typeLabels = computed(() => ({
+  team_plan: t('approvals.typeTeamPlan'),
+  architecture: t('approvals.typeArchitecture'),
+  implementation_plan: t('approvals.typeImplPlan'),
+  budget: t('approvals.typeBudget'),
+  deploy: t('approvals.typeDeploy'),
+  brd: t('approvals.typeBrd'),
+  memory_candidate: t('approvals.typeMemoryCandidate'),
+  custom: t('approvals.typeCustom'),
+}))
 
 const typeColors = {
   team_plan: 'var(--role-pm)',
@@ -278,12 +280,12 @@ const overflowWarning = computed(() => {
   }
 })
 
-const knownTypes = [
-  { key: 'team_plan', desc: 'PM submits sprint plans — backlog, role assignments, DoD.' },
-  { key: 'architecture', desc: 'SA submits ADRs / system design before DEV implements.' },
-  { key: 'implementation_plan', desc: 'DEV submits an impl plan (file map, branch, scope) before writing.' },
-  { key: 'brd', desc: 'BA submits a Business Requirements Doc for acceptance review.' },
-]
+const knownTypes = computed(() => [
+  { key: 'team_plan', desc: t('approvals.descTeamPlan') },
+  { key: 'architecture', desc: t('approvals.descArchitecture') },
+  { key: 'implementation_plan', desc: t('approvals.descImplPlan') },
+  { key: 'brd', desc: t('approvals.descBrd') },
+])
 </script>
 
 <template>
@@ -300,29 +302,29 @@ const knownTypes = [
         </svg>
       </button>
       <div class="approvals__heading" v-if="!isMobileDetailView">
-        <div class="eyebrow">OPERATIONS · APPROVALS</div>
+        <div class="eyebrow">{{ t('approvals.eyebrow') }}</div>
         <h1 class="approvals__title">
-          Plan &amp; document <span class="grad" style="font-style: italic;">review</span>
+          {{ t('approvals.titlePrefix') }} <span class="grad" style="font-style: italic;">{{ t('approvals.titleReview') }}</span>
           <span class="approvals__title-sub">
-            · {{ store.stats.pending_count || 0 }} pending
+            · {{ t('approvals.pendingCount', { n: store.stats.pending_count || 0 }) }}
           </span>
         </h1>
         <p class="approvals__desc">
-          Each item is a plan or doc an agent sent via
+          {{ t('approvals.descPrefix') }}
           <code class="approvals__inline-code">request_approval</code>.
-          Comment by line or selection range before approving.
+          {{ t('approvals.descSuffix') }}
         </p>
       </div>
-      <h1 v-else class="approvals__title approvals__title--mobile">Review approval</h1>
+      <h1 v-else class="approvals__title approvals__title--mobile">{{ t('approvals.reviewApproval') }}</h1>
     </div>
 
     <!-- ─── Overflow warning ─── -->
     <div v-if="overflowWarning && !isMobileDetailView" class="approvals__overflow">
       <span class="approvals__overflow-dot"></span>
       <span class="approvals__overflow-text">
-        Queue at {{ overflowWarning.waitMin }}m wait
+        {{ t('approvals.queueWait', { min: overflowWarning.waitMin }) }}
         <template v-if="overflowWarning.blockedCount">
-          · {{ overflowWarning.blockedCount }} blocked agent{{ overflowWarning.blockedCount > 1 ? 's' : '' }}
+          · {{ t('approvals.blockedAgents', { n: overflowWarning.blockedCount }) }}
         </template>
       </span>
     </div>
@@ -347,7 +349,7 @@ const knownTypes = [
               :key="f"
               :class="{ 'is-active': filter === f }"
               @click="filter = f"
-            >{{ f }}</button>
+            >{{ t('approvals.tab_' + f) }}</button>
           </div>
         </div>
         <div class="approvals__queue-list">
@@ -369,7 +371,7 @@ const knownTypes = [
               <span
                 v-if="item.status === 'pending'"
                 class="approvals-row__wait"
-              >blocked {{ formatTimeAgo(item.created_at) }}</span>
+              >{{ t('approvals.blockedAgo', { ago: formatTimeAgo(item.created_at) }) }}</span>
               <span
                 v-else
                 class="chip"
@@ -378,7 +380,7 @@ const knownTypes = [
                   'chip-danger': item.status === 'rejected',
                   'chip-muted': item.status === 'cancelled',
                 }"
-              ><span class="chip-dot"></span> {{ item.status === 'cancelled' ? 'superseded' : item.status }}</span>
+              ><span class="chip-dot"></span> {{ item.status === 'cancelled' ? t('approvals.statusSuperseded') : item.status === 'approved' ? t('approvals.statusApproved') : item.status === 'rejected' ? t('approvals.statusRejected') : item.status }}</span>
             </div>
             <div class="approvals-row__title">{{ item.title }}</div>
             <div class="approvals-row__meta">
@@ -393,7 +395,7 @@ const knownTypes = [
             </div>
           </button>
           <div v-if="filteredList.length === 0" class="approvals__queue-empty">
-            No {{ filter === 'all' ? '' : filter }} approvals
+            {{ filter === 'all' ? t('approvals.emptyAll') : t('approvals.emptyFiltered', { filter: t('approvals.tab_' + filter) }) }}
           </div>
         </div>
       </aside>
@@ -414,25 +416,25 @@ const knownTypes = [
               <span>{{ detail.agent_name }}</span>
               <span v-if="detail.team_name"> · {{ detail.team_name }}</span>
               <span> · {{ formatTimeAgo(detail.created_at) }}</span>
-              <span v-if="detail.status === 'pending'"> · blocking</span>
+              <span v-if="detail.status === 'pending'"> · {{ t('approvals.blocking') }}</span>
             </div>
           </div>
           <div class="seg" v-if="detail.content_format === 'markdown' || detail.content_format === 'text'">
-            <button :class="{ 'is-active': viewMode === 'preview' }" @click="viewMode = 'preview'">Preview</button>
-            <button :class="{ 'is-active': viewMode === 'source' }" @click="viewMode = 'source'">Source</button>
+            <button :class="{ 'is-active': viewMode === 'preview' }" @click="viewMode = 'preview'">{{ t('approvals.preview') }}</button>
+            <button :class="{ 'is-active': viewMode === 'source' }" @click="viewMode = 'source'">{{ t('approvals.source') }}</button>
           </div>
         </div>
 
         <!-- Hint bar -->
         <div v-if="detail.status === 'pending' && viewMode === 'source'" class="approvals__hint">
-          <span>● TIP</span>
-          <span>Click line numbers to comment · select text to comment a range</span>
-          <span class="approvals__hint-right">{{ inlineComments.length }} inline comments · ⌘+⏎ submit</span>
+          <span>● {{ t('approvals.tip') }}</span>
+          <span>{{ t('approvals.hintText') }}</span>
+          <span class="approvals__hint-right">{{ t('approvals.hintRight', { n: inlineComments.length }) }}</span>
         </div>
         <div v-if="detail.status === 'pending'" class="approvals__wait">
-          ⏳ Waiting for {{ formatDuration(waitingTime) }}
+          ⏳ {{ t('approvals.waitingFor', { duration: formatDuration(waitingTime) }) }}
           <template v-if="detail.paused_agents?.length">
-            — {{ detail.paused_agents.length }} agent(s) paused
+            — {{ t('approvals.agentsPaused', { n: detail.paused_agents.length }) }}
           </template>
         </div>
 
@@ -460,9 +462,9 @@ const knownTypes = [
         <!-- Comment popover (only while pending — resolved approvals are read-only) -->
         <div v-if="commentPopover && isPending" class="approvals__popover">
           <div class="approvals__popover-head">
-            <span v-if="commentPopover.line">💬 Comment on Line {{ commentPopover.line }}</span>
+            <span v-if="commentPopover.line">💬 {{ t('approvals.commentOnLine', { n: commentPopover.line }) }}</span>
             <span v-else-if="commentPopover.selection">
-              💬 Comment on Lines {{ commentPopover.selection.start_line }}–{{ commentPopover.selection.end_line }}
+              💬 {{ t('approvals.commentOnLines', { from: commentPopover.selection.start_line, to: commentPopover.selection.end_line }) }}
             </span>
             <button class="btn btn-icon btn-ghost" @click="commentPopover = null">×</button>
           </div>
@@ -472,15 +474,15 @@ const knownTypes = [
           <textarea
             v-model="commentDraft"
             class="approvals__popover-input"
-            placeholder="Write your comment…"
+            :placeholder="t('approvals.commentPlaceholder')"
             rows="3"
             @keydown.ctrl.enter.prevent="submitComment"
             @keydown.meta.enter.prevent="submitComment"
           ></textarea>
           <div class="approvals__popover-actions">
-            <button class="btn btn-secondary" @click="commentPopover = null">Cancel</button>
+            <button class="btn btn-secondary" @click="commentPopover = null">{{ t('common.cancel') }}</button>
             <button class="btn btn-primary" :disabled="!commentDraft.trim()" @click="submitComment">
-              Comment (⌘+⏎)
+              {{ t('approvals.commentSubmit') }}
             </button>
           </div>
         </div>
@@ -488,21 +490,21 @@ const knownTypes = [
         <!-- Comments -->
         <div v-if="inlineComments.length" class="approvals__comments">
           <div class="approvals__comments-head">
-            <span>💬 Inline Comments</span>
+            <span>💬 {{ t('approvals.inlineComments') }}</span>
             <span class="approvals__comments-count">{{ inlineComments.length }}</span>
             <span class="mono-label" style="font-size: 9.5px; color: var(--text-subtle); margin-left: auto;">
-              Comments are sent with resolve · agents will see them
+              {{ t('approvals.commentsSentNote') }}
             </span>
           </div>
           <div v-for="c in inlineComments" :key="c.id" class="approval-comment">
             <template v-if="editingCommentId !== c.id">
               <div class="approval-comment__head">
-                <span class="approval-comment__author">{{ c.author || 'user' }}</span>
+                <span class="approval-comment__author">{{ c.author || t('approvals.authorUser') }}</span>
                 <span class="mono-label approval-comment__loc">{{ getCommentLocation(c) }}</span>
                 <span class="mono-label approval-comment__time">{{ formatTimeAgo(c.created_at) }}</span>
                 <div class="approval-comment__actions" v-if="isPending">
-                  <button class="btn btn-icon btn-ghost" @click="startEditing(c)" title="Edit">✏️</button>
-                  <button class="btn btn-icon btn-ghost approval-comment__delete" @click="deleteComment(c.id)" title="Delete">🗑️</button>
+                  <button class="btn btn-icon btn-ghost" @click="startEditing(c)" :title="t('common.edit')">✏️</button>
+                  <button class="btn btn-icon btn-ghost approval-comment__delete" @click="deleteComment(c.id)" :title="t('common.delete')">🗑️</button>
                 </div>
               </div>
               <div v-if="c.selection?.selected_text" class="approval-comment__quoted">
@@ -513,7 +515,7 @@ const knownTypes = [
 
             <template v-else>
               <div class="approval-comment__head">
-                <span class="approval-comment__author">Editing comment</span>
+                <span class="approval-comment__author">{{ t('approvals.editingComment') }}</span>
                 <span class="mono-label approval-comment__loc">{{ getCommentLocation(c) }}</span>
               </div>
               <textarea
@@ -524,8 +526,8 @@ const knownTypes = [
                 @keydown.meta.enter.prevent="saveEditing"
               ></textarea>
               <div class="approvals__popover-actions">
-                <button class="btn btn-secondary" @click="cancelEditing">Cancel</button>
-                <button class="btn btn-primary" :disabled="!editingBody.trim()" @click="saveEditing">Save</button>
+                <button class="btn btn-secondary" @click="cancelEditing">{{ t('common.cancel') }}</button>
+                <button class="btn btn-primary" :disabled="!editingBody.trim()" @click="saveEditing">{{ t('common.save') }}</button>
               </div>
             </template>
           </div>
@@ -536,19 +538,19 @@ const knownTypes = [
           <textarea
             v-model="resolveComment"
             class="approvals__resolve-input"
-            placeholder="Optional comment for the agent (sent with approve/reject)…"
+            :placeholder="t('approvals.resolvePlaceholder')"
             rows="2"
           ></textarea>
           <div class="approvals__resolve-actions">
             <button class="btn btn-primary" :disabled="isResolving" @click="doResolve('approve')">
-              ✓ Approve · agent continues
+              ✓ {{ t('approvals.approveAction') }}
             </button>
             <button class="btn btn-secondary approvals__btn-reject" :disabled="isResolving" @click="doResolve('reject')">
-              ✕ Reject · agent stops
+              ✕ {{ t('approvals.rejectAction') }}
             </button>
             <span class="approvals__resolve-status">
               <span class="chip-dot" style="background: var(--warning);"></span>
-              <strong>{{ detail.agent_name }}</strong> blocked {{ formatDuration(waitingTime) }} — awaiting resolve
+              <strong>{{ detail.agent_name }}</strong> {{ t('approvals.blockedAwaiting', { duration: formatDuration(waitingTime) }) }}
             </span>
           </div>
         </div>
@@ -568,8 +570,8 @@ const knownTypes = [
             }"
           >
             <span class="chip-dot"></span>
-            {{ detail.status === 'approved' ? 'Approved'
-               : detail.status === 'cancelled' ? 'Superseded' : 'Rejected' }}
+            {{ detail.status === 'approved' ? t('approvals.statusApproved')
+               : detail.status === 'cancelled' ? t('approvals.statusSuperseded') : t('approvals.statusRejected') }}
           </span>
         </div>
       </section>
@@ -585,11 +587,11 @@ const knownTypes = [
           class="approvals__empty-catalog"
         >
           <div class="approvals__empty-catalog-head">
-            <span class="chip chip-success"><span class="chip-dot pulse-dot"></span> READY</span>
+            <span class="chip chip-success"><span class="chip-dot pulse-dot"></span> {{ t('approvals.ready') }}</span>
             <span class="approvals__empty-catalog-text">
-              No pending approvals. When an agent calls
+              {{ t('approvals.catalogPrefix') }}
               <code class="approvals__inline-code">request_approval</code>,
-              it will appear here and the agent will block until you resolve.
+              {{ t('approvals.catalogSuffix') }}
             </span>
           </div>
           <div class="approvals__type-grid">
@@ -612,13 +614,13 @@ const knownTypes = [
             </div>
           </div>
           <p class="approvals__history-hint">
-            Switch to <strong>Approved</strong>, <strong>Rejected</strong>, or <strong>All</strong> in the queue tabs to browse past decisions.
+            {{ t('approvals.historyHintPrefix') }} <strong>{{ t('approvals.tab_approved') }}</strong>, <strong>{{ t('approvals.tab_rejected') }}</strong>, {{ t('approvals.historyHintOr') }} <strong>{{ t('approvals.tab_all') }}</strong> {{ t('approvals.historyHintSuffix') }}
           </p>
         </div>
         <div v-else class="approvals__detail-placeholder">
-          <div class="mono-label">SELECT AN APPROVAL</div>
-          <p v-if="filteredList.length">Pick an item from the queue to review.</p>
-          <p v-else>No {{ filter === 'all' ? 'past' : filter }} approvals yet.</p>
+          <div class="mono-label">{{ t('approvals.selectAnApproval') }}</div>
+          <p v-if="filteredList.length">{{ t('approvals.pickFromQueue') }}</p>
+          <p v-else>{{ filter === 'all' ? t('approvals.noPastYet') : t('approvals.noFilteredYet', { filter: t('approvals.tab_' + filter) }) }}</p>
         </div>
       </section>
     </div>

@@ -4,9 +4,11 @@
  * Logic preserved; visuals restyled to match new design tokens.
  */
 import { useAudioPlayerStore } from '../../stores/audioPlayer'
+import { useLang } from '../../composables/useLang'
 import AudioProgressBar from './AudioProgressBar.vue'
 
 const store = useAudioPlayerStore()
+const { t } = useLang()
 
 function handleSeek(seconds) {
   store.seekTo(seconds)
@@ -34,7 +36,7 @@ function close() {
                 <circle cx="18" cy="16" r="3" stroke="currentColor" stroke-width="1.5"/>
               </svg>
             </div>
-            <h2 class="full-player__title">{{ store.currentStoryTitle || 'Audio' }}</h2>
+            <h2 class="full-player__title">{{ store.currentStoryTitle || t('stories.audio') }}</h2>
             <p class="full-player__chapter">{{ store.currentChapterLabel }}</p>
             <p class="full-player__progress-label">{{ store.chapterProgress }}</p>
           </div>
@@ -96,7 +98,7 @@ function close() {
           </div>
 
           <div class="full-player__speed">
-            <span class="mono-label">Speed</span>
+            <span class="mono-label">{{ t('stories.speed') }}</span>
             <div class="seg full-player__speed-options">
               <button
                 v-for="speed in store.SPEED_OPTIONS"

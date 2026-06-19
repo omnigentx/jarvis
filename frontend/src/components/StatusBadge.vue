@@ -9,6 +9,11 @@
  * Visual: token-driven role colours, pulsing dot for transitional
  * states (pausing/resuming/spawning) and live states (running).
  */
+import { computed } from 'vue'
+import { useLang } from '../composables/useLang'
+
+const { t } = useLang()
+
 defineProps({
   status: { type: String, default: 'idle' },
   size: { type: String, default: 'md' },
@@ -17,19 +22,19 @@ defineProps({
 // Status → (role-class, label, pulse). Aligned with the canonical
 // palette in `agentMeta.js::statusColor` and the `--status-*` tokens
 // in `tokens.css`. Roles map 1:1 to `.sb-pill--*` CSS classes below.
-const statusConfig = {
-  running:   { label: 'Running',   role: 'success', pulse: true },
-  completed: { label: 'Completed', role: 'success', pulse: false },
-  resuming:  { label: 'Resuming…', role: 'success', pulse: true },
-  pausing:   { label: 'Pausing…',  role: 'warning', pulse: true },
-  paused:    { label: 'Paused',    role: 'paused',  pulse: false },
-  thinking:  { label: 'Thinking…', role: 'info',    pulse: true },
-  spawning:  { label: 'Spawning',  role: 'info',    pulse: true },
-  starting:  { label: 'Starting',  role: 'info',    pulse: true },
-  idle:      { label: 'Idle',      role: 'muted',   pulse: false },
-  blocked:   { label: 'Blocked',   role: 'danger',  pulse: false },
-  error:     { label: 'Error',     role: 'danger',  pulse: false },
-}
+const statusConfig = computed(() => ({
+  running:   { label: t('statusBadge.running'),   role: 'success', pulse: true },
+  completed: { label: t('statusBadge.completed'), role: 'success', pulse: false },
+  resuming:  { label: t('statusBadge.resuming'),  role: 'success', pulse: true },
+  pausing:   { label: t('statusBadge.pausing'),   role: 'warning', pulse: true },
+  paused:    { label: t('statusBadge.paused'),    role: 'paused',  pulse: false },
+  thinking:  { label: t('statusBadge.thinking'),  role: 'info',    pulse: true },
+  spawning:  { label: t('statusBadge.spawning'),  role: 'info',    pulse: true },
+  starting:  { label: t('statusBadge.starting'),  role: 'info',    pulse: true },
+  idle:      { label: t('statusBadge.idle'),      role: 'muted',   pulse: false },
+  blocked:   { label: t('statusBadge.blocked'),   role: 'danger',  pulse: false },
+  error:     { label: t('statusBadge.error'),     role: 'danger',  pulse: false },
+}))
 </script>
 
 <template>

@@ -13,9 +13,11 @@
 import { ref, computed, onMounted } from 'vue'
 import { apiFetch } from '../../api'
 import { useConfirm } from '../../composables/useConfirm'
+import { useLang } from '../../composables/useLang'
 import GoogleOAuthCard from '../../components/GoogleOAuthCard.vue'
 
 const { confirm } = useConfirm()
+const { t } = useLang()
 
 // ─── Project Repository (jarvis_repo) ───────────────────────────────────
 const JARVIS_REPO_CATEGORY = 'service.jarvis_repo'
@@ -60,7 +62,7 @@ async function fetchJarvisRepoStatus() {
 async function saveJarvisRepo() {
   const url = jarvisRepoUrl.value.trim()
   if (!url) {
-    jarvisRepoError.value = 'Repository URL cannot be empty.'
+    jarvisRepoError.value = t('settings.services.repo.errEmpty')
     return
   }
   jarvisRepoSaving.value = true
@@ -94,10 +96,9 @@ async function saveJarvisRepo() {
 async function removeJarvisRepo() {
   if (
     !(await confirm({
-      title: 'Clear repository URL',
-      message:
-        'Agile-team agents will lose the project repo reference and refuse to clone/push until a new URL is set.',
-      confirmText: 'Clear',
+      title: t('settings.services.repo.clearTitle'),
+      message: t('settings.services.repo.clearMsg'),
+      confirmText: t('settings.services.repo.clearConfirm'),
       variant: 'danger',
     }))
   ) {
@@ -175,7 +176,7 @@ async function saveRoborock() {
   const username = roborockUsername.value.trim()
   const password = roborockPassword.value.trim()
   if (!username || !password) {
-    roborockError.value = 'Both email and password are required.'
+    roborockError.value = t('settings.services.roborock.errRequired')
     return
   }
   roborockSaving.value = true
@@ -206,10 +207,9 @@ async function saveRoborock() {
 async function disconnectRoborock() {
   if (
     !(await confirm({
-      title: 'Disconnect Roborock',
-      message:
-        'Vacuum control tools will stop working until you re-enter your Roborock credentials.',
-      confirmText: 'Disconnect',
+      title: t('settings.services.roborock.disconnectTitle'),
+      message: t('settings.services.roborock.disconnectMsg'),
+      confirmText: t('settings.services.disconnect'),
       variant: 'danger',
     }))
   ) {
@@ -292,7 +292,7 @@ async function saveGithub() {
   const name = githubUserName.value.trim()
   const email = githubUserEmail.value.trim()
   if (!token || !name || !email) {
-    githubError.value = 'Token, git user name, and email are all required.'
+    githubError.value = t('settings.services.github.errRequired')
     return
   }
   githubSaving.value = true
@@ -325,10 +325,9 @@ async function saveGithub() {
 async function disconnectGithub() {
   if (
     !(await confirm({
-      title: 'Disconnect GitHub',
-      message:
-        'Dev agents will stop being able to clone/push/pull private repos until a new token is configured.',
-      confirmText: 'Disconnect',
+      title: t('settings.services.github.disconnectTitle'),
+      message: t('settings.services.github.disconnectMsg'),
+      confirmText: t('settings.services.disconnect'),
       variant: 'danger',
     }))
   ) {
@@ -383,8 +382,8 @@ onMounted(() => {
           </svg>
         </div>
         <div class="card-title-block">
-          <h2>Google · Gmail + Calendar</h2>
-          <p>OAuth 2.0. Needs a Google Cloud project with Gmail + Calendar APIs enabled.</p>
+          <h2>{{ t('settings.services.google.title') }}</h2>
+          <p>{{ t('settings.services.google.desc') }}</p>
         </div>
       </header>
       <GoogleOAuthCard />
@@ -402,18 +401,18 @@ onMounted(() => {
           </svg>
         </div>
         <div class="card-title-block">
-          <h2>Project Repository</h2>
-          <p>Git URL agile-team agents (Dev, DSO, …) clone, push to, and file issues against. Stored as plain text for audit visibility.</p>
+          <h2>{{ t('settings.services.repo.title') }}</h2>
+          <p>{{ t('settings.services.repo.desc') }}</p>
         </div>
         <span
           class="status-chip"
           :class="{ on: jarvisRepoConfigured }"
         >
-          {{ jarvisRepoConfigured ? '● CONFIGURED' : '○ NOT CONFIGURED' }}
+          {{ jarvisRepoConfigured ? t('settings.services.statusConfigured') : t('settings.services.statusNotConfigured') }}
         </span>
       </header>
 
-      <div v-if="jarvisRepoLoading" class="muted">Loading…</div>
+      <div v-if="jarvisRepoLoading" class="muted">{{ t('common.loading') }}</div>
       <div v-else-if="jarvisRepoStatusError" class="error-msg">{{ jarvisRepoStatusError }}</div>
 
       <!-- Form mode -->
@@ -421,10 +420,7 @@ onMounted(() => {
         v-if="!jarvisRepoLoading && (!jarvisRepoConfigured || jarvisRepoEditing)"
         class="card-body"
       >
-        <p class="muted">
-          Stored as plain text — a public git URL is not sensitive, and surfacing
-          it here lets you confirm exactly which repo your agents will touch.
-        </p>
+        <p class="muted">{{ t('settings.services.repo.plainTextNote') }}</p>
         <label class="field-label">JARVIS_REPO_URL</label>
         <input
           class="text-input mono"
@@ -440,16 +436,16 @@ onMounted(() => {
             class="btn"
             :disabled="jarvisRepoSaving"
             @click="cancelJarvisRepoEdit"
-          >Cancel</button>
+          >{{ t('common.cancel') }}</button>
           <button
             type="button"
             class="btn primary"
             :disabled="jarvisRepoSaving"
             @click="saveJarvisRepo"
-          >{{ jarvisRepoSaving ? 'Saving…' : 'Save URL' }}</button>
+          >{{ jarvisRepoSaving ? t('settings.common.saving') : t('settings.services.repo.saveUrl') }}</button>
         </div>
         <div v-if="jarvisRepoError" class="error-msg">{{ jarvisRepoError }}</div>
-        <div v-if="jarvisRepoSaved" class="success-msg">Repository URL saved.</div>
+        <div v-if="jarvisRepoSaved" class="success-msg">{{ t('settings.services.repo.savedMsg') }}</div>
       </div>
 
       <!-- Configured display -->
@@ -464,13 +460,11 @@ onMounted(() => {
             </svg>
             <code>{{ jarvisRepoStatus.current_url }}</code>
           </div>
-          <div v-else class="muted small">
-            URL on file but stored encrypted from the setup wizard. Save again here to re-store as plain text.
-          </div>
+          <div v-else class="muted small">{{ t('settings.services.repo.encryptedNote') }}</div>
         </div>
         <div class="action-row inline">
-          <button type="button" class="btn" @click="jarvisRepoEditing = true">Edit</button>
-          <button type="button" class="btn danger" @click="removeJarvisRepo">Clear</button>
+          <button type="button" class="btn" @click="jarvisRepoEditing = true">{{ t('common.edit') }}</button>
+          <button type="button" class="btn danger" @click="removeJarvisRepo">{{ t('settings.services.repo.clearConfirm') }}</button>
         </div>
       </div>
     </section>
@@ -483,36 +477,33 @@ onMounted(() => {
           <span style="font-size: 18px;">🤖</span>
         </div>
         <div class="card-title-block">
-          <h2>Roborock Vacuum</h2>
-          <p>IoT control through xiaomiy/python-miio. Uses the same email + password as the Roborock mobile app.</p>
+          <h2>{{ t('settings.services.roborock.title') }}</h2>
+          <p>{{ t('settings.services.roborock.desc') }}</p>
         </div>
         <span
           class="status-chip"
           :class="{ on: roborockConnected }"
         >
-          {{ roborockConnected ? '● CONNECTED' : '○ NOT CONFIGURED' }}
+          {{ roborockConnected ? t('settings.services.statusConnected') : t('settings.services.statusNotConfigured') }}
         </span>
       </header>
 
-      <div v-if="roborockLoading" class="muted">Loading…</div>
+      <div v-if="roborockLoading" class="muted">{{ t('common.loading') }}</div>
       <div v-else-if="roborockStatusError" class="error-msg">{{ roborockStatusError }}</div>
 
       <div
         v-if="!roborockLoading && (!roborockConnected || roborockEditing)"
         class="card-body"
       >
-        <p class="muted">
-          Credentials are encrypted at rest with the master key. 2FA codes are handled
-          automatically through the Gmail integration.
-        </p>
-        <label class="field-label">Account email</label>
+        <p class="muted">{{ t('settings.services.roborock.note') }}</p>
+        <label class="field-label">{{ t('settings.services.roborock.emailLabel') }}</label>
         <input
           class="text-input"
           placeholder="you@example.com"
           autocomplete="off"
           v-model="roborockUsername"
         />
-        <label class="field-label">Account password</label>
+        <label class="field-label">{{ t('settings.services.roborock.passwordLabel') }}</label>
         <input
           class="text-input"
           type="password"
@@ -527,16 +518,16 @@ onMounted(() => {
             class="btn"
             :disabled="roborockSaving"
             @click="cancelRoborockEdit"
-          >Cancel</button>
+          >{{ t('common.cancel') }}</button>
           <button
             type="button"
             class="btn primary"
             :disabled="roborockSaving"
             @click="saveRoborock"
-          >{{ roborockSaving ? 'Saving…' : 'Save credentials' }}</button>
+          >{{ roborockSaving ? t('settings.common.saving') : t('settings.services.saveCredentials') }}</button>
         </div>
         <div v-if="roborockError" class="error-msg">{{ roborockError }}</div>
-        <div v-if="roborockSaved" class="success-msg">Roborock credentials saved.</div>
+        <div v-if="roborockSaved" class="success-msg">{{ t('settings.services.roborock.savedMsg') }}</div>
       </div>
 
       <div
@@ -544,14 +535,12 @@ onMounted(() => {
         class="card-body row-flow"
       >
         <div class="meta-info">
-          <div>Email + password on file.</div>
-          <div class="muted small">
-            Values are encrypted with the master key; the UI never echoes them back.
-          </div>
+          <div>{{ t('settings.services.roborock.onFile') }}</div>
+          <div class="muted small">{{ t('settings.services.encryptedEcho') }}</div>
         </div>
         <div class="action-row inline">
-          <button type="button" class="btn" @click="roborockEditing = true">Update</button>
-          <button type="button" class="btn danger" @click="disconnectRoborock">Disconnect</button>
+          <button type="button" class="btn" @click="roborockEditing = true">{{ t('settings.services.update') }}</button>
+          <button type="button" class="btn danger" @click="disconnectRoborock">{{ t('settings.services.disconnect') }}</button>
         </div>
       </div>
     </section>
@@ -566,18 +555,18 @@ onMounted(() => {
           </svg>
         </div>
         <div class="card-title-block">
-          <h2>GitHub (Dev Agent Git Access)</h2>
-          <p>Personal access token + git identity used by dev agents and the GitHub MCP. Bind-mounted into the container — never exposed via env.</p>
+          <h2>{{ t('settings.services.github.title') }}</h2>
+          <p>{{ t('settings.services.github.desc') }}</p>
         </div>
         <span
           class="status-chip"
           :class="{ on: githubConnected }"
         >
-          {{ githubConnected ? '● CONFIGURED' : '○ NOT CONFIGURED' }}
+          {{ githubConnected ? t('settings.services.statusConfigured') : t('settings.services.statusNotConfigured') }}
         </span>
       </header>
 
-      <div v-if="githubLoading" class="muted">Loading…</div>
+      <div v-if="githubLoading" class="muted">{{ t('common.loading') }}</div>
       <div v-else-if="githubStatusError" class="error-msg">{{ githubStatusError }}</div>
 
       <div
@@ -585,11 +574,11 @@ onMounted(() => {
         class="card-body"
       >
         <p class="muted">
-          Create a token at
+          {{ t('settings.services.github.tokenHintPre') }}
           <a href="https://github.com/settings/tokens" target="_blank" rel="noopener">github.com/settings/tokens</a>
-          with the <code>repo</code> scope.
+          {{ t('settings.services.github.tokenHintPost') }} <code>repo</code> {{ t('settings.services.github.tokenHintScope') }}
         </p>
-        <label class="field-label">Personal Access Token</label>
+        <label class="field-label">{{ t('settings.services.github.tokenLabel') }}</label>
         <input
           class="text-input mono"
           placeholder="ghp_…"
@@ -597,14 +586,14 @@ onMounted(() => {
           autocomplete="new-password"
           v-model="githubToken"
         />
-        <label class="field-label">Git user name (for commits)</label>
+        <label class="field-label">{{ t('settings.services.github.userNameLabel') }}</label>
         <input
           class="text-input"
           placeholder="Jane Developer"
           autocomplete="off"
           v-model="githubUserName"
         />
-        <label class="field-label">Git user email (for commits)</label>
+        <label class="field-label">{{ t('settings.services.github.userEmailLabel') }}</label>
         <input
           class="text-input"
           placeholder="jane@example.com"
@@ -618,16 +607,16 @@ onMounted(() => {
             class="btn"
             :disabled="githubSaving"
             @click="cancelGithubEdit"
-          >Cancel</button>
+          >{{ t('common.cancel') }}</button>
           <button
             type="button"
             class="btn primary"
             :disabled="githubSaving"
             @click="saveGithub"
-          >{{ githubSaving ? 'Saving…' : 'Save credentials' }}</button>
+          >{{ githubSaving ? t('settings.common.saving') : t('settings.services.saveCredentials') }}</button>
         </div>
         <div v-if="githubError" class="error-msg">{{ githubError }}</div>
-        <div v-if="githubSaved" class="success-msg">GitHub credentials saved.</div>
+        <div v-if="githubSaved" class="success-msg">{{ t('settings.services.github.savedMsg') }}</div>
       </div>
 
       <div
@@ -635,14 +624,12 @@ onMounted(() => {
         class="card-body row-flow"
       >
         <div class="meta-info">
-          <div>Token + git identity on file.</div>
-          <div class="muted small">
-            Token bind-mounted to the container as read-only; never echoed back.
-          </div>
+          <div>{{ t('settings.services.github.onFile') }}</div>
+          <div class="muted small">{{ t('settings.services.github.bindNote') }}</div>
         </div>
         <div class="action-row inline">
-          <button type="button" class="btn" @click="githubEditing = true">Update</button>
-          <button type="button" class="btn danger" @click="disconnectGithub">Disconnect</button>
+          <button type="button" class="btn" @click="githubEditing = true">{{ t('settings.services.update') }}</button>
+          <button type="button" class="btn danger" @click="disconnectGithub">{{ t('settings.services.disconnect') }}</button>
         </div>
       </div>
     </section>
@@ -650,8 +637,7 @@ onMounted(() => {
     <!-- Placeholder -->
     <section class="service-card muted-card">
       <p>
-        <strong>More services</strong> (Firebase, Home Assistant…) will land here over time.
-        For now they still live in the Services tab of the Setup Wizard.
+        <strong>{{ t('settings.services.more.title') }}</strong> {{ t('settings.services.more.desc') }}
       </p>
     </section>
   </div>

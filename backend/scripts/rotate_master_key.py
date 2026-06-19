@@ -1,6 +1,10 @@
 """One-shot CLI to rotate ``JARVIS_MASTER_KEY`` and re-encrypt every stored
 secret in the system_config table.
 
+NOT a recovery tool. This rotates the *encryption* master key; it never reveals
+the auth key. If you forgot the key the Setup wizard asks for, run
+``scripts/show_api_key.py`` instead — that prints ``JARVIS_API_KEY``.
+
 Usage::
 
     JARVIS_MASTER_KEY_OLD=<current> \\

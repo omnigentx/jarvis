@@ -17,6 +17,7 @@ import { useChatStore } from '../stores/chat'
 import { apiFetch } from '../api'
 import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
+import { useLang } from '../composables/useLang'
 import { buildOrbitGroups, classifyAgent } from '../components/agent/agentMeta.js'
 import OrbitHero from '../components/agent/OrbitHero.vue'
 import AgentTreeRow from '../components/agent/AgentTreeRow.vue'
@@ -27,6 +28,7 @@ const chatStore = useChatStore()
 const router = useRouter()
 const toast = useToast()
 const { confirm } = useConfirm()
+const { t } = useLang()
 
 // 'tree' | 'flow' — tree default per design.
 const viewMode = ref('tree')
@@ -289,26 +291,26 @@ const counts = computed(() => ({
     <!-- Page header -->
     <header class="page-header">
       <div class="header-text">
-        <div class="eyebrow">WORKSPACE · AGENTS</div>
+        <div class="eyebrow">{{ t('agents.eyebrow') }}</div>
         <h1 class="page-title">
-          Agents · <span class="grad" style="font-style: italic">orchestration tree</span>
+          {{ t('agents.title') }} · <span class="grad" style="font-style: italic">{{ t('agents.titleAccent') }}</span>
         </h1>
         <p class="page-subtitle">
-          Jarvis at the center, static workers and spawned teams orbiting outward.
+          {{ t('agents.subtitle') }}
         </p>
       </div>
 
       <div class="header-stats">
-        <span class="chip chip-muted">{{ counts.total }} agents</span>
-        <span class="chip chip-success">{{ counts.running }} running</span>
-        <span class="chip chip-muted">{{ counts.idle }} idle</span>
-        <span v-if="counts.error" class="chip chip-danger">{{ counts.error }} errored</span>
+        <span class="chip chip-muted">{{ t('agents.statAgents', { n: counts.total }) }}</span>
+        <span class="chip chip-success">{{ t('agents.statRunning', { n: counts.running }) }}</span>
+        <span class="chip chip-muted">{{ t('agents.statIdle', { n: counts.idle }) }}</span>
+        <span v-if="counts.error" class="chip chip-danger">{{ t('agents.statErrored', { n: counts.error }) }}</span>
       </div>
     </header>
 
     <!-- Loading -->
     <div v-if="store.isLoading && !store.agentsList.length" class="state-center">
-      <span class="loading-text">Loading agents…</span>
+      <span class="loading-text">{{ t('agents.loading') }}</span>
     </div>
 
     <template v-else>
@@ -330,29 +332,29 @@ const counts = computed(() => ({
             class="ring-pill"
             :class="{ active: activeRing === 'all' }"
             @click="activeRing = 'all'"
-          >All</button>
+          >{{ t('agents.ringAll') }}</button>
           <button
             class="ring-pill"
             :class="{ active: activeRing === 'core' }"
             @click="activeRing = 'core'"
-          >Core</button>
+          >{{ t('agents.ringCore') }}</button>
           <button
             class="ring-pill"
             :class="{ active: activeRing === 'spawned' }"
             @click="activeRing = 'spawned'"
-          >Spawned</button>
+          >{{ t('agents.ringSpawned') }}</button>
           <button
             class="ring-pill"
             :class="{ active: activeRing === 'teams' }"
             @click="activeRing = 'teams'"
-          >Teams</button>
+          >{{ t('agents.ringTeams') }}</button>
         </div>
 
         <input
           v-model="searchQuery"
           type="text"
           class="tb-search"
-          placeholder="Search by name, role, team, model…"
+          :placeholder="t('agents.searchPlaceholder')"
         />
 
         <div class="seg view-toggle" role="tablist" aria-label="View mode">
@@ -361,22 +363,22 @@ const counts = computed(() => ({
             :class="{ 'is-active': viewMode === 'tree' }"
             :aria-selected="viewMode === 'tree'"
             @click="viewMode = 'tree'"
-          >☰ Tree</button>
+          >☰ {{ t('agents.viewTree') }}</button>
           <button
             role="tab"
             :class="{ 'is-active': viewMode === 'flow' }"
             :aria-selected="viewMode === 'flow'"
             @click="viewMode = 'flow'"
-          >⇄ Flow</button>
+          >⇄ {{ t('agents.viewFlow') }}</button>
         </div>
       </div>
 
       <!-- Empty -->
       <div v-if="!filteredAgents.length" class="empty-state">
         <div class="empty-icon">∅</div>
-        <div class="empty-title">No agents match this view</div>
+        <div class="empty-title">{{ t('agents.emptyTitle') }}</div>
         <div class="empty-sub">
-          {{ searchQuery ? 'Try a different search term' : 'Spawn a team or open Settings to add agents' }}
+          {{ searchQuery ? t('agents.emptySearchHint') : t('agents.emptyDefaultHint') }}
         </div>
       </div>
 
@@ -386,13 +388,13 @@ const counts = computed(() => ({
           <span />
           <span />
           <span />
-          <span>NAME · ORCHESTRATED BY</span>
-          <span>MODEL</span>
-          <span>STATUS</span>
-          <span style="text-align: right">TOKENS</span>
-          <span style="text-align: right">LAST</span>
-          <span style="text-align: right">ACTIVITY</span>
-          <span style="text-align: right">ACTIONS</span>
+          <span>{{ t('agents.colName') }}</span>
+          <span>{{ t('agents.colModel') }}</span>
+          <span>{{ t('agents.colStatus') }}</span>
+          <span style="text-align: right">{{ t('agents.colTokens') }}</span>
+          <span style="text-align: right">{{ t('agents.colLast') }}</span>
+          <span style="text-align: right">{{ t('agents.colActivity') }}</span>
+          <span style="text-align: right">{{ t('agents.colActions') }}</span>
         </div>
         <div class="tree-body">
           <AgentTreeRow

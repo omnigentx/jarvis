@@ -18,13 +18,16 @@
  * Props / events / slots are preserved verbatim — visual restyle only.
  */
 import { computed } from 'vue'
+import { useLang } from '../composables/useLang'
+
+const { t } = useLang()
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
-  title: { type: String, default: 'Confirm' },
+  title: { type: String, default: '' },
   message: { type: String, default: '' },
-  confirmText: { type: String, default: 'Confirm' },
-  cancelText: { type: String, default: 'Cancel' },
+  confirmText: { type: String, default: '' },
+  cancelText: { type: String, default: '' },
   variant: { type: String, default: 'danger' }, // danger | warning | info
   loading: { type: Boolean, default: false },
   error: { type: String, default: '' },
@@ -73,7 +76,7 @@ const usePrimaryConfirm = computed(() => props.variant === 'info')
             </slot>
           </div>
 
-          <h3 class="cm-title">{{ title }}</h3>
+          <h3 class="cm-title">{{ title || t('confirm.title') }}</h3>
 
           <div class="cm-desc">
             <slot>{{ message }}</slot>
@@ -93,7 +96,7 @@ const usePrimaryConfirm = computed(() => props.variant === 'info')
               @click="emit('cancel')"
               :disabled="loading"
             >
-              {{ cancelText }}
+              {{ cancelText || t('common.cancel') }}
             </button>
             <button
               class="cm-btn"
@@ -107,7 +110,7 @@ const usePrimaryConfirm = computed(() => props.variant === 'info')
               :disabled="loading"
             >
               <span v-if="loading" class="cm-spinner" :style="{ borderTopColor: usePrimaryConfirm ? '#fff' : colors.main }"></span>
-              {{ loading ? 'Processing…' : confirmText }}
+              {{ loading ? t('common.processing') : (confirmText || t('confirm.confirm')) }}
             </button>
           </div>
         </div>

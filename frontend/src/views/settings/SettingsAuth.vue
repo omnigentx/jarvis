@@ -24,6 +24,9 @@ import {
   listPasskeys,
   registerPasskey,
 } from '../../services/passkey.js'
+import { useLang } from '../../composables/useLang'
+
+const { t } = useLang()
 
 const supported = ref(true)
 const credentials = ref([])
@@ -46,11 +49,10 @@ async function refresh() {
   if (result.ok) {
     credentials.value = result.rows
   } else if (result.code === 'auth_failed') {
-    loadError.value =
-      'Your session has expired. Reload the page and sign in again.'
+    loadError.value = t('settings.auth.errSessionExpired')
   } else {
     loadError.value =
-      result.detail || 'Failed to load passkeys. Check the backend.'
+      result.detail || t('settings.auth.errLoadFailed')
   }
   loading.value = false
 }
@@ -66,8 +68,8 @@ async function register() {
     })
     if (result.ok) {
       registerSuccess.value = result.replaced
-        ? 'Existing passkey on this authenticator was updated.'
-        : 'Passkey registered. You can now sign in with it.'
+        ? t('settings.auth.regUpdated')
+        : t('settings.auth.regSuccess')
       labelDraft.value = ''
       await refresh()
     } else {
@@ -80,16 +82,17 @@ async function register() {
 
 async function onDelete(cred) {
   if (!confirm(
-    `Delete passkey "${cred.label || cred.id.slice(0, 12)}"? ` +
-    `You will no longer be able to sign in with this authenticator on ` +
-    `${cred.rp_id}.`,
+    t('settings.auth.deleteConfirm', {
+      label: cred.label || cred.id.slice(0, 12),
+      rpId: cred.rp_id,
+    }),
   )) {
     return
   }
   const result = await deletePasskey(cred.id)
   if (!result.ok) {
     loadError.value =
-      result.detail || `Failed to delete passkey (${result.code}).`
+      result.detail || t('settings.auth.errDeleteFailed', { code: result.code })
     return
   }
   await refresh()
@@ -98,19 +101,19 @@ async function onDelete(cred) {
 function _registerErrorMessage(result) {
   switch (result.code) {
     case 'cancelled':
-      return 'Cancelled. No passkey was registered.'
+      return t('settings.auth.errCancelled')
     case 'already_registered':
-      return 'This authenticator already has a passkey for this site.'
+      return t('settings.auth.errAlreadyRegistered')
     case 'unsupported':
-      return 'Your browser does not support passkeys.'
+      return t('settings.auth.errUnsupported')
     case 'auth_failed':
-      return 'Your session expired. Reload and sign in again.'
+      return t('settings.auth.errAuthFailed')
     case 'verify_failed':
-      return `Attestation rejected (${result.detail || 'unknown'}).`
+      return t('settings.auth.errVerifyFailed', { detail: result.detail || t('settings.auth.unknown') })
     case 'network':
-      return 'Network error. Check the backend is reachable.'
+      return t('settings.auth.errNetwork')
     default:
-      return result.detail || `Register failed (${result.code}).`
+      return result.detail || t('settings.auth.errRegisterFailed', { code: result.code })
   }
 }
 
@@ -121,23 +124,23 @@ const hostname = computed(() => {
 
 function formatTransports(transports) {
   if (!transports || transports.length === 0) return '—'
-  return transports.map((t) => {
-    if (t === 'internal') return 'Touch ID / built-in'
-    if (t === 'hybrid') return 'Phone / hybrid'
-    if (t === 'usb') return 'USB security key'
-    if (t === 'nfc') return 'NFC'
-    if (t === 'ble') return 'Bluetooth'
-    return t
+  return transports.map((tr) => {
+    if (tr === 'internal') return t('settings.auth.transportInternal')
+    if (tr === 'hybrid') return t('settings.auth.transportHybrid')
+    if (tr === 'usb') return t('settings.auth.transportUsb')
+    if (tr === 'nfc') return 'NFC'
+    if (tr === 'ble') return t('settings.auth.transportBle')
+    return tr
   }).join(', ')
 }
 
 function formatRelative(unixSeconds) {
-  if (!unixSeconds) return 'never'
+  if (!unixSeconds) return t('settings.auth.never')
   const deltaSec = Date.now() / 1000 - unixSeconds
-  if (deltaSec < 60) return 'just now'
-  if (deltaSec < 3600) return `${Math.floor(deltaSec / 60)} min ago`
-  if (deltaSec < 86400) return `${Math.floor(deltaSec / 3600)} hr ago`
-  if (deltaSec < 30 * 86400) return `${Math.floor(deltaSec / 86400)} days ago`
+  if (deltaSec < 60) return t('settings.auth.justNow')
+  if (deltaSec < 3600) return t('settings.auth.minAgo', { n: Math.floor(deltaSec / 60) })
+  if (deltaSec < 86400) return t('settings.auth.hrAgo', { n: Math.floor(deltaSec / 3600) })
+  if (deltaSec < 30 * 86400) return t('settings.auth.daysAgo', { n: Math.floor(deltaSec / 86400) })
   const d = new Date(unixSeconds * 1000)
   return d.toLocaleDateString()
 }
@@ -154,41 +157,38 @@ function formatRelative(unixSeconds) {
           </svg>
         </div>
         <div>
-          <h2>Passkeys</h2>
+          <h2>{{ t('settings.auth.passkeysTitle') }}</h2>
           <p>
-            Sign in to the dashboard with Touch ID, Face ID, Windows Hello, or a
-            security key — no password to remember. Passkeys are scoped to the
-            current origin (<code>{{ hostname }}</code>): one registered on
-            localhost cannot be used after you switch to a public domain.
+            {{ t('settings.auth.passkeysDescPre') }}
+            (<code>{{ hostname }}</code>){{ t('settings.auth.passkeysDescPost') }}
           </p>
         </div>
       </header>
 
       <div v-if="!supported" class="error-msg">
-        Your browser does not support WebAuthn / passkeys.
-        Sign in with the API key under Settings → General.
+        {{ t('settings.auth.notSupported') }}
       </div>
 
-      <div v-else-if="loading" class="muted-row">Loading passkeys…</div>
+      <div v-else-if="loading" class="muted-row">{{ t('settings.auth.loading') }}</div>
 
       <div v-else-if="credentials.length === 0" class="muted-row">
-        No passkeys registered for <code>{{ hostname }}</code> yet.
+        {{ t('settings.auth.noneYetPre') }} <code>{{ hostname }}</code> {{ t('settings.auth.noneYetPost') }}
       </div>
 
       <table v-else class="passkey-table">
         <thead>
           <tr>
-            <th>Label</th>
-            <th>Type</th>
-            <th>Created</th>
-            <th>Last used</th>
+            <th>{{ t('settings.auth.colLabel') }}</th>
+            <th>{{ t('settings.auth.colType') }}</th>
+            <th>{{ t('settings.auth.colCreated') }}</th>
+            <th>{{ t('settings.auth.colLastUsed') }}</th>
             <th class="col-actions"></th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="cred in credentials" :key="cred.id">
             <td class="label-cell">
-              {{ cred.label || '(unlabeled)' }}
+              {{ cred.label || t('settings.auth.unlabeled') }}
               <div class="cred-id" :title="cred.id">{{ cred.id.slice(0, 12) }}…</div>
             </td>
             <td>{{ formatTransports(cred.transports) }}</td>
@@ -200,7 +200,7 @@ function formatRelative(unixSeconds) {
                 class="btn danger small"
                 @click="onDelete(cred)"
               >
-                Delete
+                {{ t('common.delete') }}
               </button>
             </td>
           </tr>
@@ -210,13 +210,13 @@ function formatRelative(unixSeconds) {
       <div v-if="loadError" class="error-msg">{{ loadError }}</div>
 
       <div class="field" style="margin-top: 18px;">
-        <label>Add a passkey from this device</label>
+        <label>{{ t('settings.auth.addLabel') }}</label>
         <div class="input-group">
           <input
             v-model="labelDraft"
             class="pwd-input"
             type="text"
-            placeholder="Label (e.g. MacBook Touch ID, iPhone)"
+            :placeholder="t('settings.auth.labelPlaceholder')"
             :disabled="registering || !supported"
             maxlength="100"
           />
@@ -230,7 +230,7 @@ function formatRelative(unixSeconds) {
           :disabled="!supported || registering"
           @click="register"
         >
-          {{ registering ? 'Waiting for authenticator…' : 'Register passkey' }}
+          {{ registering ? t('settings.auth.waitingAuthenticator') : t('settings.auth.registerPasskey') }}
         </button>
       </div>
 
@@ -248,13 +248,11 @@ function formatRelative(unixSeconds) {
           </svg>
         </div>
         <div>
-          <h2>API Key (scripts &amp; recovery)</h2>
+          <h2>{{ t('settings.auth.apiKeyTitle') }}</h2>
           <p>
-            The API key in <code>JARVIS_API_KEY</code> remains the credential for
-            non-browser callers (the Xiaozhi voice device, CLI tools, scripts)
-            and is the recovery path if you lose every passkey: read it from
-            <code>.env</code>, sign in once, then register a new passkey here.
-            Rotate it under <strong>Settings → General → Change API Key</strong>.
+            {{ t('settings.auth.apiKeyDescPre') }} <code>JARVIS_API_KEY</code>
+            {{ t('settings.auth.apiKeyDescMid') }} <code>.env</code>{{ t('settings.auth.apiKeyDescPost') }}
+            <strong>{{ t('settings.auth.apiKeyRotate') }}</strong>.
           </p>
         </div>
       </header>

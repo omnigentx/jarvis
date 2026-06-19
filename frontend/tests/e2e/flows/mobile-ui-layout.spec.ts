@@ -35,6 +35,12 @@ test('mobile chat: composer sits just above the tab bar (no dead-space gap)', as
   await mockBackend(page, [NOISE, join(FIXTURES, 'chat_streaming_happy.yaml')])
   await page.goto('/chat')
 
+  // Wait for the SPA to render both anchors before measuring — querying them
+  // synchronously right after goto() races the first paint (a null here is a
+  // not-yet-mounted composer, not a layout bug).
+  await expect(page.locator('.compose-host')).toBeVisible()
+  await expect(page.locator('.mobile-tabbar')).toBeVisible()
+
   const gap = await page.evaluate(() => {
     const compose = document.querySelector('.compose-host')!.getBoundingClientRect()
     const tabbar = document.querySelector('.mobile-tabbar')!.getBoundingClientRect()

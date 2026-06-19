@@ -5,6 +5,9 @@
  * (Ch.xx · title · status dot · duration · actions).
  */
 import { computed } from 'vue'
+import { useLang } from '../../composables/useLang'
+
+const { t } = useLang()
 
 const props = defineProps({
   chapter: { type: Object, required: true },
@@ -70,14 +73,14 @@ const statusType = computed(() => {
 
     <!-- Actions -->
     <span class="ch-row__actions">
-      <button class="btn btn-icon btn-ghost ch-row__btn" @click.stop="emit('read', chapter.file)" title="Read text">
+      <button class="btn btn-icon btn-ghost ch-row__btn" @click.stop="emit('read', chapter.file)" :title="t('stories.readText')">
         <svg viewBox="0 0 24 24" fill="none" width="13" height="13">
           <path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2zM22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"
             stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
       </button>
       <button class="btn btn-icon btn-ghost ch-row__btn ch-row__btn--play"
-        @click.stop="emit('play', chapter.file)" title="Play audio" data-testid="chapter-play">
+        @click.stop="emit('play', chapter.file)" :title="t('stories.playAudio')" data-testid="chapter-play">
         <svg v-if="!isPlaying" viewBox="0 0 24 24" fill="none" width="13" height="13">
           <polygon points="5,3 19,12 5,21" fill="currentColor"/>
         </svg>

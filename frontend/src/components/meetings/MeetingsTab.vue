@@ -4,6 +4,9 @@ import { useMeetingList } from '../../composables/useMeetingList'
 import { useMeetingStream } from '../../composables/useMeetingStream'
 import MeetingList from './MeetingList.vue'
 import MeetingTranscript from './MeetingTranscript.vue'
+import { useLang } from '../../composables/useLang'
+
+const { t } = useLang()
 
 const { meetings, activeMeetings, endedMeetings, isLoading, error, fetchMeetings } = useMeetingList()
 
@@ -52,19 +55,19 @@ const displayedMeetings = computed(() => {
           <div class="meetings-title-row">
             <h2 class="meetings-title">
               <span class="meetings-icon">📋</span>
-              Meetings
+              {{ t('meetings.listTitle') }}
             </h2>
             <span v-if="activeMeetings.length" class="active-badge">
-              {{ activeMeetings.length }} Active
+              {{ t('meetings.activeCountCap', { n: activeMeetings.length }) }}
             </span>
           </div>
           <!-- View mode tabs -->
           <div class="view-tabs">
             <button
               v-for="tab in [
-                { key: 'all', label: 'All' },
-                { key: 'active', label: 'Active' },
-                { key: 'ended', label: 'Ended' },
+                { key: 'all', label: t('meetings.tabAll') },
+                { key: 'active', label: t('meetings.tabActive') },
+                { key: 'ended', label: t('meetings.tabEnded') },
               ]"
               :key="tab.key"
               class="view-tab"
@@ -82,21 +85,21 @@ const displayedMeetings = computed(() => {
         <!-- Loading state -->
         <div v-if="isLoading && !meetings.length" class="meetings-loading">
           <div class="loading-spinner"></div>
-          <span>Loading meetings...</span>
+          <span>{{ t('meetings.loadingList') }}</span>
         </div>
 
         <!-- Error state -->
         <div v-else-if="error" class="meetings-error">
           <span class="error-icon">⚠️</span>
           <span>{{ error }}</span>
-          <button class="retry-btn" @click="fetchMeetings">Retry</button>
+          <button class="retry-btn" @click="fetchMeetings">{{ t('meetings.retry') }}</button>
         </div>
 
         <!-- Empty state -->
         <div v-else-if="!displayedMeetings.length" class="meetings-empty">
           <span class="empty-icon">📭</span>
-          <p>No meetings found</p>
-          <p class="empty-hint">Meetings appear here when agents create them</p>
+          <p>{{ t('meetings.noMeetingsFound') }}</p>
+          <p class="empty-hint">{{ t('meetings.noMeetingsTabHint') }}</p>
         </div>
 
         <!-- Meeting list -->
@@ -124,8 +127,8 @@ const displayedMeetings = computed(() => {
       <div v-else class="meetings-detail-empty">
         <div class="empty-detail-content">
           <span class="empty-detail-icon">💬</span>
-          <h3>Select a meeting</h3>
-          <p>Choose a meeting from the list to view its transcript in real time</p>
+          <h3>{{ t('meetings.selectMeeting') }}</h3>
+          <p>{{ t('meetings.selectMeetingChoose') }}</p>
         </div>
       </div>
     </div>

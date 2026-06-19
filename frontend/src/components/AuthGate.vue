@@ -18,6 +18,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import { useLang } from '../composables/useLang'
 import { useAuthStore } from '../stores/auth'
 import {
   authenticateWithPasskey,
@@ -25,6 +26,7 @@ import {
   isSupported as isPasskeySupported,
 } from '../services/passkey.js'
 
+const { t } = useLang()
 const auth = useAuthStore()
 const router = useRouter()
 const route = useRoute()
@@ -58,23 +60,23 @@ const reasonHint = computed(() => {
   const r = auth.lastReason || ''
   switch (r) {
     case 'key_rotated':
-      return 'Master key was rotated. Paste the new key to continue.'
+      return t('authGate.reasonKeyRotated')
     case 'expired':
     case 'whoami_unauthenticated':
     case 'rest_401':
-      return 'Your session has expired. Please log in again.'
+      return t('authGate.reasonExpired')
     case 'max_lifetime_exceeded':
-      return 'Session reached its maximum lifetime. Please log in again.'
+      return t('authGate.reasonMaxLifetime')
     case 'invalid_credentials':
-      return 'Wrong API key. Try again, or reset via setup.'
+      return t('authGate.reasonInvalidCredentials')
     case 'cross_tab':
-      return 'Logged out from another tab.'
+      return t('authGate.reasonCrossTab')
     case 'logout':
-      return 'Logged out.'
+      return t('authGate.reasonLogout')
     case '':
       return ''
     default:
-      return `Authentication required (${r}).`
+      return t('authGate.reasonDefault', { r })
   }
 })
 
@@ -120,27 +122,23 @@ async function handlePasskey() {
         errorMessage.value = ''
         break
       case 'credential_unknown':
-        errorMessage.value =
-          'This passkey is not recognised on this deployment. ' +
-          'Sign in with your API key, then re-register the passkey.'
+        errorMessage.value = t('authGate.errCredentialUnknown')
         showApiKey.value = true
         break
       case 'rate_limited':
-        errorMessage.value =
-          'Too many attempts. Wait a minute and try again.'
+        errorMessage.value = t('authGate.errRateLimited')
         break
       case 'unsupported':
-        errorMessage.value = 'Your browser does not support passkeys.'
+        errorMessage.value = t('authGate.errUnsupported')
         passkeyOffered.value = false
         showApiKey.value = true
         break
       case 'network':
-        errorMessage.value =
-          'Network error. Check the backend is reachable.'
+        errorMessage.value = t('authGate.errNetwork')
         break
       default:
         errorMessage.value =
-          result.detail || 'Passkey sign-in failed.'
+          result.detail || t('authGate.errPasskeyFailed')
     }
   } finally {
     passkeyBusy.value = false
@@ -163,15 +161,15 @@ async function handleSubmit() {
     if (result.ok) {
       apiKey.value = ''
     } else if (result.status === 401) {
-      errorMessage.value = 'Wrong API key.'
+      errorMessage.value = t('authGate.errWrongKey')
     } else if (result.status === 429) {
-      errorMessage.value = 'Too many attempts. Wait a minute and try again.'
+      errorMessage.value = t('authGate.errRateLimited')
     } else if (result.status === 503) {
-      errorMessage.value = 'Backend not configured. Run setup first.'
+      errorMessage.value = t('authGate.errNotConfigured')
     } else if (result.status === 0) {
-      errorMessage.value = 'Network error. Check the backend is reachable.'
+      errorMessage.value = t('authGate.errNetwork')
     } else {
-      errorMessage.value = `Login failed (${result.status}).`
+      errorMessage.value = t('authGate.errLoginFailed', { status: result.status })
     }
   } finally {
     submitting.value = false
@@ -239,10 +237,10 @@ function onKeydown(event) {
               <path d="M6 11h12v9H6zM9 11V8a3 3 0 0 1 6 0v3" />
             </svg>
           </span>
-          <h2 id="auth-gate-title" class="auth-gate-title">Authentication required</h2>
+          <h2 id="auth-gate-title" class="auth-gate-title">{{ t('authGate.title') }}</h2>
           <p v-if="reasonHint" class="auth-gate-reason">{{ reasonHint }}</p>
           <p v-else class="auth-gate-reason auth-gate-reason--neutral">
-            Paste your JARVIS_API_KEY to access the dashboard.
+            {{ t('authGate.neutralHint') }}
           </p>
         </div>
 
@@ -262,7 +260,7 @@ function onKeydown(event) {
           >
             <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
           </svg>
-          {{ passkeyBusy ? 'Waiting for passkey…' : 'Sign in with passkey' }}
+          {{ passkeyBusy ? t('authGate.passkeyWaiting') : t('authGate.passkeySignIn') }}
         </button>
 
         <p v-if="passkeyOffered && errorMessage" class="auth-gate-error">
@@ -276,18 +274,18 @@ function onKeydown(event) {
           :disabled="passkeyBusy"
           @click="revealApiKey"
         >
-          Use API key instead
+          {{ t('authGate.useApiKeyInstead') }}
         </button>
 
         <form v-if="showApiKey" @submit.prevent="handleSubmit">
-          <label for="auth-gate-key" class="auth-gate-label mono-label">API KEY</label>
+          <label for="auth-gate-key" class="auth-gate-label mono-label">{{ t('authGate.apiKeyLabel') }}</label>
           <input
             id="auth-gate-key"
             ref="inputEl"
             v-model="apiKey"
             type="password"
             autocomplete="current-password"
-            placeholder="Paste JARVIS_API_KEY (from your .env)"
+            :placeholder="t('authGate.apiKeyPlaceholder')"
             class="auth-gate-input"
             :class="{ 'auth-gate-input--error': !passkeyOffered && errorMessage }"
             :disabled="submitting"
@@ -300,7 +298,7 @@ function onKeydown(event) {
             class="auth-gate-submit"
             :disabled="submitting || !apiKey.trim()"
           >
-            {{ submitting ? 'Authenticating…' : 'Continue' }}
+            {{ submitting ? t('authGate.authenticating') : t('common.continue') }}
             <svg v-if="!submitting" width="13" height="13" viewBox="0 0 24 24" fill="none">
               <path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
@@ -314,16 +312,16 @@ function onKeydown(event) {
             :disabled="submitting || passkeyBusy"
             @click="goToSetup"
           >
-            Forgot your key? Re-run Setup Wizard →
+            {{ t('authGate.forgotKey') }}
           </button>
           <div class="auth-gate-fineprint mono-label">
-            KEY STORED IN HTTP-ONLY COOKIE · NO LOCAL TOKEN
+            {{ t('authGate.fineprint') }}
           </div>
         </div>
       </div>
 
       <div class="auth-gate-tagline mono-label">
-        <span>Just A Rather Very Intelligent System</span>
+        <span>{{ t('authGate.tagline') }}</span>
         <span class="auth-gate-tagline__sep">·</span>
         <span>MIT</span>
       </div>
