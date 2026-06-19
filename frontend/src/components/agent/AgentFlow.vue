@@ -230,19 +230,19 @@ const zoomTransform = computed(() =>
 
       <!-- Edges: root → team PMs -->
       <path
-        v-for="(t, i) in teamsLaid" :key="`e-pm-${i}`"
-        :d="bezier(rootCx, LANE_Y.root + NODE_H, t.pmX, t.pmY)"
+        v-for="(tl, i) in teamsLaid" :key="`e-pm-${i}`"
+        :d="bezier(rootCx, LANE_Y.root + NODE_H, tl.pmX, tl.pmY)"
         fill="none"
-        :stroke="isActive(t.team.pm) ? 'url(#flow-grad)' : 'var(--border-strong)'"
+        :stroke="isActive(tl.team.pm) ? 'url(#flow-grad)' : 'var(--border-strong)'"
         stroke-width="3"
-        :opacity="isActive(t.team.pm) ? 0.65 : 0.35"
+        :opacity="isActive(tl.team.pm) ? 0.65 : 0.35"
       />
 
       <!-- Edges: PM → members -->
-      <template v-for="(t, i) in teamsLaid" :key="`e-mb-${i}`">
+      <template v-for="(tl, i) in teamsLaid" :key="`e-mb-${i}`">
         <path
-          v-for="(m, j) in t.members" :key="`e-${i}-${j}`"
-          :d="bezier(t.pmX, t.pmY + NODE_H, m.x, m.y)"
+          v-for="(m, j) in tl.members" :key="`e-${i}-${j}`"
+          :d="bezier(tl.pmX, tl.pmY + NODE_H, m.x, m.y)"
           fill="none"
           :stroke="isActive(m.agent) ? 'url(#flow-grad)' : 'var(--border-strong)'"
           stroke-width="1.5"
@@ -291,30 +291,30 @@ const zoomTransform = computed(() =>
 
       <!-- Team PMs -->
       <g
-        v-for="(t, i) in teamsLaid" :key="`pm-${i}`"
-        :transform="`translate(${t.pmX - NODE_W/2}, ${t.pmY})`"
+        v-for="(tl, i) in teamsLaid" :key="`pm-${i}`"
+        :transform="`translate(${tl.pmX - NODE_W/2}, ${tl.pmY})`"
         class="flow-node flow-team-pm"
         tabindex="0"
         role="button"
-        :style="{ '--bar': teamColor(t.team.name) }"
-        @click="handleClick(t.team.pm)"
-        @keydown.enter="handleClick(t.team.pm)"
+        :style="{ '--bar': teamColor(tl.team.name) }"
+        @click="handleClick(tl.team.pm)"
+        @keydown.enter="handleClick(tl.team.pm)"
       >
         <rect class="node-rect" width="170" height="52" rx="8" />
         <rect class="node-bar" x="0" y="0" width="3" height="52" />
         <circle
           cx="158" cy="12" r="4"
-          :style="{ fill: statusColor(t.team.pm?.status) }"
-          :class="{ 'status-pulse': isActive(t.team.pm) }"
+          :style="{ fill: statusColor(tl.team.pm?.status) }"
+          :class="{ 'status-pulse': isActive(tl.team.pm) }"
         />
-        <text x="14" y="22" class="node-name">{{ truncate(t.team.pm?.name || t.team.name, 20) }}</text>
-        <text x="14" y="38" class="node-meta">{{ truncate('team · ' + t.team.name, 24) }}</text>
+        <text x="14" y="22" class="node-name">{{ truncate(tl.team.pm?.name || tl.team.name, 20) }}</text>
+        <text x="14" y="38" class="node-meta">{{ truncate('team · ' + tl.team.name, 24) }}</text>
       </g>
 
       <!-- Team members -->
-      <template v-for="(t, i) in teamsLaid" :key="`m-${i}`">
+      <template v-for="(tl, i) in teamsLaid" :key="`m-${i}`">
         <g
-          v-for="(m, j) in t.members" :key="`mm-${i}-${j}`"
+          v-for="(m, j) in tl.members" :key="`mm-${i}-${j}`"
           :transform="`translate(${m.x - MEMBER_W/2}, ${m.y})`"
           class="flow-node flow-member"
           tabindex="0"

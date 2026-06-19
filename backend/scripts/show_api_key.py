@@ -41,6 +41,10 @@ def main() -> int:
 
     if not key:
         # Fall back to the persisted value, the way boot hydration does.
+        # Direct SystemConfig read (not config_service.get) on purpose: the
+        # auth key is stored with is_secret=False (routes/setup.py), i.e.
+        # plaintext, so there's no decryption to do and this second read path
+        # can't diverge from the writer.
         sys.path.insert(0, str(_BACKEND))
         from core.database import SessionLocal, SystemConfig
 

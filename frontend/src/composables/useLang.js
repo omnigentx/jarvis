@@ -87,7 +87,11 @@ function _resolve(obj, path) {
 function t(key, params) {
   const active = _resolve(LOCALES[lang.value] || {}, key)
   const base = _resolve(LOCALES.en, key)
-  let str = active != null ? active : base != null ? base : key
+  // Only leaf string values are valid translations; a non-leaf key (e.g. a
+  // bare namespace like "agents" that resolves to an object) falls through to
+  // the raw key rather than rendering "[object Object]".
+  let str =
+    typeof active === 'string' ? active : typeof base === 'string' ? base : key
   if (params && typeof str === 'string') {
     str = str.replace(/\{(\w+)\}/g, (_, k) =>
       params[k] != null ? String(params[k]) : `{${k}}`,
