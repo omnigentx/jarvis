@@ -15,6 +15,7 @@ import logging
 import time
 import uuid
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from core.database import MemoryCandidate
@@ -23,6 +24,21 @@ from services.memory.models import CandidateStatus
 from services.memory.sensitivity import has_secret
 
 logger = logging.getLogger("memory.candidate")
+
+
+_OPEN_STATUSES = [CandidateStatus.PENDING.value,
+                  CandidateStatus.AUTO_APPROVED.value,
+                  CandidateStatus.APPROVED.value]
+
+
+def _find_open_dup(db: Session, dedupe: str):
+    """The open (pending/auto-approved/approved) candidate for this dedupe key,
+    if any. Used both for the pre-INSERT read-check and the post-IntegrityError
+    fallback so the two agree on what 'already proposed' means."""
+    return (db.query(MemoryCandidate)
+            .filter(MemoryCandidate.dedupe_key == dedupe,
+                    MemoryCandidate.status.in_(_OPEN_STATUSES))
+            .first())
 
 
 def _dedupe_key(owner: str, content: str, subject_scope: str = "user") -> str:
@@ -51,14 +67,7 @@ def create_candidate(
     content = payload.get("content", "")
     dedupe = _dedupe_key(owner_agent_name, content, payload.get("subject_scope", "user"))
 
-    existing = (
-        db.query(MemoryCandidate)
-        .filter(MemoryCandidate.dedupe_key == dedupe,
-                MemoryCandidate.status.in_([CandidateStatus.PENDING.value,
-                                            CandidateStatus.AUTO_APPROVED.value,
-                                            CandidateStatus.APPROVED.value]))
-        .first()
-    )
+    existing = _find_open_dup(db, dedupe)
     if existing is not None:
         return existing
 
@@ -76,7 +85,18 @@ def create_candidate(
         dedupe_key=dedupe, created_at=now,
     )
     db.add(cand)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # Concurrency backstop (same shape as create_memory): a sibling lane
+        # captured the SAME fact and committed between our read-check (L46) and
+        # this commit. The partial UNIQUE index uq_candidate_open_dedup rejects
+        # the dup — fall back to the winner instead of two pending cards.
+        db.rollback()
+        winner = _find_open_dup(db, dedupe)
+        if winner is not None:
+            return winner
+        raise
     _emit("memory_candidate_created", cand)
 
     if requires_curator:

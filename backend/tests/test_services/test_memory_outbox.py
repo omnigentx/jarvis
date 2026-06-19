@@ -100,6 +100,18 @@ def test_claim_batch_only_due_pending_ordered(db):
     assert all(r.lease_expires_at == 120.0 + ob.DEFAULT_LEASE_SECONDS for r in claimed)
 
 
+def test_claim_batch_does_not_double_claim(db):
+    # H2: the atomic UPDATE...RETURNING claim flips rows to in_progress in one
+    # statement, so a second claimer (worker/clone) gets NONE of the same rows —
+    # not a second copy. (Single-statement stand-in for true concurrency.)
+    _enq(db, rev=1, now=100.0, agg="a")
+    _enq(db, rev=2, now=100.0, agg="b")
+    first = ob.claim_batch(db, limit=10, now=120.0)
+    second = ob.claim_batch(db, limit=10, now=120.0)
+    assert {r.aggregate_id for r in first} == {"a", "b"}
+    assert second == []                           # already claimed → nothing left
+
+
 def test_mark_done(db):
     _enq(db, rev=1)
     [row] = ob.claim_batch(db, limit=1, now=120.0)

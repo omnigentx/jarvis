@@ -469,31 +469,34 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Failed to start memory index worker")
 
-    # v2 migration: if the LadybugDB backend is selected but its graph is empty
-    # while SQLite (the source of truth) has memories — e.g. first boot after
-    # switching from Qdrant — enqueue a full rebuild so the worker repopulates
-    # Ladybug. Best-effort; the index is a disposable projection.
+    # v2 migration: if the LadybugDB projection holds FEWER memories than SQLite
+    # (the source of truth), enqueue a full rebuild so the worker repopulates it.
+    # Drives off count() < SQLite-active rather than count()==0 (M3): the latter
+    # missed a graph that a corrupt-WAL self-heal wiped-and-recreated with a few
+    # stale nodes, or a partially-projected graph — both leave count()>0 yet
+    # under-populated, with no record-level watermark to detect it. Best-effort;
+    # the index is a disposable projection.
     try:
         if _mem_cfg and _mem_cfg.enabled and getattr(_mem_cfg, "vector_backend", "ladybug") == "ladybug":
+            from sqlalchemy import func
+
+            from core.database import MemoryRecord, get_db_session
             from services.indexing.ladybug_store import get_ladybug_store
             store = get_ladybug_store(getattr(_mem_cfg, "ladybug_path", "data/memory_graph"))
-            if store.count() == 0:
-                from sqlalchemy import func
+            _db = get_db_session()
+            try:
+                n_sqlite = _db.query(func.count(MemoryRecord.id)).filter(
+                    MemoryRecord.status == "active").scalar() or 0
+                n_graph = store.count()
+                if n_graph < n_sqlite:
+                    import time as _t
 
-                from core.database import MemoryRecord, get_db_session
-                _db = get_db_session()
-                try:
-                    n_sqlite = _db.query(func.count(MemoryRecord.id)).filter(
-                        MemoryRecord.status == "active").scalar() or 0
-                    if n_sqlite:
-                        import time as _t
-
-                        from services.indexing import consistency_service as cs
-                        enq = cs.rebuild(_db, now=_t.time())
-                        logger.info("[MEMORY] LadybugDB empty + %d SQLite memories → "
-                                    "enqueued %d for rebuild", n_sqlite, enq)
-                finally:
-                    _db.close()
+                    from services.indexing import consistency_service as cs
+                    enq = cs.rebuild(_db, now=_t.time())
+                    logger.info("[MEMORY] graph under-populated (%d/%d memories) → "
+                                "enqueued %d for rebuild", n_graph, n_sqlite, enq)
+            finally:
+                _db.close()
     except Exception:
         logger.exception("[MEMORY] ladybug migration check failed")
 

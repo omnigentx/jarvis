@@ -262,3 +262,42 @@ def test_ledger_dedups_same_record_across_providers():
     graph_hit.evidence_id = "A"      # bare/graph-style id, SAME record_id
     led.add(dense_hit, turn=1)
     assert led.dedup([graph_hit], turn=2) == []   # deduped despite differing evidence_id
+
+
+# ── H3 + M1: relevance gate carve-outs ──────────────────────────────────────
+
+class _FakeProvider:
+    def __init__(self, hits, available=True):
+        self._hits, self._available = hits, available
+    def is_available(self): return self._available
+    async def search(self, request, *, limit): return list(self._hits)
+
+
+@pytest.mark.asyncio
+async def test_bm25_first_keeps_fts_hit_when_dense_empty():
+    # H3: an exact-identifier query (PROJ-42) is legitimately far from stored
+    # memories in embedding space → dense returns [] even on-topic. The gate
+    # must NOT drop the strong FTS match when bm25_first is set.
+    from types import SimpleNamespace
+
+    from services.retrieval.orchestrator import RetrievalOrchestrator
+    orch = RetrievalOrchestrator.__new__(RetrievalOrchestrator)
+    orch._fts = _FakeProvider([_ev("PROJ", bm25=0, excerpt="ticket PROJ-42 approved")])
+    orch._dense = _FakeProvider([], available=True)        # healthy but empty
+    orch.settings = SimpleNamespace(quality_gate_thresholds={})
+    budget = SimpleNamespace(max_candidates_per_retriever=10, max_fused_candidates=10)
+    req = RetrievalRequest(owner_agent_name="Jarvis", query="status of PROJ-42")
+
+    gated, _ = await orch._fast_round(req, budget, bm25_first=False)
+    assert gated == []                                     # default gate drops it
+    kept, _ = await orch._fast_round(req, budget, bm25_first=True)
+    assert [e.record_id for e in kept] == ["PROJ"]         # exact-identifier recall preserved
+
+
+def test_safe_match_expr_drops_stopwords():
+    # M1: function-word-only queries yield no FTS match (off-topic guarantee that
+    # holds even when the dense lane is down and the gate can't run).
+    from services.indexing.fts_index import _safe_match_expr
+    assert _safe_match_expr("thời tiết gì") == '"thời" OR "tiết"'   # 'gì' dropped
+    assert _safe_match_expr("gì là của") is None                    # all function words
+    assert _safe_match_expr("the weather") == '"weather"'           # 'the' dropped

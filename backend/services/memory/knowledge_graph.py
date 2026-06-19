@@ -126,8 +126,15 @@ async def extract_and_store(record_id: str, *, generate_fn=None) -> bool:
         if rec is None or rec.status != "active":
             return False
         triples = await extract_triples(rec.content, generate_fn=generate_fn)
+        # relations_json: "[]" is a TERMINAL "attempted, no triples" state (not
+        # re-extracted) — distinct from NULL "never attempted" (a failed LLM
+        # returns early below WITHOUT committing, so NULL is preserved → retried).
         rec.relations_json = json.dumps(triples, ensure_ascii=False)
-        rec.entities_json = json.dumps(_entities_from_triples(triples), ensure_ascii=False)
+        # entities_json: only OVERWRITE when extraction actually found something —
+        # an empty result must NOT clobber the entity list seeded at capture time
+        # (the documented fallback). M4.
+        if triples:
+            rec.entities_json = json.dumps(_entities_from_triples(triples), ensure_ascii=False)
         ob.enqueue(db, event_type=ob.EVENT_MEMORY_UPSERT, aggregate_id=rec.id,
                    aggregate_revision=rec.current_version, now=time.time(), force=True)
         db.commit()
@@ -188,10 +195,12 @@ async def backfill_relations(owner: str | None = None, *, force: bool = False,
         results = await asyncio.gather(*[_one(r) for r in rows])
         now = time.time()
         for rec, triples in results:
-            # SAME single-source rule as extract_and_store: triples → relations_json,
-            # entities DERIVED from triples → entities_json.
+            # SAME single-source rule as extract_and_store: triples → relations_json;
+            # entities DERIVED from triples → entities_json, but only overwrite when
+            # non-empty so an empty re-extract doesn't clobber a capture seed (M4).
             rec.relations_json = json.dumps(triples, ensure_ascii=False)
-            rec.entities_json = json.dumps(_entities_from_triples(triples), ensure_ascii=False)
+            if triples:
+                rec.entities_json = json.dumps(_entities_from_triples(triples), ensure_ascii=False)
             ob.enqueue(db, event_type=ob.EVENT_MEMORY_UPSERT, aggregate_id=rec.id,
                        aggregate_revision=rec.current_version, now=now, force=True)
         db.commit()

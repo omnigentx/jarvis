@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from typing import Callable, Optional
 
-from sqlalchemy import event, func
+from sqlalchemy import event, func, text
 from sqlalchemy.orm import Session
 
 from core.database import MemoryIndexOutbox, SessionLocal
@@ -155,22 +155,36 @@ def claim_batch(
 ) -> list[MemoryIndexOutbox]:
     """Atomically claim up to ``limit`` due pending rows: flip them to
     in_progress with a lease so a crash mid-batch is recoverable. Ordered by
-    ``next_attempt_at`` so retries don't starve fresh work indefinitely."""
-    rows = (
+    ``next_attempt_at`` so retries don't starve fresh work indefinitely.
+
+    The claim is a SINGLE ``UPDATE ... RETURNING`` statement: a separate
+    SELECT-then-UPDATE is NOT atomic under SQLite's default isolation, so two
+    workers could both read then both claim the same rows. One statement makes
+    the read-and-flip atomic — the loser's UPDATE simply matches different (or
+    zero) still-PENDING rows."""
+    table = MemoryIndexOutbox.__tablename__
+    claimed = db.execute(
+        text(
+            f"UPDATE {table} SET status = :ip, lease_expires_at = :lease "
+            f"WHERE id IN ("
+            f"  SELECT id FROM {table} "
+            f"  WHERE status = :pending AND next_attempt_at <= :now "
+            f"  ORDER BY next_attempt_at ASC LIMIT :lim"
+            f") RETURNING id"
+        ),
+        {"ip": IN_PROGRESS, "lease": now + lease_seconds,
+         "pending": PENDING, "now": now, "lim": limit},
+    ).fetchall()
+    db.commit()                          # expires the session → next query reloads fresh state
+    ids = [r[0] for r in claimed]
+    if not ids:
+        return []
+    return (
         db.query(MemoryIndexOutbox)
-        .filter(
-            MemoryIndexOutbox.status == PENDING,
-            MemoryIndexOutbox.next_attempt_at <= now,
-        )
+        .filter(MemoryIndexOutbox.id.in_(ids))
         .order_by(MemoryIndexOutbox.next_attempt_at.asc())
-        .limit(limit)
         .all()
     )
-    for r in rows:
-        r.status = IN_PROGRESS
-        r.lease_expires_at = now + lease_seconds
-    db.commit()
-    return rows
 
 
 def mark_done(db: Session, row_id: int, *, now: float) -> None:

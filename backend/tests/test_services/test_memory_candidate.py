@@ -86,6 +86,38 @@ def test_dedupe_collapses_across_lanes(db):
     assert db.query(MemoryCandidate).count() == 1
 
 
+def test_dedupe_race_falls_back_to_winner_under_unique_index(db, monkeypatch):
+    # H1: under real concurrency the two lanes both pass the read-check and both
+    # INSERT. The partial UNIQUE index (installed by init_db) turns the loser's
+    # INSERT into an IntegrityError, which must resolve to the winner — NOT a
+    # second card, NOT a 500. Simulate the lost race by making the loser's
+    # read-check miss once while the winner already exists.
+    from sqlalchemy import text
+    db.execute(text(
+        "CREATE UNIQUE INDEX uq_candidate_open_dedup ON memory_candidates(dedupe_key) "
+        "WHERE status IN ('pending','auto_approved','approved') AND dedupe_key IS NOT NULL"))
+    db.commit()
+
+    winner = cnd.create_candidate(db, owner_agent_name="Jarvis", candidate_type="agent_remember",
+                                  payload=_payload(content="user commutes at 6:50"),
+                                  now=100.0, requires_approval=True)
+
+    real_find = cnd._find_open_dup
+    calls = {"n": 0}
+    def flaky_find(session, dedupe):       # miss on the loser's read-check, real afterwards
+        calls["n"] += 1
+        return None if calls["n"] == 1 else real_find(session, dedupe)
+    monkeypatch.setattr(cnd, "_find_open_dup", flaky_find)
+
+    loser = cnd.create_candidate(db, owner_agent_name="Jarvis", candidate_type="extracted",
+                                 payload=_payload(content="user commutes at 6:50"),
+                                 now=200.0, requires_approval=True)
+
+    assert loser.id == winner.id                       # resolved to the winner
+    assert db.query(MemoryCandidate).filter(
+        MemoryCandidate.status == 'pending').count() == 1   # exactly one card
+
+
 def test_dedupe_keeps_distinct_subject_scope(db):
     # A user-fact and an agent-observation of the same text are different
     # memories → different scope → NOT collapsed.

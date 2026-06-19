@@ -38,19 +38,34 @@ def fts_delete(db: Session, *, doc_kind: str, doc_id: str) -> None:
     )
 
 
+# Function words carry no retrieval signal but survive the len>1 filter and, in
+# an OR-match, fire on any memory containing them — injecting off-topic hits.
+# Dropping them is the FTS-side half of the off-topic relevance guarantee: it
+# holds even when the dense lane is DOWN (so the orchestrator gate can't run).
+# Conservative VI + EN particles/pronouns/articles only — never content words.
+_STOPWORDS = frozenset({
+    # Vietnamese
+    "gì", "là", "của", "và", "có", "thì", "mà", "ở", "cho", "với", "các",
+    "những", "này", "đó", "ạ", "ừ", "à", "ơi", "nhé", "vậy", "thế", "rồi", "đi",
+    "được", "bị", "khi", "nếu", "hay", "hoặc", "cũng", "đã", "sẽ", "đang",
+    # English
+    "the", "a", "an", "is", "are", "was", "were", "be", "to", "of", "and", "or",
+    "in", "on", "at", "for", "with", "this", "that", "it", "as", "do", "does",
+})
+
+
 def _safe_match_expr(query: str) -> str | None:
     """Build a safe FTS5 MATCH expression from arbitrary user text. Raw text
     can contain FTS5 operators that raise a syntax error; we extract word
     tokens and OR them as quoted phrases (recall-friendly, never crashes).
 
-    Drop pure-number and single-character tokens: in an OR-match they fire on
-    incidental digits/letters in memories (query "2 cộng 2" → token "2" →
-    matches "...2km...") and inject off-topic hits. They carry no retrieval
-    signal here; the dense lane carries semantic relevance. Language-agnostic
-    (no stopword list). If nothing meaningful remains, FTS returns nothing and
-    the dense lane decides."""
+    Drop pure-number, single-character, and stopword (function-word) tokens: in
+    an OR-match they fire on incidental matches in memories (query "2 cộng 2" →
+    token "2" → matches "...2km..."; "thời tiết gì" → "gì" → any memory) and
+    inject off-topic hits. They carry no retrieval signal; the dense lane carries
+    semantic relevance. If nothing meaningful remains, FTS returns nothing."""
     tokens = [t for t in re.findall(r"\w+", query, flags=re.UNICODE)
-              if len(t) > 1 and not t.isdigit()]
+              if len(t) > 1 and not t.isdigit() and t.lower() not in _STOPWORDS]
     if not tokens:
         return None
     return " OR ".join(f'"{t}"' for t in tokens)

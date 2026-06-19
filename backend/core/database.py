@@ -1023,6 +1023,38 @@ def init_db():
             conn.rollback()
             logger.warning("[MEMORY] active-dedup unique index migration skipped: %s", exc)
 
+    # Candidate dedup concurrency backstop (memory v2): the same fact proposed by
+    # two lanes (sync `remember` RPC + async extractor, separate sessions) can
+    # race past the app-level SELECT and both INSERT → duplicate cards. Mirror
+    # the record-layer guard: collapse existing OPEN duplicates (keep newest per
+    # dedupe_key, reject the rest), then a partial UNIQUE index on dedupe_key for
+    # open statuses turns the race into a catchable IntegrityError (handled in
+    # candidate_service.create_candidate by re-SELECTing the winner).
+    with engine.connect() as conn:
+        try:
+            conn.execute(text(
+                "UPDATE memory_candidates SET status='rejected' "
+                "WHERE status IN ('pending','auto_approved','approved') "
+                "AND dedupe_key IS NOT NULL AND id NOT IN ("
+                "  SELECT id FROM ("
+                "    SELECT id, ROW_NUMBER() OVER ("
+                "      PARTITION BY dedupe_key ORDER BY created_at DESC, id DESC) AS rn "
+                "    FROM memory_candidates "
+                "    WHERE status IN ('pending','auto_approved','approved') "
+                "    AND dedupe_key IS NOT NULL"
+                "  ) WHERE rn = 1)"
+            ))
+            conn.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_candidate_open_dedup "
+                "ON memory_candidates (dedupe_key) "
+                "WHERE status IN ('pending','auto_approved','approved') "
+                "AND dedupe_key IS NOT NULL"
+            ))
+            conn.commit()
+        except Exception as exc:
+            conn.rollback()
+            logger.warning("[MEMORY] candidate-dedup unique index migration skipped: %s", exc)
+
     # --- One-time data migration: JSON files → SQLite ---
     _migrate_story_providers(logger)
     _migrate_story_metadata(logger)

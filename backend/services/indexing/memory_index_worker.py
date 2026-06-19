@@ -24,6 +24,21 @@ from services.indexing.embedding_provider import get_shared_embedding_provider
 logger = logging.getLogger("memory.index_worker")
 
 
+def _broadcast_indexed(n: int) -> None:
+    """Best-effort SSE hint that ``n`` records were (re)indexed this drain, so the
+    Memory page can refresh index-status / the graph live instead of staying
+    stale until a manual reload. Global (no agent) — it's a refresh tick, not a
+    per-agent event; the worker runs on the main loop so broadcast is in-loop."""
+    try:
+        from services.activity_stream import activity_stream_manager
+        activity_stream_manager.broadcast({
+            "event_type": "memory_indexed", "message": f"{n} indexed",
+            "data": {"count": n},
+        })
+    except Exception:  # noqa: BLE001 — never let a UI hint break indexing
+        pass
+
+
 def _load_entities(entities_json):
     """Parse a MemoryRecord.entities_json → list[{name,etype}] (graph linking)."""
     if not entities_json:
@@ -112,6 +127,8 @@ class MemoryIndexWorker:
                     logger.error("[MEMORY] index task %s failed: %s", row.id, exc, exc_info=True)
                     ob.mark_failed(db, row.id, error=str(exc), now=now)
                     stats["failed"] += 1
+            if stats["done"]:
+                _broadcast_indexed(stats["done"])     # nudge open Memory panels to re-fetch
             return stats
         finally:
             db.close()

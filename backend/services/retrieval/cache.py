@@ -5,6 +5,7 @@ change, NOT TTL alone; never shared across agents.
 from __future__ import annotations
 
 import hashlib
+import threading
 from collections import OrderedDict
 
 from services.retrieval.contracts import Evidence
@@ -31,18 +32,26 @@ class RetrievalCache:
     def __init__(self, max_entries: int = _MAX_ENTRIES):
         self._data: "OrderedDict[str, list[Evidence]]" = OrderedDict()
         self._max = max_entries
+        # The OrderedDict is mutated by both the asyncio request path and the
+        # index worker's own loop/thread; guard get/set so a concurrent
+        # move_to_end/popitem can't corrupt the LRU ("RuntimeError: OrderedDict
+        # mutated during iteration" / lost entries).
+        self._lock = threading.Lock()
 
     def get(self, key: str) -> list[Evidence] | None:
-        if key not in self._data:
-            return None
-        self._data.move_to_end(key)
-        return self._data[key]
+        with self._lock:
+            if key not in self._data:
+                return None
+            self._data.move_to_end(key)
+            return self._data[key]
 
     def set(self, key: str, evidence: list[Evidence]) -> None:
-        self._data[key] = evidence
-        self._data.move_to_end(key)
-        while len(self._data) > self._max:
-            self._data.popitem(last=False)
+        with self._lock:
+            self._data[key] = evidence
+            self._data.move_to_end(key)
+            while len(self._data) > self._max:
+                self._data.popitem(last=False)
 
     def clear(self) -> None:
-        self._data.clear()
+        with self._lock:
+            self._data.clear()

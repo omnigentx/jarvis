@@ -20,12 +20,15 @@ export const useMemoryStore = defineStore('memory', () => {
   }
 
   function processMemoryEvent(event) {
+    // memory_indexed is a GLOBAL refresh tick from the index worker (no agent) —
+    // handle it BEFORE the per-agent guard so the drain hint reaches the panels.
+    if (event.event_type === 'memory_indexed') {
+      indexTick.value += 1
+      return
+    }
     const agent = event.agent_name
     if (!agent) return
     switch (event.event_type) {
-      case 'memory_indexed':
-        indexTick.value += 1
-        break
       case 'retrieval_degraded':
         degradedByAgent.value = { ...degradedByAgent.value, [agent]: true }
         break

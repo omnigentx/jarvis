@@ -97,10 +97,15 @@ class RetrievalOrchestrator:
                         filters=json.dumps(sorted(request.types)), index_revision=index_rev)
         cached = _CACHE.get(key)
         if cached is not None:
-            return self._finalize(request, cached, level=LEVEL_FAST, cache_hit=True,
+            # Copy the cached list: _finalize re-applies the recency/authority
+            # policy at the CURRENT ``now`` (so a hot read-only query doesn't
+            # freeze recency buckets at first-call time), and that reorder must
+            # not mutate the shared cached list under another concurrent reader.
+            return self._finalize(request, list(cached), level=LEVEL_FAST, cache_hit=True,
                                   budget=budget, ledger=ledger, turn=turn, now=now)
 
-        fused, dense_failed = await self._fast_round(request, budget)
+        fused, dense_failed = await self._fast_round(
+            request, budget, bm25_first=decision.bm25_first)
         # Recency/authority/freshness ranking on the HAPPY path too — this is the
         # read-side of ADD-only (a newer fact, e.g. "works at FPT", outranks the
         # superseded "Techcombank" for "where do I work now"). Previously this
@@ -123,7 +128,8 @@ class RetrievalOrchestrator:
                               budget=budget, ledger=ledger, turn=turn, now=now,
                               dense_failed=dense_failed)
 
-    async def _fast_round(self, request: RetrievalRequest, budget) -> tuple[list[Evidence], bool]:
+    async def _fast_round(self, request: RetrievalRequest, budget, *,
+                          bm25_first: bool = False) -> tuple[list[Evidence], bool]:
         cap = budget.max_candidates_per_retriever
         dense_on = self._dense.is_available()
         tasks = [self._fts.search(request, limit=cap)]
@@ -143,11 +149,21 @@ class RetrievalOrchestrator:
         # Relevance gate (agentic "retrieve-or-not"): the dense lane is the best
         # semantic judge — when it's healthy yet returns NOTHING within the
         # similarity threshold, the query is off-topic, so the FTS lane's hits are
-        # just incidental keyword matches (function words like "gì"/"là" hitting a
-        # memory). Drop them → no memory is injected for an unrelated turn. Only
-        # when dense is genuinely DOWN do we fall back to FTS-only (degraded), which
-        # also preserves exact-identifier recall.
-        if dense_on and not dense_failed and isinstance(results[1], list) and not results[1]:
+        # just incidental keyword matches (function words hitting a memory). Drop
+        # them → no memory is injected for an unrelated turn.
+        #
+        # Two deliberate carve-outs:
+        #   - bm25_first: an exact-identifier query (email/ID/code) is legitimately
+        #     far from stored memories in embedding space, so dense returns [] even
+        #     on-topic. Keep the FTS hit — dropping it would lose exact-identifier
+        #     recall (the whole point of the router flag).
+        #   - dense DOWN (dense_failed / not dense_on): no semantic judge available,
+        #     so we CANNOT make the off-topic guarantee — fall back to FTS-only
+        #     (degraded, surfaced via the degraded flag). The FTS lane already drops
+        #     stopwords/function-words (fts_index._safe_match_expr) so an off-topic
+        #     function-word-only query still yields nothing even here.
+        if (dense_on and not dense_failed and not bm25_first
+                and isinstance(results[1], list) and not results[1]):
             return [], dense_failed
         fused = fusion.rrf_fuse(lists)
         return fused[: budget.max_fused_candidates], dense_failed
@@ -163,6 +179,11 @@ class RetrievalOrchestrator:
 
     def _finalize(self, request, fused, *, level, cache_hit, budget, ledger, turn, now,
                   dense_failed=False) -> RetrievalResult:
+        # Recency/authority policy is applied HERE (not only pre-cache) so cache
+        # hits get fresh recency at the current ``now``. apply_policy is
+        # idempotent (re-derives order from rrf + boost(now), no cumulative
+        # mutation), so the extra call on the miss path is a harmless no-op.
+        fusion.apply_policy(fused, now=now)
         if ledger is not None:
             fused = ledger.dedup(fused, turn=turn)
         selected, tokens = build_evidence(fused, budget)
@@ -192,9 +213,12 @@ class RetrievalOrchestrator:
 
     def _emit_completed(self, request, result, now) -> None:
         """Best-effort SSE so the chat UI can show a 'memory used' chip and
-        clear/raise the degraded banner. Never breaks retrieval."""
-        if not result.evidence and not result.degraded:
-            return
+        clear/raise the degraded banner. Never breaks retrieval.
+
+        Emit on ANY non-degraded turn (even 0 evidence): the frontend clears the
+        degraded banner on ``retrieval_completed``, so a recovered-but-empty turn
+        must still send it — otherwise a banner raised by an earlier degraded
+        turn sticks forever (nit)."""
         try:
             from services.activity_stream import activity_stream_manager
             event_type = "retrieval_degraded" if result.degraded else "retrieval_completed"

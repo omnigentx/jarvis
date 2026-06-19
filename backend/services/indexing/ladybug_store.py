@@ -29,16 +29,40 @@ def _norm(s: str) -> str:
     return " ".join((s or "").strip().lower().split())
 
 
+_GRAPH_SIDECARS = ("", ".wal", ".lock", ".shadow", ".tmp")
+
+
 def _wipe_graph_files(path: str) -> None:
-    """Remove a LadybugDB graph and its sidecars (``.wal`` / ``.lock`` /
-    ``.shadow``). The store is a disposable projection — see ``_open``."""
+    """Remove a LadybugDB graph and its sidecars. The store is a disposable
+    projection — see ``_open``."""
     if os.path.isdir(path):
         shutil.rmtree(path, ignore_errors=True)
-    for p in (path, f"{path}.wal", f"{path}.lock", f"{path}.shadow", f"{path}.tmp"):
+    for s in _GRAPH_SIDECARS:
         try:
-            os.remove(p)
+            os.remove(path + s)
         except OSError:
             pass
+
+
+def _quarantine_graph_files(path: str) -> None:
+    """Move a corrupt graph + sidecars ASIDE to ``<path>*.corrupt`` instead of
+    deleting them, so a mis-triggered self-heal is forensically recoverable (the
+    projection is rebuildable from SQLite either way). Overwrites a previous
+    quarantine — only the latest corruption is kept. Best-effort."""
+    for s in _GRAPH_SIDECARS:
+        src = path + s
+        if not os.path.exists(src):
+            continue
+        dst = src + ".corrupt"
+        try:
+            if os.path.isdir(dst):
+                shutil.rmtree(dst, ignore_errors=True)
+            elif os.path.exists(dst):
+                os.remove(dst)
+            os.replace(src, dst)
+        except OSError:
+            # last resort: don't let an unmovable file block recovery
+            _wipe_graph_files(src)
 
 EMBED_DIM = 1024  # BAAI/bge-m3
 _VECTOR_INDEX = "memory_emb_idx"
@@ -98,13 +122,16 @@ class LadybugStore:
         try:
             db = ladybug.Database(path)
         except RuntimeError as exc:
-            msg = str(exc).lower()
-            if "wal" not in msg and "corrupt" not in msg:
+            # Match ONLY Ladybug's exact corrupt-WAL signature — a broad
+            # "wal"/"corrupt" substring could wipe a healthy graph on an
+            # unrelated transient/lock error. Quarantine (not delete) so a
+            # misfire is recoverable; the startup migration rebuilds from SQLite.
+            if "corrupted wal file" not in str(exc).lower():
                 raise
-            logger.warning("[MEMORY] LadybugDB open failed (%s) — wiping the "
-                           "disposable graph; the startup migration rebuilds "
-                           "it from SQLite", exc)
-            _wipe_graph_files(path)
+            logger.error("[MEMORY] LadybugDB corrupt WAL (%s) — quarantining the "
+                         "disposable graph to <path>*.corrupt; the startup "
+                         "migration rebuilds it from SQLite", exc)
+            _quarantine_graph_files(path)
             db = ladybug.Database(path)   # fresh, empty graph
         return db, ladybug.Connection(db)
 

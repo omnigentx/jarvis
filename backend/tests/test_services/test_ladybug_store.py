@@ -63,21 +63,42 @@ def test_open_self_heals_corrupt_wal(monkeypatch, tmp_path):
         return real_db(p, **kw)
 
     monkeypatch.setattr(ladybug, "Database", flaky_db)
-    real_wipe = ls._wipe_graph_files
+    real_q = ls._quarantine_graph_files
 
-    def spy_wipe(p):
+    def spy_quarantine(p):
         wiped["n"] += 1
-        real_wipe(p)
+        real_q(p)
 
-    monkeypatch.setattr(ls, "_wipe_graph_files", spy_wipe)
+    monkeypatch.setattr(ls, "_quarantine_graph_files", spy_quarantine)
 
-    store = ls.LadybugStore(path)        # first open throws → wipe → retry → ok
+    store = ls.LadybugStore(path)        # first open throws → quarantine → retry → ok
     try:
         assert calls["n"] == 2           # retried exactly once
-        assert wiped["n"] == 1           # graph was wiped before the retry
+        assert wiped["n"] == 1           # graph was moved aside before the retry
         assert store.count() == 0        # fresh empty graph, usable (no raise)
     finally:
         store.close()
+
+
+def test_open_reraises_non_corruption_error(monkeypatch, tmp_path):
+    # M2: the self-heal must match ONLY Ladybug's exact corrupt-WAL signature —
+    # a transient/lock error (or any message merely containing "wal"/"corrupt")
+    # must propagate, NOT wipe a healthy graph.
+    import ladybug
+
+    from services.indexing import ladybug_store as ls
+
+    def boom(p=None, **kw):
+        raise RuntimeError("IO error: database is locked (wal busy)")
+
+    monkeypatch.setattr(ladybug, "Database", boom)
+    healed = {"n": 0}
+    monkeypatch.setattr(ls, "_quarantine_graph_files",
+                        lambda p: healed.__setitem__("n", healed["n"] + 1))
+
+    with pytest.raises(RuntimeError, match="locked"):
+        ls.LadybugStore(str(tmp_path / "graph"))
+    assert healed["n"] == 0              # never quarantined a healthy graph
 
 
 def test_graph_dump_knowledge_graph(store):

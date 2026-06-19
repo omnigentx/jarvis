@@ -73,14 +73,14 @@
     "memories": "Ký ức",
     "allTypes": "Tất cả loại",
     "active": "Đang dùng",
-    "archived": "Archived",
+    "archived": "Đã lưu trữ",
     "noMemories": "Chưa có ký ức nào.",
-    "archive": "Archive",
+    "archive": "Lưu trữ",
     "delete": "Xóa",
     "recentRetrievals": "Lần tìm gần đây",
     "confirmDelete": "Xóa vĩnh viễn ký ức này?",
     "graph": "Đồ thị ký ức",
-    "restore": "Restore"
+    "restore": "Khôi phục"
   },
   "chat": {
     "memoryUsed": "ký ức đã dùng"

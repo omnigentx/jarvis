@@ -114,6 +114,27 @@ async def test_extract_and_store_skips_missing(test_db):
 
 
 @pytest.mark.asyncio
+async def test_empty_extraction_preserves_seeded_entities(test_db):
+    # M4: a capture-seeded entity list must survive an extraction that finds no
+    # triples — the empty result must NOT clobber entities_json to "[]".
+    db = test_db()
+    db.add(MemoryRecord(id="m1", owner_agent_name="Jarvis", memory_type="semantic",
+                        subject_scope="user", content="ok", normalized_content="ok",
+                        status="active", authority="agent_observed", confidence=0.9,
+                        current_version=1, created_at=1.0, updated_at=1.0,
+                        entities_json=json.dumps([{"name": "Acme", "etype": "org"}])))
+    db.commit(); db.close()
+
+    stored = await kg.extract_and_store("m1", generate_fn=_fixed_fn("[]"))
+    assert stored is False                                   # no triples found
+    db = test_db()
+    rec = db.query(MemoryRecord).one()
+    assert json.loads(rec.relations_json) == []             # attempted, terminal
+    assert json.loads(rec.entities_json) == [{"name": "Acme", "etype": "org"}]   # seed kept
+    db.close()
+
+
+@pytest.mark.asyncio
 async def test_backfill_skips_already_filled_unless_forced(test_db):
     db = test_db()
     db.add(MemoryRecord(id="m1", owner_agent_name="Jarvis", memory_type="semantic",
