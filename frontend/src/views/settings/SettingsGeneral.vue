@@ -516,7 +516,7 @@ onMounted(refreshSystem)
             :disabled="!logDirty || systemSaving"
             @click="saveLogLevel"
           >
-            {{ t('common.save') }}
+            {{ t('common.saveShort') }}
           </button>
         </div>
       </div>
@@ -538,7 +538,7 @@ onMounted(refreshSystem)
             :disabled="!timezoneDirty || systemSaving"
             @click="saveTimezone"
           >
-            {{ t('common.save') }}
+            {{ t('common.saveShort') }}
           </button>
         </div>
       </div>
@@ -564,7 +564,7 @@ onMounted(refreshSystem)
             :disabled="!sessionDirty || systemSaving"
             @click="saveSessionWindow"
           >
-            {{ t('common.save') }}
+            {{ t('common.saveShort') }}
           </button>
         </div>
       </div>

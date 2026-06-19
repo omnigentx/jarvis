@@ -22,7 +22,8 @@
     "retry": "Retry",
     "remove": "Remove",
     "copy": "Copy",
-    "skip": "Skip"
+    "skip": "Skip",
+    "saveShort": "Save"
   },
   "settings": {
     "memory": {

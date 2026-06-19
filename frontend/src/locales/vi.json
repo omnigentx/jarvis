@@ -22,7 +22,8 @@
     "retry": "Thử lại",
     "remove": "Gỡ",
     "copy": "Sao chép",
-    "skip": "Bỏ qua"
+    "skip": "Bỏ qua",
+    "saveShort": "Lưu"
   },
   "settings": {
     "memory": {

@@ -588,7 +588,7 @@ onMounted(() => loadSessions())
               {{ reloading ? t('settings.runningTemplates.reloading') : t('settings.runningTemplates.forceReload') }}
             </button>
             <button type="button" class="btn primary" :disabled="!dirty || saving" @click="onSaveRole">
-              {{ saving ? t('settings.runningTemplates.saving') : t('common.save') }}
+              {{ saving ? t('settings.runningTemplates.saving') : t('common.saveShort') }}
             </button>
           </div>
         </header>
