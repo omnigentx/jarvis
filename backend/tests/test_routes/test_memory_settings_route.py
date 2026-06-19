@@ -80,24 +80,34 @@ def test_index_status_route(client):
     assert r.status_code == 200, r.text
     body = r.json()
     assert "outbox" in body and "episodic_documents" in body
+    # The dense block is the core observable this surfaces: the backend is
+    # LadybugDB and `embeddings` reports whether dense recall is actually live
+    # (the missing-FlagEmbedding incident showed as embeddings=False).
+    assert body["dense"]["backend"] == "ladybug"
+    assert "embeddings" in body["dense"] and "reachable" in body["dense"]
 
 
 def test_memory_search_route_degraded(client):
-    # No data + Qdrant absent → empty evidence, degraded flag, no crash.
+    # No data + dense lane absent → empty evidence, degraded flag, no crash.
     r = client.post("/api/agents/Jarvis/memory-search", json={"query": "compactor"})
     assert r.status_code == 200, r.text
     body = r.json()
     assert "evidence" in body and body["degraded"] is True
 
 
-def test_memory_graph_route_unavailable_for_non_ladybug(client, monkeypatch):
-    # Non-LadybugDB backend → the route short-circuits to an empty, available=False
-    # payload (never opens a store, never 500s) so the UI shows an empty state.
+def test_memory_graph_route_empty_when_store_unavailable(client, monkeypatch):
+    # Memory ENABLED but the LadybugDB store can't be opened → the route returns
+    # an empty, available=False payload (never 500s) so the UI shows an empty
+    # state. (Forces the store path, not the disabled short-circuit.)
     import types
 
     import routes.memory as rm
     monkeypatch.setattr(rm, "get_memory_settings",
-                        lambda: types.SimpleNamespace(enabled=True))
+                        lambda: types.SimpleNamespace(enabled=True, ladybug_path="unused"))
+
+    def _no_store(*_a, **_k):
+        raise RuntimeError("store unavailable")
+    monkeypatch.setattr("services.indexing.ladybug_store.get_ladybug_store", _no_store)
     r = client.get("/api/agents/Jarvis/memory-graph")
     assert r.status_code == 200, r.text
     assert r.json() == {"nodes": [], "edges": [], "available": False}

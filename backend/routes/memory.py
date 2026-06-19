@@ -331,7 +331,11 @@ async def index_status() -> dict[str, Any]:
     }
     try:
         from services.indexing.ladybug_store import get_ladybug_store
-        store = get_ladybug_store(cfg.ladybug_path)          # process singleton
+        # Reuses the process-wide store singleton already opened at startup — this
+        # read-only health probe must NOT be the first opener (opening can trigger
+        # the corrupt-WAL quarantine self-heal, which shouldn't be a side effect
+        # of viewing settings). Startup opens it via the migration check.
+        store = get_ladybug_store(cfg.ladybug_path)
         dense["reachable"] = True
         dense["points"] = store.count()
     except Exception:
