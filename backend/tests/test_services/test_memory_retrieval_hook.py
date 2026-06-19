@@ -12,7 +12,7 @@ def _settings(enabled=True, auto_capture=False):
     return types.SimpleNamespace(
         enabled=enabled, embedding_model="BAAI/bge-m3", embedding_revision="",
         trigger_lexicon_overrides={}, mode="balanced",
-        qdrant_url="http://localhost:59999", vector_backend="qdrant", evidence_token_budget=2500,
+        evidence_token_budget=2500,
         quality_gate_thresholds={}, auto_capture_preferences=auto_capture,
         approval_policy="manual", pinned_token_budget=1500)
 

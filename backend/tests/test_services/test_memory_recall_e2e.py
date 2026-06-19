@@ -37,7 +37,7 @@ def _cfg():
     return types.SimpleNamespace(
         enabled=True, auto_capture_preferences=False, mode="balanced",
         embedding_model="BAAI/bge-m3", embedding_revision="",
-        vector_backend="ladybug", ladybug_path="unused",
+        ladybug_path="unused",
         evidence_token_budget=2500, trigger_lexicon_overrides={},
         quality_gate_thresholds={}, approval_policy="manual", pinned_token_budget=1500)
 

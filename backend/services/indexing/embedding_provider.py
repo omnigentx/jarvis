@@ -15,7 +15,7 @@ from abc import ABC, abstractmethod
 logger = logging.getLogger("memory.embedding")
 
 # Pinned default (overridable via settings). Revision is pinned separately so a
-# model/revision change forces a new Qdrant collection rather than silently
+# model/revision change forces a new vector index rather than silently
 # mixing vector spaces.
 DEFAULT_MODEL = "BAAI/bge-m3"
 BGE_M3_DIM = 1024

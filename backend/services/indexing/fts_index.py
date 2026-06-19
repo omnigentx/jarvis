@@ -1,5 +1,5 @@
 """SQLite FTS5 maintenance + search (degraded fallback / admin / consistency
-reference — never the production path, which is Qdrant).
+reference — never the production path, which is LadybugDB).
 
 One virtual table ``memory_fts`` (created in core.database.init_db) fed from
 both episodic_documents and memory_records. FTS5 has no key-based UPDATE, so

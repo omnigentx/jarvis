@@ -167,7 +167,7 @@ class CandidatePayload:
 
 
 class RetrievalProvider(ABC):
-    """A pluggable retrieval backend (Qdrant, SQLite FTS, communications)."""
+    """A pluggable retrieval backend (LadybugDB, SQLite FTS, communications)."""
 
     @abstractmethod
     async def search(self, request: RetrievalRequest, *, limit: int) -> list[Evidence]:

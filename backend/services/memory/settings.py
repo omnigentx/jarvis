@@ -40,11 +40,9 @@ class MemorySettings:
     embedding_model: str = "BAAI/bge-m3"
     embedding_revision: str = ""
     reranker_enabled: bool = True
-    # Vector/graph backend: "ladybug" (embedded graph + HNSW, memory v2) or
-    # "qdrant" (legacy dense-only). ``ladybug_path`` = the embedded DB dir.
-    vector_backend: str = "ladybug"
+    # Dense/graph backend = LadybugDB (embedded property graph + HNSW vectors).
+    # ``ladybug_path`` is the embedded DB directory.
     ladybug_path: str = "data/memory_graph"
-    qdrant_url: str = "http://localhost:6333"
     # Retention (days)
     retention_episodic_days: int = 90
     retention_retrieval_runs_days: int = 30
@@ -77,9 +75,7 @@ _SCHEMA: dict[str, tuple[str, Any]] = {
     "embedding_model": ("str", "BAAI/bge-m3"),
     "embedding_revision": ("str", ""),
     "reranker_enabled": ("bool", True),
-    "vector_backend": ("str", "ladybug"),
     "ladybug_path": ("str", "data/memory_graph"),
-    "qdrant_url": ("str", "http://localhost:6333"),
     "retention_episodic_days": ("int", 90),
     "retention_retrieval_runs_days": ("int", 30),
     "recall_min_similarity": ("float", 0.44),

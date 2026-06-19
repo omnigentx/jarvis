@@ -2,7 +2,7 @@
 
 The outbox is the DURABLE QUEUE. Index intents are written in the SAME SQLite
 transaction as the domain write, so "truth committed" and "index scheduled"
-are atomic — Qdrant can be down for hours and nothing is lost. The worker
+are atomic — the dense backend can be down for hours and nothing is lost. The worker
 drains pending rows; idempotency comes from the
 ``UNIQUE(event_type, aggregate_id, aggregate_revision)`` constraint.
 """
@@ -230,7 +230,7 @@ def mark_failed(
 
 def defer(db: Session, row_id: int, *, delay_s: float, now: float) -> None:
     """Reschedule a claimed row WITHOUT counting a failure. Used when a
-    dependency (Qdrant/embedder) is transiently unavailable: a multi-hour
+    dependency (the dense backend/embedder) is transiently unavailable: a multi-hour
     outage must not exhaust ``max_attempts`` and dead-letter healthy work.
     The row returns to pending; FTS was already updated for degraded search."""
     row = db.get(MemoryIndexOutbox, row_id)

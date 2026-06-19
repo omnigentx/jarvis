@@ -27,11 +27,12 @@
   },
   "settings": {
     "memory": {
-      "intro": "Every agent gets its own long-lived memory: pinned preferences, recalled conversations and decisions, and hybrid keyword (BM25) + vector search. SQLite holds the real data; Qdrant is a rebuildable search index.",
-      "qdrant": "Qdrant",
-      "qdrantConnected": "Connected",
-      "qdrantPoints": "{points} vectors indexed",
-      "qdrantDownPrefix": "Not connected — semantic search is degraded and falling back to keyword search. Check the Qdrant container at",
+      "intro": "Every agent gets its own long-lived memory: pinned preferences, recalled conversations and decisions, and hybrid keyword (BM25) + vector search. SQLite holds the real data; LadybugDB is a rebuildable vector + knowledge-graph index.",
+      "dense": "Semantic index (LadybugDB)",
+      "denseConnected": "Connected",
+      "densePoints": "{points} memories indexed",
+      "denseNoEmbeddings": "Embeddings unavailable — semantic search and the knowledge graph are off (keyword search only). Install the 'memory' extra (FlagEmbedding) on the backend.",
+      "denseDown": "Index unavailable — semantic search is degraded, falling back to keyword search.",
       "indexQueue": "Index queue",
       "queuePending": "{n} pending",
       "queueDead": "{n} failed",
@@ -55,7 +56,6 @@
       "providerDefault": "Default (inherit)",
       "curatorBaseUrl": "Curator base URL (optional)",
       "embeddingModel": "Embedding model",
-      "qdrantUrl": "Qdrant URL",
       "curatorApiKey": "Curator API key",
       "curatorApiKeySet": "Already set — type a new key to replace it, or leave blank to keep it.",
       "curatorApiKeyUnset": "Not set. Use this together with a cheaper router base URL.",
@@ -561,7 +561,7 @@
     }
   },
   "memory": {
-    "degraded": "Semantic search is degraded (Qdrant unavailable) — falling back to keyword search.",
+    "degraded": "Semantic search is degraded (vector index unavailable) — falling back to keyword search.",
     "episodic": "Episodic",
     "indexPending": "Indexing",
     "indexDead": "Index errors",

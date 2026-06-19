@@ -34,8 +34,7 @@ from services.retrieval.orchestrator import _CACHE
 
 def _settings():
     return types.SimpleNamespace(
-        enabled=True, qdrant_url="http://localhost:59999", vector_backend="qdrant",
-        embedding_model="BAAI/bge-m3", embedding_revision="",
+        enabled=True, embedding_model="BAAI/bge-m3", embedding_revision="",
         approval_policy="auto_low_risk", pinned_token_budget=1500,
         evidence_token_budget=2500, trigger_lexicon_overrides={},
         quality_gate_thresholds={})

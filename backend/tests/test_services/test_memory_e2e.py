@@ -1,11 +1,11 @@
 """END-TO-END memory flows through PRODUCTION code (no mocking of the memory
 subsystem). One real SQLite DB (+FTS5) shared across MemoryService, the index
 worker, the retrieval orchestrator, and the agent-facing RPC handlers —
-exactly the path a live request takes, minus Qdrant/embeddings (absent here,
+exactly the path a live request takes, minus the dense lane (LadybugDB + embeddings) (absent here,
 so these prove the FTS degraded path + no-lost-writes guarantee).
 
 Covers spec §26: remember→recall, exact-identifier BM25, cross-agent denial,
-episodic recall, Qdrant-outage resilience.
+episodic recall, dense-outage resilience.
 """
 import types
 
@@ -25,11 +25,11 @@ from services.retrieval.orchestrator import _CACHE
 
 
 def _settings():
-    # Unreachable Qdrant: these e2e flows assert the FTS/degraded path and the
-    # no-lost-writes guarantee, independent of any locally-running Qdrant.
+    # These e2e flows assert the FTS/degraded path and the no-lost-writes
+    # guarantee. The dense lane (LadybugDB) is forced unavailable in the `stack`
+    # fixture so this runs FTS-only deterministically (no model load / no store).
     return types.SimpleNamespace(
-        enabled=True,
-        qdrant_url="http://localhost:59999", vector_backend="qdrant", embedding_model="BAAI/bge-m3",
+        enabled=True, embedding_model="BAAI/bge-m3",
         embedding_revision="", evidence_token_budget=2500,
         trigger_lexicon_overrides={}, quality_gate_thresholds={},
         approval_policy="auto_low_risk", pinned_token_budget=2000)
@@ -52,15 +52,18 @@ def stack(monkeypatch):
     monkeypatch.setattr(wmod, "SessionLocal", Factory)
     monkeypatch.setattr(rpc_handlers, "get_db_session", lambda: Factory())
     monkeypatch.setattr(rpc_handlers, "get_memory_settings", _settings)
-    # The worker's _qd() reads the GLOBAL settings to pick the vector backend →
-    # pin it to qdrant (unreachable) so this e2e deterministically exercises the
-    # FTS/degraded path, not LadybugDB.
     import services.memory.settings as ms
     monkeypatch.setattr(ms, "get_memory_settings", _settings)
-    # Worker points at an unreachable Qdrant so it deterministically uses the
-    # FTS path (and defers dense work) regardless of a local Qdrant.
+    # Force the dense lane (LadybugDB) UNAVAILABLE so this e2e deterministically
+    # exercises the FTS/degraded path: store=None → is_available() False → the
+    # worker defers dense (FTS still written) and the orchestrator recalls
+    # FTS-only — no embedding model load, no real graph store opened.
+    import services.indexing.ladybug_store as lbs
+    def _no_store(*_a, **_k):
+        raise RuntimeError("dense disabled for this e2e")
+    monkeypatch.setattr(lbs, "get_ladybug_store", _no_store)
     return types.SimpleNamespace(
-        Factory=Factory, worker=MemoryIndexWorker(qdrant_url="http://localhost:59999"))
+        Factory=Factory, worker=MemoryIndexWorker())
 
 
 import time as _time
@@ -69,7 +72,7 @@ import time as _time
 async def _drain(worker, now=None):
     # Far-future clock so rows written with fixed test timestamps OR real
     # time.time() (the RPC paths use real time) are always due. Deferred dense
-    # rows just re-pend (no Qdrant in tests); FTS is written on the first pass.
+    # rows just re-pend (no dense lane in tests); FTS is written on the first pass.
     return await worker.process_pending(now=_time.time() + 100_000)
 
 
@@ -83,7 +86,7 @@ async def test_remember_then_recall_through_full_pipeline(stack):
 
     # 2. the background worker drains the outbox into the (FTS) index
     stats = await _drain(stack.worker, now=110.0)
-    assert stats["done"] + stats["deferred"] >= 1     # FTS updated (dense deferred: no Qdrant)
+    assert stats["done"] + stats["deferred"] >= 1     # FTS updated (dense deferred: no LadybugDB)
 
     # 3. the agent searches via the real RPC handler → real orchestrator → FTS
     res = await rpc_handlers.memory_search(agent_name="Jarvis", query="dedicated compactor")
@@ -130,8 +133,8 @@ async def test_episodic_projection_recall(stack):
     assert any("verification" in e["text"] for e in res["memories"])
 
 
-async def test_qdrant_outage_keeps_writes_and_chat(stack):
-    """No Qdrant: writes still persist, the outbox retains the dense intent for
+async def test_dense_outage_keeps_writes_and_chat(stack):
+    """No dense lane: writes still persist, the outbox retains the dense intent for
     later, and search still returns results via FTS (degraded, not broken)."""
     svc = MemoryService(stack.Factory())
     rec = svc.create_memory(owner_agent_name="Jarvis", memory_type="semantic",
@@ -166,7 +169,7 @@ async def test_agent_forget_archives_and_drops_from_search(stack):
     await _drain(stack.worker)
     assert (await rpc_handlers.memory_search(agent_name="Jarvis", query="caching"))["memories"]
     # forget → archive. Retrieval excludes non-active memory immediately (the
-    # provider filters status), and the outbox also queues FTS/Qdrant removal.
+    # provider filters status), and the outbox also queues FTS/dense removal.
     out = await rpc_handlers.memory_forget(agent_name="Jarvis", memory_id=rec.id)
     assert out["status"] == "archived"
     db = stack.Factory()

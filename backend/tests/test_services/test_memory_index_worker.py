@@ -1,5 +1,5 @@
 """WS03 worker + consistency: drain happy path, degraded defer, rebuild,
-retention. Real SQLite (in-memory shared) + FTS5; Qdrant/embeddings faked."""
+retention. Real SQLite (in-memory shared) + FTS5; dense/embeddings faked."""
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -31,7 +31,7 @@ def Session(monkeypatch):
     return SessionFactory
 
 
-class _FakeQdrant:
+class _FakeDenseIndexer:
     def __init__(self, available=True):
         self._available = available
         self.points = []
@@ -65,8 +65,8 @@ def _seed_episodic(Session, now=100.0):
 async def test_worker_happy_path_indexes_dense_and_fts(Session, monkeypatch):
     _seed_episodic(Session)
     worker = MemoryIndexWorker()
-    fake_qd = _FakeQdrant(available=True)
-    monkeypatch.setattr(worker, "_qd", lambda: fake_qd)
+    fake_dense = _FakeDenseIndexer(available=True)
+    monkeypatch.setattr(worker, "_dense", lambda: fake_dense)
     monkeypatch.setattr(worker, "_emb", lambda: _FakeEmbedding())
 
     stats = await worker.process_pending(now=200.0)
@@ -77,8 +77,8 @@ async def test_worker_happy_path_indexes_dense_and_fts(Session, monkeypatch):
     assert db.query(MemoryIndexOutbox).one().status == ob.DONE
     assert db.get(EpisodicDocument, "doc-1").indexed_revision == 1
     # dense point upserted with correct payload
-    assert len(fake_qd.points) == 1
-    p = fake_qd.points[0]
+    assert len(fake_dense.points) == 1
+    p = fake_dense.points[0]
     assert p["payload"]["owner_agent_name"] == "Jarvis"
     assert p["payload"]["memory_type"] == "episodic"
     # FTS searchable
@@ -89,7 +89,7 @@ async def test_worker_happy_path_indexes_dense_and_fts(Session, monkeypatch):
 async def test_worker_degraded_defers_dense_keeps_fts(Session, monkeypatch):
     _seed_episodic(Session)
     worker = MemoryIndexWorker()
-    monkeypatch.setattr(worker, "_qd", lambda: _FakeQdrant(available=False))
+    monkeypatch.setattr(worker, "_dense", lambda: _FakeDenseIndexer(available=False))
     monkeypatch.setattr(worker, "_emb", lambda: _FakeEmbedding())
 
     stats = await worker.process_pending(now=200.0)
@@ -163,13 +163,13 @@ async def test_worker_episodic_prune_removes_dense_and_fts(Session, monkeypatch)
     """
     _seed_episodic(Session)
     worker = MemoryIndexWorker()
-    fake_qd = _FakeQdrant(available=True)
-    monkeypatch.setattr(worker, "_qd", lambda: fake_qd)
+    fake_dense = _FakeDenseIndexer(available=True)
+    monkeypatch.setattr(worker, "_dense", lambda: fake_dense)
     monkeypatch.setattr(worker, "_emb", lambda: _FakeEmbedding())
 
     # Index first: a dense point + FTS row now exist.
     await worker.process_pending(now=200.0)
-    assert len(fake_qd.points) == 1
+    assert len(fake_dense.points) == 1
     assert fts_index.fts_search(Session(), owner_agent_name="Jarvis", query="compactor")
 
     # Prune it, then drain the worker.
@@ -180,7 +180,7 @@ async def test_worker_episodic_prune_removes_dense_and_fts(Session, monkeypatch)
     db.close()
     await worker.process_pending(now=400.0)
 
-    assert "doc-1" in fake_qd.deleted        # dense removed (the B4 fix)
+    assert "doc-1" in fake_dense.deleted        # dense removed (the B4 fix)
     assert not fts_index.fts_search(Session(), owner_agent_name="Jarvis", query="compactor")
     db.close()
 

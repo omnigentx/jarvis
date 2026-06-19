@@ -3,8 +3,7 @@
 The dense leg (HNSW ``QUERY_VECTOR_INDEX``) PLUS a one-hop entity-linking boost
 (memories that share an entity with the top vector hits — the multi-hop signal),
 both owner-scoped. Returns [] when the store or embedder is unavailable so the
-orchestrator degrades to FTS-only. Drop-in alternative to ``QdrantProvider``,
-selected by ``settings.vector_backend``.
+orchestrator degrades to FTS-only. The sole dense/graph retrieval backend.
 """
 from __future__ import annotations
 

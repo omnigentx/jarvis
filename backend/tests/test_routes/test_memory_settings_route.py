@@ -97,7 +97,7 @@ def test_memory_graph_route_unavailable_for_non_ladybug(client, monkeypatch):
 
     import routes.memory as rm
     monkeypatch.setattr(rm, "get_memory_settings",
-                        lambda: types.SimpleNamespace(enabled=True, vector_backend="qdrant"))
+                        lambda: types.SimpleNamespace(enabled=True))
     r = client.get("/api/agents/Jarvis/memory-graph")
     assert r.status_code == 200, r.text
     assert r.json() == {"nodes": [], "edges": [], "available": False}

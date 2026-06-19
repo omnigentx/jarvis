@@ -728,7 +728,7 @@ class PasskeyCredential(Base):
 # ──────────────────────────────────────────────────────────────────────
 # Agent memory + adaptive RAG (docs/agent-memory-adaptive-rag-spec.md)
 #
-# SQLite is the source of truth for all memory state; Qdrant is a
+# SQLite is the source of truth for all memory state; LadybugDB is a
 # rebuildable index. Every table keys on ``owner_agent_name`` (the
 # normalized agent name — see helpers/agent_identity.py); there is no
 # team/global memory. Schemas mirror spec §12 exactly.
@@ -979,9 +979,9 @@ def init_db():
     # Memory degraded-search index (FTS5). Single virtual table fed from both
     # episodic_documents.content and memory_records.normalized_content by the
     # indexing layer. It is the degraded fallback / admin search / consistency
-    # reference — never the production search path (that is Qdrant). Wrapped in
+    # reference — never the production search path (that is LadybugDB). Wrapped in
     # try/except because a stripped SQLite build may lack FTS5; memory then
-    # degrades to Qdrant-only with no SQLite fallback (surfaced at runtime).
+    # degrades to dense-only with no SQLite fallback (surfaced at runtime).
     with engine.connect() as conn:
         try:
             conn.execute(text(

@@ -460,7 +460,6 @@ async def lifespan(app: FastAPI):
         _mem_cfg = get_memory_settings()
         from services.indexing.memory_index_worker import MemoryIndexWorker
         state.memory_index_worker = MemoryIndexWorker(
-            qdrant_url=_mem_cfg.qdrant_url,
             embedding_model=_mem_cfg.embedding_model,
             embedding_revision=_mem_cfg.embedding_revision,
         )
@@ -491,7 +490,7 @@ async def lifespan(app: FastAPI):
     # under-populated, with no record-level watermark to detect it. Best-effort;
     # the index is a disposable projection.
     try:
-        if _mem_cfg and _mem_cfg.enabled and getattr(_mem_cfg, "vector_backend", "ladybug") == "ladybug":
+        if _mem_cfg and _mem_cfg.enabled:
             from sqlalchemy import func
 
             from core.database import MemoryRecord, get_db_session

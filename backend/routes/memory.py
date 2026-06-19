@@ -316,23 +316,27 @@ async def index_status() -> dict[str, Any]:
         status = cs.status(db)
     finally:
         db.close()
-    # Probe Qdrant so the UI can warn when dense search is unavailable instead
-    # of failing silently. Reachability + point count.
+    # Dense/graph health for the UI: the ACTUAL backend is LadybugDB (HNSW
+    # vectors + property graph). Dense search needs BOTH the store open AND
+    # embeddings available — surface both so the UI warns with the real reason
+    # (e.g. embeddings missing) instead of failing silently.
     cfg = get_memory_settings()
-    qdrant = {"configured_url": cfg.qdrant_url, "reachable": False, "points": None}
+    from services.indexing.embedding_provider import get_shared_embedding_provider
+    dense = {
+        "backend": "ladybug",
+        "reachable": False,                                  # LadybugDB store open
+        "embeddings": get_shared_embedding_provider(
+            cfg.embedding_model, cfg.embedding_revision).is_available(),
+        "points": None,
+    }
     try:
-        from services.indexing.qdrant_indexer import COLLECTION, get_qdrant_indexer
-        idx = get_qdrant_indexer(cfg.qdrant_url)
-        if idx.is_available():
-            qdrant["reachable"] = True
-            try:
-                info = idx._get_client().get_collection(COLLECTION)
-                qdrant["points"] = info.points_count
-            except Exception:
-                qdrant["points"] = 0          # collection not created yet
+        from services.indexing.ladybug_store import get_ladybug_store
+        store = get_ladybug_store(cfg.ladybug_path)          # process singleton
+        dense["reachable"] = True
+        dense["points"] = store.count()
     except Exception:
         pass
-    status["qdrant"] = qdrant
+    status["dense"] = dense
     status["enabled"] = cfg.enabled
     return status
 
@@ -341,15 +345,15 @@ async def index_status() -> dict[str, Any]:
 async def memory_graph(name: str, limit: int = Query(400, ge=1, le=1000)) -> dict[str, Any]:
     """Owner-scoped LadybugDB KNOWLEDGE GRAPH for the UI: entity nodes connected
     by typed RELATES edges (subject—predicate—object). ``available=False`` (empty
-    payload) when memory is off, the backend isn't LadybugDB, or the graph can't
-    be opened — the UI shows an empty-state instead of erroring."""
+    payload) when memory is off or the graph can't be opened — the UI shows an
+    empty-state instead of erroring."""
     empty = {"nodes": [], "edges": [], "available": False}
     cfg = get_memory_settings()
-    if not cfg.enabled or getattr(cfg, "vector_backend", "ladybug") != "ladybug":
+    if not cfg.enabled:
         return empty
     try:
         from services.indexing.ladybug_store import get_ladybug_store
-        store = get_ladybug_store(getattr(cfg, "ladybug_path", "data/memory_graph"))
+        store = get_ladybug_store(cfg.ladybug_path)
         data = store.graph_dump(owner=name, limit=limit)
         data["available"] = True
         return data

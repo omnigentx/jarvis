@@ -19,7 +19,6 @@ from sqlalchemy.orm import Session
 
 from core.database import RetrievalRun
 from services.indexing.embedding_provider import get_shared_embedding_provider
-from services.indexing.qdrant_indexer import get_qdrant_indexer
 from services.retrieval import fusion
 from services.retrieval.budget import build_budget
 from services.retrieval.cache import RetrievalCache, cache_key, normalize_query
@@ -34,7 +33,6 @@ from services.retrieval.intent_router import (
 )
 from services.retrieval.ledger import EvidenceLedger
 from services.retrieval.providers.communication_provider import CommunicationProvider
-from services.retrieval.providers.qdrant_provider import QdrantProvider
 from services.retrieval.providers.sqlite_fts_provider import SqliteFtsProvider
 from services.retrieval.quality_gate import is_weak
 
@@ -51,24 +49,22 @@ class RetrievalOrchestrator:
         self._fts = SqliteFtsProvider(db)
         self._comm = CommunicationProvider(db)
         emb = get_shared_embedding_provider(settings.embedding_model, settings.embedding_revision)
-        # Dense/graph leg: LadybugDB (v2) or legacy Qdrant, chosen by settings.
-        if getattr(settings, "vector_backend", "ladybug") == "ladybug":
-            from services.indexing.ladybug_store import get_ladybug_store
-            from services.retrieval.providers.ladybug_provider import LadybugProvider
-            try:
-                store = get_ladybug_store(getattr(settings, "ladybug_path", "data/memory_graph"))
-            except Exception as exc:  # noqa: BLE001 — degrade to FTS-only, never break retrieval
-                logger.warning("[MEMORY] LadybugDB unavailable, FTS-only: %s", exc)
-                store = None
-            # Relevance gate: cosine distance = 1 - similarity (LadybugDB cosine
-            # metric, measured 2026-06-17). An off-topic query whose nearest
-            # memory is beyond this distance contributes nothing → no injection.
-            min_sim = getattr(settings, "recall_min_similarity", 0.44)
-            max_hops = int(getattr(settings, "graph_max_hops", 1) or 1)
-            self._dense = LadybugProvider(store, emb, max_distance=1.0 - float(min_sim),
-                                          max_hops=max_hops)
-        else:
-            self._dense = QdrantProvider(get_qdrant_indexer(settings.qdrant_url), emb)
+        # Dense/graph leg: LadybugDB (HNSW vectors + property graph). Degrades to
+        # FTS-only when the store can't be opened — never breaks retrieval.
+        from services.indexing.ladybug_store import get_ladybug_store
+        from services.retrieval.providers.ladybug_provider import LadybugProvider
+        try:
+            store = get_ladybug_store(settings.ladybug_path)
+        except Exception as exc:  # noqa: BLE001 — degrade to FTS-only, never break retrieval
+            logger.warning("[MEMORY] LadybugDB unavailable, FTS-only: %s", exc)
+            store = None
+        # Relevance gate: cosine distance = 1 - similarity (LadybugDB cosine
+        # metric, measured 2026-06-17). An off-topic query whose nearest memory
+        # is beyond this distance contributes nothing → no injection.
+        min_sim = getattr(settings, "recall_min_similarity", 0.44)
+        max_hops = int(getattr(settings, "graph_max_hops", 1) or 1)
+        self._dense = LadybugProvider(store, emb, max_distance=1.0 - float(min_sim),
+                                      max_hops=max_hops)
 
     async def retrieve(self, request: RetrievalRequest, *, now: float,
                        ledger: EvidenceLedger | None = None, turn: int = 0,
@@ -193,13 +189,12 @@ class RetrievalOrchestrator:
         # Degraded = dense lane not serving. Two distinct causes: it's offline
         # (is_available() False) OR it errored mid-search (dense_failed) — the
         # latter previously read as a healthy empty result.
-        _backend = getattr(self.settings, "vector_backend", "ladybug")
         if dense_failed:
-            degraded, reason = True, f"{_backend}_error"
+            degraded, reason = True, "ladybug_error"
         elif not self._dense.is_available():
-            degraded, reason = True, f"{_backend}_unavailable"
+            degraded, reason = True, "ladybug_unavailable"
         elif self._dense_unpopulated(fused):
-            degraded, reason = True, f"{_backend}_unpopulated"
+            degraded, reason = True, "ladybug_unpopulated"
         else:
             degraded, reason = False, None
         result = RetrievalResult(
@@ -243,7 +238,7 @@ class RetrievalOrchestrator:
             return False                      # dense did contribute → populated
         store = getattr(self._dense, "store", None)
         if store is None:
-            return False                      # non-graph backend (e.g. Qdrant)
+            return False                      # no store attribute (degraded/FTS-only)
         try:
             return store.count() == 0
         except Exception:  # noqa: BLE001 — never let the check break retrieval

@@ -37,7 +37,6 @@ class MemorySettingsPatch(BaseModel):
     embedding_model: str | None = None
     embedding_revision: str | None = None
     reranker_enabled: bool | None = None
-    qdrant_url: str | None = None
     retention_episodic_days: int | None = None
     retention_retrieval_runs_days: int | None = None
     recall_min_similarity: float | None = None

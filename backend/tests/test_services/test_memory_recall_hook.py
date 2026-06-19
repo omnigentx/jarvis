@@ -36,8 +36,7 @@ def _settings():
         enabled=True, auto_capture_preferences=False, mode="balanced",
         embedding_model="BAAI/bge-m3", embedding_revision="",
         trigger_lexicon_overrides={}, approval_policy="manual",
-        pinned_token_budget=1500, evidence_token_budget=2500,
-        qdrant_url="http://localhost:59999", vector_backend="qdrant")
+        pinned_token_budget=1500, evidence_token_budget=2500)
 
 
 def _user(text):
