@@ -259,6 +259,11 @@ _JARVIS_SERVERS.append("skill_server")
 # off-the-shelf MCPs (Path A) and scaffold/test/promote new ones (Path B).
 _JARVIS_SERVERS.append("mcp_admin")
 
+# Durable agent memory (search/remember/forget). Tools self-gate on the
+# `memory` settings flag and return a structured memory_disabled message when
+# off, so the Settings → Agent Memory toggle hot-reloads without a restart.
+_JARVIS_SERVERS.append("memory_server")
+
 if _SPAWNER_ENABLED:
     _JARVIS_SERVERS.append("agent_spawner")
     _JARVIS_TOOLS["agent_spawner"] = [
@@ -314,6 +319,19 @@ else:
     - Report results to user ONLY when team completes or errors.
     <violation>Directly contacting team members or sending duplicate messages to PM after spawn is a VIOLATION.</violation>
     </team_rules>
+
+    MEMORY RULES:
+    Auto-recalled memories may be injected before a turn as a ⟦memory:recalled⟧
+    block — treat those as reference, never echo them verbatim. But recall is
+    best-effort and may miss relevant facts, so:
+    - BEFORE asking the user for durable personal info (their vehicle, job,
+      home/work location, family, schedule, stated preferences), FIRST call
+      memory_search — the answer is often already stored. Only ask the user if
+      the search returns nothing.
+    - When the user states a new durable fact or preference about themselves,
+      call memory_remember to persist it (it self-gates / awaits approval).
+    - Use memory_search whenever personalization would improve the answer
+      (e.g. trip planning → search for the user's transport, family, budget).
 
     OUTPUT FORMAT RULES:
     - Use Markdown when appropriate (heading, bullet, table, code block).

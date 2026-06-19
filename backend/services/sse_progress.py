@@ -92,12 +92,11 @@ def _persist_activity(
 
 # --- Agent Name Mapping ---
 
-def normalize_agent_name(name: str) -> str:
-    """Strip instance suffix like [1], [2] from agent names.
-    e.g. 'FinanceAgent[1]' -> 'FinanceAgent'
-    This ensures Activity Stream agent_name matches REST API names.
-    """
-    return re.sub(r'\[\d+\]$', '', name)
+# Canonical identity normalization now lives in ``helpers.agent_identity`` so
+# the spawn subsystem and memory services share one definition. Re-exported
+# here because every SSE progress hook in this module (and external importers)
+# reference ``normalize_agent_name`` from ``services.sse_progress``.
+from helpers.agent_identity import normalize_agent_name  # noqa: E402  (re-export)
 
 
 def humanize_agent_name(name: str) -> str:
@@ -159,7 +158,7 @@ def _get_token_info(agent) -> Optional[dict]:
 
 
 def _persist_and_broadcast_token_usage(
-    agent_name: str, run_id: str, tokens: Optional[dict]
+    agent_name: str, run_id: str, tokens: Optional[dict], category: str = "agent"
 ):
     """Persist token usage to SQLite and broadcast via activity stream.
     Called once per LLM call (on_after_llm_call) to avoid double-counting."""
@@ -192,6 +191,7 @@ def _persist_and_broadcast_token_usage(
             record = TokenUsageRecord(
                 agent_name=agent_name,
                 run_id=run_id,
+                category=category,
                 model=model,
                 input_tokens=input_t,
                 output_tokens=output_t,

@@ -1,0 +1,191 @@
+"""WS05 candidate lifecycle + curator: deterministic auto-approve, approval
+gating, dedupe, secret→approval, approve/reject, curator decision parsing."""
+
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from core.database import Base, MemoryCandidate, MemoryRecord
+from services.memory import candidate_service as cnd
+
+
+@pytest.fixture()
+def db():
+    engine = create_engine("sqlite:///:memory:",
+                           connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    s = sessionmaker(bind=engine)()
+    yield s
+    s.close()
+
+
+def _payload(content="answer in Vietnamese", **kw):
+    base = dict(memory_type="pinned", content=content, subject_scope="user",
+                authority="user_confirmed")
+    base.update(kw)
+    return base
+
+
+def test_deterministic_candidate_auto_persists(db):
+    c = cnd.create_candidate(db, owner_agent_name="Jarvis", candidate_type="preference",
+                             payload=_payload(), now=100.0)
+    assert c.status == "auto_approved"
+    assert db.query(MemoryRecord).filter_by(owner_agent_name="Jarvis").count() == 1
+
+
+def test_requires_approval_stays_pending(db):
+    c = cnd.create_candidate(db, owner_agent_name="Jarvis", candidate_type="fact",
+                             payload=_payload(content="we picked Postgres"), now=100.0,
+                             requires_approval=True)
+    assert c.status == "pending"
+    assert db.query(MemoryRecord).count() == 0          # nothing persisted yet
+
+
+def test_approve_then_persists(db):
+    c = cnd.create_candidate(db, owner_agent_name="Jarvis", candidate_type="fact",
+                             payload=_payload(content="we picked Postgres",
+                                              memory_type="semantic", subject_scope="project:jarvis"),
+                             now=100.0, requires_approval=True)
+    cnd.approve_candidate(db, c.id, now=200.0)
+    assert db.get(MemoryCandidate, c.id).status == "approved"
+    assert db.query(MemoryRecord).filter_by(owner_agent_name="Jarvis").count() == 1
+
+
+def test_reject_does_not_persist(db):
+    c = cnd.create_candidate(db, owner_agent_name="Jarvis", candidate_type="fact",
+                             payload=_payload(content="maybe wrong"), now=100.0,
+                             requires_approval=True)
+    cnd.reject_candidate(db, c.id, now=200.0, reason="not durable")
+    assert db.get(MemoryCandidate, c.id).status == "rejected"
+    assert db.query(MemoryRecord).count() == 0
+
+
+def test_dedupe_returns_existing(db):
+    a = cnd.create_candidate(db, owner_agent_name="Jarvis", candidate_type="fact",
+                             payload=_payload(content="dup note"), now=100.0,
+                             requires_approval=True)
+    b = cnd.create_candidate(db, owner_agent_name="Jarvis", candidate_type="fact",
+                             payload=_payload(content="dup   NOTE"), now=200.0,
+                             requires_approval=True)
+    assert a.id == b.id
+    assert db.query(MemoryCandidate).count() == 1
+
+
+def test_dedupe_collapses_across_lanes(db):
+    # RC1: the same fact proposed by the agent's `remember` tool and by the
+    # background extractor must collapse to ONE card — candidate_type is NOT
+    # part of the dedupe key, only (owner, subject_scope, normalized content).
+    a = cnd.create_candidate(db, owner_agent_name="Jarvis", candidate_type="agent_remember",
+                             payload=_payload(content="user commutes at 6:50"), now=100.0,
+                             requires_approval=True)
+    b = cnd.create_candidate(db, owner_agent_name="Jarvis", candidate_type="extracted",
+                             payload=_payload(content="user commutes at 6:50"), now=200.0,
+                             requires_approval=True)
+    assert a.id == b.id
+    assert db.query(MemoryCandidate).count() == 1
+
+
+def test_dedupe_race_falls_back_to_winner_under_unique_index(db, monkeypatch):
+    # H1: under real concurrency the two lanes both pass the read-check and both
+    # INSERT. The partial UNIQUE index (installed by init_db) turns the loser's
+    # INSERT into an IntegrityError, which must resolve to the winner — NOT a
+    # second card, NOT a 500. Simulate the lost race by making the loser's
+    # read-check miss once while the winner already exists.
+    from sqlalchemy import text
+    db.execute(text(
+        "CREATE UNIQUE INDEX uq_candidate_open_dedup ON memory_candidates(dedupe_key) "
+        "WHERE status IN ('pending','auto_approved','approved') AND dedupe_key IS NOT NULL"))
+    db.commit()
+
+    winner = cnd.create_candidate(db, owner_agent_name="Jarvis", candidate_type="agent_remember",
+                                  payload=_payload(content="user commutes at 6:50"),
+                                  now=100.0, requires_approval=True)
+
+    real_find = cnd._find_open_dup
+    calls = {"n": 0}
+    def flaky_find(session, dedupe):       # miss on the loser's read-check, real afterwards
+        calls["n"] += 1
+        return None if calls["n"] == 1 else real_find(session, dedupe)
+    monkeypatch.setattr(cnd, "_find_open_dup", flaky_find)
+
+    loser = cnd.create_candidate(db, owner_agent_name="Jarvis", candidate_type="extracted",
+                                 payload=_payload(content="user commutes at 6:50"),
+                                 now=200.0, requires_approval=True)
+
+    assert loser.id == winner.id                       # resolved to the winner
+    assert db.query(MemoryCandidate).filter(
+        MemoryCandidate.status == 'pending').count() == 1   # exactly one card
+
+
+def test_dedupe_keeps_distinct_subject_scope(db):
+    # A user-fact and an agent-observation of the same text are different
+    # memories → different scope → NOT collapsed.
+    a = cnd.create_candidate(db, owner_agent_name="Jarvis", candidate_type="fact",
+                             payload=_payload(content="likes pho", subject_scope="user"),
+                             now=100.0, requires_approval=True)
+    b = cnd.create_candidate(db, owner_agent_name="Jarvis", candidate_type="fact",
+                             payload=_payload(content="likes pho", subject_scope="agent:Jarvis"),
+                             now=200.0, requires_approval=True)
+    assert a.id != b.id
+    assert db.query(MemoryCandidate).count() == 2
+
+
+def test_secret_forces_approval(db):
+    c = cnd.create_candidate(db, owner_agent_name="Jarvis", candidate_type="fact",
+                             payload=_payload(content="key is sk-ABCDEF0123456789ABCDEF",
+                                              memory_type="semantic", subject_scope="system"),
+                             now=100.0)  # NOT requires_approval, but secret forces it
+    assert c.status == "pending" and c.requires_approval == 1
+    assert db.query(MemoryRecord).count() == 0
+
+
+def test_approved_secret_persists(db):
+    """B1 regression: a user-approved SECRET must persist. Secrets force
+    approval; on the human-approved path _persist_from_candidate authorizes the
+    write (allow_secret=True) instead of letting MemoryService raise and the
+    error get swallowed — which silently dropped the explicitly-approved secret
+    and diverged candidate/card state."""
+    c = cnd.create_candidate(db, owner_agent_name="Jarvis", candidate_type="fact",
+                             payload=_payload(content="key is sk-ABCDEF0123456789ABCDEF",
+                                              memory_type="semantic", subject_scope="system"),
+                             now=100.0)
+    assert c.status == "pending" and c.requires_approval == 1
+    cnd.approve_candidate(db, c.id, now=200.0)               # must NOT raise
+    assert db.get(MemoryCandidate, c.id).status == "approved"
+    recs = db.query(MemoryRecord).filter_by(owner_agent_name="Jarvis").all()
+    assert len(recs) == 1
+    assert "sk-ABCDEF" in recs[0].content
+    assert recs[0].sensitivity == "secret"
+
+
+def test_compactor_subtype_forwarded_on_persist(db):
+    """B2 regression: the compactor's subtype must survive persistence — it was
+    stored on the candidate but dropped at the create_memory boundary."""
+    cands = [{"type": "semantic", "subtype": "architecture_decision",
+              "content": "We chose Postgres over MySQL.", "subject_scope": "project:jarvis",
+              "confidence": 0.95, "explicit": True}]
+    cnd.ingest_compactor_candidates(db, owner_agent_name="Jarvis", candidates=cands,
+                                    now=100.0, approval_policy="auto_low_risk")
+    rec = db.query(MemoryRecord).filter_by(owner_agent_name="Jarvis").one()
+    assert rec.memory_subtype == "architecture_decision"
+
+
+def test_compactor_ingest_manual_policy_pending(db):
+    cands = [{"type": "semantic", "subtype": "architecture_decision",
+              "content": "Use a dedicated compactor agent.", "subject_scope": "project:jarvis",
+              "source_message_indexes": [28, 29], "confidence": 0.97, "explicit": True}]
+    ids = cnd.ingest_compactor_candidates(db, owner_agent_name="Jarvis", candidates=cands,
+                                          now=100.0, approval_policy="manual")
+    assert len(ids) == 1
+    assert db.get(MemoryCandidate, ids[0]).status == "pending"   # manual → awaits approval
+    assert db.query(MemoryRecord).count() == 0
+
+
+def test_compactor_ingest_auto_policy_persists(db):
+    cands = [{"type": "semantic", "content": "We chose Postgres over MySQL.",
+              "subject_scope": "project:jarvis", "confidence": 0.95, "explicit": True}]
+    ids = cnd.ingest_compactor_candidates(db, owner_agent_name="Jarvis", candidates=cands,
+                                          now=100.0, approval_policy="auto_low_risk")
+    assert db.get(MemoryCandidate, ids[0]).status == "auto_approved"
+    assert db.query(MemoryRecord).filter_by(owner_agent_name="Jarvis").count() == 1

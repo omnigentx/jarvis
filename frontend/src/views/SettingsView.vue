@@ -20,6 +20,7 @@ import SettingsServices from './settings/SettingsServices.vue'
 import SettingsLLM from './settings/SettingsLLM.vue'
 import SettingsVoice from './settings/SettingsVoice.vue'
 import SettingsCompaction from './settings/SettingsCompaction.vue'
+import SettingsMemory from './settings/SettingsMemory.vue'
 import SettingsExperimental from './settings/SettingsExperimental.vue'
 
 const { t } = useLang()
@@ -35,6 +36,7 @@ const TABS = [
   { id: 'yaml',         labelKey: 'settings.shell.tab.yaml',         eyebrow: 'INTEGRATIONS' },
   { id: 'running-tmpl', labelKey: 'settings.shell.tab.runningTmpl',  eyebrow: 'INTEGRATIONS' },
   { id: 'compaction',   labelKey: 'settings.shell.tab.compaction',   eyebrow: 'ADVANCED' },
+  { id: 'memory',       labelKey: 'settings.shell.tab.memory',       eyebrow: 'ADVANCED' },
   { id: 'experimental', labelKey: 'settings.shell.tab.experimental', eyebrow: 'ADVANCED' },
 ]
 const GROUP_KEY = {
@@ -105,6 +107,7 @@ function labelFor(id) {
         <SettingsRunningTemplates v-else-if="active === 'running-tmpl'" />
         <SettingsServices v-else-if="active === 'services'" />
         <SettingsCompaction v-else-if="active === 'compaction'" />
+        <SettingsMemory v-else-if="active === 'memory'" />
         <SettingsExperimental v-else-if="active === 'experimental'" />
       </section>
     </main>

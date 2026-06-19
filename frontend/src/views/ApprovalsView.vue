@@ -246,6 +246,7 @@ const typeLabels = computed(() => ({
   budget: t('approvals.typeBudget'),
   deploy: t('approvals.typeDeploy'),
   brd: t('approvals.typeBrd'),
+  memory_candidate: t('approvals.typeMemoryCandidate'),
   custom: t('approvals.typeCustom'),
 }))
 
@@ -256,6 +257,7 @@ const typeColors = {
   budget: 'var(--role-qe)',
   deploy: 'var(--role-dso)',
   brd: 'var(--role-ba)',
+  memory_candidate: 'var(--primary)',
   custom: 'var(--role-des)',
 }
 

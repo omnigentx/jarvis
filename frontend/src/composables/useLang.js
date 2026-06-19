@@ -26,23 +26,28 @@
  */
 import { ref } from 'vue'
 
-// Auto-discover every locale file. eager + import:'default' gives us a plain
-// map of { './locales/en.json': {...}, './locales/vi.json': {...} }.
-const _modules = import.meta.glob('../locales/*.json', {
-  eager: true,
-  import: 'default',
-})
+import en from '../locales/en.json' with { type: 'json' }
+import vi from '../locales/vi.json' with { type: 'json' }
 
-// Build { en: {...}, vi: {...}, ... } keyed by the filename stem.
-const LOCALES = {}
-for (const [path, data] of Object.entries(_modules)) {
-  const code = path.split('/').pop().replace(/\.json$/, '')
-  LOCALES[code] = data
+// en/vi are the statically-imported base so this module is importable under
+// plain `node --test` (where import.meta.glob doesn't exist). English is the
+// COMPLETE base/fallback locale and must always be present.
+const LOCALES = { en, vi }
+
+// Auto-discover any OTHER locale files a contributor drops in. This is a
+// Vite build-time macro; under `node --test` import.meta.glob is undefined and
+// the call throws, so the try/catch makes it a no-op there (en/vi above
+// already cover tests + fallback). In the Vite build it expands to the full
+// map, keeping the "add one JSON file, zero JS" contributor promise.
+let _extra = {}
+try {
+  _extra = import.meta.glob('../locales/*.json', { eager: true, import: 'default' })
+} catch {
+  /* node test env — static en/vi base suffices */
 }
-
-// English is the COMPLETE base/fallback locale and must always exist.
-if (!LOCALES.en) {
-  throw new Error('useLang: src/locales/en.json (the base locale) is missing.')
+for (const [path, data] of Object.entries(_extra)) {
+  const code = path.split('/').pop().replace(/\.json$/, '')
+  if (!LOCALES[code]) LOCALES[code] = data
 }
 
 // Available codes, English first so it is always the fallback base; the rest

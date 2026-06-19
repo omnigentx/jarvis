@@ -41,6 +41,25 @@ function toggleTools(msgId) { expandedTools[msgId] = !expandedTools[msgId] }
 function toggleRow(msgId, idx) { expandedRows[`${msgId}-${idx}`] = !expandedRows[`${msgId}-${idx}`] }
 function isRowExpanded(msgId, idx) { return !!expandedRows[`${msgId}-${idx}`] }
 
+// ── Memory-used chip (auto-injected recall block) ──
+// The retrieval hook injects a message tagged with this marker. Instead of
+// rendering it as a raw user bubble, we collapse it into a subtle chip with an
+// expandable list of the recalled excerpts. Marker mirrors
+// services/memory/retrieval_hook.MEMORY_MARKER.
+const MEMORY_MARKER = '⟦memory:recalled⟧'
+const expandedMemory = reactive({})
+const memLabel = computed(() => t('chat.memoryUsed'))
+function isMemoryBlock(msg) {
+  return msg.role === 'user' && typeof msg.content === 'string' && msg.content.includes(MEMORY_MARKER)
+}
+function memoryLines(msg) {
+  return String(msg.content || '')
+    .split('\n')
+    .filter((l) => l.trim().startsWith('- '))
+    .map((l) => l.replace(/^\s*-\s*/, ''))
+}
+function toggleMemory(msgId) { expandedMemory[msgId] = !expandedMemory[msgId] }
+
 // Auto-scroll to bottom on new messages
 watch(
   () => props.messages.length,
@@ -184,8 +203,19 @@ function parsedAgentContent(content) {
 
     <div class="msgs-stack">
       <template v-for="msg in messages" :key="msg.id">
+        <!-- ── MEMORY-USED CHIP (auto-injected recall block) ───────────── -->
+        <div v-if="isMemoryBlock(msg)" class="row row-memory">
+          <button class="memory-chip" @click="toggleMemory(msg.id)">
+            🧠 {{ memoryLines(msg).length }} {{ memLabel }}
+            <span class="mc-chevron" :class="{ expanded: !!expandedMemory[msg.id] }">▾</span>
+          </button>
+          <div v-if="expandedMemory[msg.id]" class="memory-detail">
+            <div v-for="(line, i) in memoryLines(msg)" :key="i" class="memory-line">{{ line }}</div>
+          </div>
+        </div>
+
         <!-- ── USER MESSAGE ────────────────────────────────────────────── -->
-        <div v-if="msg.role === 'user'" class="row row-user">
+        <div v-else-if="msg.role === 'user'" class="row row-user">
           <div class="bubble-wrap">
             <span v-if="isBargeIn(msg)" class="chip chip-bargein">
               <span class="chip-dot" /> {{ t('chat.bargeIn') }}
@@ -691,4 +721,18 @@ function parsedAgentContent(content) {
      awkward letterboxing on phones. Let it expand to full bubble. */
   .yt-embed { max-width: 100%; }
 }
+
+/* ── Memory-used chip (auto-injected recall block) ── */
+.row-memory { display: flex; flex-direction: column; align-items: center; gap: 6px; margin: 2px 0; }
+.memory-chip { display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  background: var(--primary-bg); color: var(--primary); border: 1px solid var(--primary-bg-strong);
+  border-radius: var(--r-full); padding: 3px 12px; font-size: 12px; }
+.memory-chip:hover { background: var(--primary-bg-strong); }
+.mc-chevron { transition: transform .15s; display: inline-block; }
+.mc-chevron.expanded { transform: rotate(180deg); }
+.memory-detail { max-width: 78%; background: var(--bg-2); border: 1px solid var(--border);
+  border-radius: var(--r-md); padding: 8px 12px; }
+.memory-line { font-size: 12px; color: var(--text-dim); line-height: 1.5;
+  padding: 2px 0; border-bottom: 1px solid var(--border); }
+.memory-line:last-child { border-bottom: none; }
 </style>
