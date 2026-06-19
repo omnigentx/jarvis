@@ -70,6 +70,24 @@ class MemoryIndexWorker:
         self._running = False
         self._wake: "asyncio.Event | None" = None
         self._loop: "asyncio.AbstractEventLoop | None" = None
+        self._dense_down_logged = False     # so a degraded-defer isn't silent
+
+    def _note_dense_state(self, qd, emb) -> bool:
+        """Return whether the dense leg is writable; LOG the first time it isn't
+        (and on recovery) so an indefinite defer isn't silent — the prod symptom
+        where 4 rows deferred forever with no log while the graph stayed empty."""
+        up = qd.is_available() and emb.is_available()
+        if not up and not self._dense_down_logged:
+            self._dense_down_logged = True
+            why = ([] + (["embeddings unavailable"] if not emb.is_available() else [])
+                   + (["vector store unavailable"] if not qd.is_available() else []))
+            logger.warning("[MEMORY] dense index DEFERRED (%s) — FTS still written, "
+                           "but vectors + knowledge-graph edges are NOT projected "
+                           "until it recovers", ", ".join(why) or "dense backend down")
+        elif up and self._dense_down_logged:
+            self._dense_down_logged = False
+            logger.info("[MEMORY] dense index recovered — resuming vector/graph projection")
+        return up
 
     # Lazy providers — re-instantiate Qdrant probe each batch so an outage
     # that ends is detected without a restart.
@@ -171,7 +189,7 @@ class MemoryIndexWorker:
         db.commit()
         qd = self._qd()
         emb = self._emb()
-        if not (qd.is_available() and emb.is_available()):
+        if not self._note_dense_state(qd, emb):
             return True  # defer dense part; FTS already serves degraded search
         qd.ensure_collection()
         chunks = chunker.chunk_document(doc.document_type, doc.content)
@@ -215,7 +233,7 @@ class MemoryIndexWorker:
         db.commit()
         qd = self._qd()
         emb = self._emb()
-        if not (qd.is_available() and emb.is_available()):
+        if not self._note_dense_state(qd, emb):
             return True
         qd.ensure_collection()
         chunks = chunker.chunk_document(chunker.DOC_FACT, rec.normalized_content)

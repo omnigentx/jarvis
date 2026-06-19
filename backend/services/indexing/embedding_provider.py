@@ -117,11 +117,29 @@ def _deps_available() -> bool:
     return importlib.util.find_spec("FlagEmbedding") is not None
 
 
+_WARNED_MISSING_DEPS = False
+
+
 def get_embedding_provider(model_name: str = DEFAULT_MODEL,
                            revision: str = "") -> EmbeddingProvider:
     """Return a usable provider, or a Null provider (degraded) if the embedding
-    deps are not installed."""
+    deps are not installed.
+
+    FTS-only is a SUPPORTED mode (the ``memory`` extra is optional), so a missing
+    dep does not crash — but it must NOT be silent: a memory-enabled deployment
+    expecting dense recall + the knowledge graph would otherwise degrade with no
+    signal (the prod incident where the graph stayed empty for an hour). Log it
+    LOUD, once."""
     if not _deps_available():
+        global _WARNED_MISSING_DEPS
+        if not _WARNED_MISSING_DEPS:
+            _WARNED_MISSING_DEPS = True
+            logger.error(
+                "[MEMORY] FlagEmbedding is NOT installed — dense vector recall AND "
+                "the knowledge graph are DISABLED; memory degraded to FTS-only "
+                "keyword search. Index writes will DEFER (graph stays empty). Fix: "
+                "install the 'memory' extra (uv sync --extra memory / "
+                "pip install 'FlagEmbedding>=1.4.0').")
         return NullEmbeddingProvider("FlagEmbedding not installed")
     return BGEEmbeddingProvider(model_name, revision)
 

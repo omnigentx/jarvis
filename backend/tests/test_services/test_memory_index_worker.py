@@ -252,3 +252,38 @@ async def test_worker_wakes_at_retry_deadline_when_no_notify(monkeypatch):
     assert len(calls) >= 2                        # re-drained at the deadline, no notify
     w.stop()
     await asyncio.wait_for(task, timeout=1.0)
+
+
+# ── Fail-loud: a missing/down dense leg must NOT defer silently ──────────────
+
+class _Avail:
+    def __init__(self, ok): self._ok = ok
+    def is_available(self): return self._ok
+
+
+def test_note_dense_state_logs_once_then_recovery(caplog):
+    import logging
+    w = MemoryIndexWorker()
+    down_emb, up = _Avail(False), _Avail(True)
+    with caplog.at_level(logging.WARNING, logger="memory.index_worker"):
+        assert w._note_dense_state(up, down_emb) is False        # embeddings down
+        assert w._note_dense_state(up, down_emb) is False        # still down
+    warns = [r for r in caplog.records if "DEFERRED" in r.message]
+    assert len(warns) == 1                                       # logged ONCE, not silent, not spammy
+    assert "embeddings unavailable" in warns[0].message
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="memory.index_worker"):
+        assert w._note_dense_state(up, up) is True               # recovered
+    assert any("recovered" in r.message for r in caplog.records)
+
+
+def test_embedding_provider_missing_deps_is_loud(monkeypatch, caplog):
+    import logging
+
+    from services.indexing import embedding_provider as ep
+    monkeypatch.setattr(ep, "_deps_available", lambda: False)
+    monkeypatch.setattr(ep, "_WARNED_MISSING_DEPS", False)
+    with caplog.at_level(logging.ERROR, logger="memory.embedding"):
+        prov = ep.get_embedding_provider()
+    assert prov.is_available() is False
+    assert any("FlagEmbedding is NOT installed" in r.message for r in caplog.records)
