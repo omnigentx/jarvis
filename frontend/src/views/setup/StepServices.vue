@@ -17,10 +17,12 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSetupStore } from '../../stores/setup'
+import { useLang } from '../../composables/useLang'
 import GoogleOAuthCard from '../../components/GoogleOAuthCard.vue'
 import WizardCard from './WizardCard.vue'
 import './wizard.css'
 
+const { t } = useLang()
 const router = useRouter()
 const store = useSetupStore()
 
@@ -29,15 +31,18 @@ const store = useSetupStore()
 // panel above the optional integrations.
 const JARVIS_REPO_ID = 'jarvis_repo'
 const JARVIS_REPO_URL_KEY = 'JARVIS_REPO_URL'
-const SERVICES = [
+// User-facing label/desc/field-label resolved via t() so they follow the
+// active locale; ids/keys/flags stay plain. Computed so labels re-render on
+// language toggle.
+const SERVICES = computed(() => [
   {
     id: 'roborock',
-    label: 'Roborock (Vacuum)',
-    desc: 'Control Roborock vacuums via the Roborock cloud. Uses your Roborock account email + password (same credentials as the Roborock mobile app).',
+    label: t('setup.services.roborockLabel'),
+    desc: t('setup.services.roborockDesc'),
     mode: 'fields',
     fields: [
-      { key: 'ROBOROCK_USERNAME', label: 'Account email', secret: false },
-      { key: 'ROBOROCK_PASSWORD', label: 'Account password', secret: true },
+      { key: 'ROBOROCK_USERNAME', label: t('setup.services.roborockUsername'), secret: false },
+      { key: 'ROBOROCK_PASSWORD', label: t('setup.services.roborockPassword'), secret: true },
     ],
   },
   {
@@ -45,28 +50,28 @@ const SERVICES = [
     // manages) — routes/setup.py maps it there so both surfaces share one
     // source of truth. See VOICE_SERVICES in voice_engine_registry.py.
     id: 'cloudflare_turn',
-    label: 'Cloudflare TURN (Voice relay)',
-    desc: 'Lets voice chat work when you open Jarvis from OUTSIDE your home network — phone on 4G/5G, office Wi-Fi. Not needed for localhost / LAN / VPN use, and you can add it later in Settings → Voice. Get both values free at dash.cloudflare.com → Realtime → TURN → Create (free tier: 1 TB/month relay traffic).',
+    label: t('setup.services.turnLabel'),
+    desc: t('setup.services.turnDesc'),
     mode: 'fields',
     fields: [
-      { key: 'key_id', label: 'Turn Token ID', secret: false },
-      { key: 'api_token', label: 'API Token', secret: true },
+      { key: 'key_id', label: t('setup.services.turnTokenId'), secret: false },
+      { key: 'api_token', label: t('setup.services.turnApiToken'), secret: true },
     ],
     requireAllIfAny: true,
   },
   {
     id: 'github',
-    label: 'GitHub & Git',
-    desc: 'Personal access token so dev agents can git clone/push/pull private repos (and drive the GitHub MCP). Name + email are used as the commit identity. Create a token at https://github.com/settings/tokens with the "repo" scope.',
+    label: t('setup.services.githubLabel'),
+    desc: t('setup.services.githubDesc'),
     mode: 'fields',
     fields: [
-      { key: 'personal_access_token', label: 'Personal Access Token', secret: true },
-      { key: 'user_name', label: 'Git user name (for commits)', secret: false },
-      { key: 'user_email', label: 'Git user email (for commits)', secret: false },
+      { key: 'personal_access_token', label: t('setup.services.githubPat'), secret: true },
+      { key: 'user_name', label: t('setup.services.githubUserName'), secret: false },
+      { key: 'user_email', label: t('setup.services.githubUserEmail'), secret: false },
     ],
     requireAllIfAny: true,
   },
-]
+])
 
 const values = ref({})
 const expanded = ref({})
@@ -114,7 +119,7 @@ const payload = computed(() => {
   if (repoUrl) {
     out[JARVIS_REPO_ID] = { [JARVIS_REPO_URL_KEY]: repoUrl }
   }
-  for (const svc of SERVICES) {
+  for (const svc of SERVICES.value) {
     if (svc.mode !== 'fields') continue
     const raw = values.value[svc.id] || {}
     const filled = Object.fromEntries(
@@ -130,7 +135,7 @@ const payload = computed(() => {
 const hasAny = computed(() => Object.keys(payload.value).length > 0)
 
 const validationError = computed(() => {
-  for (const svc of SERVICES) {
+  for (const svc of SERVICES.value) {
     if (svc.mode !== 'fields' || !svc.requireAllIfAny) continue
     const raw = values.value[svc.id] || {}
     const filled = svc.fields.filter((f) => raw[f.key] && String(raw[f.key]).trim())
@@ -140,7 +145,7 @@ const validationError = computed(() => {
       .filter((f) => !(raw[f.key] && String(raw[f.key]).trim()))
       .map((f) => f.label)
       .join(', ')
-    return `${svc.label}: please also fill ${missing}.`
+    return t('setup.services.validationFill', { service: svc.label, missing })
   }
   return ''
 })
@@ -173,9 +178,9 @@ function onBack() { router.push({ name: 'SetupLLM' }) }
 
 <template>
   <WizardCard
-    title="External services"
-    subtitle="Connect optional services to extend Jarvis. You can revisit these from Settings → Services later."
-    step-label="STEP 03 / 05 · SERVICES"
+    :title="t('setup.services.title')"
+    :subtitle="t('setup.services.subtitle')"
+    :step-label="t('setup.services.stepLabel')"
     width="820px"
   >
     <!-- Project Repository — promoted, always open -->
@@ -183,17 +188,14 @@ function onBack() { router.push({ name: 'SetupLLM' }) }
       <div class="row">
         <div style="flex: 1;">
           <div class="repo-title-row">
-            <h3>Project Repository</h3>
-            <span class="recommended-badge" title="Required for Jarvis self-improvement workflows">
-              Recommended
+            <h3>{{ t('setup.services.repoTitle') }}</h3>
+            <span class="recommended-badge" :title="t('setup.services.repoBadgeTitle')">
+              {{ t('setup.services.recommended') }}
             </span>
           </div>
           <div class="desc">
-            <strong>Jarvis uses this to evolve itself.</strong> Agile-team agents
-            (Dev, DSO, …) inject this URL into their system prompt — so when you
-            tell them <em>"work on jarvis"</em>, this is the repo they clone, push
-            commits to, and file issues against. Without it, self-improvement
-            prompts have nowhere to land.
+            <strong>{{ t('setup.services.repoDescStrong') }}</strong> {{ t('setup.services.repoDescBody1') }}
+            <em>{{ t('setup.services.repoDescQuote') }}</em>{{ t('setup.services.repoDescBody2') }}
           </div>
         </div>
         <div style="display: flex; align-items: center; gap: 10px;">
@@ -203,8 +205,8 @@ function onBack() { router.push({ name: 'SetupLLM' }) }
           >
             {{
               (values[JARVIS_REPO_ID]?.[JARVIS_REPO_URL_KEY] || '').trim()
-                ? '● Will configure'
-                : '○ Not configured'
+                ? t('setup.services.willConfigure')
+                : t('setup.services.notConfigured')
             }}
           </span>
         </div>
@@ -213,7 +215,7 @@ function onBack() { router.push({ name: 'SetupLLM' }) }
       <div class="fields">
         <div class="wizard-field">
           <label :for="`${JARVIS_REPO_ID}-${JARVIS_REPO_URL_KEY}`">
-            Repository URL
+            {{ t('setup.services.repoUrlLabel') }}
           </label>
           <input
             :id="`${JARVIS_REPO_ID}-${JARVIS_REPO_URL_KEY}`"
@@ -252,8 +254,8 @@ function onBack() { router.push({ name: 'SetupLLM' }) }
           >
             {{
               values[svc.id] && Object.values(values[svc.id]).some(Boolean)
-                ? '● Will configure'
-                : '○ Not configured'
+                ? t('setup.services.willConfigure')
+                : t('setup.services.notConfigured')
             }}
           </span>
           <button
@@ -262,7 +264,7 @@ function onBack() { router.push({ name: 'SetupLLM' }) }
             class="wizard-btn ghost"
             @click="toggle(svc.id)"
           >
-            {{ isExpanded(svc.id) ? 'Close' : 'Configure' }}
+            {{ isExpanded(svc.id) ? t('common.close') : t('setup.services.configure') }}
           </button>
         </div>
       </div>
@@ -286,7 +288,7 @@ function onBack() { router.push({ name: 'SetupLLM' }) }
             <button
               type="button"
               class="icon-btn"
-              :title="isRevealed(svc.id, f.key) ? 'Hide' : 'Reveal'"
+              :title="isRevealed(svc.id, f.key) ? t('setup.services.hide') : t('setup.services.reveal')"
               @click="toggleReveal(svc.id, f.key)"
             >
               <svg v-if="isRevealed(svc.id, f.key)" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -325,12 +327,12 @@ function onBack() { router.push({ name: 'SetupLLM' }) }
           <line x1="19" y1="12" x2="5" y2="12" />
           <polyline points="12 19 5 12 12 5" />
         </svg>
-        Back
+        {{ t('common.back') }}
       </button>
     </template>
     <template #footer-right>
       <button type="button" class="wizard-btn ghost" :disabled="submitting" @click="onSkip">
-        Skip
+        {{ t('common.skip') }}
       </button>
       <button
         type="button"
@@ -338,7 +340,7 @@ function onBack() { router.push({ name: 'SetupLLM' }) }
         :disabled="submitting || !hasAny || !!validationError"
         @click="onSubmit"
       >
-        {{ submitting ? 'Saving…' : hasAny ? 'Save & Continue' : 'Nothing to save' }}
+        {{ submitting ? t('common.saving') : hasAny ? t('setup.services.saveContinue') : t('setup.services.nothingToSave') }}
         <svg v-if="!submitting && hasAny" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <line x1="5" y1="12" x2="19" y2="12" />
           <polyline points="12 5 19 12 12 19" />

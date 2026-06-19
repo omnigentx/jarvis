@@ -11,7 +11,9 @@ import { apiFetch, buildSSEUrl } from '../api.js'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import { useToast } from '../composables/useToast.js'
 import { useSSEConnection } from '../composables/useSSEConnection.js'
+import { useLang } from '../composables/useLang'
 
+const { t } = useLang()
 const toast = useToast()
 
 // ─── State ───
@@ -78,22 +80,22 @@ function handleSSEEvent(event) {
   if (event.type === 'job_approval_changed') {
     // Approval was resolved on the Approvals page — refresh so the pending
     // badge flips and next-run reflects the now-runnable (or rejected) job.
-    const name = event.job_name || 'Job'
-    if (event.approval_status === 'approved') toast.success(`✅ Approved: ${name} can now run`)
-    else if (event.approval_status === 'rejected') toast.info(`🚫 Rejected: ${name} will not run`)
+    const name = event.job_name || t('scheduler.jobFallback')
+    if (event.approval_status === 'approved') toast.success(`✅ ${t('scheduler.toastApproved', { name })}`)
+    else if (event.approval_status === 'rejected') toast.info(`🚫 ${t('scheduler.toastRejected', { name })}`)
     fetchAll()
     return
   }
   if (['job_started', 'job_completed', 'job_failed', 'reminder'].includes(event.type)) {
-    const name = event.job_name || 'Job'
+    const name = event.job_name || t('scheduler.jobFallback')
     if (event.type === 'reminder') {
       toast.success(`🔔 ${name}: ${event.message || ''}`)
     } else if (event.type === 'job_completed') {
-      toast.success(`✅ ${name} completed (${event.duration_ms || 0}ms)`)
+      toast.success(`✅ ${t('scheduler.toastCompleted', { name, ms: event.duration_ms || 0 })}`)
     } else if (event.type === 'job_failed') {
-      toast.error(`❌ ${name} failed: ${(event.error || '').slice(0, 80)}`)
+      toast.error(`❌ ${t('scheduler.toastFailed', { name, error: (event.error || '').slice(0, 80) })}`)
     } else if (event.type === 'job_started') {
-      toast.info(`⏳ Running: ${name}`)
+      toast.info(`⏳ ${t('scheduler.toastRunning', { name })}`)
       const j = jobs.value.find(j => j.id === event.job_id)
       if (j) j.status = 'running'
     }
@@ -133,7 +135,7 @@ async function doDeleteJob() {
     await apiFetch(`/api/scheduler/jobs/${deleteTargetId.value}`, { method: 'DELETE' })
     showDeleteConfirm.value = false
     deleteTargetId.value = null
-    toast.success(`Deleted job '${name}'`)
+    toast.success(t('scheduler.toastDeleted', { name }))
     await fetchAll()
   } finally {
     isDeleting.value = false
@@ -143,8 +145,8 @@ async function doDeleteJob() {
 // Create / edit
 const editingJob = ref(null)
 const isEditing = computed(() => editingJob.value !== null)
-const modalTitle = computed(() => isEditing.value ? 'Edit job' : 'Create scheduled job')
-const modalAction = computed(() => isEditing.value ? 'Save changes' : 'Create job')
+const modalTitle = computed(() => isEditing.value ? t('scheduler.modalTitleEdit') : t('scheduler.modalTitleCreate'))
+const modalAction = computed(() => isEditing.value ? t('common.saveChanges') : t('scheduler.modalActionCreate'))
 
 const newJob = ref({
   name: '',
@@ -199,10 +201,10 @@ async function createJob() {
       body: JSON.stringify(body),
     })
     closeModal()
-    toast.success('Job created successfully')
+    toast.success(t('scheduler.toastCreated'))
     await fetchAll()
   } catch (e) {
-    toast.error('Failed to create job: ' + e.message)
+    toast.error(t('scheduler.toastCreateFailed', { error: e.message }))
   }
 }
 
@@ -215,10 +217,10 @@ async function updateJob() {
       body: JSON.stringify(body),
     })
     closeModal()
-    toast.success('Job updated successfully')
+    toast.success(t('scheduler.toastUpdated'))
     await fetchAll()
   } catch (e) {
-    toast.error('Failed to update job: ' + e.message)
+    toast.error(t('scheduler.toastUpdateFailed', { error: e.message }))
   }
 }
 
@@ -251,7 +253,7 @@ function statusColor(status) {
 }
 
 function modeLabel(mode) {
-  return mode === 'agent_turn' ? 'Agent' : 'Reminder'
+  return mode === 'agent_turn' ? t('scheduler.modeAgent') : t('scheduler.modeReminder')
 }
 function modeColor(mode) {
   return mode === 'agent_turn' ? 'var(--primary-hover)' : 'var(--accent)'
@@ -267,25 +269,25 @@ onMounted(() => {
     <!-- ─── Header ─── -->
     <div class="scheduler__header">
       <div class="scheduler__heading">
-        <div class="eyebrow">OPERATIONS · SCHEDULER</div>
+        <div class="eyebrow">{{ t('scheduler.eyebrow') }}</div>
         <h1 class="scheduler__title">
-          <span class="grad" style="font-style: italic;">{{ stats.active_jobs || 0 }}</span> active jobs
+          <span class="grad" style="font-style: italic;">{{ stats.active_jobs || 0 }}</span> {{ t('scheduler.activeJobs') }}
           <span class="scheduler__title-sub">
-            · {{ stats.next_24h || 0 }} next 24h · {{ Math.round((stats.success_rate || 0) * 100) }}% success
+            · {{ t('scheduler.titleSub', { next: stats.next_24h || 0, rate: Math.round((stats.success_rate || 0) * 100) }) }}
           </span>
         </h1>
         <p class="scheduler__desc">
-          Cron jobs and reminders. Catch failures early; intervene with quick actions.
+          {{ t('scheduler.desc') }}
         </p>
       </div>
       <div class="scheduler__header-actions">
-        <button class="btn btn-secondary" @click="fetchAll">↻ Refresh</button>
+        <button class="btn btn-secondary" @click="fetchAll">↻ {{ t('scheduler.refresh') }}</button>
         <button class="btn btn-primary" @click="openCreateModal">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
             <line x1="12" y1="5" x2="12" y2="19"/>
             <line x1="5" y1="12" x2="19" y2="12"/>
           </svg>
-          New scheduled job
+          {{ t('scheduler.newJob') }}
         </button>
       </div>
     </div>
@@ -293,12 +295,12 @@ onMounted(() => {
     <!-- ─── KPI cards ─── -->
     <div class="scheduler__kpi">
       <div class="card scheduler__kpi-card">
-        <div class="mono-label">ACTIVE</div>
+        <div class="mono-label">{{ t('scheduler.kpiActive') }}</div>
         <div class="scheduler__kpi-value">{{ stats.active_jobs }}</div>
-        <div class="scheduler__kpi-sub" style="color: var(--primary-hover);">{{ activeJobs.length }} scheduled</div>
+        <div class="scheduler__kpi-sub" style="color: var(--primary-hover);">{{ t('scheduler.kpiScheduled', { n: activeJobs.length }) }}</div>
       </div>
       <div class="card scheduler__kpi-card">
-        <div class="mono-label">FAILED · TODAY</div>
+        <div class="mono-label">{{ t('scheduler.kpiFailedToday') }}</div>
         <div
           class="scheduler__kpi-value"
           :style="{ color: stats.failed_today > 0 ? 'var(--danger)' : 'var(--text)' }"
@@ -307,21 +309,21 @@ onMounted(() => {
           class="scheduler__kpi-sub"
           :style="{ color: stats.failed_today > 0 ? 'var(--danger)' : 'var(--success)' }"
         >
-          {{ stats.failed_today > 0 ? `${stats.failed_today} need retry` : 'all clear' }}
+          {{ stats.failed_today > 0 ? t('scheduler.kpiNeedRetry', { n: stats.failed_today }) : t('scheduler.kpiAllClear') }}
         </div>
       </div>
       <div class="card scheduler__kpi-card">
-        <div class="mono-label">NEXT 24H</div>
+        <div class="mono-label">{{ t('scheduler.kpiNext24h') }}</div>
         <div class="scheduler__kpi-value">{{ stats.next_24h }}</div>
-        <div class="scheduler__kpi-sub" style="color: var(--accent);">upcoming runs</div>
+        <div class="scheduler__kpi-sub" style="color: var(--accent);">{{ t('scheduler.kpiUpcomingRuns') }}</div>
       </div>
       <div class="card scheduler__kpi-card">
-        <div class="mono-label">SUCCESS RATE</div>
+        <div class="mono-label">{{ t('scheduler.kpiSuccessRate') }}</div>
         <div class="scheduler__kpi-value">{{ Math.round(stats.success_rate * 100) }}%</div>
         <div
           class="scheduler__kpi-sub"
           :style="{ color: stats.success_rate >= 0.9 ? 'var(--success)' : 'var(--warning)' }"
-        >{{ stats.runs_today }} runs today</div>
+        >{{ t('scheduler.kpiRunsToday', { n: stats.runs_today }) }}</div>
       </div>
     </div>
 
@@ -329,7 +331,7 @@ onMounted(() => {
     <div v-if="needsAttentionJobs.length > 0" class="scheduler__attention">
       <span class="scheduler__attention-icon">⚠</span>
       <span class="scheduler__attention-text">
-        {{ needsAttentionJobs.length }} job{{ needsAttentionJobs.length > 1 ? 's' : '' }} need attention
+        {{ t('scheduler.needAttention', { n: needsAttentionJobs.length }) }}
       </span>
     </div>
 
@@ -338,15 +340,15 @@ onMounted(() => {
       <!-- Execution overview -->
       <div class="card scheduler__panel">
         <div class="scheduler__panel-head">
-          <h2 class="scheduler__panel-title">Execution overview</h2>
+          <h2 class="scheduler__panel-title">{{ t('scheduler.executionOverview') }}</h2>
           <div class="seg">
-            <button :class="{ 'is-active': timeFilter === 'today' }" @click="timeFilter = 'today'">Today</button>
-            <button :class="{ 'is-active': timeFilter === 'week' }" @click="timeFilter = 'week'">This week</button>
-            <button :class="{ 'is-active': timeFilter === 'all' }" @click="timeFilter = 'all'">All</button>
+            <button :class="{ 'is-active': timeFilter === 'today' }" @click="timeFilter = 'today'">{{ t('scheduler.filterToday') }}</button>
+            <button :class="{ 'is-active': timeFilter === 'week' }" @click="timeFilter = 'week'">{{ t('scheduler.filterWeek') }}</button>
+            <button :class="{ 'is-active': timeFilter === 'all' }" @click="timeFilter = 'all'">{{ t('scheduler.filterAll') }}</button>
           </div>
         </div>
 
-        <div v-if="recentRuns.length === 0" class="scheduler__empty">No executions yet</div>
+        <div v-if="recentRuns.length === 0" class="scheduler__empty">{{ t('scheduler.noExecutions') }}</div>
 
         <div v-else class="scheduler__timeline">
           <div v-for="run in recentRuns" :key="run.id" class="scheduler__timeline-row">
@@ -358,13 +360,13 @@ onMounted(() => {
                 class="scheduler__badge"
                 :style="{ borderColor: 'color-mix(in srgb, ' + modeColor(run.result_type === 'text' ? 'reminder' : 'agent_turn') + ' 30%, transparent)', color: modeColor(run.result_type === 'text' ? 'reminder' : 'agent_turn') }"
               >
-                {{ run.result_type === 'text' ? 'Reminder' : 'Agent' }}
+                {{ run.result_type === 'text' ? t('scheduler.modeReminder') : t('scheduler.modeAgent') }}
               </span>
               <span
                 class="scheduler__badge"
                 :style="{ borderColor: 'color-mix(in srgb, ' + statusColor(run.status) + ' 30%, transparent)', color: statusColor(run.status) }"
               >
-                {{ run.status === 'success' ? 'Done' : run.status }}
+                {{ run.status === 'success' ? t('scheduler.statusDone') : run.status }}
               </span>
             </div>
           </div>
@@ -373,19 +375,19 @@ onMounted(() => {
 
       <!-- Quick actions -->
       <div class="card scheduler__panel scheduler__panel--narrow">
-        <h2 class="scheduler__panel-title">Quick actions</h2>
+        <h2 class="scheduler__panel-title">{{ t('scheduler.quickActions') }}</h2>
         <div class="scheduler__quick">
           <button class="scheduler__quick-item" @click="openCreateModal(); newJob.exec_mode = 'reminder'">
-            <span>Create reminder</span>
-            <span class="scheduler__quick-go">Go →</span>
+            <span>{{ t('scheduler.quickCreateReminder') }}</span>
+            <span class="scheduler__quick-go">{{ t('scheduler.quickGo') }}</span>
           </button>
           <button class="scheduler__quick-item" @click="openCreateModal(); newJob.exec_mode = 'agent_turn'">
-            <span>Schedule agent task</span>
-            <span class="scheduler__quick-go">Go →</span>
+            <span>{{ t('scheduler.quickScheduleAgent') }}</span>
+            <span class="scheduler__quick-go">{{ t('scheduler.quickGo') }}</span>
           </button>
           <button class="scheduler__quick-item" @click="fetchAll">
-            <span>Sync now</span>
-            <span class="scheduler__quick-go">Go →</span>
+            <span>{{ t('scheduler.quickSyncNow') }}</span>
+            <span class="scheduler__quick-go">{{ t('scheduler.quickGo') }}</span>
           </button>
         </div>
       </div>
@@ -393,7 +395,7 @@ onMounted(() => {
 
     <!-- ─── Jobs needing attention ─── -->
     <div v-if="needsAttentionJobs.length > 0" class="scheduler__attention-section">
-      <h2 class="scheduler__section-title">Jobs needing attention</h2>
+      <h2 class="scheduler__section-title">{{ t('scheduler.jobsNeedingAttention') }}</h2>
       <div class="scheduler__attention-grid">
         <div v-for="job in needsAttentionJobs" :key="job.id" class="card scheduler__attention-card">
           <div class="scheduler__attention-head">
@@ -402,18 +404,18 @@ onMounted(() => {
               class="scheduler__badge"
               :style="{ borderColor: 'color-mix(in srgb, ' + statusColor(job.last_result || job.status) + ' 30%, transparent)', color: statusColor(job.last_result || job.status) }"
             >
-              {{ job.last_result === 'failed' ? 'Failed' : job.status === 'disabled' ? 'Disabled' : 'Attention' }}
+              {{ job.last_result === 'failed' ? t('scheduler.badgeFailed') : job.status === 'disabled' ? t('scheduler.badgeDisabled') : t('scheduler.badgeAttention') }}
             </span>
           </div>
           <div class="scheduler__attention-meta">
             {{ modeLabel(job.exec_mode) }} · {{ job.schedule_cron }}
           </div>
           <div v-if="job.last_error" class="scheduler__attention-err">{{ job.last_error.slice(0, 120) }}</div>
-          <div class="scheduler__attention-next">Next: {{ job.next_run_display || 'N/A' }}</div>
+          <div class="scheduler__attention-next">{{ t('scheduler.nextLabel') }}: {{ job.next_run_display || t('scheduler.notAvailable') }}</div>
           <div class="scheduler__attention-actions">
-            <button class="btn btn-primary" @click="retryJob(job.id)">Retry</button>
-            <button v-if="job.status !== 'active'" class="btn btn-secondary" @click="resumeJob(job.id)">Resume</button>
-            <button class="btn btn-secondary scheduler__btn-danger" @click="confirmDeleteJob(job)">Delete</button>
+            <button class="btn btn-primary" @click="retryJob(job.id)">{{ t('scheduler.retry') }}</button>
+            <button v-if="job.status !== 'active'" class="btn btn-secondary" @click="resumeJob(job.id)">{{ t('scheduler.resume') }}</button>
+            <button class="btn btn-secondary scheduler__btn-danger" @click="confirmDeleteJob(job)">{{ t('common.delete') }}</button>
           </div>
         </div>
       </div>
@@ -422,25 +424,25 @@ onMounted(() => {
     <!-- ─── All jobs table ─── -->
     <div class="card scheduler__jobs">
       <div class="scheduler__panel-head">
-        <h2 class="scheduler__panel-title">All jobs</h2>
-        <span class="scheduler__panel-count">{{ jobs.length }} total</span>
+        <h2 class="scheduler__panel-title">{{ t('scheduler.allJobs') }}</h2>
+        <span class="scheduler__panel-count">{{ t('scheduler.totalCount', { n: jobs.length }) }}</span>
       </div>
 
       <div v-if="jobs.length === 0 && !loading" class="scheduler__empty">
-        No cron jobs yet. Create one to get started.
+        {{ t('scheduler.noJobs') }}
       </div>
 
       <div v-if="jobs.length > 0" class="scheduler__jobs-body">
         <!-- Desktop table -->
         <div class="scheduler__table-head">
-          <span>Status</span>
-          <span>Name</span>
-          <span>Schedule</span>
-          <span>Mode</span>
-          <span>Next run</span>
-          <span>Last run</span>
-          <span>Runs</span>
-          <span>Actions</span>
+          <span>{{ t('scheduler.colStatus') }}</span>
+          <span>{{ t('scheduler.colName') }}</span>
+          <span>{{ t('scheduler.colSchedule') }}</span>
+          <span>{{ t('scheduler.colMode') }}</span>
+          <span>{{ t('scheduler.colNextRun') }}</span>
+          <span>{{ t('scheduler.colLastRun') }}</span>
+          <span>{{ t('scheduler.colRuns') }}</span>
+          <span>{{ t('scheduler.colActions') }}</span>
         </div>
         <div v-for="job in jobs" :key="job.id" class="scheduler__table-row" @click="openJobDetail(job)">
           <span class="scheduler__col-status">
@@ -449,8 +451,8 @@ onMounted(() => {
           <span class="scheduler__col-name">
             <span class="scheduler__job-name">{{ job.name }}</span>
             <span v-if="job.calendar_type === 'lunar'" class="scheduler__job-tag">🌙</span>
-            <span v-if="job.approval_status === 'pending'" class="scheduler__approval-badge" title="Created by an agent — awaiting your approval before it can run">⏳ Awaiting approval</span>
-            <span v-else-if="job.approval_status === 'rejected'" class="scheduler__approval-badge scheduler__approval-badge--rejected" title="Approval rejected — this job will not run">🚫 Rejected</span>
+            <span v-if="job.approval_status === 'pending'" class="scheduler__approval-badge" :title="t('scheduler.approvalPendingTitle')">⏳ {{ t('scheduler.awaitingApproval') }}</span>
+            <span v-else-if="job.approval_status === 'rejected'" class="scheduler__approval-badge scheduler__approval-badge--rejected" :title="t('scheduler.approvalRejectedTitle')">🚫 {{ t('scheduler.badgeRejected') }}</span>
           </span>
           <span class="scheduler__col-cron">
             <code class="scheduler__cron">{{ job.schedule_cron }}</code>
@@ -469,9 +471,9 @@ onMounted(() => {
             <span v-if="job.fail_count > 0" class="scheduler__fail-indicator">⚠{{ job.fail_count }}</span>
           </span>
           <span class="scheduler__col-actions">
-            <button v-if="job.status === 'active'" class="btn btn-icon btn-ghost" title="Pause" @click.stop="pauseJob(job.id)">⏸</button>
-            <button v-else class="btn btn-icon btn-ghost" title="Resume" @click.stop="resumeJob(job.id)">▶</button>
-            <button class="btn btn-icon btn-ghost scheduler__btn-delete" title="Delete" @click.stop="confirmDeleteJob(job)">×</button>
+            <button v-if="job.status === 'active'" class="btn btn-icon btn-ghost" :title="t('scheduler.pause')" @click.stop="pauseJob(job.id)">⏸</button>
+            <button v-else class="btn btn-icon btn-ghost" :title="t('scheduler.resume')" @click.stop="resumeJob(job.id)">▶</button>
+            <button class="btn btn-icon btn-ghost scheduler__btn-delete" :title="t('common.delete')" @click.stop="confirmDeleteJob(job)">×</button>
           </span>
         </div>
 
@@ -482,8 +484,8 @@ onMounted(() => {
             <span class="scheduler__job-card-name">
               {{ job.name }}
               <span v-if="job.calendar_type === 'lunar'" style="margin-left: 4px;">🌙</span>
-              <span v-if="job.approval_status === 'pending'" class="scheduler__approval-badge">⏳ Awaiting approval</span>
-              <span v-else-if="job.approval_status === 'rejected'" class="scheduler__approval-badge scheduler__approval-badge--rejected">🚫 Rejected</span>
+              <span v-if="job.approval_status === 'pending'" class="scheduler__approval-badge">⏳ {{ t('scheduler.awaitingApproval') }}</span>
+              <span v-else-if="job.approval_status === 'rejected'" class="scheduler__approval-badge scheduler__approval-badge--rejected">🚫 {{ t('scheduler.badgeRejected') }}</span>
             </span>
             <span
               class="scheduler__badge"
@@ -493,13 +495,13 @@ onMounted(() => {
           <div class="scheduler__job-card-meta">
             <code class="scheduler__cron">{{ job.schedule_cron }}</code>
             <span v-if="job.one_shot" class="scheduler__one-shot">1×</span>
-            <span class="scheduler__job-card-next">Next: {{ job.next_run_display || '—' }}</span>
-            <span v-if="job.fail_count > 0" class="scheduler__fail-indicator">⚠ {{ job.fail_count }} fails</span>
+            <span class="scheduler__job-card-next">{{ t('scheduler.nextLabel') }}: {{ job.next_run_display || '—' }}</span>
+            <span v-if="job.fail_count > 0" class="scheduler__fail-indicator">⚠ {{ t('scheduler.failsCount', { n: job.fail_count }) }}</span>
           </div>
           <div class="scheduler__job-card-actions">
-            <button v-if="job.status === 'active'" class="btn btn-icon btn-ghost" title="Pause" @click.stop="pauseJob(job.id)">⏸</button>
-            <button v-else class="btn btn-icon btn-ghost" title="Resume" @click.stop="resumeJob(job.id)">▶</button>
-            <button class="btn btn-icon btn-ghost scheduler__btn-delete" title="Delete" @click.stop="confirmDeleteJob(job)">×</button>
+            <button v-if="job.status === 'active'" class="btn btn-icon btn-ghost" :title="t('scheduler.pause')" @click.stop="pauseJob(job.id)">⏸</button>
+            <button v-else class="btn btn-icon btn-ghost" :title="t('scheduler.resume')" @click.stop="resumeJob(job.id)">▶</button>
+            <button class="btn btn-icon btn-ghost scheduler__btn-delete" :title="t('common.delete')" @click.stop="confirmDeleteJob(job)">×</button>
           </div>
         </div>
       </div>
@@ -525,64 +527,64 @@ onMounted(() => {
               :style="{ borderColor: 'color-mix(in srgb, ' + statusColor(editingJob.status) + ' 30%, transparent)', color: statusColor(editingJob.status) }"
             >{{ editingJob.status }}</span>
             <span v-if="editingJob.run_count > 0" class="scheduler-modal__edit-runs">
-              {{ editingJob.run_count }} runs · Last: {{ formatDateTime(editingJob.last_run_at) }}
+              {{ t('scheduler.editRuns', { n: editingJob.run_count, last: formatDateTime(editingJob.last_run_at) }) }}
             </span>
           </div>
 
           <div class="scheduler-modal__form">
             <label class="scheduler-modal__field">
-              <span>Name</span>
-              <input v-model="newJob.name" placeholder="e.g. Take medicine reminder" class="scheduler-modal__input" />
+              <span>{{ t('scheduler.fieldName') }}</span>
+              <input v-model="newJob.name" :placeholder="t('scheduler.namePlaceholder')" class="scheduler-modal__input" />
             </label>
 
             <label class="scheduler-modal__field">
-              <span>Cron expression</span>
-              <input v-model="newJob.cron_expr" placeholder="0 8 * * *   (8am daily)" class="scheduler-modal__input scheduler-modal__input--mono" />
+              <span>{{ t('scheduler.fieldCron') }}</span>
+              <input v-model="newJob.cron_expr" :placeholder="t('scheduler.cronPlaceholder')" class="scheduler-modal__input scheduler-modal__input--mono" />
               <div class="scheduler-modal__hint">
-                minute hour day month weekday — e.g. <code>0 9 * * 1-5</code> = 9am Mon–Fri
+                {{ t('scheduler.cronHintPrefix') }} <code>0 9 * * 1-5</code> {{ t('scheduler.cronHintSuffix') }}
               </div>
             </label>
 
             <div class="scheduler-modal__row">
               <label class="scheduler-modal__field">
-                <span>Calendar</span>
+                <span>{{ t('scheduler.fieldCalendar') }}</span>
                 <select v-model="newJob.calendar_type" class="scheduler-modal__input">
-                  <option value="solar">☀️ Solar</option>
-                  <option value="lunar">🌙 Lunar</option>
+                  <option value="solar">☀️ {{ t('scheduler.calendarSolar') }}</option>
+                  <option value="lunar">🌙 {{ t('scheduler.calendarLunar') }}</option>
                 </select>
               </label>
               <label class="scheduler-modal__field">
-                <span>Mode</span>
+                <span>{{ t('scheduler.fieldMode') }}</span>
                 <select v-model="newJob.exec_mode" class="scheduler-modal__input">
-                  <option value="reminder">Reminder</option>
-                  <option value="agent_turn">Agent turn</option>
+                  <option value="reminder">{{ t('scheduler.modeReminder') }}</option>
+                  <option value="agent_turn">{{ t('scheduler.modeAgentTurn') }}</option>
                 </select>
               </label>
             </div>
 
             <label v-if="newJob.exec_mode === 'agent_turn'" class="scheduler-modal__field">
-              <span>Agent name</span>
-              <input v-model="newJob.exec_agent" placeholder="e.g. Jarvis" class="scheduler-modal__input" />
+              <span>{{ t('scheduler.fieldAgentName') }}</span>
+              <input v-model="newJob.exec_agent" :placeholder="t('scheduler.agentNamePlaceholder')" class="scheduler-modal__input" />
             </label>
 
             <label class="scheduler-modal__field">
-              <span>{{ newJob.exec_mode === 'reminder' ? 'Reminder message' : 'Agent command' }}</span>
+              <span>{{ newJob.exec_mode === 'reminder' ? t('scheduler.fieldReminderMessage') : t('scheduler.fieldAgentCommand') }}</span>
               <textarea
                 v-model="newJob.exec_payload"
                 rows="3"
-                :placeholder="newJob.exec_mode === 'reminder' ? 'Take your medicine!' : 'Summarize today\'s news'"
+                :placeholder="newJob.exec_mode === 'reminder' ? t('scheduler.reminderPlaceholder') : t('scheduler.agentCommandPlaceholder')"
                 class="scheduler-modal__input scheduler-modal__textarea"
               ></textarea>
             </label>
 
             <label class="scheduler-modal__checkbox">
               <input type="checkbox" v-model="newJob.one_shot" />
-              Run only once (one-shot)
+              {{ t('scheduler.runOnce') }}
             </label>
           </div>
 
           <div class="scheduler-modal__actions">
-            <button class="btn btn-secondary" @click="closeModal">Cancel</button>
+            <button class="btn btn-secondary" @click="closeModal">{{ t('common.cancel') }}</button>
             <button
               class="btn btn-primary"
               @click="saveJob"
@@ -595,9 +597,9 @@ onMounted(() => {
 
     <ConfirmModal
       :visible="showDeleteConfirm"
-      title="Delete scheduled job"
-      :message="'Are you sure you want to delete job \'' + deleteTargetName + '\'? This cannot be undone.'"
-      confirm-text="Delete"
+      :title="t('scheduler.deleteTitle')"
+      :message="t('scheduler.deleteMessage', { name: deleteTargetName })"
+      :confirm-text="t('common.delete')"
       variant="danger"
       :loading="isDeleting"
       @confirm="doDeleteJob"

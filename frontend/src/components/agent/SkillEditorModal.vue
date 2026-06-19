@@ -33,6 +33,7 @@ import { defaultKeymap, indentWithTab, history, historyKeymap } from '@codemirro
 import { load as yamlLoad } from 'js-yaml'
 import { apiFetch, ApiError } from '../../api'
 import { useConfirm } from '../../composables/useConfirm'
+import { useLang } from '../../composables/useLang'
 import MarkdownRenderer from '../MarkdownRenderer.vue'
 
 const props = defineProps({
@@ -43,6 +44,7 @@ const props = defineProps({
 const emit = defineEmits(['close', 'saved'])
 
 const { confirm } = useConfirm()
+const { t } = useLang()
 
 // ----- Editor state ------------------------------------------------------
 
@@ -111,7 +113,7 @@ const parsed = computed(() => {
   const text = content.value
   const m = text.match(/^---\s*\n([\s\S]*?)\n---\s*(?:\n|$)/)
   if (!m) {
-    return { error: 'Missing frontmatter (--- ... ---)', frontmatter: {}, body: text }
+    return { error: t('skillEditor.missingFrontmatter'), frontmatter: {}, body: text }
   }
   const yamlText = m[1]
   const body = text.slice(m[0].length)
@@ -149,9 +151,9 @@ watch(newName, (v) => {
   if (!v) {
     nameError.value = ''
   } else if (!NAME_RE.test(v)) {
-    nameError.value = 'Lowercase letters, digits, and hyphens only (no leading/trailing hyphen).'
+    nameError.value = t('skillEditor.nameRuleError')
   } else if (['con', 'prn', 'aux', 'nul', '_builtin'].includes(v.toLowerCase())) {
-    nameError.value = 'Reserved name.'
+    nameError.value = t('skillEditor.reservedName')
   } else {
     nameError.value = ''
   }
@@ -235,7 +237,7 @@ async function onSave() {
     // clean even if the response trims trailing whitespace.
     savedContent.value = content.value
     mtimeNs.value = res.mtime_ns
-    successMsg.value = `${res.name} saved.`
+    successMsg.value = t('skillEditor.savedMsg', { name: res.name })
     emit('saved', res)
   } catch (err) {
     if (err instanceof ApiError && err.status === 409) {
@@ -266,9 +268,9 @@ async function onClose() {
     : dirty.value
   if (hasUserEdits) {
     const ok = await confirm({
-      title: 'Discard unsaved changes',
-      message: 'You have unsaved changes. Discard them and close?',
-      confirmText: 'Discard',
+      title: t('skillEditor.discardTitle'),
+      message: t('skillEditor.discardMessage'),
+      confirmText: t('skillEditor.discard'),
       variant: 'warning',
     })
     if (!ok) return
@@ -362,8 +364,8 @@ watch(
               <span class="sk-icon">⚡</span>
               <div>
                 <h3 class="sk-title">
-                  {{ mode === 'create' ? 'Create skill' : displayName }}
-                  <span v-if="isBuiltin" class="sk-badge sk-badge-builtin" title="Ships with Jarvis. Editable, but cannot be deleted.">Built-in</span>
+                  {{ mode === 'create' ? t('skillEditor.createSkill') : displayName }}
+                  <span v-if="isBuiltin" class="sk-badge sk-badge-builtin" :title="t('skillEditor.builtinTitle')">{{ t('skillEditor.builtin') }}</span>
                 </h3>
                 <p v-if="mode === 'edit' && description" class="sk-subtitle">{{ description }}</p>
               </div>
@@ -375,19 +377,19 @@ watch(
                   :class="{ active: viewMode === 'source' }"
                   @click="viewMode = 'source'"
                   role="tab"
-                >Source</button>
+                >{{ t('skillEditor.viewSource') }}</button>
                 <button
                   type="button"
                   :class="{ active: viewMode === 'split' }"
                   @click="viewMode = 'split'"
                   role="tab"
-                >Split</button>
+                >{{ t('skillEditor.viewSplit') }}</button>
                 <button
                   type="button"
                   :class="{ active: viewMode === 'preview' }"
                   @click="viewMode = 'preview'"
                   role="tab"
-                >Preview</button>
+                >{{ t('skillEditor.viewPreview') }}</button>
               </div>
               <div v-else class="sk-view-toggle" role="tablist">
                 <button
@@ -395,36 +397,36 @@ watch(
                   :class="{ active: viewMode === 'source' }"
                   @click="viewMode = 'source'"
                   role="tab"
-                >Source</button>
+                >{{ t('skillEditor.viewSource') }}</button>
                 <button
                   type="button"
                   :class="{ active: viewMode === 'preview' }"
                   @click="viewMode = 'preview'"
                   role="tab"
-                >Preview</button>
+                >{{ t('skillEditor.viewPreview') }}</button>
               </div>
-              <button class="sk-close" @click="onClose" aria-label="Close">×</button>
+              <button class="sk-close" @click="onClose" :aria-label="t('skillEditor.close')">×</button>
             </div>
           </header>
 
           <!-- Used-by banner (edit mode, with refs) -->
           <div v-if="mode === 'edit' && usedBy.length" class="sk-banner sk-banner-info">
-            <strong>Used by {{ usedBy.length }} agent{{ usedBy.length === 1 ? '' : 's' }}:</strong>
+            <strong>{{ t('skillEditor.usedByCount', { n: usedBy.length }) }}</strong>
             <span>{{ usedBy.join(', ') }}</span>
-            <span class="sk-banner-note">Changes apply to all of them.</span>
+            <span class="sk-banner-note">{{ t('skillEditor.usedByNote') }}</span>
           </div>
 
           <!-- Conflict banner -->
           <div v-if="conflict" class="sk-banner sk-banner-warn">
-            <strong>Conflict:</strong>
+            <strong>{{ t('skillEditor.conflictLabel') }}</strong>
             <span>{{ error }}</span>
-            <button class="sk-banner-btn" @click="onReloadFromDisk">Reload</button>
+            <button class="sk-banner-btn" @click="onReloadFromDisk">{{ t('skillEditor.reload') }}</button>
           </div>
 
           <!-- Create-mode name input -->
           <div v-if="mode === 'create'" class="sk-create-form">
             <label class="sk-label">
-              Skill name
+              {{ t('skillEditor.skillName') }}
               <input
                 v-model="newName"
                 type="text"
@@ -436,7 +438,7 @@ watch(
               />
             </label>
             <p v-if="nameError" class="sk-input-error">{{ nameError }}</p>
-            <p v-else class="sk-input-hint">Lowercase letters, digits, and hyphens. Becomes the skill's directory name.</p>
+            <p v-else class="sk-input-hint">{{ t('skillEditor.nameHint') }}</p>
           </div>
 
           <!-- Frontmatter preview parse error (preview pane only) -->
@@ -444,14 +446,14 @@ watch(
             v-if="(viewMode === 'preview' || viewMode === 'split') && parsed.error"
             class="sk-banner sk-banner-warn"
           >
-            <strong>Frontmatter parse error:</strong>
+            <strong>{{ t('skillEditor.frontmatterParseError') }}</strong>
             <span>{{ parsed.error }}</span>
           </div>
 
           <!-- Body: editor + preview -->
           <div class="sk-body" :class="`sk-body-${viewMode}`">
             <div v-if="viewMode !== 'preview'" class="sk-pane sk-pane-source">
-              <div v-if="loading" class="sk-loading">Loading…</div>
+              <div v-if="loading" class="sk-loading">{{ t('skillEditor.loading') }}</div>
               <Codemirror
                 v-else
                 v-model="content"
@@ -474,7 +476,7 @@ watch(
                   :content="previewBody"
                   content-type="markdown"
                 />
-                <div v-else class="sk-empty-preview">Empty preview — start typing to see rendered markdown.</div>
+                <div v-else class="sk-empty-preview">{{ t('skillEditor.emptyPreview') }}</div>
               </div>
             </div>
           </div>
@@ -482,20 +484,20 @@ watch(
           <!-- Footer -->
           <footer class="sk-footer">
             <div class="sk-status">
-              <span v-if="dirty && !saving" class="sk-pill sk-pill-dirty">Unsaved</span>
-              <span v-else-if="saving" class="sk-pill sk-pill-saving">Saving…</span>
+              <span v-if="dirty && !saving" class="sk-pill sk-pill-dirty">{{ t('skillEditor.unsaved') }}</span>
+              <span v-else-if="saving" class="sk-pill sk-pill-saving">{{ t('skillEditor.saving') }}</span>
               <span v-else-if="successMsg" class="sk-pill sk-pill-saved">{{ successMsg }}</span>
-              <span v-else-if="!loading" class="sk-pill sk-pill-clean">Saved</span>
+              <span v-else-if="!loading" class="sk-pill sk-pill-clean">{{ t('skillEditor.saved') }}</span>
               <span v-if="error && !conflict" class="sk-error">{{ error }}</span>
             </div>
             <div class="sk-footer-actions">
-              <button class="sk-btn sk-btn-secondary" @click="onClose">Cancel</button>
+              <button class="sk-btn sk-btn-secondary" @click="onClose">{{ t('skillEditor.cancel') }}</button>
               <button
                 class="sk-btn sk-btn-primary"
                 :disabled="!canSave"
                 @click="onSave"
               >
-                {{ mode === 'create' ? 'Create' : 'Save' }} <span class="sk-kbd">⌘S</span>
+                {{ mode === 'create' ? t('skillEditor.create') : t('skillEditor.save') }} <span class="sk-kbd">⌘S</span>
               </button>
             </div>
           </footer>

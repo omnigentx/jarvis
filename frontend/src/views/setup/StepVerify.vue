@@ -9,9 +9,11 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSetupStore } from '../../stores/setup'
+import { useLang } from '../../composables/useLang'
 import WizardCard from './WizardCard.vue'
 import './wizard.css'
 
+const { t } = useLang()
 const router = useRouter()
 const setupStore = useSetupStore()
 
@@ -46,49 +48,49 @@ const summary = computed(() => {
       : null,
     services,
     yaml: yamlStep?.completed
-      ? 'Accepted defaults'
+      ? t('setup.verify.yamlAccepted')
       : yamlStep?.skipped
-        ? 'Skipped'
-        : 'Pending',
+        ? t('setup.verify.yamlSkipped')
+        : t('setup.verify.yamlPending'),
   }
 })
 
 const pageTitle = computed(() =>
-  setupStore.overallComplete ? 'Setup complete' : 'Ready to launch',
+  setupStore.overallComplete ? t('setup.verify.titleComplete') : t('setup.verify.titleReady'),
 )
 const pageSubtitle = computed(() =>
   setupStore.overallComplete
-    ? "Jarvis is configured and ready to go. Click Launch when you're ready."
-    : "Here's the final summary. Review and launch when ready.",
+    ? t('setup.verify.subtitleComplete')
+    : t('setup.verify.subtitleReady'),
 )
 
 // Checklist items — each row has its own pass/skip/warn state so the user
 // sees exactly what's good vs. what they're launching without.
 const checklist = computed(() => [
   {
-    label: 'Master API key',
+    label: t('setup.verify.masterKey'),
     sub: summary.value.hasMasterKey
-      ? 'Configured · stored encrypted'
-      : 'Required — please go back to Step 1',
+      ? t('setup.verify.masterKeyOk')
+      : t('setup.verify.masterKeyMissing'),
     ok: summary.value.hasMasterKey,
   },
   {
-    label: 'LLM provider',
+    label: t('setup.verify.llmProvider'),
     sub: summary.value.llm
-      ? `${summary.value.llm}${summary.value.llmApiKeySet ? ' · key stored' : ' · key missing'}`
-      : 'Required — please go back to Step 2',
+      ? `${summary.value.llm}${summary.value.llmApiKeySet ? t('setup.verify.keyStored') : t('setup.verify.keyMissing')}`
+      : t('setup.verify.llmMissing'),
     ok: !!summary.value.llm && summary.value.llmApiKeySet,
   },
   {
-    label: 'External services',
+    label: t('setup.verify.externalServices'),
     sub: summary.value.services.length
       ? summary.value.services.join(', ')
-      : 'None configured · optional',
+      : t('setup.verify.noneConfigured'),
     ok: true,
     optional: true,
   },
   {
-    label: 'YAML config',
+    label: t('setup.verify.yamlConfig'),
     sub: summary.value.yaml,
     ok: true,
     optional: true,
@@ -157,7 +159,7 @@ function onBack() { router.push({ name: 'SetupYaml' }) }
         <div class="text">
           <div class="label">
             {{ item.label }}
-            <span v-if="item.optional" class="tag">OPTIONAL</span>
+            <span v-if="item.optional" class="tag">{{ t('setup.verify.optional') }}</span>
           </div>
           <div class="sub">{{ item.sub }}</div>
         </div>
@@ -171,13 +173,13 @@ function onBack() { router.push({ name: 'SetupYaml' }) }
         <line x1="12" y1="17" x2="12.01" y2="17" />
       </svg>
       <div style="flex: 1;">
-        <strong>Missing critical config:</strong>
+        <strong>{{ t('setup.verify.missingTitle') }}</strong>
         <ul class="missing-list">
           <li v-for="m in missing" :key="m"><code>{{ m }}</code></li>
         </ul>
         <label class="accept-row">
           <input type="checkbox" v-model="acceptWarnings" />
-          <span>Launch anyway (I'll configure later in Settings)</span>
+          <span>{{ t('setup.verify.launchAnyway') }}</span>
         </label>
       </div>
     </div>
@@ -187,7 +189,7 @@ function onBack() { router.push({ name: 'SetupYaml' }) }
     </div>
 
     <p class="fineprint">
-      You can always change these settings later from the Settings page.
+      {{ t('setup.verify.fineprint') }}
     </p>
 
     <template #footer-left>
@@ -196,7 +198,7 @@ function onBack() { router.push({ name: 'SetupYaml' }) }
           <line x1="19" y1="12" x2="5" y2="12" />
           <polyline points="12 19 5 12 12 5" />
         </svg>
-        Back
+        {{ t('common.back') }}
       </button>
     </template>
     <template #footer-right>
@@ -209,7 +211,7 @@ function onBack() { router.push({ name: 'SetupYaml' }) }
         <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
           <polygon points="5 3 19 12 5 21 5 3" />
         </svg>
-        {{ submitting ? 'Launching…' : 'Launch Jarvis' }}
+        {{ submitting ? t('setup.verify.launching') : t('setup.verify.launch') }}
       </button>
     </template>
   </WizardCard>

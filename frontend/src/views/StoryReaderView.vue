@@ -12,8 +12,10 @@ import { apiFetch } from '../api'
 import { useAudioPlayerStore } from '../stores/audioPlayer'
 import { useToast } from '../composables/useToast'
 import { useBreakpoint } from '../composables/useBreakpoint'
+import { useLang } from '../composables/useLang'
 
 const { isMobile } = useBreakpoint()
+const { t } = useLang()
 
 const props = defineProps({
   storyId: { type: String, required: true },
@@ -77,7 +79,7 @@ async function fetchContent() {
     content.value = data.content || data.error || ''
   } catch (e) {
     content.value = ''
-    toast.error('Unable to load content', { description: e.message })
+    toast.error(t('stories.unableLoadContent'), { description: e.message })
   } finally {
     isLoading.value = false
   }
@@ -104,7 +106,7 @@ async function handlePlayToggle() {
       chapterFiles,
     )
   } catch (e) {
-    toast.error('Unable to play audio', { description: e.message })
+    toast.error(t('stories.unablePlayAudio'), { description: e.message })
   }
 }
 
@@ -148,7 +150,7 @@ onMounted(() => {
     <!-- Header -->
     <div class="reader__header">
       <!-- Mobile already shows a back arrow in the app-bar; hide this one there. -->
-      <button v-if="!isMobile" class="btn btn-icon btn-ghost" @click="handleBack" title="Back">
+      <button v-if="!isMobile" class="btn btn-icon btn-ghost" @click="handleBack" :title="t('common.back')">
         <svg viewBox="0 0 24 24" fill="none" width="14" height="14">
           <path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
@@ -161,7 +163,7 @@ onMounted(() => {
 
       <span v-if="isThisChapterPlaying" class="chip chip-success">
         <span class="chip-dot pulse-dot"></span>
-        PLAYING
+        {{ t('stories.playing') }}
       </span>
     </div>
 
@@ -169,7 +171,7 @@ onMounted(() => {
          Chapter nav is up here too so the reader doesn't have to scroll to the
          bottom to move chapters. -->
     <div class="reader__controls">
-      <button class="btn btn-icon btn-secondary reader__chap" :disabled="!canPrev" @click="goChapter(-1)" title="Previous chapter" aria-label="Previous chapter">
+      <button class="btn btn-icon btn-secondary reader__chap" :disabled="!canPrev" @click="goChapter(-1)" :title="t('stories.prevChapter')" :aria-label="t('stories.prevChapter')">
         <svg viewBox="0 0 24 24" fill="none" width="15" height="15">
           <path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
@@ -184,7 +186,7 @@ onMounted(() => {
         >Aa {{ size }}</button>
       </div>
 
-      <button class="btn btn-icon btn-secondary reader__chap" :disabled="!canNext" @click="goChapter(1)" title="Next chapter" aria-label="Next chapter">
+      <button class="btn btn-icon btn-secondary reader__chap" :disabled="!canNext" @click="goChapter(1)" :title="t('stories.nextChapter')" :aria-label="t('stories.nextChapter')">
         <svg viewBox="0 0 24 24" fill="none" width="15" height="15">
           <path d="M9 18l6-6-6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
@@ -194,7 +196,7 @@ onMounted(() => {
         class="btn btn-icon"
         :class="isThisChapterPlaying ? 'btn-primary' : 'btn-secondary'"
         @click="handlePlayToggle"
-        :title="isThisChapterPlaying ? 'Pause' : 'Play audio'"
+        :title="isThisChapterPlaying ? t('stories.pause') : t('stories.playAudio')"
       >
         <svg v-if="!isThisChapterPlaying" viewBox="0 0 24 24" fill="none" width="14" height="14">
           <polygon points="6,3 20,12 6,21" fill="currentColor"/>
@@ -209,7 +211,7 @@ onMounted(() => {
     <!-- Loading -->
     <div v-if="isLoading" class="reader__loading">
       <div class="reader__spinner"></div>
-      <p>Loading content…</p>
+      <p>{{ t('stories.loadingContent') }}</p>
     </div>
 
     <!-- Content -->
@@ -229,13 +231,13 @@ onMounted(() => {
         <svg viewBox="0 0 24 24" fill="none" width="12" height="12">
           <path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
-        Previous
+        {{ t('stories.previous') }}
       </button>
       <span class="reader__nav-progress">
         {{ currentIndex + 1 }} / {{ chapters.length || '—' }}
       </span>
       <button class="btn btn-secondary" :disabled="!canNext" @click="goChapter(1)">
-        Next
+        {{ t('stories.next') }}
         <svg viewBox="0 0 24 24" fill="none" width="12" height="12">
           <path d="M9 18l6-6-6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>

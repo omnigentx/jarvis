@@ -11,6 +11,9 @@ import LifecycleBar from '../components/monitor/LifecycleBar.vue'
 import BulkInjectBar from '../components/monitor/BulkInjectBar.vue'
 import { useToast } from '../composables/useToast'
 import { statusColor } from '../components/agent/agentMeta.js'
+import { useLang } from '../composables/useLang'
+
+const { t } = useLang()
 
 // Explicit name so AppLayout's `<keep-alive include="['Chat', 'TeamMonitor']">`
 // preserves activity-stream / meeting-stream subscriptions across nav.
@@ -78,15 +81,15 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
 // to a "Delete (11)" badge and can't tell where the 5-agent gap came
 // from — same confusion that prompted this whole thread.
 const dropdownLabel = computed(() => {
-  if (selectedAgents.value.size === 0) return 'All Agents'   // implicit-all (initial)
-  if (selectedAgents.value.has('__none__')) return 'None Selected'
+  if (selectedAgents.value.size === 0) return t('teamMonitor.allAgents')   // implicit-all (initial)
+  if (selectedAgents.value.has('__none__')) return t('teamMonitor.noneSelected')
   const count = selectedAgents.value.size
   const total = store.agentsList.length
   const deletable = deletableSelectedNames.value.length
   let main = (total > 0 && count === total)
-    ? `All ${total} selected`
-    : `${count} agent${count > 1 ? 's' : ''} selected`
-  if (deletable < count) main += ` · ${deletable} deletable`
+    ? t('teamMonitor.allCountSelected', { n: total })
+    : t('teamMonitor.countSelected', { n: count })
+  if (deletable < count) main += ' · ' + t('teamMonitor.deletableSuffix', { n: deletable })
   return main
 })
 
@@ -117,7 +120,7 @@ async function handlePauseToggle(agentName, currentStatus) {
   } catch (e) {
     if (e?.code === 'approval_pause_lock') {
       toast?.show?.(
-        `Agent is paused by pending approval ${e.approvalId}. Resolve the approval first.`,
+        t('teamMonitor.pausedByApproval', { id: e.approvalId }),
         { kind: 'warn' },
       )
     } else {
@@ -165,7 +168,7 @@ const agentsGrouped = computed(() => {
     groups.push({ type: 'team', name, agents, color: teamColor(name) })
   }
   if (noTeam.length) {
-    groups.push({ type: 'solo', name: 'Individual Agents', agents: noTeam, color: null })
+    groups.push({ type: 'solo', name: t('teamMonitor.individualAgents'), agents: noTeam, color: null })
   }
   return groups
 })
@@ -284,13 +287,12 @@ const bulkDeleteTooltip = computed(() => {
   const n = deletableSelectedNames.value.length
   const skipped = protectedSelectedNames.value.length
   if (n === 0 && skipped > 0) {
-    return `Only built-in agents are selected — built-ins cannot be deleted. Tick some user agents first.`
+    return t('teamMonitor.tooltipOnlyBuiltin')
   }
-  if (n === 0) return 'Select agents from the dropdown first'
-  const plural = n !== 1 ? 's' : ''
+  if (n === 0) return t('teamMonitor.tooltipSelectFirst')
   return skipped > 0
-    ? `Delete ${n} agent${plural} (${skipped} built-in kept)`
-    : `Delete ${n} agent${plural}`
+    ? t('teamMonitor.tooltipDeleteKept', { n, skipped })
+    : t('teamMonitor.tooltipDelete', { n })
 })
 
 function requestBulkDelete() {
@@ -336,9 +338,9 @@ async function confirmBulkDelete() {
   bulkDeleteModal.value.loading = false
   if (fail.length) {
     bulkDeleteModal.value.error =
-      `${fail.length}/${names.length} failed:\n` +
+      t('teamMonitor.bulkFailedHeading', { fail: fail.length, total: names.length }) + '\n' +
       fail.map(f => `• ${f.name}: ${f.err}`).join('\n')
-    toast.error(`Bulk delete: ${fail.length} of ${names.length} failed`, {
+    toast.error(t('teamMonitor.bulkFailedToast', { fail: fail.length, total: names.length }), {
       description: fail.map(f => `${f.name}: ${f.err}`).join('\n'),
       duration: 6000,
     })
@@ -347,7 +349,7 @@ async function confirmBulkDelete() {
   }
 
   bulkDeleteModal.value = { visible: false, names: [], protected: [], loading: false, error: '' }
-  toast.success(`Deleted ${ok.length} agent${ok.length !== 1 ? 's' : ''}`, {
+  toast.success(t('teamMonitor.bulkDeletedToast', { n: ok.length }), {
     description: ok.join(', '),
     duration: 5000,
   })
@@ -392,10 +394,10 @@ async function confirmDelete() {
     await apiFetch(`/api/agents/${name}`, { method: 'DELETE' })
     store.agentsList = store.agentsList.filter(a => a.name !== name)
     deleteModal.value = { visible: false, agentName: '', loading: false, error: '' }
-    toast.success(`Agent "${name}" deleted`)
+    toast.success(t('teamMonitor.agentDeletedToast', { name }))
   } catch (err) {
     deleteModal.value.loading = false
-    deleteModal.value.error = err.message || 'Failed to delete agent'
+    deleteModal.value.error = err.message || t('teamMonitor.deleteFailed')
   }
 }
 
@@ -419,7 +421,7 @@ async function bulkInject({ text, files }) {
     targets = selectedAgentNames.value
   }
   if (!targets.length) {
-    toast.warning?.('No agents selected for inject', { duration: 3000 })
+    toast.warning?.(t('teamMonitor.noAgentsForInject'), { duration: 3000 })
     return []
   }
   // POST to each agent in parallel; allSettled so a partial failure
@@ -458,15 +460,15 @@ onMounted(() => {
     <!-- Header -->
     <div class="monitor-header">
       <div>
-        <h1 class="monitor-title">Team Monitor</h1>
-        <p class="monitor-subtitle">Real-time multi-agent activity stream</p>
+        <h1 class="monitor-title">{{ t('teamMonitor.title') }}</h1>
+        <p class="monitor-subtitle">{{ t('teamMonitor.subtitle') }}</p>
       </div>
       <div style="display: flex; align-items: center; gap: 12px;">
         <div class="monitor-stats">
-          <span class="stat-pill stat-total">{{ store.stats.total }} agents</span>
-          <span class="stat-pill stat-running">{{ store.stats.running }} running</span>
-          <span class="stat-pill stat-idle">{{ store.stats.idle }} idle</span>
-          <span v-if="store.stats.error" class="stat-pill stat-error">{{ store.stats.error }} error</span>
+          <span class="stat-pill stat-total">{{ t('teamMonitor.statAgents', { n: store.stats.total }) }}</span>
+          <span class="stat-pill stat-running">{{ t('teamMonitor.statRunning', { n: store.stats.running }) }}</span>
+          <span class="stat-pill stat-idle">{{ t('teamMonitor.statIdle', { n: store.stats.idle }) }}</span>
+          <span v-if="store.stats.error" class="stat-pill stat-error">{{ t('teamMonitor.statError', { n: store.stats.error }) }}</span>
         </div>
         <!-- Bulk delete selected (deletable) agents -->
         <button
@@ -475,7 +477,7 @@ onMounted(() => {
           :title="bulkDeleteTooltip"
           @click="requestBulkDelete"
         >
-          🗑 Delete Selected
+          🗑 {{ t('teamMonitor.deleteSelected') }}
           <span v-if="canBulkDelete" class="bulk-delete-count">{{ deletableSelectedNames.length }}</span>
         </button>
       </div>
@@ -491,12 +493,12 @@ onMounted(() => {
           class="filter-btn"
           :class="{ active: filter === 'all' }"
           @click="filter = 'all'"
-        >All</button>
+        >{{ t('teamMonitor.filterAll') }}</button>
         <button
           class="filter-btn"
           :class="{ active: filter === 'active' }"
           @click="filter = 'active'"
-        >Active</button>
+        >{{ t('teamMonitor.filterActive') }}</button>
 
         <!-- Team filter pills -->
         <button
@@ -523,9 +525,9 @@ onMounted(() => {
         <Transition name="dropdown-fade">
           <div v-if="showAgentDropdown" class="dropdown-panel">
             <div class="dropdown-actions">
-              <button class="dropdown-action" @click="selectAll">Select All</button>
+              <button class="dropdown-action" @click="selectAll">{{ t('teamMonitor.selectAll') }}</button>
               <span class="dropdown-divider">|</span>
-              <button class="dropdown-action" @click="selectedAgents = new Set(['__none__'])">Clear</button>
+              <button class="dropdown-action" @click="selectedAgents = new Set(['__none__'])">{{ t('teamMonitor.clear') }}</button>
             </div>
             <div class="dropdown-search">
               <input
@@ -533,18 +535,18 @@ onMounted(() => {
                 v-model="dropdownSearch"
                 class="dropdown-search-input"
                 type="text"
-                placeholder="Search by name…"
+                :placeholder="t('teamMonitor.searchByName')"
                 @keydown.escape.stop="dropdownSearch = ''"
               />
               <button
                 v-if="dropdownSearch"
                 class="dropdown-search-clear"
-                title="Clear search"
+                :title="t('teamMonitor.clearSearch')"
                 @click="dropdownSearch = ''"
               >×</button>
             </div>
             <div v-if="!agentsGroupedFiltered.length" class="dropdown-empty">
-              No agents match "{{ dropdownSearch }}"
+              {{ t('teamMonitor.noAgentsMatch', { q: dropdownSearch }) }}
             </div>
             <div v-else class="dropdown-list">
               <template v-for="group in agentsGroupedFiltered" :key="group.name">
@@ -575,7 +577,7 @@ onMounted(() => {
                   <span
                     v-if="a.type === 'builtin'"
                     class="dropdown-item-builtin"
-                    title="Built-in agent — protected from bulk delete"
+                    :title="t('teamMonitor.builtinProtected')"
                   >🔒</span>
                 </label>
               </template>
@@ -590,7 +592,7 @@ onMounted(() => {
 
     <!-- Empty state -->
     <div v-if="!filteredAgents.length" class="empty-state">
-      <p>{{ filter === 'active' ? 'No active agents at the moment' : 'No agents found' }}</p>
+      <p>{{ filter === 'active' ? t('teamMonitor.noActiveAgents') : t('teamMonitor.noAgentsFound') }}</p>
     </div>
 
     <!-- ═══ Agent grid — terminal-style, message_history-driven ═══ -->
@@ -621,30 +623,29 @@ onMounted(() => {
     <!-- Delete Confirmation Modal -->
     <ConfirmModal
       :visible="deleteModal.visible"
-      title="Remove Agent"
-      confirm-text="Remove Agent"
+      :title="t('teamMonitor.removeAgentTitle')"
+      :confirm-text="t('teamMonitor.removeAgentConfirm')"
       variant="danger"
       :loading="deleteModal.loading"
       :error="deleteModal.error"
       @confirm="confirmDelete"
       @cancel="cancelDelete"
     >
-      Are you sure you want to remove <strong>{{ deleteModal.agentName }}</strong>?
-      This will delete its card file, registry entries, and activity history.
+      {{ t('teamMonitor.removeAgentLead') }} <strong>{{ deleteModal.agentName }}</strong>{{ t('teamMonitor.removeAgentTail') }}
     </ConfirmModal>
 
     <!-- Bulk Delete Confirmation Modal -->
     <ConfirmModal
       :visible="bulkDeleteModal.visible"
-      :title="`Delete ${bulkDeleteModal.names.length} agent${bulkDeleteModal.names.length !== 1 ? 's' : ''}?`"
-      :confirm-text="`Delete ${bulkDeleteModal.names.length}`"
+      :title="t('teamMonitor.bulkDeleteTitle', { n: bulkDeleteModal.names.length })"
+      :confirm-text="t('teamMonitor.bulkDeleteConfirm', { n: bulkDeleteModal.names.length })"
       variant="danger"
       :loading="bulkDeleteModal.loading"
       :error="bulkDeleteModal.error"
       @confirm="confirmBulkDelete"
       @cancel="cancelBulkDelete"
     >
-      <p>The following agents and their conversation history will be permanently removed:</p>
+      <p>{{ t('teamMonitor.bulkDeleteBody') }}</p>
       <ul class="bulk-delete-list">
         <li v-for="n in bulkDeleteModal.names" :key="n">{{ n }}</li>
       </ul>
@@ -654,7 +655,7 @@ onMounted(() => {
       <div v-if="bulkDeleteModal.protected.length" class="bulk-delete-protected">
         <span class="bulk-delete-protected-icon">🔒</span>
         <div>
-          <strong>{{ bulkDeleteModal.protected.length }} built-in agent{{ bulkDeleteModal.protected.length !== 1 ? 's' : '' }} will be kept:</strong>
+          <strong>{{ t('teamMonitor.builtinKept', { n: bulkDeleteModal.protected.length }) }}</strong>
           <span class="bulk-delete-protected-names">{{ bulkDeleteModal.protected.join(', ') }}</span>
         </div>
       </div>
@@ -718,7 +719,7 @@ onMounted(() => {
   background: var(--bg-button);
   border: 1px solid var(--border);
   border-radius: 8px;
-  color: var(--text-body);
+  color: var(--text-dim);
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
@@ -763,7 +764,7 @@ onMounted(() => {
   max-height: 240px;
   overflow-y: auto;
   font-size: 12px;
-  color: var(--text-body);
+  color: var(--text-dim);
 }
 
 .bulk-delete-list li {
@@ -1042,7 +1043,7 @@ onMounted(() => {
   border: 1px solid rgba(245, 158, 11, 0.25);
   border-radius: 6px;
   font-size: 12px;
-  color: var(--text-body);
+  color: var(--text-dim);
 }
 
 .bulk-delete-protected-icon {
@@ -1054,7 +1055,7 @@ onMounted(() => {
 .bulk-delete-protected-names {
   display: block;
   margin-top: 2px;
-  color: var(--text-sub);
+  color: var(--text-muted);
   font-size: 11px;
 }
 

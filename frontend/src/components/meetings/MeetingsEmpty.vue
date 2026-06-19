@@ -5,17 +5,19 @@
  * picks a meeting from the list, so users on a fresh /v2/meetings load
  * see a "select a meeting" prompt instead of a blank pane.
  */
+import { useLang } from '../../composables/useLang'
+
+const { t } = useLang()
 </script>
 
 <template>
   <div class="mt-empty">
     <div class="mt-empty-card">
       <div class="mt-empty-icon">🎙</div>
-      <h3 class="mt-empty-title">Select a meeting</h3>
+      <h3 class="mt-empty-title">{{ t('meetings.selectMeeting') }}</h3>
       <p class="mt-empty-body">
-        Pick a meeting from the list to view its transcript in real time.
-        When agents call <code>create_meeting(agenda, participants, max_rounds)</code>,
-        meetings appear in the left rail and auto-stream once a participant joins.
+        {{ t('meetings.selectMeetingBodyPrefix') }}
+        <code>create_meeting(agenda, participants, max_rounds)</code>{{ t('meetings.selectMeetingBodySuffix') }}
       </p>
       <div class="mt-empty-mono">
         END BY VERDICT · [DECISION] VERDICT: PASS — &lt;summary&gt;

@@ -11,8 +11,10 @@
  */
 import { computed } from 'vue'
 import { useVoiceSession } from '../../composables/useVoiceSession.js'
+import { useLang } from '../../composables/useLang'
 
 const session = useVoiceSession()
+const { t } = useLang()
 
 // NOTE — no onBeforeUnmount stop() here. The voice session is a module-level
 // singleton (see useVoiceSession.js) and the host route is kept alive across
@@ -20,16 +22,19 @@ const session = useVoiceSession()
 // are: user stop, auth expiry, browser tab close. Auto-stopping on
 // component unmount used to fire on every route change.
 
-const STATUS_LABELS = {
-  idle: 'Off',
-  connecting: 'Connecting…',
-  loading_stt: 'Loading STT model (first run ~30s)…',
-  listening: 'VAD active',
-  thinking: 'Transcribing…',
-  speaking: 'Speaking',
-  error: 'Error',
+const STATUS_LABEL_KEYS = {
+  idle: 'chat.voiceStatusOff',
+  connecting: 'chat.voiceStatusConnecting',
+  loading_stt: 'chat.voiceStatusLoadingStt',
+  listening: 'chat.voiceStatusListening',
+  thinking: 'chat.voiceStatusThinking',
+  speaking: 'chat.voiceStatusSpeaking',
+  error: 'chat.voiceStatusError',
 }
-const statusLabel = computed(() => STATUS_LABELS[session.status.value] || session.status.value)
+const statusLabel = computed(() => {
+  const key = STATUS_LABEL_KEYS[session.status.value]
+  return key ? t(key) : session.status.value
+})
 const isOn = computed(() => session.status.value !== 'idle' && session.status.value !== 'error')
 const canInterrupt = computed(() =>
   session.status.value === 'thinking' || session.status.value === 'speaking',
@@ -48,7 +53,7 @@ async function toggle() {
       class="mic-btn"
       :class="{ active: isOn }"
       type="button"
-      :title="isOn ? 'Stop hands-free' : 'Start hands-free'"
+      :title="isOn ? t('chat.stopHandsFree') : t('chat.startHandsFree')"
       @click="toggle"
     >
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -56,13 +61,13 @@ async function toggle() {
         <path d="M3 8c0 2.8 2.2 5 5 5s5-2.2 5-5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
         <line x1="8" y1="13" x2="8" y2="15" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
       </svg>
-      <span class="mic-label">{{ isOn ? 'Stop' : 'Mic' }}</span>
+      <span class="mic-label">{{ isOn ? t('chat.stop') : t('chat.mic') }}</span>
     </button>
 
     <span
       class="status-pill"
       :class="`pill-${session.status.value}`"
-      :title="`Voice status: ${statusLabel}`"
+      :title="t('chat.voiceStatusTitle', { status: statusLabel })"
     >
       <span v-if="canInterrupt" class="status-dot pulse" />
       <span v-else-if="isOn" class="status-dot" />
@@ -80,7 +85,7 @@ async function toggle() {
       class="interrupt-btn"
       @click="session.bargeIn()"
     >
-      Interrupt
+      {{ t('chat.interrupt') }}
     </button>
 
     <span v-if="session.error.value" class="err-msg">{{ session.error.value }}</span>

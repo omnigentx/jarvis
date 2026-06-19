@@ -2,6 +2,7 @@
 import { ref, computed } from 'vue'
 import { useChatStore } from '../../stores/chat'
 import { useVoiceSession } from '../../composables/useVoiceSession.js'
+import { useLang } from '../../composables/useLang'
 
 /**
  * ChatHeader — top strip with current agent, voice readiness chip, and
@@ -20,6 +21,7 @@ const props = defineProps({
 const emit = defineEmits(['switch-agent', 'toggle-conversations'])
 const chatStore = useChatStore()
 const voice = useVoiceSession()
+const { t } = useLang()
 const showDropdown = ref(false)
 
 const initials = computed(() => {
@@ -34,12 +36,12 @@ const initials = computed(() => {
 // Voice readiness mono-strip — pulls live state from the singleton.
 const voiceStrip = computed(() => {
   const s = voice.status.value
-  if (s === 'idle') return 'voice off'
-  if (s === 'loading_stt') return 'stt loading'
-  if (s === 'connecting') return 'connecting'
-  if (s === 'speaking')  return 'vad on · tts streaming'
-  if (s === 'thinking')  return 'transcribed · awaiting reply'
-  return 'vad active · stt ready'
+  if (s === 'idle') return t('chat.voiceOff')
+  if (s === 'loading_stt') return t('chat.voiceSttLoading')
+  if (s === 'connecting') return t('chat.voiceConnecting')
+  if (s === 'speaking')  return t('chat.voiceSpeaking')
+  if (s === 'thinking')  return t('chat.voiceThinking')
+  return t('chat.voiceReady')
 })
 
 const isVoiceOn = computed(() => voice.status.value !== 'idle' && voice.status.value !== 'error')
@@ -78,7 +80,7 @@ function selectAgent(name) {
       v-if="showHamburger"
       class="hd-hamburger"
       @click="emit('toggle-conversations')"
-      aria-label="Open conversations"
+      :aria-label="t('chat.openConversations')"
     >
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
         <line x1="2" y1="4" x2="14" y2="4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
@@ -91,8 +93,8 @@ function selectAgent(name) {
 
     <div class="hd-info">
       <div class="hd-name-row">
-        <span class="hd-name">{{ agent?.name || 'No Agent' }}</span>
-        <span v-if="agent" class="hd-role">· orchestrator</span>
+        <span class="hd-name">{{ agent?.name || t('chat.noAgent') }}</span>
+        <span v-if="agent" class="hd-role">· {{ t('chat.orchestrator') }}</span>
       </div>
       <div class="hd-status-row">
         <span class="hd-dot" :class="{ on: isVoiceOn }" />
@@ -108,7 +110,7 @@ function selectAgent(name) {
     <!-- Switch agent -->
     <div class="hd-switch">
       <button class="hd-switch-btn" @click="showDropdown = !showDropdown">
-        <span>Switch</span>
+        <span>{{ t('chat.switch') }}</span>
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
           <path d="M3 5L6 8L9 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
@@ -133,7 +135,7 @@ function selectAgent(name) {
     <button
       class="hd-tts"
       :class="{ playing: chatStore.ttsPlaying, on: chatStore.ttsEnabled }"
-      :title="chatStore.ttsPlaying ? 'Stop playback' : chatStore.ttsEnabled ? 'TTS On' : 'TTS Off'"
+      :title="chatStore.ttsPlaying ? t('chat.ttsStopPlayback') : chatStore.ttsEnabled ? t('chat.ttsOn') : t('chat.ttsOff')"
       @click="chatStore.ttsPlaying ? chatStore.stopTts() : chatStore.toggleTts()"
     >
       <svg v-if="chatStore.ttsPlaying" width="14" height="14" viewBox="0 0 15 15" fill="none">

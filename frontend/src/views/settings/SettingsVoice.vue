@@ -19,7 +19,7 @@ import { onMounted, ref, computed } from 'vue'
 import { apiFetch } from '../../api.js'
 import { useLang } from '../../composables/useLang.js'
 
-const { lang } = useLang()
+const { lang, t } = useLang()
 const loading = ref(true)
 const saving = ref(false)
 const saveSuccess = ref(false)
@@ -255,9 +255,9 @@ async function testStt() {
   sttResult.value = ''
   try {
     const r = await apiFetch('/api/voice/test/stt', { method: 'POST' })
-    sttResult.value = r.transcript || '(empty transcript)'
+    sttResult.value = r.transcript || t('settings.voice.stt.emptyTranscript')
   } catch (e) {
-    sttResult.value = `error: ${e?.message || e}`
+    sttResult.value = t('settings.voice.stt.errorPrefix', { msg: e?.message || e })
   } finally {
     sttTesting.value = false
   }
@@ -299,11 +299,11 @@ async function clearSecret(engine, slot) {
 function reqBadgeFor(engineId) {
   const r = requirements.value[engineId]
   if (!r) return null
-  if (r.ok) return { text: 'ready', tone: 'ok' }
+  if (r.ok) return { text: t('settings.voice.badge.ready'), tone: 'ok' }
   const missing = []
-  if (r.missing_binaries?.length) missing.push(`needs ${r.missing_binaries.join(', ')}`)
+  if (r.missing_binaries?.length) missing.push(t('settings.voice.badge.needs', { items: r.missing_binaries.join(', ') }))
   const noKeys = Object.entries(r.secrets_present || {}).filter(([, v]) => !v).map(([k]) => k)
-  if (noKeys.length) missing.push(`set ${noKeys.join(', ')}`)
+  if (noKeys.length) missing.push(t('settings.voice.badge.setKey', { items: noKeys.join(', ') }))
   return { text: missing.join(' · '), tone: 'warn' }
 }
 function badgesFor(spec) {
@@ -318,8 +318,8 @@ function badgesFor(spec) {
 // shows nothing rather than guessing.
 function netBadgeFor(spec) {
   const tags = spec?.badges || []
-  if (tags.includes('local')) return { label: 'Local', tone: 'local' }
-  if (tags.includes('cloud')) return { label: 'Cloud', tone: 'cloud' }
+  if (tags.includes('local')) return { label: t('settings.voice.netLocal'), tone: 'local' }
+  if (tags.includes('cloud')) return { label: t('settings.voice.netCloud'), tone: 'cloud' }
   return null
 }
 
@@ -336,14 +336,14 @@ const chatProviderLabel = computed(() => {
 
 <template>
   <div class="voice-sections">
-    <p v-if="loading" class="loading">Loading…</p>
+    <p v-if="loading" class="loading">{{ t('common.loading') }}</p>
     <p v-else-if="error" class="error-msg">{{ error }}</p>
 
     <template v-else>
       <!-- ─── Provider split summary ─────────────────────────────────── -->
       <section class="hud-card provider-split">
         <div class="hud-corner" />
-        <div class="mono-label split-label">● PROVIDER SPLIT</div>
+        <div class="mono-label split-label">{{ t('settings.voice.providerSplit') }}</div>
         <div class="split-grid">
           <div class="split-cell">
             <div class="split-cell-head">
@@ -355,7 +355,7 @@ const chatProviderLabel = computed(() => {
           <div class="split-cell">
             <div class="split-cell-head">
               <span class="split-cell-key">tts_stories_provider</span>
-              <span class="chip chip-muted">🔒 LOCKED EDGE</span>
+              <span class="chip chip-muted">{{ t('settings.voice.lockedEdge') }}</span>
             </div>
             <div class="mono-label split-cell-sub">STORIES · LIBRARY · PREGEN</div>
           </div>
@@ -373,11 +373,11 @@ const chatProviderLabel = computed(() => {
             </svg>
           </div>
           <div>
-            <h2><span class="mono-num">01 /</span> Chat &amp; Notification Voice</h2>
+            <h2><span class="mono-num">01 /</span> {{ t('settings.voice.chat.title') }}</h2>
             <p>
-              Used by interactive chat replies and cron notifications. Default is Edge — free, no API key.
-              Paid engines require a key (set inline below). Stories use a separate <strong>locked Edge</strong>
-              provider so paid engines never burn long-form quota.
+              {{ t('settings.voice.chat.descPre') }}
+              <strong>{{ t('settings.voice.chat.descLockedEdge') }}</strong>
+              {{ t('settings.voice.chat.descPost') }}
             </p>
           </div>
         </header>
@@ -397,17 +397,17 @@ const chatProviderLabel = computed(() => {
                   v-if="netBadgeFor(spec)"
                   class="net-chip"
                   :class="`net-chip--${netBadgeFor(spec).tone}`"
-                  :title="netBadgeFor(spec).tone === 'cloud' ? 'Audio/text leaves your host' : 'Runs on-box, no network egress'"
+                  :title="netBadgeFor(spec).tone === 'cloud' ? t('settings.voice.net.cloudTitleAudioText') : t('settings.voice.net.localTitle')"
                 >{{ netBadgeFor(spec).label }}</span>
-                <span v-if="(secretsStatus[id]?.api_key) || (spec.secrets?.length === 0)" class="mini-dot" title="Ready"></span>
+                <span v-if="(secretsStatus[id]?.api_key) || (spec.secrets?.length === 0)" class="mini-dot" :title="t('settings.voice.ready')"></span>
               </span>
               <span class="provider-sub">{{ badgesFor(spec).join(' · ') || spec.description }}</span>
             </button>
           </template>
         </div>
         <p v-if="enabledFlags.tts.known.length > enabledFlags.tts.enabled.length" class="provider-flag-hint">
-          {{ enabledFlags.tts.known.length - enabledFlags.tts.enabled.length }} TTS engine(s) hidden by
-          <code>TTS_BACKENDS_ENABLED</code> in <code>backend/.env</code>.
+          {{ t('settings.voice.tts.hiddenPre', { n: enabledFlags.tts.known.length - enabledFlags.tts.enabled.length }) }}
+          <code>TTS_BACKENDS_ENABLED</code> {{ t('settings.voice.hiddenIn') }} <code>backend/.env</code>.
         </p>
 
         <div v-if="chatEngineSpec" class="provider-hint">
@@ -423,7 +423,7 @@ const chatProviderLabel = computed(() => {
             <select :id="`chat-${p.key}`" class="text-input" :value="paramValue(active.tts_chat, p.key, p.default)" @change="setParam(active.tts_chat, p.key, $event.target.value)">
               <option v-for="o in voiceOptionsFor(active.tts_chat.engine, p.options || [p.default])" :key="o" :value="o">{{ o }}</option>
             </select>
-            <button type="button" class="btn ghost small" @click="refreshVoices(active.tts_chat.engine)">Refresh from server</button>
+            <button type="button" class="btn ghost small" @click="refreshVoices(active.tts_chat.engine)">{{ t('settings.voice.refreshVoices') }}</button>
           </div>
           <select v-else-if="p.type === 'select'" :id="`chat-${p.key}`" class="text-input" :value="paramValue(active.tts_chat, p.key, p.default)" @change="setParam(active.tts_chat, p.key, $event.target.value)">
             <option v-for="o in (p.options || [])" :key="o" :value="o">{{ o }}</option>
@@ -452,9 +452,9 @@ const chatProviderLabel = computed(() => {
         <!-- Per-engine secrets -->
         <div v-for="slot in (chatEngineSpec?.secrets || [])" :key="slot" class="field">
           <label :for="`secret-${active.tts_chat.engine}-${slot}`">
-            Secret · {{ slot }}
-            <span v-if="(secretsStatus[active.tts_chat.engine] || {})[slot]" class="key-status stored">stored · hidden</span>
-            <span v-else class="key-status missing">not set</span>
+            {{ t('settings.voice.secretLabel', { slot }) }}
+            <span v-if="(secretsStatus[active.tts_chat.engine] || {})[slot]" class="key-status stored">{{ t('settings.common.storedHidden') }}</span>
+            <span v-else class="key-status missing">{{ t('settings.common.notSet') }}</span>
           </label>
           <div class="input-group">
             <input
@@ -462,7 +462,7 @@ const chatProviderLabel = computed(() => {
               class="pwd-input"
               :type="secretReveal[`${active.tts_chat.engine}.${slot}`] ? 'text' : 'password'"
               autocomplete="off"
-              :placeholder="(secretsStatus[active.tts_chat.engine] || {})[slot] ? 'Leave blank to keep current' : 'Paste API key'"
+              :placeholder="(secretsStatus[active.tts_chat.engine] || {})[slot] ? t('settings.common.keepCurrent') : t('settings.common.pasteApiKey')"
               :value="secretInput[`${active.tts_chat.engine}.${slot}`] || ''"
               @input="secretInput[`${active.tts_chat.engine}.${slot}`] = $event.target.value"
             />
@@ -478,14 +478,14 @@ const chatProviderLabel = computed(() => {
             </button>
           </div>
           <div class="action-row" style="margin-top: 8px;">
-            <button type="button" class="btn ghost" :disabled="!(secretsStatus[active.tts_chat.engine] || {})[slot]" @click="clearSecret(active.tts_chat.engine, slot)">Clear</button>
-            <button type="button" class="btn primary" :disabled="!secretInput[`${active.tts_chat.engine}.${slot}`]" @click="setSecret(active.tts_chat.engine, slot)">Save key</button>
+            <button type="button" class="btn ghost" :disabled="!(secretsStatus[active.tts_chat.engine] || {})[slot]" @click="clearSecret(active.tts_chat.engine, slot)">{{ t('settings.voice.clear') }}</button>
+            <button type="button" class="btn primary" :disabled="!secretInput[`${active.tts_chat.engine}.${slot}`]" @click="setSecret(active.tts_chat.engine, slot)">{{ t('settings.voice.saveKey') }}</button>
           </div>
         </div>
 
         <div class="action-row">
           <button type="button" class="btn ghost" :disabled="previewing === 'chat'" @click="preview('chat')">
-            {{ previewing === 'chat' ? 'Playing…' : 'Preview' }}
+            {{ previewing === 'chat' ? t('settings.voice.playing') : t('settings.voice.preview') }}
           </button>
         </div>
       </section>
@@ -501,13 +501,10 @@ const chatProviderLabel = computed(() => {
           </div>
           <div>
             <h2>
-              <span class="mono-num">02 /</span> Stories Voice
-              <span class="key-status stored">Edge only</span>
+              <span class="mono-num">02 /</span> {{ t('settings.voice.stories.title') }}
+              <span class="key-status stored">{{ t('settings.voice.stories.edgeOnly') }}</span>
             </h2>
-            <p>
-              Long-form audiobook narration. Always uses the free Edge engine — paid engines burn
-              quota fast on book-length text. Only voice id and rate are editable.
-            </p>
+            <p>{{ t('settings.voice.stories.desc') }}</p>
           </div>
         </header>
 
@@ -533,7 +530,7 @@ const chatProviderLabel = computed(() => {
 
         <div class="action-row">
           <button type="button" class="btn ghost" :disabled="previewing === 'stories'" @click="preview('stories')">
-            {{ previewing === 'stories' ? 'Playing…' : 'Preview' }}
+            {{ previewing === 'stories' ? t('settings.voice.playing') : t('settings.voice.preview') }}
           </button>
         </div>
       </section>
@@ -550,11 +547,10 @@ const chatProviderLabel = computed(() => {
             </svg>
           </div>
           <div>
-            <h2><span class="mono-num">03 /</span> Speech recognition</h2>
+            <h2><span class="mono-num">03 /</span> {{ t('settings.voice.stt.title') }}</h2>
             <p>
-              Pick a backend below. <strong>faster-whisper</strong> is multilingual (vi+en
-              code-switching). <strong>Gipformer</strong> is Vietnamese-only but gives better
-              accents on Vietnamese audio.
+              {{ t('settings.voice.stt.descPre') }} <strong>faster-whisper</strong> {{ t('settings.voice.stt.descMid') }}
+              <strong>Gipformer</strong> {{ t('settings.voice.stt.descPost') }}
             </p>
           </div>
         </header>
@@ -574,7 +570,7 @@ const chatProviderLabel = computed(() => {
                   v-if="netBadgeFor(spec)"
                   class="net-chip"
                   :class="`net-chip--${netBadgeFor(spec).tone}`"
-                  :title="netBadgeFor(spec).tone === 'cloud' ? 'Audio leaves your host' : 'Runs on-box, no network egress'"
+                  :title="netBadgeFor(spec).tone === 'cloud' ? t('settings.voice.net.cloudTitleAudio') : t('settings.voice.net.localTitle')"
                 >{{ netBadgeFor(spec).label }}</span>
               </span>
               <span class="provider-sub">{{ badgesFor(spec).join(' · ') || spec.description }}</span>
@@ -582,8 +578,8 @@ const chatProviderLabel = computed(() => {
           </template>
         </div>
         <p v-if="enabledFlags.stt.known.length > enabledFlags.stt.enabled.length" class="provider-flag-hint">
-          {{ enabledFlags.stt.known.length - enabledFlags.stt.enabled.length }} STT backend(s) hidden by
-          <code>STT_BACKENDS_ENABLED</code> in <code>backend/.env</code>.
+          {{ t('settings.voice.stt.hiddenPre', { n: enabledFlags.stt.known.length - enabledFlags.stt.enabled.length }) }}
+          <code>STT_BACKENDS_ENABLED</code> {{ t('settings.voice.hiddenIn') }} <code>backend/.env</code>.
         </p>
 
         <div v-if="sttSpec" class="provider-hint">
@@ -592,7 +588,7 @@ const chatProviderLabel = computed(() => {
             {{ reqBadgeFor(sttBackendId).text }}
           </span>
           <span v-if="sttSpec.language_locked" class="key-status stored">
-            language locked: {{ sttSpec.language_locked }}
+            {{ t('settings.voice.stt.languageLocked', { lang: sttSpec.language_locked }) }}
           </span>
         </div>
 
@@ -612,7 +608,7 @@ const chatProviderLabel = computed(() => {
             />
             <label v-else-if="p.type === 'toggle'" class="toggle-row">
               <input type="checkbox" :checked="paramValue(active.stt, p.key, p.default)" @change="setParam(active.stt, p.key, $event.target.checked)" />
-              <span>{{ p.help || 'Enabled' }}</span>
+              <span>{{ p.help || t('settings.voice.enabled') }}</span>
             </label>
             <input v-else-if="p.type === 'number'" :id="`stt-${p.key}`" class="text-input" type="number"
               :value="paramValue(active.stt, p.key, p.default)"
@@ -627,11 +623,11 @@ const chatProviderLabel = computed(() => {
           </div>
 
           <div class="field">
-            <label for="wake-backend">Wake word</label>
+            <label for="wake-backend">{{ t('settings.voice.stt.wakeWord') }}</label>
             <select id="wake-backend" class="text-input" v-model="activeWakeBackend">
               <option v-for="(spec, id) in wakeBackends" :key="id" :value="id">{{ spec.label || id }}</option>
             </select>
-            <span class="hint">Disabled by default — turn on to require "jarvis" before transcription kicks in.</span>
+            <span class="hint">{{ t('settings.voice.stt.wakeWordHint') }}</span>
           </div>
 
           <template v-if="activeWakeBackend !== 'off'">
@@ -660,9 +656,9 @@ const chatProviderLabel = computed(() => {
                component is more churn than it's worth right now. -->
           <div v-for="slot in (sttSpec?.secrets || [])" :key="slot" class="field">
             <label :for="`stt-secret-${sttBackendId}-${slot}`">
-              Secret · {{ slot }}
-              <span v-if="(secretsStatus[sttBackendId] || {})[slot]" class="key-status stored">stored · hidden</span>
-              <span v-else class="key-status missing">not set</span>
+              {{ t('settings.voice.secretLabel', { slot }) }}
+              <span v-if="(secretsStatus[sttBackendId] || {})[slot]" class="key-status stored">{{ t('settings.common.storedHidden') }}</span>
+              <span v-else class="key-status missing">{{ t('settings.common.notSet') }}</span>
             </label>
             <div class="input-group">
               <input
@@ -670,7 +666,7 @@ const chatProviderLabel = computed(() => {
                 class="pwd-input"
                 :type="secretReveal[`${sttBackendId}.${slot}`] ? 'text' : 'password'"
                 autocomplete="off"
-                :placeholder="(secretsStatus[sttBackendId] || {})[slot] ? 'Leave blank to keep current' : 'Paste API key'"
+                :placeholder="(secretsStatus[sttBackendId] || {})[slot] ? t('settings.common.keepCurrent') : t('settings.common.pasteApiKey')"
                 :value="secretInput[`${sttBackendId}.${slot}`] || ''"
                 @input="secretInput[`${sttBackendId}.${slot}`] = $event.target.value"
               />
@@ -686,8 +682,8 @@ const chatProviderLabel = computed(() => {
               </button>
             </div>
             <div class="action-row" style="margin-top: 8px;">
-              <button type="button" class="btn ghost" :disabled="!(secretsStatus[sttBackendId] || {})[slot]" @click="clearSecret(sttBackendId, slot)">Clear</button>
-              <button type="button" class="btn primary" :disabled="!secretInput[`${sttBackendId}.${slot}`]" @click="setSecret(sttBackendId, slot)">Save key</button>
+              <button type="button" class="btn ghost" :disabled="!(secretsStatus[sttBackendId] || {})[slot]" @click="clearSecret(sttBackendId, slot)">{{ t('settings.voice.clear') }}</button>
+              <button type="button" class="btn primary" :disabled="!secretInput[`${sttBackendId}.${slot}`]" @click="setSecret(sttBackendId, slot)">{{ t('settings.voice.saveKey') }}</button>
             </div>
           </div>
         </template>
@@ -695,7 +691,7 @@ const chatProviderLabel = computed(() => {
         <div class="action-row">
           <span v-if="sttResult" class="stt-result" :title="sttResult">"{{ sttResult }}"</span>
           <button type="button" class="btn ghost" :disabled="sttTesting" @click="testStt">
-            {{ sttTesting ? 'Testing…' : 'Test STT (warmup audio)' }}
+            {{ sttTesting ? t('settings.voice.stt.testing') : t('settings.voice.stt.testBtn') }}
           </button>
         </div>
       </section>
@@ -726,37 +722,33 @@ const chatProviderLabel = computed(() => {
 
         <div class="provider-hint">
           <span v-if="reqBadgeFor(svcId)" class="key-status" :class="reqBadgeFor(svcId).tone === 'ok' ? 'stored' : 'missing'">
-            {{ reqBadgeFor(svcId).tone === 'ok' ? 'configured — relay active' : reqBadgeFor(svcId).text }}
+            {{ reqBadgeFor(svcId).tone === 'ok' ? t('settings.voice.svc.relayActive') : reqBadgeFor(svcId).text }}
           </span>
         </div>
 
         <ol v-if="svcId === 'cloudflare_turn'" class="turn-steps">
           <li>
-            <strong>When do I need this?</strong> Only when you open Jarvis from
-            outside the network the server lives on — phone on 4G/5G, office Wi-Fi,
-            a friend's house. On <code>localhost</code>, the same LAN, or a VPN
-            (Tailscale etc.) voice already works without it.
+            <strong>{{ t('settings.voice.turn.q1') }}</strong> {{ t('settings.voice.turn.a1Pre') }}
+            <code>localhost</code>{{ t('settings.voice.turn.a1Post') }}
           </li>
           <li>
-            Open the
+            {{ t('settings.voice.turn.step2Pre') }}
             <a href="https://dash.cloudflare.com/?to=/:account/calls" target="_blank" rel="noopener">
-              Cloudflare Dashboard → Realtime → TURN</a>
-            (free Cloudflare account is enough — the free tier includes 1&nbsp;TB/month of relay traffic).
+              {{ t('settings.voice.turn.step2Link') }}</a>
+            {{ t('settings.voice.turn.step2Post') }}
           </li>
-          <li>Click <strong>Create</strong>, give the TURN app any name (e.g. <code>jarvis-voice</code>).</li>
+          <li>{{ t('settings.voice.turn.step3Pre') }} <strong>{{ t('settings.voice.turn.step3Create') }}</strong>{{ t('settings.voice.turn.step3Post') }} <code>jarvis-voice</code>).</li>
           <li>
-            Copy the <strong>Turn Token ID</strong> into <code>key_id</code> and the
-            <strong>API Token</strong> into <code>api_token</code> below, then save both.
-            Applies immediately — no restart. The key never leaves this server;
-            browsers only ever receive short-lived credentials minted from it.
+            {{ t('settings.voice.turn.step4Pre') }} <strong>Turn Token ID</strong> {{ t('settings.voice.turn.step4Into') }} <code>key_id</code> {{ t('settings.voice.turn.step4And') }}
+            <strong>API Token</strong> {{ t('settings.voice.turn.step4Into') }} <code>api_token</code> {{ t('settings.voice.turn.step4Post') }}
           </li>
         </ol>
 
         <div v-for="slot in (svc.secrets || [])" :key="slot" class="field">
           <label :for="`svc-secret-${svcId}-${slot}`">
-            Secret · {{ slot }}
-            <span v-if="(secretsStatus[svcId] || {})[slot]" class="key-status stored">stored · hidden</span>
-            <span v-else class="key-status missing">not set</span>
+            {{ t('settings.voice.secretLabel', { slot }) }}
+            <span v-if="(secretsStatus[svcId] || {})[slot]" class="key-status stored">{{ t('settings.common.storedHidden') }}</span>
+            <span v-else class="key-status missing">{{ t('settings.common.notSet') }}</span>
           </label>
           <div class="input-group">
             <input
@@ -764,7 +756,7 @@ const chatProviderLabel = computed(() => {
               class="pwd-input"
               :type="secretReveal[`${svcId}.${slot}`] ? 'text' : 'password'"
               autocomplete="off"
-              :placeholder="(secretsStatus[svcId] || {})[slot] ? 'Leave blank to keep current' : 'Paste value'"
+              :placeholder="(secretsStatus[svcId] || {})[slot] ? t('settings.common.keepCurrent') : t('settings.voice.pasteValue')"
               :value="secretInput[`${svcId}.${slot}`] || ''"
               @input="secretInput[`${svcId}.${slot}`] = $event.target.value"
             />
@@ -780,8 +772,8 @@ const chatProviderLabel = computed(() => {
             </button>
           </div>
           <div class="action-row" style="margin-top: 8px;">
-            <button type="button" class="btn ghost" :disabled="!(secretsStatus[svcId] || {})[slot]" @click="clearSecret(svcId, slot)">Clear</button>
-            <button type="button" class="btn primary" :disabled="!secretInput[`${svcId}.${slot}`]" @click="setSecret(svcId, slot)">Save key</button>
+            <button type="button" class="btn ghost" :disabled="!(secretsStatus[svcId] || {})[slot]" @click="clearSecret(svcId, slot)">{{ t('settings.voice.clear') }}</button>
+            <button type="button" class="btn primary" :disabled="!secretInput[`${svcId}.${slot}`]" @click="setSecret(svcId, slot)">{{ t('settings.voice.saveKey') }}</button>
           </div>
         </div>
       </section>
@@ -789,9 +781,9 @@ const chatProviderLabel = computed(() => {
       <p v-if="previewError" class="error-msg">{{ previewError }}</p>
 
       <div class="footer-row">
-        <span v-if="saveSuccess" class="success-msg">Saved · live now (no restart needed)</span>
+        <span v-if="saveSuccess" class="success-msg">{{ t('settings.voice.savedLive') }}</span>
         <button class="btn primary" type="button" :disabled="saving" @click="save">
-          {{ saving ? 'Saving…' : 'Save changes' }}
+          {{ saving ? t('settings.common.saving') : t('common.saveChanges') }}
         </button>
       </div>
     </template>
@@ -810,7 +802,10 @@ const chatProviderLabel = computed(() => {
   gap: 8px;
   font-size: 13px;
   line-height: 1.55;
-  color: var(--text-secondary);
+  /* --text-dim is defined for BOTH themes (dark #B6BAC6 / light #3A4055).
+     The previous --text-secondary (#c4c8d4, style.css) had no light-theme
+     override, so this body text fell to ~1.6:1 contrast on light cards. */
+  color: var(--text-dim);
 }
 .turn-steps strong { color: var(--text); }
 .turn-steps code {

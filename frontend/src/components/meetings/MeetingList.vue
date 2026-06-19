@@ -1,6 +1,9 @@
 <script setup>
 import { computed } from 'vue'
 import { normalizeTs } from '../../utils/timeFormat.js'
+import { useLang } from '../../composables/useLang'
+
+const { t } = useLang()
 
 const props = defineProps({
   meetings: { type: Array, required: true },
@@ -18,12 +21,12 @@ function statusColor(meeting) {
 
 function statusLabel(meeting) {
   if (meeting.ended) {
-    if (meeting.outcome === 'consensus') return 'Consensus'
-    if (meeting.outcome === 'max_rounds') return 'Max Rounds'
-    return 'Ended'
+    if (meeting.outcome === 'consensus') return t('meetings.statusConsensus')
+    if (meeting.outcome === 'max_rounds') return t('meetings.statusMaxRounds')
+    return t('meetings.statusEnded')
   }
-  if (meeting.started) return 'In Progress'
-  return 'Waiting'
+  if (meeting.started) return t('meetings.statusInProgress')
+  return t('meetings.statusWaiting')
 }
 
 function statusIcon(meeting) {
@@ -50,7 +53,7 @@ function formatTime(ts) {
 }
 
 function truncateAgenda(agenda, max = 60) {
-  if (!agenda) return 'No agenda'
+  if (!agenda) return t('meetings.noAgenda')
   return agenda.length > max ? agenda.slice(0, max) + '…' : agenda
 }
 
@@ -96,7 +99,7 @@ function agentInitial(name) {
             </div>
           </div>
           <span class="participant-count">
-            {{ (meeting.participants || []).length }} participants
+            {{ t('meetings.participantsCount', { n: (meeting.participants || []).length }) }}
           </span>
         </div>
 
@@ -106,7 +109,7 @@ function agentInitial(name) {
             {{ statusIcon(meeting) }} {{ statusLabel(meeting) }}
           </span>
           <span v-if="meeting.turn_count" class="turn-count">
-            {{ meeting.turn_count }} turns
+            {{ t('meetings.turnsCount', { n: meeting.turn_count }) }}
           </span>
           <span v-if="meeting.current_speaker && !meeting.ended" class="current-speaker">
             🎤 {{ meeting.current_speaker }}

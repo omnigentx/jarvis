@@ -4,6 +4,7 @@ import { useBreakpoint } from '../../composables/useBreakpoint'
 import { parseYoutubeTags, youtubeEmbedUrl } from '../../utils/youtubeTags'
 import { normalizeTs } from '../../utils/timeFormat.js'
 import { useVoiceSession } from '../../composables/useVoiceSession.js'
+import { useLang } from '../../composables/useLang'
 import MarkdownRenderer from '../MarkdownRenderer.vue'
 
 /**
@@ -34,6 +35,7 @@ const expandedTools = reactive({})
 const expandedRows = reactive({})
 const { isMobile } = useBreakpoint()
 const voice = useVoiceSession()
+const { t } = useLang()
 
 function toggleTools(msgId) { expandedTools[msgId] = !expandedTools[msgId] }
 function toggleRow(msgId, idx) { expandedRows[`${msgId}-${idx}`] = !expandedRows[`${msgId}-${idx}`] }
@@ -99,8 +101,8 @@ function formatTime(ts) {
   const d = new Date(ms)
   const now = new Date()
   const diff = now - d
-  if (diff < 60000) return 'just now'
-  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`
+  if (diff < 60000) return t('chat.justNow')
+  if (diff < 3600000) return t('chat.minutesAgo', { n: Math.floor(diff / 60000) })
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
@@ -174,9 +176,9 @@ function parsedAgentContent(content) {
     <!-- Empty state -->
     <div v-if="!messages.length && !isStreaming" class="empty-state">
       <div class="empty-icon">💬</div>
-      <div class="empty-title">Start a conversation</div>
+      <div class="empty-title">{{ t('chat.startConversation') }}</div>
       <div class="empty-sub">
-        Send a message to interact with {{ agent?.name || 'an agent' }}
+        {{ t('chat.emptySub', { name: agent?.name || t('chat.anAgent') }) }}
       </div>
     </div>
 
@@ -186,7 +188,7 @@ function parsedAgentContent(content) {
         <div v-if="msg.role === 'user'" class="row row-user">
           <div class="bubble-wrap">
             <span v-if="isBargeIn(msg)" class="chip chip-bargein">
-              <span class="chip-dot" /> BARGE-IN
+              <span class="chip-dot" /> {{ t('chat.bargeIn') }}
             </span>
             <div class="bubble bubble-user">
               <span class="bubble-text">{{ msg.content }}</span>
@@ -237,7 +239,7 @@ function parsedAgentContent(content) {
 
               <!-- Interrupted badge -->
               <div v-if="isInterrupted(msg)" class="interrupted-strip">
-                <span class="chip chip-interrupted">◼ INTERRUPTED</span>
+                <span class="chip chip-interrupted">◼ {{ t('chat.interrupted') }}</span>
               </div>
             </div>
 
@@ -267,7 +269,7 @@ function parsedAgentContent(content) {
                     <path d="M9.77 4.23a4 4 0 0 1 2 3.27 4 4 0 0 1-1.15 3.12L6.5 14.74a1.5 1.5 0 0 1-2.12 0l-.12-.12a1.5 1.5 0 0 1 0-2.12l4.12-4.12A4 4 0 0 1 9.77 4.23z" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
                   </svg>
                   <span class="tc-summary">
-                    {{ toolCount(msg.toolCalls) }} tool{{ toolCount(msg.toolCalls) > 1 ? 's' : '' }} used
+                    {{ t('chat.toolsUsed', { n: toolCount(msg.toolCalls) }) }}
                   </span>
                   <span v-if="totalDuration(msg.toolCalls)" class="tc-duration-label">
                     · {{ totalDuration(msg.toolCalls) }}
@@ -324,7 +326,7 @@ function parsedAgentContent(content) {
                     <transition name="tc-expand">
                       <div v-if="isRowExpanded(msg.id, idx)" class="tc-detail">
                         <div v-if="g.args && Object.keys(g.args).length" class="tc-detail-block">
-                          <div class="tc-detail-label">Arguments</div>
+                          <div class="tc-detail-label">{{ t('chat.arguments') }}</div>
                           <div class="tc-detail-args">
                             <div v-for="(val, key) in g.args" :key="key" class="tc-arg-row">
                               <span class="tc-arg-key">{{ key }}</span>
@@ -333,7 +335,7 @@ function parsedAgentContent(content) {
                           </div>
                         </div>
                         <div v-if="g.resultPreview" class="tc-detail-block">
-                          <div class="tc-detail-label">Result</div>
+                          <div class="tc-detail-label">{{ t('chat.result') }}</div>
                           <div class="tc-detail-result">
                             <MarkdownRenderer
                               :content="g.resultPreview"

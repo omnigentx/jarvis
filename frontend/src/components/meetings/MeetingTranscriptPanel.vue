@@ -17,6 +17,9 @@
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import MarkdownRenderer from '../MarkdownRenderer.vue'
 import { normalizeTs } from '../../utils/timeFormat.js'
+import { useLang } from '../../composables/useLang'
+
+const { t } = useLang()
 
 const props = defineProps({
   meeting: { type: Object, default: null },
@@ -116,10 +119,10 @@ const stallAgeText = computed(() => {
 
 // ── Connection / status ─────────────────────────────────────────────────
 const connection = computed(() => {
-  if (props.meetingState?.ended) return { label: 'MEETING ENDED', color: 'var(--text-muted)', live: false }
-  if (props.isConnected) return { label: 'LIVE', color: 'var(--success)', live: true }
-  if (props.isConnecting) return { label: 'CONNECTING…', color: 'var(--warning)', live: false }
-  return { label: 'DISCONNECTED', color: 'var(--danger)', live: false }
+  if (props.meetingState?.ended) return { label: t('meetings.connMeetingEndedCaps'), color: 'var(--text-muted)', live: false }
+  if (props.isConnected) return { label: t('meetings.connLiveCaps'), color: 'var(--success)', live: true }
+  if (props.isConnecting) return { label: t('meetings.connConnectingCaps'), color: 'var(--warning)', live: false }
+  return { label: t('meetings.connDisconnectedCaps'), color: 'var(--danger)', live: false }
 })
 
 // ── Auto-scroll ─────────────────────────────────────────────────────────
@@ -180,12 +183,12 @@ function formatTimestamp(ts) {
   <div class="tp">
     <!-- Header row 1 -->
     <div class="tp-head">
-      <button class="tp-back" @click="emit('close')" title="Back to list">
+      <button class="tp-back" @click="emit('close')" :title="t('meetings.backToList')">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
           <path d="M19 12H5"/><polyline points="12 19 5 12 12 5"/>
         </svg>
       </button>
-      <h2 class="tp-title" :title="meeting?.agenda">{{ meeting?.agenda || 'Meeting' }}</h2>
+      <h2 class="tp-title" :title="meeting?.agenda">{{ meeting?.agenda || t('meetings.meetingFallback') }}</h2>
       <span
         class="tp-badge"
         :style="{
@@ -202,13 +205,13 @@ function formatTimestamp(ts) {
         class="tp-iconbtn"
         :class="{ active: showDetails }"
         @click="showDetails = !showDetails"
-        :title="showDetails ? 'Hide details' : 'Show full description'"
+        :title="showDetails ? t('meetings.hideDetails') : t('meetings.showFullDescription')"
       >
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="9"/><path d="M12 8v4"/><circle cx="12" cy="16" r="0.5" fill="currentColor"/>
         </svg>
       </button>
-      <button class="tp-iconbtn" :class="{ active: expandAll }" @click="expandAll = !expandAll" :title="expandAll ? 'Collapse long messages' : 'Expand long messages'">
+      <button class="tp-iconbtn" :class="{ active: expandAll }" @click="expandAll = !expandAll" :title="expandAll ? t('meetings.collapseLong') : t('meetings.expandLong')">
         {{ expandAll ? '⊟' : '⊞' }}
       </button>
     </div>
@@ -216,13 +219,13 @@ function formatTimestamp(ts) {
     <!-- Header row 2: round counter + agenda strip pills + participants -->
     <div class="tp-meta">
       <span class="tp-pill">
-        round {{ meetingState.current_round || meeting?.current_round || 1 }}<span v-if="meeting?.max_rounds"> / {{ meeting.max_rounds }}</span>
+        {{ t('meetings.roundLower') }} {{ meetingState.current_round || meeting?.current_round || 1 }}<span v-if="meeting?.max_rounds"> / {{ meeting.max_rounds }}</span>
       </span>
-      <span class="tp-pill">{{ transcript.length }} msgs</span>
+      <span class="tp-pill">{{ t('meetings.msgsCount', { n: transcript.length }) }}</span>
       <span v-if="currentSpeaker && !meetingState.ended" class="tp-pill speak-pill" :class="{ stalled: isStalled }">
         🎙 {{ currentSpeaker }}
         <span class="tp-pill-age">· {{ stallAgeText }}</span>
-        <span v-if="isStalled" class="tp-pill-warn">⚠ stalled</span>
+        <span v-if="isStalled" class="tp-pill-warn">⚠ {{ t('meetings.stalled') }}</span>
       </span>
       <span v-if="meetingState.ended && meetingState.outcome" class="tp-pill ended-pill">
         ✓ {{ meetingState.outcome }}
@@ -247,33 +250,33 @@ function formatTimestamp(ts) {
     <!-- Stall warning banner (separate from pill — full-width attention grab) -->
     <div v-if="isStalled" class="tp-stall-banner">
       <span class="tp-stall-icon">⚠</span>
-      <span>Stalled · {{ currentSpeaker }} hasn't spoken in {{ stallAgeText }}.</span>
+      <span>{{ t('meetings.stallBanner', { speaker: currentSpeaker, age: stallAgeText }) }}</span>
       <span class="tp-stall-ref">(b61af7db pattern)</span>
     </div>
 
     <!-- Details drawer -->
     <div v-if="showDetails" class="tp-drawer">
       <div class="tp-drawer-head">
-        <span class="mono-label">MEETING DETAILS</span>
+        <span class="mono-label">{{ t('meetings.detailsTitleCaps') }}</span>
         <button class="tp-drawer-close" @click="showDetails = false">×</button>
       </div>
       <div class="tp-drawer-body">
         <div class="tp-drawer-block">
-          <div class="tp-drawer-label">Agenda</div>
-          <div class="tp-drawer-val">{{ meeting?.agenda || '(no agenda)' }}</div>
+          <div class="tp-drawer-label">{{ t('meetings.agendaLabel') }}</div>
+          <div class="tp-drawer-val">{{ meeting?.agenda || t('meetings.noAgendaParen') }}</div>
         </div>
         <div v-if="meeting?.description" class="tp-drawer-block">
-          <div class="tp-drawer-label">Description</div>
+          <div class="tp-drawer-label">{{ t('meetings.descriptionLabel') }}</div>
           <div class="tp-drawer-val">
             <MarkdownRenderer :content="meeting.description" content-type="markdown" />
           </div>
         </div>
         <div v-if="meeting?.created_by" class="tp-drawer-block">
-          <div class="tp-drawer-label">Created by</div>
+          <div class="tp-drawer-label">{{ t('meetings.createdByLabel') }}</div>
           <div class="tp-drawer-val">{{ meeting.created_by }}</div>
         </div>
         <div v-if="meeting?.meeting_id" class="tp-drawer-block">
-          <div class="tp-drawer-label">Meeting ID</div>
+          <div class="tp-drawer-label">{{ t('meetings.meetingIdLabel') }}</div>
           <code class="tp-drawer-mono">{{ meeting.meeting_id }}</code>
         </div>
       </div>
@@ -285,11 +288,11 @@ function formatTimestamp(ts) {
         <div class="tp-empty-dots">
           <span /><span /><span />
         </div>
-        <p>Waiting for participants to join…</p>
+        <p>{{ t('meetings.waitingParticipants') }}</p>
       </div>
 
       <div v-else-if="!transcript.length && meetingState.ended" class="tp-empty">
-        <p>No transcript available</p>
+        <p>{{ t('meetings.noTranscript') }}</p>
       </div>
 
       <template v-else>
@@ -325,7 +328,7 @@ function formatTimestamp(ts) {
               class="entry-more"
               @click="toggleExpand(entry.turn)"
             >
-              {{ expanded.has(entry.turn) ? '↑ Show less' : '↓ Show more' }}
+              {{ expanded.has(entry.turn) ? t('meetings.showLess') : t('meetings.showMore') }}
             </button>
           </div>
         </article>
@@ -351,10 +354,10 @@ function formatTimestamp(ts) {
     <!-- Footer -->
     <div class="tp-footer">
       <span class="tp-foot-dot" :class="{ live: connection.live }" />
-      <span class="tp-foot-label">{{ connection.live ? 'SSE connected' : connection.label.toLowerCase() }}</span>
+      <span class="tp-foot-label">{{ connection.live ? t('meetings.sseConnected') : connection.label.toLowerCase() }}</span>
       <code class="tp-foot-url">/api/agent/meetings/{{ meeting?.meeting_id }}/stream</code>
       <span class="tp-foot-tail">
-        {{ meetingState.ended ? 'meeting ended · transcript frozen' : 'auto-scroll · meeting drives itself' }}
+        {{ meetingState.ended ? t('meetings.footFrozen') : t('meetings.footAutoScroll') }}
       </span>
     </div>
   </div>

@@ -11,7 +11,9 @@ import { useBreakpoint } from '../composables/useBreakpoint'
 import { apiFetch } from '../api'
 import { useAudioPlayerStore } from '../stores/audioPlayer'
 import MarkdownRenderer from '../components/MarkdownRenderer.vue'
+import { useLang } from '../composables/useLang'
 
+const { t } = useLang()
 const route = useRoute()
 const router = useRouter()
 const { isMobile } = useBreakpoint()
@@ -90,9 +92,9 @@ function statusColor(status) {
   return 'var(--warning)'
 }
 function typeLabel(type) {
-  if (type === 'reminder') return 'Reminder'
-  if (type === 'agent_result') return 'Agent Result'
-  if (type === 'error') return 'Error'
+  if (type === 'reminder') return t('notifications.typeReminder')
+  if (type === 'agent_result') return t('notifications.typeAgentResult')
+  if (type === 'error') return t('notifications.typeError')
   return type
 }
 function typeColor(type) {
@@ -155,11 +157,11 @@ async function deleteNotif() {
 function goBack() { router.push('/notifications') }
 
 const ttsLabel = computed(() => {
-  if (ttsState.value === 'loading') return 'Loading…'
-  if (ttsState.value === 'playing') return 'Pause'
-  if (ttsState.value === 'paused') return 'Resume'
-  if (ttsState.value === 'blocked') return 'Story playing'
-  return 'Listen'
+  if (ttsState.value === 'loading') return t('common.loadingEllipsis')
+  if (ttsState.value === 'playing') return t('notifications.ttsPause')
+  if (ttsState.value === 'paused') return t('notifications.ttsResume')
+  if (ttsState.value === 'blocked') return t('notifications.ttsBlocked')
+  return t('notifications.ttsListen')
 })
 
 onMounted(fetchDetail)
@@ -168,12 +170,12 @@ onMounted(fetchDetail)
 <template>
   <div class="notif-detail jv" :class="{ 'notif-detail--mobile': isMobile }">
     <!-- Loading / error -->
-    <div v-if="loading" class="notif-detail__state">Loading…</div>
+    <div v-if="loading" class="notif-detail__state">{{ t('common.loadingEllipsis') }}</div>
 
     <div v-else-if="error" class="notif-detail__state notif-detail__state--error">
       <span style="font-size: 24px;">⚠</span>
       <span>{{ error }}</span>
-      <button class="btn btn-secondary" @click="goBack">← Back to list</button>
+      <button class="btn btn-secondary" @click="goBack">{{ t('notifications.backToList') }}</button>
     </div>
 
     <template v-else-if="notification">
@@ -185,7 +187,7 @@ onMounted(fetchDetail)
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M19 12H5"/><polyline points="12 19 5 12 12 5"/>
           </svg>
-          Back
+          {{ t('common.back') }}
         </button>
 
         <div class="notif-detail__heading">
@@ -211,31 +213,31 @@ onMounted(fetchDetail)
             <span v-else>▶</span>
             {{ ttsLabel }}
           </button>
-          <button v-if="notification.is_read" class="btn btn-secondary" @click="markUnread">Mark unread</button>
-          <button class="btn btn-secondary notif-detail__delete" @click="deleteNotif">Delete</button>
+          <button v-if="notification.is_read" class="btn btn-secondary" @click="markUnread">{{ t('notifications.markUnread') }}</button>
+          <button class="btn btn-secondary notif-detail__delete" @click="deleteNotif">{{ t('common.delete') }}</button>
         </div>
       </div>
 
       <!-- Meta pills -->
       <div v-if="meta.agent || meta.exec_mode || meta.duration_ms || meta.status" class="notif-detail__meta">
         <div v-if="meta.agent" class="notif-detail__pill">
-          <span class="mono-label">AGENT</span>
+          <span class="mono-label">{{ t('notifications.metaAgent') }}</span>
           <span>{{ meta.agent }}</span>
         </div>
         <div v-if="meta.exec_mode" class="notif-detail__pill">
-          <span class="mono-label">MODE</span>
+          <span class="mono-label">{{ t('notifications.metaMode') }}</span>
           <span>{{ meta.exec_mode }}</span>
         </div>
         <div v-if="meta.duration_ms" class="notif-detail__pill">
-          <span class="mono-label">DURATION</span>
+          <span class="mono-label">{{ t('notifications.metaDuration') }}</span>
           <span>{{ formatDuration(meta.duration_ms) }}</span>
         </div>
         <div v-if="meta.status" class="notif-detail__pill">
-          <span class="mono-label">STATUS</span>
+          <span class="mono-label">{{ t('notifications.metaStatus') }}</span>
           <span :style="{ color: statusColor(meta.status) }">● {{ meta.status }}</span>
         </div>
         <div class="notif-detail__pill">
-          <span class="mono-label">TIME</span>
+          <span class="mono-label">{{ t('notifications.metaTime') }}</span>
           <span>{{ formatTime(notification.created_at) }}</span>
         </div>
       </div>
@@ -243,12 +245,12 @@ onMounted(fetchDetail)
       <!-- Content -->
       <div class="notif-detail__body card">
         <div class="notif-detail__body-head">
-          <span>Content</span>
+          <span>{{ t('notifications.content') }}</span>
           <span class="mono-label">{{ notification.content_type || 'text' }}</span>
         </div>
         <div class="notif-detail__body-content">
           <MarkdownRenderer
-            :content="notification.content || notification.preview || 'No content'"
+            :content="notification.content || notification.preview || t('notifications.noContent')"
             :content-type="notification.content_type || 'text'"
           />
         </div>

@@ -5,9 +5,11 @@
  * Logic untouched; restyled to match the new design.
  */
 import { useAudioPlayerStore } from '../../stores/audioPlayer'
+import { useLang } from '../../composables/useLang'
 import AudioProgressBar from './AudioProgressBar.vue'
 
 const store = useAudioPlayerStore()
+const { t } = useLang()
 
 function handleSeek(seconds) {
   store.seekTo(seconds)
@@ -28,7 +30,7 @@ function handleSeek(seconds) {
     <div class="mini-player__content">
       <!-- Info -->
       <div class="mini-player__info" @click="store.isFullPlayerOpen = true">
-        <div class="mini-player__title">{{ store.currentStoryTitle || 'Audio' }}</div>
+        <div class="mini-player__title">{{ store.currentStoryTitle || t('stories.audio') }}</div>
         <div class="mini-player__chapter">{{ store.currentChapterLabel }}</div>
       </div>
 
@@ -43,7 +45,7 @@ function handleSeek(seconds) {
           class="mini-player__btn"
           :disabled="!store.canPlayPrev"
           @click="store.prevChapter()"
-          title="Previous chapter"
+          :title="t('stories.prevChapter')"
         >
           <svg viewBox="0 0 24 24" fill="none" width="16" height="16">
             <polygon points="19,20 9,12 19,4" fill="currentColor"/>
@@ -51,7 +53,7 @@ function handleSeek(seconds) {
           </svg>
         </button>
 
-        <button class="mini-player__btn mini-player__btn--skip" @click="store.skipBackward(10)" title="-10s">
+        <button class="mini-player__btn mini-player__btn--skip" @click="store.skipBackward(10)" :title="t('stories.back10')">
           <svg viewBox="0 0 24 24" fill="none" width="16" height="16">
             <polyline points="1,4 1,10 7,10" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
             <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
@@ -69,7 +71,7 @@ function handleSeek(seconds) {
           </svg>
         </button>
 
-        <button class="mini-player__btn mini-player__btn--skip" @click="store.skipForward(30)" title="+30s">
+        <button class="mini-player__btn mini-player__btn--skip" @click="store.skipForward(30)" :title="t('stories.fwd30')">
           <svg viewBox="0 0 24 24" fill="none" width="16" height="16">
             <polyline points="23,4 23,10 17,10" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
             <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
@@ -80,7 +82,7 @@ function handleSeek(seconds) {
           class="mini-player__btn"
           :disabled="!store.canPlayNext"
           @click="store.nextChapter()"
-          title="Next chapter"
+          :title="t('stories.nextChapter')"
         >
           <svg viewBox="0 0 24 24" fill="none" width="16" height="16">
             <polygon points="5,4 15,12 5,20" fill="currentColor"/>
@@ -88,11 +90,11 @@ function handleSeek(seconds) {
           </svg>
         </button>
 
-        <button class="mini-player__btn mini-player__btn--speed" @click="store.cycleSpeed()" title="Playback speed">
+        <button class="mini-player__btn mini-player__btn--speed" @click="store.cycleSpeed()" :title="t('stories.playbackSpeed')">
           {{ store.playbackSpeed }}x
         </button>
 
-        <button class="mini-player__btn mini-player__btn--close" @click="store.stopAndReset()" title="Close">
+        <button class="mini-player__btn mini-player__btn--close" @click="store.stopAndReset()" :title="t('common.close')">
           <svg viewBox="0 0 24 24" fill="none" width="14" height="14">
             <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
           </svg>

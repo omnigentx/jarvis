@@ -12,9 +12,12 @@
  * thickness reflects token volume (capped by log-scale so a 100k vs 1k
  * difference doesn't draw a 100x thicker line).
  */
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { avatarGlyph, roleColorToken, statusColor, teamColor } from './agentMeta.js'
+import { useLang } from '../../composables/useLang'
+
+const { t } = useLang()
 
 const props = defineProps({
   conductor: { type: Object, default: null },
@@ -24,47 +27,77 @@ const props = defineProps({
 
 const router = useRouter()
 
-const W = 1220
-const H = 720
-const COL_X = { root: 60, mid: 360, pm: 700, leaf: 1000 }
+// Vertical Sankey: lanes stack TOP → BOTTOM so agents spread HORIZONTALLY
+// across the (wide) screen instead of cramming into one tall column. The
+// canvas width grows with the busiest lane, then the SVG scales to fit its
+// container — so 30 agents shrink-to-fit rather than overlap.
 const NODE_W = 170
 const NODE_H = 52
+const MEMBER_W = 160
 const MEMBER_H = 44
-const MEMBER_GAP = 50
+const LANE_GAP = 24 // horizontal gap between sibling nodes in a lane
+const laneStep = NODE_W + LANE_GAP
+const memberStep = MEMBER_W + 14
 
-const rootY = computed(() => H / 2)
+// Y of each lane's node TOP edge (top → bottom).
+const LANE_Y = { root: 44, mid: 176, pm: 336, leaf: 484 }
 
-const midNodesLaid = computed(() => {
-  const n = props.midNodes.length
-  if (n === 0) return []
-  const spacing = (H - 80) / Math.max(1, n)
-  return props.midNodes.map((agent, i) => ({
-    agent,
-    x: COL_X.mid,
-    y: 40 + spacing * i + spacing / 2,
-  }))
+const hasTeams = computed(() => props.teams.length > 0)
+// Collapse the empty team lanes (and their labels) when there are no teams,
+// so the canvas isn't mostly blank space below the core agents.
+const H = computed(() => (hasTeams.value ? 560 : LANE_Y.mid + NODE_H + 48))
+
+const memberCount = computed(() =>
+  props.teams.reduce(
+    (s, t) => s + (t.members || []).filter((m) => m !== t.pm).length,
+    0,
+  ),
+)
+
+// Width tracks the busiest lane so siblings never overlap; the 1220 floor
+// keeps small graphs from stretching edge-to-edge.
+const W = computed(() => {
+  const widest = Math.max(
+    1,
+    props.midNodes.length,
+    props.teams.length,
+    memberCount.value,
+  )
+  return Math.max(1220, widest * laneStep + 80)
 })
 
-const teamsLaid = computed(() => {
-  const n = props.teams.length
-  if (n === 0) return []
-  const spacing = n > 1 ? (H - 160) / n : 0
-  return props.teams.map((team, i) => {
-    const y = n === 1 ? H / 2 : 80 + spacing * i + spacing / 2
+const rootCx = computed(() => W.value / 2)
+
+// Centre `count` nodes across the canvas; returns the CENTRE x of node `i`.
+function centredX(count, i, step) {
+  const start = W.value / 2 - ((count - 1) * step) / 2
+  return start + i * step
+}
+
+const midNodesLaid = computed(() =>
+  props.midNodes.map((agent, i) => ({
+    agent,
+    x: centredX(props.midNodes.length, i, laneStep), // centre x
+    y: LANE_Y.mid, // top y
+  })),
+)
+
+const teamsLaid = computed(() =>
+  props.teams.map((team, i) => {
+    const x = centredX(props.teams.length, i, laneStep)
+    const mems = (team.members || []).filter((m) => m !== team.pm)
     return {
       team,
-      pmX: COL_X.pm,
-      pmY: y,
-      members: (team.members || [])
-        .filter(m => m !== team.pm)
-        .map((m, j, all) => ({
-          agent: m,
-          x: COL_X.leaf,
-          y: y - ((all.length - 1) * MEMBER_GAP) / 2 + j * MEMBER_GAP,
-        })),
+      pmX: x,
+      pmY: LANE_Y.pm,
+      members: mems.map((m, j, all) => ({
+        agent: m,
+        x: x - ((all.length - 1) * memberStep) / 2 + j * memberStep, // centre x
+        y: LANE_Y.leaf,
+      })),
     }
-  })
-})
+  }),
+)
 
 function edgeWeight(tokens) {
   // tokens is the human-formatted string or number. Use log-scale.
@@ -92,18 +125,84 @@ function truncate(s, n) {
 }
 
 function bezier(x1, y1, x2, y2) {
-  const cx = x1 + (x2 - x1) * 0.5
-  return `M ${x1} ${y1} C ${cx} ${y1}, ${cx} ${y2}, ${x2} ${y2}`
+  // Vertical flow: ease the control points along Y so edges curve top→bottom.
+  const cy = y1 + (y2 - y1) * 0.5
+  return `M ${x1} ${y1} C ${x1} ${cy}, ${x2} ${cy}, ${x2} ${y2}`
 }
 
 function handleClick(agent) {
   if (agent?.name) router.push(`/agents/${encodeURIComponent(agent.name)}`)
 }
+
+// ── Zoom & pan ───────────────────────────────────────────────────────────
+// Same model as OrbitHero: zoom the content inside a fixed SVG stage and drag
+// to pan, so a busy graph can be enlarged for readability instead of just
+// shrinking to fit. Clamped so labels stay legible.
+const ZOOM_MIN = 0.6
+const ZOOM_MAX = 2.5
+const zoom = ref(1)
+const pan = ref({ x: 0, y: 0 })
+const stageRef = ref(null)
+const isDragging = ref(false)
+let dragStart = null
+
+function onWheel(e) {
+  e.preventDefault()
+  const delta = e.deltaY > 0 ? -0.1 : 0.1
+  zoom.value = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoom.value + delta))
+}
+function zoomIn() { zoom.value = Math.min(ZOOM_MAX, zoom.value + 0.2) }
+function zoomOut() { zoom.value = Math.max(ZOOM_MIN, zoom.value - 0.2) }
+function zoomReset() { zoom.value = 1; pan.value = { x: 0, y: 0 } }
+
+// Pointer px → SVG userspace: preserveAspectRatio meet ⇒ min(rectW/W, rectH/H).
+function stageScale() {
+  const rect = stageRef.value?.getBoundingClientRect()
+  if (!rect || !rect.width || !rect.height) return 1
+  return Math.min(rect.width / W.value, rect.height / H.value)
+}
+function onPointerDown(e) {
+  if (e.button !== 0) return
+  // Don't hijack clicks on a node or the zoom buttons.
+  if (e.target.closest('.flow-node, .zoom-controls')) return
+  isDragging.value = true
+  dragStart = { mx: e.clientX, my: e.clientY, px: pan.value.x, py: pan.value.y }
+  stageRef.value?.setPointerCapture?.(e.pointerId)
+}
+function onPointerMove(e) {
+  if (!isDragging.value || !dragStart) return
+  const s = stageScale() || 1
+  pan.value = {
+    x: dragStart.px + (e.clientX - dragStart.mx) / s,
+    y: dragStart.py + (e.clientY - dragStart.my) / s,
+  }
+}
+function onPointerUp(e) {
+  if (!isDragging.value) return
+  isDragging.value = false
+  dragStart = null
+  stageRef.value?.releasePointerCapture?.(e.pointerId)
+}
+const zoomTransform = computed(() =>
+  `translate(${pan.value.x} ${pan.value.y}) translate(${W.value / 2} ${H.value / 2}) scale(${zoom.value}) translate(${-W.value / 2} ${-H.value / 2})`,
+)
 </script>
 
 <template>
   <div class="flow-host">
-    <svg :viewBox="`0 0 ${W} ${H}`" class="flow-svg" preserveAspectRatio="xMidYMid meet">
+    <div class="flow-stage">
+    <svg
+      ref="stageRef"
+      :viewBox="`0 0 ${W} ${H}`"
+      class="flow-svg"
+      :class="{ 'is-dragging': isDragging }"
+      preserveAspectRatio="xMidYMid meet"
+      @wheel="onWheel"
+      @pointerdown="onPointerDown"
+      @pointermove="onPointerMove"
+      @pointerup="onPointerUp"
+      @pointerleave="onPointerUp"
+    >
       <defs>
         <linearGradient id="flow-grad" x1="0%" y1="0%" x2="100%" y2="0%">
           <stop offset="0%" stop-color="#6366F1" stop-opacity="0.45" />
@@ -111,16 +210,18 @@ function handleClick(agent) {
         </linearGradient>
       </defs>
 
-      <!-- Lane labels -->
-      <text :x="COL_X.root + NODE_W/2" y="22" class="lane-label">ORCHESTRATOR</text>
-      <text :x="COL_X.mid + NODE_W/2"  y="22" class="lane-label">STATIC + CARDS</text>
-      <text :x="COL_X.pm + NODE_W/2"   y="22" class="lane-label">TEAM PMs</text>
-      <text :x="COL_X.leaf + 80"       y="22" class="lane-label">TEAM MEMBERS</text>
+      <g :transform="zoomTransform">
+      <!-- Lane labels — centred above each top→bottom lane. Team lanes are
+           hidden when there are no teams so the canvas isn't half-empty. -->
+      <text :x="rootCx" :y="LANE_Y.root - 14" class="lane-label">{{ t('flowLegend.laneOrchestrator') }}</text>
+      <text :x="rootCx" :y="LANE_Y.mid - 14"  class="lane-label">{{ t('flowLegend.laneStaticCards') }}</text>
+      <text v-if="hasTeams" :x="rootCx" :y="LANE_Y.pm - 14"   class="lane-label">{{ t('flowLegend.laneTeamPms') }}</text>
+      <text v-if="hasTeams" :x="rootCx" :y="LANE_Y.leaf - 14" class="lane-label">{{ t('flowLegend.laneTeamMembers') }}</text>
 
-      <!-- Edges: root → mid -->
+      <!-- Edges: root → mid (conductor bottom-centre → mid top-centre) -->
       <path
         v-for="(node, i) in midNodesLaid" :key="`e-m-${i}`"
-        :d="bezier(COL_X.root + NODE_W, rootY, COL_X.mid, node.y)"
+        :d="bezier(rootCx, LANE_Y.root + NODE_H, node.x, node.y)"
         fill="none"
         :stroke="isActive(node.agent) ? 'url(#flow-grad)' : 'var(--border-strong)'"
         :stroke-width="edgeWeight(node.agent.tokenCount)"
@@ -130,7 +231,7 @@ function handleClick(agent) {
       <!-- Edges: root → team PMs -->
       <path
         v-for="(t, i) in teamsLaid" :key="`e-pm-${i}`"
-        :d="bezier(COL_X.root + NODE_W, rootY, COL_X.pm, t.pmY)"
+        :d="bezier(rootCx, LANE_Y.root + NODE_H, t.pmX, t.pmY)"
         fill="none"
         :stroke="isActive(t.team.pm) ? 'url(#flow-grad)' : 'var(--border-strong)'"
         stroke-width="3"
@@ -141,7 +242,7 @@ function handleClick(agent) {
       <template v-for="(t, i) in teamsLaid" :key="`e-mb-${i}`">
         <path
           v-for="(m, j) in t.members" :key="`e-${i}-${j}`"
-          :d="bezier(COL_X.pm + NODE_W, t.pmY, COL_X.leaf, m.y)"
+          :d="bezier(t.pmX, t.pmY + NODE_H, m.x, m.y)"
           fill="none"
           :stroke="isActive(m.agent) ? 'url(#flow-grad)' : 'var(--border-strong)'"
           stroke-width="1.5"
@@ -152,7 +253,7 @@ function handleClick(agent) {
       <!-- Conductor node -->
       <g
         v-if="conductor"
-        :transform="`translate(${COL_X.root}, ${rootY - NODE_H/2})`"
+        :transform="`translate(${rootCx - NODE_W/2}, ${LANE_Y.root})`"
         class="flow-node flow-conductor"
         tabindex="0"
         role="button"
@@ -169,7 +270,7 @@ function handleClick(agent) {
       <!-- Mid nodes -->
       <g
         v-for="(node, i) in midNodesLaid" :key="`mid-${i}`"
-        :transform="`translate(${node.x}, ${node.y - NODE_H/2})`"
+        :transform="`translate(${node.x - NODE_W/2}, ${node.y})`"
         class="flow-node"
         tabindex="0"
         role="button"
@@ -191,7 +292,7 @@ function handleClick(agent) {
       <!-- Team PMs -->
       <g
         v-for="(t, i) in teamsLaid" :key="`pm-${i}`"
-        :transform="`translate(${t.pmX}, ${t.pmY - NODE_H/2})`"
+        :transform="`translate(${t.pmX - NODE_W/2}, ${t.pmY})`"
         class="flow-node flow-team-pm"
         tabindex="0"
         role="button"
@@ -214,7 +315,7 @@ function handleClick(agent) {
       <template v-for="(t, i) in teamsLaid" :key="`m-${i}`">
         <g
           v-for="(m, j) in t.members" :key="`mm-${i}-${j}`"
-          :transform="`translate(${m.x}, ${m.y - MEMBER_H/2})`"
+          :transform="`translate(${m.x - MEMBER_W/2}, ${m.y})`"
           class="flow-node flow-member"
           tabindex="0"
           role="button"
@@ -233,15 +334,23 @@ function handleClick(agent) {
           <text x="14" y="34" class="node-meta">{{ truncate(m.agent.model || '—', 22) }}</text>
         </g>
       </template>
+      </g>
     </svg>
 
+      <div class="zoom-controls" :aria-label="t('flowLegend.zoomControls')">
+        <button class="zoom-btn" type="button" @click="zoomOut" :disabled="zoom <= ZOOM_MIN" :title="t('flowLegend.zoomOut')">−</button>
+        <button class="zoom-btn zoom-reset" type="button" @click="zoomReset" :title="t('flowLegend.zoomReset', { pct: Math.round(zoom * 100) })">{{ Math.round(zoom * 100) }}%</button>
+        <button class="zoom-btn" type="button" @click="zoomIn" :disabled="zoom >= ZOOM_MAX" :title="t('flowLegend.zoomIn')">+</button>
+      </div>
+    </div>
+
     <div class="flow-legend">
-      <span class="mono-label">LEGEND</span>
-      <span><span class="lk lk-builtin" />builtin</span>
-      <span><span class="lk lk-card" />card</span>
-      <span><span class="lk lk-pm" />team PM</span>
-      <span><span class="lk lk-member" />team member</span>
-      <span class="legend-tip">edge thickness = token flow · brighter = active</span>
+      <span class="mono-label">{{ t('flowLegend.legend') }}</span>
+      <span><span class="lk lk-builtin" />{{ t('flowLegend.builtin') }}</span>
+      <span><span class="lk lk-card" />{{ t('flowLegend.card') }}</span>
+      <span><span class="lk lk-pm" />{{ t('flowLegend.teamPm') }}</span>
+      <span><span class="lk lk-member" />{{ t('flowLegend.teamMember') }}</span>
+      <span class="legend-tip">{{ t('flowLegend.tip') }}</span>
     </div>
   </div>
 </template>
@@ -256,13 +365,62 @@ function handleClick(agent) {
   flex-direction: column;
   gap: 8px;
 }
+.flow-stage {
+  position: relative;
+}
 .flow-svg {
+  /* Fixed-height viewport (like OrbitHero) so the stage is always a
+     comfortable canvas; preserveAspectRatio="meet" fits + centres the
+     content inside it. Letting height follow the viewBox aspect collapsed a
+     wide single-row graph into a thin strip. */
   width: 100%;
-  height: auto;
-  max-height: 720px;
+  height: clamp(440px, 60vh, 660px);
   display: block;
   background: var(--bg-0);
   border-radius: var(--r-md);
+  cursor: grab;
+  touch-action: none; /* let pointer drag-pan work on touch without scrolling */
+}
+.flow-svg.is-dragging {
+  cursor: grabbing;
+}
+
+.zoom-controls {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 4px;
+  box-shadow: 0 4px 12px -6px rgba(0, 0, 0, 0.4);
+}
+.zoom-btn {
+  min-width: 28px;
+  height: 26px;
+  padding: 0 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: background 0.15s var(--ease-out), color 0.15s var(--ease-out);
+}
+.zoom-btn:hover:not(:disabled) {
+  background: var(--bg-3);
+  color: var(--text);
+}
+.zoom-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.zoom-reset {
+  font-variant-numeric: tabular-nums;
 }
 
 .lane-label {

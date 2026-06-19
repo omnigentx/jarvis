@@ -16,7 +16,9 @@
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useVoiceSession } from '../../composables/useVoiceSession.js'
+import { useLang } from '../../composables/useLang'
 
+const { t } = useLang()
 const session = useVoiceSession()
 const route = useRoute()
 const router = useRouter()
@@ -31,13 +33,13 @@ const visible = computed(() => {
 
 const statusInfo = computed(() => {
   switch (session.status.value) {
-    case 'connecting':   return { label: 'Connecting…', color: '#f59e0b', dot: true }
-    case 'loading_stt':  return { label: 'Loading STT…', color: '#f59e0b', dot: true }
-    case 'listening':    return { label: 'Listening',   color: '#10b981', dot: true }
-    case 'thinking':     return { label: 'Thinking…',   color: '#3b82f6', dot: true, spin: true }
-    case 'speaking':     return { label: 'Speaking',    color: '#8b5cf6', dot: true, spin: true }
-    case 'error':        return { label: 'Error',       color: '#ef4444', dot: true }
-    default:             return { label: 'Off',         color: '#555872', dot: false }
+    case 'connecting':   return { label: t('voiceIndicator.connecting'), color: '#f59e0b', dot: true }
+    case 'loading_stt':  return { label: t('voiceIndicator.loadingStt'), color: '#f59e0b', dot: true }
+    case 'listening':    return { label: t('voiceIndicator.listening'),  color: '#10b981', dot: true }
+    case 'thinking':     return { label: t('voiceIndicator.thinking'),   color: '#3b82f6', dot: true, spin: true }
+    case 'speaking':     return { label: t('voiceIndicator.speaking'),   color: '#8b5cf6', dot: true, spin: true }
+    case 'error':        return { label: t('voiceIndicator.error'),      color: '#ef4444', dot: true }
+    default:             return { label: t('voiceIndicator.off'),        color: '#555872', dot: false }
   }
 })
 
@@ -64,7 +66,7 @@ function handleBargeIn() {
       <button
         class="indicator-body"
         type="button"
-        title="Open chat"
+        :title="t('voiceIndicator.openChat')"
         @click="goToChat"
       >
         <span class="dot" :class="{ pulse: statusInfo.dot, spinning: statusInfo.spin }" :style="{ background: statusInfo.color }" />
@@ -78,7 +80,7 @@ function handleBargeIn() {
         v-if="canInterrupt"
         type="button"
         class="indicator-action interrupt"
-        title="Interrupt agent"
+        :title="t('voiceIndicator.interrupt')"
         @click="handleBargeIn"
       >
         ⏸
@@ -87,7 +89,7 @@ function handleBargeIn() {
       <button
         type="button"
         class="indicator-action stop"
-        title="Stop hands-free"
+        :title="t('voiceIndicator.stop')"
         @click="handleStop"
       >
         ✕

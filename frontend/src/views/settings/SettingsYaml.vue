@@ -23,8 +23,10 @@ import { EditorState } from '@codemirror/state'
 import { defaultKeymap, indentWithTab, history, historyKeymap } from '@codemirror/commands'
 import { apiFetch, ApiError } from '../../api'
 import { useConfirm } from '../../composables/useConfirm'
+import { useLang } from '../../composables/useLang'
 
 const { confirm } = useConfirm()
+const { t } = useLang()
 
 const files = ref([])
 const activeName = ref(null)
@@ -90,8 +92,8 @@ const groupedFiles = computed(() => {
   }
   return [
     { label: 'FAST-AGENT', items: core },
-    { label: 'SECRETS', items: secrets },
-    { label: 'TEAM TEMPLATES', items: teamTemplates },
+    { label: t('settings.yaml.groupSecrets'), items: secrets },
+    { label: t('settings.yaml.groupTeamTemplates'), items: teamTemplates },
   ].filter((g) => g.items.length)
 })
 
@@ -118,7 +120,7 @@ async function refreshList() {
       ...f,
       kind: 'team-template',
       // Match the chrome description used by /api/yaml/files
-      description: f.description || `Team template — ${f.display_name}`,
+      description: f.description || t('settings.yaml.teamTemplateDesc', { name: f.display_name }),
       // Factory templates are never secret files; surfaces the lock-icon
       // logic that already exists in the file tree.
       is_secret_file: false,
@@ -150,9 +152,9 @@ async function selectFile(file) {
   if (targetKey === currentKey) return
   if (dirty.value) {
     const ok = await confirm({
-      title: 'Discard unsaved changes',
-      message: `You have ${dirtyLineCount.value} edited line(s) in the current file. Discard and switch?`,
-      confirmText: 'Discard & Switch',
+      title: t('settings.yaml.discardTitle'),
+      message: t('settings.yaml.discardMsg', { n: dirtyLineCount.value }),
+      confirmText: t('settings.yaml.discardConfirm'),
       variant: 'warning',
     })
     if (!ok) return
@@ -193,12 +195,12 @@ async function onSave() {
     savedContent.value = fresh.content
     exists.value = true
     sizeBytes.value = res?.size ?? fresh.size
-    successMsg.value = `${fresh.filename} saved (${sizeBytes.value} bytes).`
+    successMsg.value = t('settings.yaml.savedBytes', { filename: fresh.filename, bytes: sizeBytes.value })
     if (target.kind === 'team-template') {
       // Surface the decision-2026-05-17 invariant inline: factory yaml edits
       // are NEVER auto-applied to running teams. The user opens Running
       // Templates → <session> → "Reset role to yaml" / "Reload" to apply.
-      successMsg.value += ' Edits to factory yaml do NOT touch running teams — open Running Templates to apply.'
+      successMsg.value += ' ' + t('settings.yaml.savedTeamTemplateNote')
     }
     refreshList().catch(() => {})
   } catch (err) {
@@ -212,9 +214,9 @@ async function onRevert() {
   if (!dirty.value) return
   if (
     !(await confirm({
-      title: 'Revert changes',
-      message: 'Discard unsaved changes and revert to last saved content?',
-      confirmText: 'Revert',
+      title: t('settings.yaml.revertTitle'),
+      message: t('settings.yaml.revertMsg'),
+      confirmText: t('settings.yaml.revert'),
       variant: 'warning',
     }))
   ) {
@@ -227,7 +229,7 @@ function _friendly(err) {
   if (err instanceof ApiError && err.body && typeof err.body === 'object') {
     const detail = err.body.detail
     if (detail && typeof detail === 'object') {
-      return `${detail.message || 'Save failed'} — ${detail.error || ''}`.trim()
+      return `${detail.message || t('settings.yaml.saveFailed')} — ${detail.error || ''}`.trim()
     }
     if (typeof detail === 'string') return detail
   }
@@ -263,7 +265,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   <div class="yaml-wrap">
     <!-- File tree -->
     <aside class="file-tree">
-      <div class="tree-eyebrow">CONFIG FILES</div>
+      <div class="tree-eyebrow">{{ t('settings.yaml.configFiles') }}</div>
       <template v-for="group in groupedFiles" :key="group.label">
         <div class="tree-section">{{ group.label }}</div>
         <button
@@ -282,16 +284,16 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
             <polyline points="14 2 14 8 20 8" />
           </svg>
           <code class="name">{{ f.filename }}</code>
-          <span v-if="f.is_secret_file" class="lock-icon" title="Contains secrets">🔒</span>
+          <span v-if="f.is_secret_file" class="lock-icon" :title="t('settings.yaml.containsSecrets')">🔒</span>
           <span v-if="activeName === f.name && activeKind === f.kind && dirty" class="dirty-dot">●</span>
-          <span v-if="!f.exists" class="new-tag">NEW</span>
+          <span v-if="!f.exists" class="new-tag">{{ t('settings.yaml.newTag') }}</span>
         </button>
       </template>
 
       <div class="tree-spacer" />
       <div class="safety-note">
-        <div class="tree-section" style="padding: 0 0 4px;">SAFETY</div>
-        Validated with <code>yaml.safe_load</code>; <code>.bak</code> backup written before each save.
+        <div class="tree-section" style="padding: 0 0 4px;">{{ t('settings.yaml.safetyEyebrow') }}</div>
+        {{ t('settings.yaml.safetyPre') }} <code>yaml.safe_load</code>; <code>.bak</code> {{ t('settings.yaml.safetyPost') }}
       </div>
     </aside>
 
@@ -309,15 +311,15 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
           <span class="chrome-desc">{{ activeFile.description }}</span>
         </div>
         <div class="chrome-actions">
-          <span v-if="dirty" class="status-pill dirty">● UNSAVED · {{ dirtyLineCount }} LINE{{ dirtyLineCount === 1 ? '' : 'S' }}</span>
-          <span v-else-if="exists && activeName" class="status-pill clean">✓ SAVED</span>
+          <span v-if="dirty" class="status-pill dirty">● {{ t('settings.yaml.unsavedLines', { n: dirtyLineCount }) }}</span>
+          <span v-else-if="exists && activeName" class="status-pill clean">✓ {{ t('settings.yaml.savedPill') }}</span>
           <button
             type="button"
             class="btn ghost"
             :disabled="!dirty || saving"
             @click="onRevert"
           >
-            Revert
+            {{ t('settings.yaml.revert') }}
           </button>
           <button
             type="button"
@@ -325,7 +327,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
             :disabled="!dirty || saving || !activeName"
             @click="onSave"
           >
-            {{ saving ? 'Saving…' : 'Save' }}
+            {{ saving ? t('settings.yaml.saving') : t('common.save') }}
             <kbd v-if="!saving" class="shortcut">⌘S</kbd>
           </button>
         </div>
@@ -333,34 +335,34 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
       <!-- Editor body -->
       <div class="editor-shell">
-        <div v-if="loading" class="overlay">Loading…</div>
+        <div v-if="loading" class="overlay">{{ t('settings.yaml.loading') }}</div>
         <Codemirror
           v-else-if="activeName"
           v-model="content"
           :extensions="extensions"
           :style="{ height: '100%' }"
-          placeholder="File is empty. Start typing YAML…"
+          :placeholder="t('settings.yaml.editorPlaceholder')"
         />
-        <div v-else class="overlay">Select a file to edit.</div>
+        <div v-else class="overlay">{{ t('settings.yaml.selectFile') }}</div>
       </div>
 
       <!-- Footer status bar -->
       <footer class="editor-footer">
         <span v-if="error" class="msg error">
           <span class="msg-icon">✕</span>
-          <strong>YAML parse error</strong> — {{ error }}
+          <strong>{{ t('settings.yaml.parseError') }}</strong> — {{ error }}
         </span>
         <span v-else-if="successMsg" class="msg ok">
           <span class="msg-icon">✓</span> {{ successMsg }}
         </span>
         <span v-else-if="dirty" class="msg dirty">
-          <span class="msg-icon">●</span> {{ dirtyLineCount }} line edited · ⌘S to save · backend hot-reloads
+          <span class="msg-icon">●</span> {{ t('settings.yaml.footerDirty', { n: dirtyLineCount }) }}
         </span>
         <span v-else-if="activeName" class="msg muted">
-          {{ exists ? `${sizeBytes} bytes on disk · backup at ${activeFile?.filename}.bak` : 'File does not exist yet — save to create it.' }}
+          {{ exists ? t('settings.yaml.footerSaved', { bytes: sizeBytes, backup: activeFile?.filename }) : t('settings.yaml.footerNotExist') }}
         </span>
         <span class="meta-pill">
-          YAML · UTF-8 · LF · {{ lineCount }} lines
+          {{ t('settings.yaml.metaPill', { n: lineCount }) }}
         </span>
       </footer>
     </section>

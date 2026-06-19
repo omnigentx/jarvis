@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useAgentsStore } from '../stores/agents'
 import { apiFetch } from '../api'
 import { useConfirm } from '../composables/useConfirm'
+import { useLang } from '../composables/useLang'
 import StatusBadge from '../components/StatusBadge.vue'
 import MarkdownRenderer from '../components/MarkdownRenderer.vue'
 import SkillEditorModal from '../components/agent/SkillEditorModal.vue'
@@ -15,6 +16,7 @@ import {
 } from '../components/agent/agentMeta.js'
 
 const { confirm } = useConfirm()
+const { t } = useLang()
 
 const route = useRoute()
 const router = useRouter()
@@ -91,15 +93,15 @@ const _stopRuntimeWatch = watch(
 )
 onUnmounted(() => _stopRuntimeWatch())
 
-const tabs = [
-  { id: 'overview', label: 'Overview' },
-  { id: 'skills', label: 'Skills' },
-  { id: 'servers', label: 'MCP Servers' },
-  { id: 'instruction', label: 'Instruction' },
-  { id: 'context', label: 'Context Window' },
-  { id: 'versions', label: 'Context Versions' },
-  { id: 'activity', label: 'History' },
-]
+const tabs = computed(() => [
+  { id: 'overview', label: t('agentDetail.tabOverview') },
+  { id: 'skills', label: t('agentDetail.tabSkills') },
+  { id: 'servers', label: t('agentDetail.tabServers') },
+  { id: 'instruction', label: t('agentDetail.tabInstruction') },
+  { id: 'context', label: t('agentDetail.tabContext') },
+  { id: 'versions', label: t('agentDetail.tabVersions') },
+  { id: 'activity', label: t('agentDetail.tabHistory') },
+])
 
 // Merge REST detail with live SSE state
 const agent = computed(() => {
@@ -317,7 +319,12 @@ function formatTokens(n) {
 }
 
 function triggerLabel(trigger) {
-  const map = { task_complete: '✅ Task Complete', idle: '💤 Idle', error: '❌ Error', manual: '🔧 Manual' }
+  const map = {
+    task_complete: `✅ ${t('agentDetail.triggerTaskComplete')}`,
+    idle: `💤 ${t('agentDetail.triggerIdle')}`,
+    error: `❌ ${t('agentDetail.triggerError')}`,
+    manual: `🔧 ${t('agentDetail.triggerManual')}`,
+  }
   return map[trigger] || trigger
 }
 
@@ -328,9 +335,9 @@ function roleClass(role) {
 }
 
 function roleLabel(role) {
-  if (role === 'user' || role === 'Role.USER') return 'User'
-  if (role === 'assistant' || role === 'Role.ASSISTANT') return 'Assistant'
-  return 'System'
+  if (role === 'user' || role === 'Role.USER') return t('agentDetail.roleUser')
+  if (role === 'assistant' || role === 'Role.ASSISTANT') return t('agentDetail.roleAssistant')
+  return t('agentDetail.roleSystem')
 }
 
 function truncateContent(content, maxLen = 300) {
@@ -459,24 +466,17 @@ async function attachSkill(skillName) {
   if (attachBusy.value) return
   if (isBuiltinAgent.value) {
     const proceed = await confirm({
-      title: `Attach to ${agentName.value}?`,
-      message:
-        `${agentName.value} is defined in code (agent.py). Attaching ` +
-        `'${skillName}' will only apply at runtime and revert when the ` +
-        `backend restarts unless you also add it to ${agentName.value}'s ` +
-        `get_skills(...) call.`,
-      confirmText: 'Attach (runtime only)',
+      title: t('agentDetail.attachConfirmTitle', { name: agentName.value }),
+      message: t('agentDetail.attachBuiltinMsg', { name: agentName.value, skill: skillName }),
+      confirmText: t('agentDetail.attachRuntimeOnly'),
       variant: 'warning',
     })
     if (!proceed) return
   } else if (isSpawnedAgent.value) {
     const proceed = await confirm({
-      title: `Attach to ${agentName.value}?`,
-      message:
-        `${agentName.value} is a spawned agent. Attaching '${skillName}' ` +
-        `only affects the live instance — it will be lost when the agent ` +
-        `stops. Edit the team template to persist this change across spawns.`,
-      confirmText: 'Attach (runtime only)',
+      title: t('agentDetail.attachConfirmTitle', { name: agentName.value }),
+      message: t('agentDetail.attachSpawnedMsg', { name: agentName.value, skill: skillName }),
+      confirmText: t('agentDetail.attachRuntimeOnly'),
       variant: 'warning',
     })
     if (!proceed) return
@@ -489,13 +489,13 @@ async function attachSkill(skillName) {
       { method: 'PUT' },
     )
     attachToast.value = res.persisted
-      ? `Attached '${skillName}'.`
-      : `Attached '${skillName}' — runtime only, reverts on restart.`
+      ? t('agentDetail.attachedPersisted', { skill: skillName })
+      : t('agentDetail.attachedRuntime', { skill: skillName })
     attachPickerOpen.value = false
     await Promise.all([fetchSkillsMeta(), reloadAgentDetail()])
     setTimeout(() => (attachToast.value = ''), 4000)
   } catch (err) {
-    attachToast.value = `Attach failed: ${err?.body?.detail?.message || err?.message || String(err)}`
+    attachToast.value = t('agentDetail.attachFailed', { error: err?.body?.detail?.message || err?.message || String(err) })
   } finally {
     attachBusy.value = false
   }
@@ -504,16 +504,16 @@ async function attachSkill(skillName) {
 async function detachSkill(skillName) {
   let message
   if (isAgentCardBased.value) {
-    message = `'${skillName}' will be removed from ${agentName.value}. The skill itself stays in the library.`
+    message = t('agentDetail.detachCardMsg', { name: agentName.value, skill: skillName })
   } else if (isSpawnedAgent.value) {
-    message = `${agentName.value} is a spawned agent. Detaching only affects the live instance; '${skillName}' will reattach on the next spawn unless you also edit the team template.`
+    message = t('agentDetail.detachSpawnedMsg', { name: agentName.value, skill: skillName })
   } else {
-    message = `${agentName.value} is code-based. Detaching only applies at runtime; the skill will reattach on next backend restart unless you remove it from agent.py.`
+    message = t('agentDetail.detachCodeMsg', { name: agentName.value })
   }
   const proceed = await confirm({
-    title: `Detach from ${agentName.value}?`,
+    title: t('agentDetail.detachConfirmTitle', { name: agentName.value }),
     message,
-    confirmText: 'Detach',
+    confirmText: t('agentDetail.detach'),
     variant: 'warning',
   })
   if (!proceed) return
@@ -524,7 +524,7 @@ async function detachSkill(skillName) {
     )
     await Promise.all([fetchSkillsMeta(), reloadAgentDetail()])
   } catch (err) {
-    attachToast.value = `Detach failed: ${err?.body?.detail?.message || err?.message || String(err)}`
+    attachToast.value = t('agentDetail.detachFailed', { error: err?.body?.detail?.message || err?.message || String(err) })
     setTimeout(() => (attachToast.value = ''), 4000)
   }
 }
@@ -635,7 +635,7 @@ function historyBadgeClass(type) {
 }
 
 function historyBadgeLabel(type) {
-  if (!type) return 'event'
+  if (!type) return t('agentDetail.eventFallback')
   if (type.startsWith('meeting_')) return type.replace('meeting_', '📋 ')
   if (type.startsWith('inbox_')) return type.replace('inbox_', '📨 ')
   if (type.startsWith('spawn_')) return type.replace('spawn_', '🚀 ')
@@ -649,7 +649,7 @@ function historyBadgeLabel(type) {
 
     <!-- Loading -->
     <div v-if="isLoading" class="loading-state">
-      <div class="loading-text">Loading agent details...</div>
+      <div class="loading-text">{{ t('agentDetail.loadingDetails') }}</div>
     </div>
 
     <template v-else-if="agent">
@@ -670,20 +670,20 @@ function historyBadgeLabel(type) {
               <span v-if="agent.is_default" class="badge badge-master">Conductor</span>
             </div>
             <p class="header-meta">
-              {{ agent.description || 'AI Agent' }}
+              {{ agent.description || t('agentDetail.aiAgent') }}
               · {{ agent.type }}
               · {{ agent.model || 'openai.gpt-4o-mini' }}
             </p>
           </div>
         </div>
         <div class="header-actions">
-          <button class="btn btn-outline" disabled>Restart</button>
+          <button class="btn btn-outline" disabled>{{ t('agentDetail.restart') }}</button>
           <router-link
             v-if="agent.is_default"
             :to="{ path: '/agents/' + agent.name + '/inject' }"
             class="btn btn-primary"
           >
-            Inject Prompt
+            {{ t('agentDetail.injectPrompt') }}
           </router-link>
         </div>
       </div>
@@ -706,19 +706,19 @@ function historyBadgeLabel(type) {
         <!-- Stats Row (full width) -->
         <div class="stats-row">
           <div class="stat-card">
-            <span class="stat-label">Model</span>
+            <span class="stat-label">{{ t('agentDetail.statModel') }}</span>
             <span class="stat-value stat-green">{{ agent.model?.includes('.') ? agent.model.slice(agent.model.indexOf('.') + 1) : (agent.model || '—') }}</span>
           </div>
           <div class="stat-card">
-            <span class="stat-label">Type</span>
+            <span class="stat-label">{{ t('agentDetail.statType') }}</span>
             <span class="stat-value stat-blue">{{ agent.type }}</span>
           </div>
           <div class="stat-card">
-            <span class="stat-label">Skills</span>
+            <span class="stat-label">{{ t('agentDetail.statSkills') }}</span>
             <span class="stat-value stat-purple">{{ agent.skills?.length || 0 }}</span>
           </div>
           <div class="stat-card">
-            <span class="stat-label">Servers</span>
+            <span class="stat-label">{{ t('agentDetail.statServers') }}</span>
             <span class="stat-value stat-orange">{{ agent.servers?.length || 0 }}</span>
           </div>
         </div>
@@ -731,18 +731,18 @@ function historyBadgeLabel(type) {
             <div class="panel" v-if="runtimePending || agent.skills?.length">
               <div class="panel-header">
                 <h3>
-                  Skills ({{ agent.skills?.length || 0 }})
-                  <span v-if="failedSkillCount" class="header-failed-pill" :title="`${failedSkillCount} skill(s) failed to load`">
-                    {{ failedSkillCount }} failed
+                  {{ t('agentDetail.skillsCount', { n: agent.skills?.length || 0 }) }}
+                  <span v-if="failedSkillCount" class="header-failed-pill" :title="t('agentDetail.skillsFailedTitle', { n: failedSkillCount })">
+                    {{ t('agentDetail.nFailed', { n: failedSkillCount }) }}
                   </span>
                 </h3>
-                <button class="view-all-link" @click="activeTab = 'skills'">View All →</button>
+                <button class="view-all-link" @click="activeTab = 'skills'">{{ t('agentDetail.viewAll') }}</button>
               </div>
               <div v-if="runtimePending" class="runtime-pending-skeleton">
                 <div class="skeleton-row" />
                 <div class="skeleton-row" />
                 <div class="skeleton-row" />
-                <span class="runtime-pending-label">Waiting for agent runtime…</span>
+                <span class="runtime-pending-label">{{ t('agentDetail.waitingRuntime') }}</span>
               </div>
               <div v-else class="skill-list">
                 <div
@@ -750,13 +750,13 @@ function historyBadgeLabel(type) {
                   :key="skill.name"
                   class="skill-item"
                   :class="`skill-status-${skill.status || 'loaded'}`"
-                  :title="skill.status === 'failed' ? `${skill.name} was requested but did not load` : ''"
+                  :title="skill.status === 'failed' ? t('agentDetail.skillNotLoadedTitle', { name: skill.name }) : ''"
                 >
                   <span class="skill-icon">⚡</span>
                   <div class="skill-info">
                     <span class="skill-name">
                       {{ skill.name }}
-                      <span v-if="skill.status === 'failed'" class="badge badge-failed">● Failed</span>
+                      <span v-if="skill.status === 'failed'" class="badge badge-failed">● {{ t('agentDetail.failed') }}</span>
                     </span>
                     <span v-if="skill.description" class="skill-desc">{{ skill.description }}</span>
                   </div>
@@ -767,7 +767,7 @@ function historyBadgeLabel(type) {
             <!-- Child Agents -->
             <div class="panel" v-if="agent.child_agents?.length">
               <div class="panel-header">
-                <h3>Sub-agents ({{ agent.child_agents.length }})</h3>
+                <h3>{{ t('agentDetail.subAgentsCount', { n: agent.child_agents.length }) }}</h3>
               </div>
               <div class="server-list">
                 <router-link
@@ -793,18 +793,18 @@ function historyBadgeLabel(type) {
             <div class="panel" v-if="runtimePending || serverTools.length">
               <div class="panel-header">
                 <h3>
-                  MCP Servers ({{ serverTools.length }})
-                  <span v-if="failedServerCount" class="header-failed-pill" :title="`${failedServerCount} server(s) failed to attach`">
-                    {{ failedServerCount }} failed
+                  {{ t('agentDetail.mcpServersCount', { n: serverTools.length }) }}
+                  <span v-if="failedServerCount" class="header-failed-pill" :title="t('agentDetail.serversFailedTitle', { n: failedServerCount })">
+                    {{ t('agentDetail.nFailed', { n: failedServerCount }) }}
                   </span>
                 </h3>
-                <button class="view-all-link" @click="activeTab = 'servers'">View All →</button>
+                <button class="view-all-link" @click="activeTab = 'servers'">{{ t('agentDetail.viewAll') }}</button>
               </div>
               <div v-if="runtimePending" class="runtime-pending-skeleton">
                 <div class="skeleton-row" />
                 <div class="skeleton-row" />
                 <div class="skeleton-row" />
-                <span class="runtime-pending-label">Waiting for agent runtime…</span>
+                <span class="runtime-pending-label">{{ t('agentDetail.waitingRuntime') }}</span>
               </div>
               <div v-else class="server-list">
                 <div
@@ -816,8 +816,8 @@ function historyBadgeLabel(type) {
                 >
                   <div class="server-icon">🔌</div>
                   <span class="server-name">{{ srv.name }}</span>
-                  <span v-if="srv.connected" class="badge badge-connected">● Connected</span>
-                  <span v-else class="badge badge-failed">● Failed</span>
+                  <span v-if="srv.connected" class="badge badge-connected">● {{ t('agentDetail.connected') }}</span>
+                  <span v-else class="badge badge-failed">● {{ t('agentDetail.failed') }}</span>
                 </div>
               </div>
             </div>
@@ -825,8 +825,8 @@ function historyBadgeLabel(type) {
             <!-- Instruction Preview -->
             <div class="panel" v-if="agent.instruction">
               <div class="panel-header">
-                <h3>Instruction (preview)</h3>
-                <button class="view-all-link" @click="activeTab = 'instruction'">Expand →</button>
+                <h3>{{ t('agentDetail.instructionPreview') }}</h3>
+                <button class="view-all-link" @click="activeTab = 'instruction'">{{ t('agentDetail.expand') }}</button>
               </div>
               <div class="instruction-preview">
                 <!-- See INSTRUCTION TAB note: render as text so XML tags
@@ -834,7 +834,7 @@ function historyBadgeLabel(type) {
                 <MarkdownRenderer :content="instructionPreview" content-type="text" />
               </div>
               <div v-if="hasMoreInstruction" class="instruction-more">
-                … {{ instructionLineCount - 12 }} more lines
+                … {{ t('agentDetail.moreLines', { n: instructionLineCount - 12 }) }}
               </div>
             </div>
           </div>
@@ -844,21 +844,18 @@ function historyBadgeLabel(type) {
       <!-- ===== SKILLS TAB ===== -->
       <div v-else-if="activeTab === 'skills'" class="animate-fade-in">
         <div v-if="isBuiltinAgent" class="code-agent-banner">
-          <strong>This agent is defined in code (agent.py).</strong>
-          Attach/detach changes apply at runtime — they revert on backend
-          restart unless you also edit
-          <code>get_skills(...)</code> in agent.py.
+          <strong>{{ t('agentDetail.builtinBannerStrong') }}</strong>
+          {{ t('agentDetail.builtinBannerBody1') }}
+          <code>get_skills(...)</code> {{ t('agentDetail.builtinBannerBody2') }}
         </div>
         <div v-else-if="isSpawnedAgent" class="code-agent-banner">
-          <strong>This is a spawned agent.</strong>
-          Skill changes here only affect the live instance — when the agent
-          stops or the team is torn down, all attachments are lost. Edit the
-          team template to make changes persistent across spawns.
+          <strong>{{ t('agentDetail.spawnedBannerStrong') }}</strong>
+          {{ t('agentDetail.spawnedBannerBody') }}
         </div>
         <p v-if="attachToast" class="attach-toast">{{ attachToast }}</p>
         <div class="skills-tab-toolbar">
           <p class="skills-tab-hint">
-            Skills are shared across agents. Editing one updates every agent that references it.
+            {{ t('agentDetail.skillsSharedHint') }}
           </p>
           <div class="skills-tab-actions">
             <div class="attach-wrap">
@@ -866,10 +863,10 @@ function historyBadgeLabel(type) {
                 class="btn-secondary-skill"
                 @click="attachPickerOpen = !attachPickerOpen"
                 type="button"
-              >+ Attach existing</button>
+              >{{ t('agentDetail.attachExisting') }}</button>
               <div v-if="attachPickerOpen" class="attach-menu" @click.stop>
                 <div v-if="!attachableSkills.length" class="attach-empty">
-                  All available skills are already attached.
+                  {{ t('agentDetail.allSkillsAttached') }}
                 </div>
                 <button
                   v-for="s in attachableSkills"
@@ -880,7 +877,7 @@ function historyBadgeLabel(type) {
                 >
                   <span class="attach-skill-name">
                     {{ s.name }}
-                    <span v-if="s.is_builtin" class="skill-builtin-badge">Built-in</span>
+                    <span v-if="s.is_builtin" class="skill-builtin-badge">{{ t('agentDetail.builtin') }}</span>
                   </span>
                 </button>
               </div>
@@ -890,7 +887,7 @@ function historyBadgeLabel(type) {
                 <line x1="12" y1="5" x2="12" y2="19"/>
                 <line x1="5" y1="12" x2="19" y2="12"/>
               </svg>
-              New skill
+              {{ t('agentDetail.newSkill') }}
             </button>
           </div>
         </div>
@@ -898,7 +895,7 @@ function historyBadgeLabel(type) {
           <div class="skeleton-row" />
           <div class="skeleton-row" />
           <div class="skeleton-row" />
-          <span class="runtime-pending-label">Waiting for agent runtime to report which skills it actually loaded…</span>
+          <span class="runtime-pending-label">{{ t('agentDetail.waitingSkills') }}</span>
         </div>
         <div v-else-if="agent.skills?.length" class="accordion-list">
           <div
@@ -924,13 +921,13 @@ function historyBadgeLabel(type) {
                     <span
                       v-if="hasSkillMeta(skill.name) && isSkillBuiltin(skill.name)"
                       class="skill-builtin-badge"
-                      title="Ships with Jarvis. Editable, but cannot be deleted."
-                    >Built-in</span>
+                      :title="t('agentDetail.builtinSkillTitle')"
+                    >{{ t('agentDetail.builtin') }}</span>
                     <span
                       v-if="skill.status === 'failed'"
                       class="badge badge-failed"
-                      title="The agent requested this skill but it failed to load (missing file, parse error, or wrong skills dir). It is NOT injected into the agent's prompt."
-                    >● Failed</span>
+                      :title="t('agentDetail.skillFailedTitle')"
+                    >● {{ t('agentDetail.failed') }}</span>
                   </span>
                   <span v-if="skill.description" class="skill-header-preview">
                     {{ skill.description }}
@@ -942,8 +939,8 @@ function historyBadgeLabel(type) {
                   class="skill-action-btn"
                   type="button"
                   @click.stop="openEditSkill(skill.name)"
-                  title="Edit skill"
-                  aria-label="Edit skill"
+                  :title="t('agentDetail.editSkill')"
+                  :aria-label="t('agentDetail.editSkill')"
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
                     <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
@@ -954,8 +951,8 @@ function historyBadgeLabel(type) {
                   class="skill-action-btn"
                   type="button"
                   @click.stop="detachSkill(skill.name)"
-                  :title="`Detach from ${agentName}`"
-                  aria-label="Detach skill from this agent"
+                  :title="t('agentDetail.detachConfirmTitle', { name: agentName })"
+                  :aria-label="t('agentDetail.detachSkillAria')"
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
                     <path d="M18 6L6 18M6 6l12 12"/>
@@ -966,8 +963,8 @@ function historyBadgeLabel(type) {
                   type="button"
                   @click.stop="openDeleteSkill(skill.name)"
                   :disabled="isSkillBuiltin(skill.name)"
-                  :title="!hasSkillMeta(skill.name) ? 'Loading skill metadata…' : (isSkillBuiltin(skill.name) ? 'Built-in skills cannot be deleted' : 'Delete skill from library')"
-                  :aria-label="isSkillBuiltin(skill.name) ? 'Built-in skill, cannot delete' : 'Delete skill'"
+                  :title="!hasSkillMeta(skill.name) ? t('agentDetail.loadingSkillMeta') : (isSkillBuiltin(skill.name) ? t('agentDetail.builtinCannotDelete') : t('agentDetail.deleteSkillFromLibrary'))"
+                  :aria-label="isSkillBuiltin(skill.name) ? t('agentDetail.builtinCannotDeleteAria') : t('agentDetail.deleteSkill')"
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
                     <polyline points="3 6 5 6 21 6"/>
@@ -978,7 +975,7 @@ function historyBadgeLabel(type) {
                   class="skill-action-btn"
                   type="button"
                   @click.stop="toggleSkill(skill.name)"
-                  :aria-label="expandedSkills[skill.name] ? 'Collapse' : 'Expand'"
+                  :aria-label="expandedSkills[skill.name] ? t('agentDetail.collapse') : t('agentDetail.expandAria')"
                 >
                   <span
                     class="accordion-chevron"
@@ -999,8 +996,8 @@ function historyBadgeLabel(type) {
           </div>
         </div>
         <div v-else class="empty-state">
-          No skills attached to this agent.
-          <button class="empty-cta" @click="openCreateSkill">Create one →</button>
+          {{ t('agentDetail.noSkillsAttached') }}
+          <button class="empty-cta" @click="openCreateSkill">{{ t('agentDetail.createOne') }}</button>
         </div>
       </div>
 
@@ -1010,7 +1007,7 @@ function historyBadgeLabel(type) {
           <div class="skeleton-row" />
           <div class="skeleton-row" />
           <div class="skeleton-row" />
-          <span class="runtime-pending-label">Waiting for agent runtime to report which MCP servers actually attached…</span>
+          <span class="runtime-pending-label">{{ t('agentDetail.waitingServers') }}</span>
         </div>
         <div v-else-if="serverTools.length" class="accordion-list">
           <div
@@ -1027,19 +1024,19 @@ function historyBadgeLabel(type) {
               <div class="accordion-header-left">
                 <span class="accordion-icon">🔌</span>
                 <span class="accordion-title">{{ srv.name }}</span>
-                <span class="badge badge-connected" v-if="srv.connected">● Connected</span>
+                <span class="badge badge-connected" v-if="srv.connected">● {{ t('agentDetail.connected') }}</span>
                 <span
                   class="badge badge-failed"
                   v-else
-                  :title="srv.error || 'MCP server failed to attach. The agent does NOT see these tools.'"
-                >● Failed</span>
+                  :title="srv.error || t('agentDetail.serverFailedTitle')"
+                >● {{ t('agentDetail.failed') }}</span>
               </div>
               <div class="accordion-header-right">
                 <span class="accordion-tool-count" v-if="srv.tools.length">
-                  {{ srv.tools.length }} tool{{ srv.tools.length !== 1 ? 's' : '' }}
+                  {{ t('agentDetail.toolCount', { n: srv.tools.length }) }}
                 </span>
-                <span class="accordion-tool-count muted" v-else-if="srv.connected">Tools not available</span>
-                <span class="accordion-tool-count muted" v-else>0 tools</span>
+                <span class="accordion-tool-count muted" v-else-if="srv.connected">{{ t('agentDetail.toolsNotAvailable') }}</span>
+                <span class="accordion-tool-count muted" v-else>{{ t('agentDetail.zeroTools') }}</span>
                 <span class="accordion-chevron" :class="{ 'chevron-open': expandedServers[srv.name] }">›</span>
               </div>
             </button>
@@ -1047,10 +1044,10 @@ function historyBadgeLabel(type) {
             <!-- Accordion Body -->
             <div v-if="expandedServers[srv.name]" class="accordion-body">
               <div v-if="!srv.connected && srv.error" class="server-error-banner">
-                <strong>Attach error:</strong> {{ srv.error }}
+                <strong>{{ t('agentDetail.attachError') }}</strong> {{ srv.error }}
               </div>
               <div v-else-if="!srv.connected" class="server-error-banner muted">
-                MCP server is not attached. No error message reported.
+                {{ t('agentDetail.serverNotAttached') }}
               </div>
               <div
                 v-for="tool in srv.tools"
@@ -1072,7 +1069,7 @@ function historyBadgeLabel(type) {
             </div>
           </div>
         </div>
-        <div v-else class="empty-state">No MCP servers configured</div>
+        <div v-else class="empty-state">{{ t('agentDetail.noServersConfigured') }}</div>
       </div>
 
       <!-- ===== INSTRUCTION TAB ===== -->
@@ -1085,7 +1082,7 @@ function historyBadgeLabel(type) {
                  tags so those would silently disappear, misleading the user
                  about what the LLM actually sees. -->
             <MarkdownRenderer
-              :content="agent.instruction || 'No instruction configured'"
+              :content="agent.instruction || t('agentDetail.noInstruction')"
               content-type="text"
             />
           </div>
@@ -1096,12 +1093,12 @@ function historyBadgeLabel(type) {
       <div v-else-if="activeTab === 'context'" class="animate-fade-in">
         <!-- Loading -->
         <div v-if="contextLoading && !contextSnapshots.length" class="loading-state">
-          <div class="loading-text">Loading context snapshots...</div>
+          <div class="loading-text">{{ t('agentDetail.loadingSnapshots') }}</div>
         </div>
 
         <!-- Empty -->
         <div v-else-if="!contextSnapshots.length" class="empty-state">
-          No context window snapshots recorded yet
+          {{ t('agentDetail.noSnapshots') }}
         </div>
 
         <!-- Snapshot list -->
@@ -1121,7 +1118,7 @@ function historyBadgeLabel(type) {
               <div class="context-stats">
                 <span class="context-stat">
                   <span class="stat-icon">💬</span>
-                  {{ snap.message_count }} msgs
+                  {{ t('agentDetail.msgsCount', { n: snap.message_count }) }}
                 </span>
                 <span class="context-stat">
                   <span class="stat-icon">📥</span>
@@ -1141,10 +1138,10 @@ function historyBadgeLabel(type) {
             <!-- Expanded messages -->
             <div v-if="expandedSnapshot === snap.id" class="context-messages">
               <div v-if="messagesLoading" class="loading-text" style="padding: 16px;">
-                Loading messages...
+                {{ t('agentDetail.loadingMessages') }}
               </div>
               <div v-else-if="!snapshotMessages.length" class="empty-state" style="padding: 16px;">
-                No messages in this snapshot
+                {{ t('agentDetail.noMessagesInSnapshot') }}
               </div>
               <div v-else class="messages-scroll">
                 <div
@@ -1159,10 +1156,10 @@ function historyBadgeLabel(type) {
                       {{ roleLabel(msg.role) }}
                     </span>
                     <span v-if="msg.has_tool_calls" class="msg-tool-badge">
-                      🔧 {{ msg.tool_count }} tool{{ msg.tool_count > 1 ? 's' : '' }}
+                      🔧 {{ t('agentDetail.toolCount', { n: msg.tool_count }) }}
                     </span>
                     <span v-if="msg.has_tool_results" class="msg-tool-badge result">
-                      📊 result
+                      📊 {{ t('agentDetail.result') }}
                     </span>
                     <span class="msg-index">#{{ idx + 1 }}</span>
                   </div>
@@ -1185,26 +1182,25 @@ function historyBadgeLabel(type) {
         <!-- Live banner while a compaction is running -->
         <div v-if="liveAgent?.compaction?.inProgress" class="version-live-banner">
           <span class="version-live-dot" />
-          Compacting context…
+          {{ t('agentDetail.compactingContext') }}
         </div>
 
         <!-- Loading -->
         <div v-if="versionsLoading && !contextVersions.length" class="loading-state">
-          <div class="loading-text">Loading compaction versions...</div>
+          <div class="loading-text">{{ t('agentDetail.loadingVersions') }}</div>
         </div>
 
         <!-- Fetch error: distinct from empty, with a retry path -->
         <div v-else-if="versionsError" class="empty-state">
-          Failed to load compaction versions —
+          {{ t('agentDetail.versionsLoadFailed') }}
           <button class="version-retry-btn" @click="fetchContextVersions({ force: true })">
-            Retry
+            {{ t('agentDetail.retry') }}
           </button>
         </div>
 
         <!-- Empty -->
         <div v-else-if="!contextVersions.length" class="empty-state">
-          No context compactions yet — versions appear here when the agent's
-          context is automatically compacted (see Settings → Context Compaction)
+          {{ t('agentDetail.noCompactions') }}
         </div>
 
         <!-- Version timeline -->
@@ -1221,17 +1217,17 @@ function historyBadgeLabel(type) {
                   class="version-status"
                   :class="v.status === 'completed' ? 'version-status-ok' : 'version-status-fail'"
                 >
-                  {{ v.status === 'completed' ? '✓ Compacted' : '✕ Failed' }}
+                  {{ v.status === 'completed' ? `✓ ${t('agentDetail.compacted')}` : `✕ ${t('agentDetail.failed')}` }}
                 </span>
                 <span class="context-time">{{ formatDate(v.created_at) }}</span>
                 <span class="version-trigger">{{ v.trigger }}</span>
               </div>
               <div class="context-stats">
                 <template v-if="v.status === 'completed'">
-                  <span class="context-stat" title="messages before → after">
+                  <span class="context-stat" :title="t('agentDetail.messagesBeforeAfter')">
                     💬 {{ v.message_count_before }} → {{ v.message_count_after }}
                   </span>
-                  <span class="context-stat" title="estimated tokens before → after">
+                  <span class="context-stat" :title="t('agentDetail.tokensBeforeAfter')">
                     🧮 {{ formatTokens(v.estimated_tokens_before) }} → {{ formatTokens(v.estimated_tokens_after) }}
                   </span>
                   <span class="version-saved">
@@ -1250,27 +1246,27 @@ function historyBadgeLabel(type) {
                   class="version-tab-btn"
                   :class="{ active: versionPanel === 'summary' }"
                   @click.stop="toggleVersion(v, 'summary')"
-                >Summary</button>
+                >{{ t('agentDetail.summary') }}</button>
                 <button
                   v-if="v.status === 'completed'"
                   class="version-tab-btn"
                   :class="{ active: versionPanel === 'diff' }"
                   @click.stop="toggleVersion(v, 'diff')"
-                >Before / After</button>
+                >{{ t('agentDetail.beforeAfter') }}</button>
                 <span class="version-meta">
-                  confidence {{ Math.round((v.confidence || 0) * 100) }}%
-                  <template v-if="v.raw_snapshot_id"> · raw snapshot #{{ v.raw_snapshot_id }}</template>
+                  {{ t('agentDetail.confidence', { n: Math.round((v.confidence || 0) * 100) }) }}
+                  <template v-if="v.raw_snapshot_id"> · {{ t('agentDetail.rawSnapshot', { id: v.raw_snapshot_id }) }}</template>
                 </span>
               </div>
 
               <!-- Summary panel -->
               <div v-if="versionPanel === 'summary'">
                 <div v-if="!versionDetails[v.id]" class="loading-text" style="padding: 16px;">
-                  Loading summary...
+                  {{ t('agentDetail.loadingSummary') }}
                 </div>
                 <div v-else-if="versionDetails[v.id].error" class="empty-state" style="padding: 16px;">
-                  Failed to load detail —
-                  <button class="version-retry-btn" @click.stop="retryVersionPanel(v)">Retry</button>
+                  {{ t('agentDetail.detailLoadFailed') }}
+                  <button class="version-retry-btn" @click.stop="retryVersionPanel(v)">{{ t('agentDetail.retry') }}</button>
                 </div>
                 <template v-else>
                   <div
@@ -1286,16 +1282,16 @@ function historyBadgeLabel(type) {
               <!-- Diff panel -->
               <div v-else-if="versionPanel === 'diff'">
                 <div v-if="!versionDiffs[v.id]" class="loading-text" style="padding: 16px;">
-                  Loading diff...
+                  {{ t('agentDetail.loadingDiff') }}
                 </div>
                 <div v-else-if="versionDiffs[v.id].error" class="empty-state" style="padding: 16px;">
-                  Diff unavailable —
-                  <button class="version-retry-btn" @click.stop="retryVersionPanel(v)">Retry</button>
+                  {{ t('agentDetail.diffUnavailable') }}
+                  <button class="version-retry-btn" @click.stop="retryVersionPanel(v)">{{ t('agentDetail.retry') }}</button>
                 </div>
                 <div v-else class="version-diff">
                   <div class="version-diff-col">
                     <div class="version-diff-title">
-                      Before ({{ versionDiffs[v.id].before.length }} msgs)
+                      {{ t('agentDetail.beforeMsgs', { n: versionDiffs[v.id].before.length }) }}
                     </div>
                     <div
                       v-for="(m, i) in versionDiffs[v.id].before"
@@ -1310,7 +1306,7 @@ function historyBadgeLabel(type) {
                   </div>
                   <div class="version-diff-col">
                     <div class="version-diff-title">
-                      After ({{ versionDiffs[v.id].after.length }} msgs)
+                      {{ t('agentDetail.afterMsgs', { n: versionDiffs[v.id].after.length }) }}
                     </div>
                     <div
                       v-for="(m, i) in versionDiffs[v.id].after"
@@ -1334,12 +1330,12 @@ function historyBadgeLabel(type) {
       <div v-else-if="activeTab === 'activity'" class="animate-fade-in">
         <!-- Loading state -->
         <div v-if="timelineLoading && !mergedHistory.length" class="loading-state">
-          <div class="loading-text">Loading history...</div>
+          <div class="loading-text">{{ t('agentDetail.loadingHistory') }}</div>
         </div>
 
         <!-- Empty state -->
         <div v-else-if="!mergedHistory.length" class="empty-state">
-          No activity recorded for this agent
+          {{ t('agentDetail.noActivity') }}
         </div>
 
         <!-- History list -->
@@ -1373,7 +1369,7 @@ function historyBadgeLabel(type) {
     <!-- Not found -->
     <div v-else class="empty-state" style="padding: 80px 0;">
       <div style="font-size: 2.5rem; margin-bottom: 0.5rem;">❓</div>
-      <h3 style="color: var(--color-text-primary)">Agent not found</h3>
+      <h3 style="color: var(--color-text-primary)">{{ t('agentDetail.agentNotFound') }}</h3>
       <p style="color: var(--color-text-muted)">{{ agentName }}</p>
     </div>
 

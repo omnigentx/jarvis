@@ -1,5 +1,8 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { useLang } from '../composables/useLang'
+
+const { t } = useLang()
 
 const props = defineProps({
   id: { type: [String, Number], required: true },
@@ -116,7 +119,7 @@ onBeforeUnmount(() => {
       <div v-if="description" class="toast-description">{{ description }}</div>
     </div>
 
-    <button class="toast-close" @click="dismiss" aria-label="Close notification">
+    <button class="toast-close" @click="dismiss" :aria-label="t('common.closeNotification')">
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
         <path d="M4 4l6 6M10 4l-6 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
       </svg>

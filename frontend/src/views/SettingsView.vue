@@ -11,6 +11,7 @@
  * mono, active item has primary-bg background + 2px primary left border.
  */
 import { ref } from 'vue'
+import { useLang } from '../composables/useLang'
 import SettingsGeneral from './settings/SettingsGeneral.vue'
 import SettingsAuth from './settings/SettingsAuth.vue'
 import SettingsYaml from './settings/SettingsYaml.vue'
@@ -21,17 +22,27 @@ import SettingsVoice from './settings/SettingsVoice.vue'
 import SettingsCompaction from './settings/SettingsCompaction.vue'
 import SettingsExperimental from './settings/SettingsExperimental.vue'
 
+const { t } = useLang()
+
+// eyebrow is the stable grouping id; its display text is resolved via the
+// settings.shell.group.* keys (see locales) so section headers translate too.
 const TABS = [
-  { id: 'general',      label: 'General',        eyebrow: 'CORE' },
-  { id: 'auth',         label: 'Authentication', eyebrow: 'CORE' },
-  { id: 'llm',          label: 'LLM Provider',   eyebrow: 'MODELS' },
-  { id: 'voice',        label: 'Voice',          eyebrow: 'MODELS' },
-  { id: 'services',     label: 'Services',       eyebrow: 'INTEGRATIONS' },
-  { id: 'yaml',         label: 'YAML Config',    eyebrow: 'INTEGRATIONS' },
-  { id: 'running-tmpl', label: 'Running Templates', eyebrow: 'INTEGRATIONS' },
-  { id: 'compaction',   label: 'Context Compaction', eyebrow: 'ADVANCED' },
-  { id: 'experimental', label: 'Experimental',   eyebrow: 'ADVANCED' },
+  { id: 'general',      labelKey: 'settings.shell.tab.general',      eyebrow: 'CORE' },
+  { id: 'auth',         labelKey: 'settings.shell.tab.auth',         eyebrow: 'CORE' },
+  { id: 'llm',          labelKey: 'settings.shell.tab.llm',          eyebrow: 'MODELS' },
+  { id: 'voice',        labelKey: 'settings.shell.tab.voice',        eyebrow: 'MODELS' },
+  { id: 'services',     labelKey: 'settings.shell.tab.services',     eyebrow: 'INTEGRATIONS' },
+  { id: 'yaml',         labelKey: 'settings.shell.tab.yaml',         eyebrow: 'INTEGRATIONS' },
+  { id: 'running-tmpl', labelKey: 'settings.shell.tab.runningTmpl',  eyebrow: 'INTEGRATIONS' },
+  { id: 'compaction',   labelKey: 'settings.shell.tab.compaction',   eyebrow: 'ADVANCED' },
+  { id: 'experimental', labelKey: 'settings.shell.tab.experimental', eyebrow: 'ADVANCED' },
 ]
+const GROUP_KEY = {
+  CORE: 'settings.shell.group.core',
+  MODELS: 'settings.shell.group.models',
+  INTEGRATIONS: 'settings.shell.group.integrations',
+  ADVANCED: 'settings.shell.group.advanced',
+}
 const active = ref('general')
 
 // Group tabs by eyebrow so the sidebar renders section headers between
@@ -42,7 +53,7 @@ function groupedTabs() {
   let lastEyebrow = null
   for (const t of TABS) {
     if (t.eyebrow !== lastEyebrow) {
-      out.push({ isHeader: true, label: t.eyebrow })
+      out.push({ isHeader: true, eyebrow: t.eyebrow })
       lastEyebrow = t.eyebrow
     }
     out.push(t)
@@ -52,7 +63,8 @@ function groupedTabs() {
 const navItems = groupedTabs()
 
 function labelFor(id) {
-  return TABS.find((t) => t.id === id)?.label || ''
+  const tab = TABS.find((tab) => tab.id === id)
+  return tab ? t(tab.labelKey) : ''
 }
 </script>
 
@@ -60,9 +72,9 @@ function labelFor(id) {
   <div class="settings-shell">
     <!-- Sidebar -->
     <aside class="settings-nav">
-      <div class="nav-eyebrow">SETTINGS</div>
+      <div class="nav-eyebrow">{{ t('settings.shell.eyebrow') }}</div>
       <template v-for="(item, idx) in navItems" :key="idx">
-        <div v-if="item.isHeader" class="nav-section">{{ item.label }}</div>
+        <div v-if="item.isHeader" class="nav-section">{{ t(GROUP_KEY[item.eyebrow]) }}</div>
         <button
           v-else
           type="button"
@@ -70,7 +82,7 @@ function labelFor(id) {
           :class="{ active: active === item.id }"
           @click="active = item.id"
         >
-          {{ item.label }}
+          {{ t(item.labelKey) }}
         </button>
       </template>
     </aside>
@@ -78,7 +90,7 @@ function labelFor(id) {
     <!-- Main -->
     <main class="settings-main">
       <header class="page-header">
-        <div class="eyebrow">SETTINGS · {{ labelFor(active).toUpperCase() }}</div>
+        <div class="eyebrow">{{ t('settings.shell.eyebrow') }} · {{ labelFor(active).toUpperCase() }}</div>
         <h1>
           <span class="grad">{{ labelFor(active) }}</span>
         </h1>

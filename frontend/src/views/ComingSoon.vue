@@ -1,6 +1,8 @@
 <script setup>
 import { useRoute, useRouter } from 'vue-router'
+import { useLang } from '../composables/useLang'
 
+const { t } = useLang()
 const route = useRoute()
 const router = useRouter()
 
@@ -13,20 +15,20 @@ function goBack() {
 <template>
   <div class="coming-soon jv">
     <div class="coming-soon__inner">
-      <div class="eyebrow">ROADMAP · PHASE 2</div>
+      <div class="eyebrow">{{ t('comingSoon.eyebrow') }}</div>
       <h1 class="coming-soon__title">
-        <span class="grad" style="font-style: italic;">Coming</span> soon
+        <span class="grad" style="font-style: italic;">{{ t('comingSoon.titleLead') }}</span> {{ t('comingSoon.titleRest') }}
       </h1>
       <p class="coming-soon__body">
-        The
-        <strong>{{ route.meta.title || 'feature' }}</strong>
-        dashboard is in development and will arrive in a future update.
+        {{ t('comingSoon.bodyLead') }}
+        <strong>{{ route.meta.title || t('comingSoon.feature') }}</strong>
+        {{ t('comingSoon.bodyRest') }}
       </p>
       <button class="btn btn-secondary coming-soon__back" @click="goBack">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M19 12H5"/><polyline points="12 19 5 12 12 5"/>
         </svg>
-        Back
+        {{ t('common.back') }}
       </button>
     </div>
   </div>

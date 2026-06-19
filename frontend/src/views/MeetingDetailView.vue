@@ -15,9 +15,11 @@
  */
 import { onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useLang } from '../composables/useLang'
 
 const route = useRoute()
 const router = useRouter()
+const { t } = useLang()
 
 onMounted(() => {
   const id = route.params.meetingId
@@ -27,7 +29,7 @@ onMounted(() => {
 
 <template>
   <div class="meeting-detail-redirect">
-    <span class="hint">Loading meeting…</span>
+    <span class="hint">{{ t('meetings.loadingMeeting') }}</span>
   </div>
 </template>
 

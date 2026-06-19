@@ -19,6 +19,9 @@ import {
   statusColor,
   teamColor,
 } from './agentMeta.js'
+import { useLang } from '../../composables/useLang'
+
+const { t } = useLang()
 
 const props = defineProps({
   conductor: { type: Object, default: null },
@@ -192,13 +195,13 @@ function openConductor() {
         class="conductor-node"
         tabindex="0"
         role="button"
-        :aria-label="`Open ${conductor.name}`"
+        :aria-label="t('orbit.open', { name: conductor.name })"
         @click="openConductor"
         @keydown.enter="openConductor"
       >
         <circle r="62" class="conductor-glow" />
         <circle r="52" class="conductor-disc" />
-        <text y="-6" class="conductor-label">CONDUCTOR</text>
+        <text y="-6" class="conductor-label">{{ t('orbit.conductor') }}</text>
         <text y="14" class="conductor-name">{{ conductor.name }}</text>
       </g>
 
@@ -211,7 +214,7 @@ function openConductor() {
           class="orbit-node"
           tabindex="0"
           role="button"
-          :aria-label="`Open ${node.item.name}`"
+          :aria-label="t('orbit.open', { name: node.item.name })"
           @click="handleClick(node)"
           @keydown.enter="handleClick(node)"
         >
@@ -234,7 +237,7 @@ function openConductor() {
           class="orbit-node"
           tabindex="0"
           role="button"
-          :aria-label="`Open ${node.item.name}`"
+          :aria-label="t('orbit.open', { name: node.item.name })"
           @click="handleClick(node)"
           @keydown.enter="handleClick(node)"
         >
@@ -257,7 +260,7 @@ function openConductor() {
           class="orbit-node team-node"
           tabindex="0"
           role="button"
-          :aria-label="`Open team ${node.item.name}`"
+          :aria-label="t('orbit.openTeam', { name: node.item.name })"
           @click="handleClick(node)"
           @keydown.enter="handleClick(node)"
         >
@@ -275,10 +278,10 @@ function openConductor() {
       </g>
     </svg>
 
-      <div class="zoom-controls" aria-label="Zoom controls">
-        <button class="zoom-btn" type="button" @click="zoomOut"  :disabled="zoom <= ZOOM_MIN" title="Zoom out">−</button>
-        <button class="zoom-btn zoom-reset" type="button" @click="zoomReset" :title="`Reset (${Math.round(zoom * 100)}%)`">{{ Math.round(zoom * 100) }}%</button>
-        <button class="zoom-btn" type="button" @click="zoomIn"   :disabled="zoom >= ZOOM_MAX" title="Zoom in">+</button>
+      <div class="zoom-controls" :aria-label="t('orbit.zoomControls')">
+        <button class="zoom-btn" type="button" @click="zoomOut"  :disabled="zoom <= ZOOM_MIN" :title="t('orbit.zoomOut')">−</button>
+        <button class="zoom-btn zoom-reset" type="button" @click="zoomReset" :title="t('orbit.zoomReset', { n: Math.round(zoom * 100) })">{{ Math.round(zoom * 100) }}%</button>
+        <button class="zoom-btn" type="button" @click="zoomIn"   :disabled="zoom >= ZOOM_MAX" :title="t('orbit.zoomIn')">+</button>
       </div>
     </div>
 
@@ -286,17 +289,17 @@ function openConductor() {
     <div class="orbit-legend">
       <div class="legend-row" :class="{ active: activeRing === 'core' || activeRing === 'all' }">
         <span class="legend-dot" style="background: var(--text-muted)"></span>
-        <span class="legend-label">Core</span>
+        <span class="legend-label">{{ t('orbit.legendCore') }}</span>
         <span class="legend-count">{{ core.length }}</span>
       </div>
       <div class="legend-row" :class="{ active: activeRing === 'spawned' || activeRing === 'all' }">
         <span class="legend-dot" style="background: var(--accent-warm)"></span>
-        <span class="legend-label">Spawned</span>
+        <span class="legend-label">{{ t('orbit.legendSpawned') }}</span>
         <span class="legend-count">{{ spawned.length }}</span>
       </div>
       <div class="legend-row" :class="{ active: activeRing === 'teams' || activeRing === 'all' }">
         <span class="legend-dot" style="background: var(--primary-hover)"></span>
-        <span class="legend-label">Teams</span>
+        <span class="legend-label">{{ t('orbit.legendTeams') }}</span>
         <span class="legend-count">{{ teams.length }}</span>
       </div>
     </div>

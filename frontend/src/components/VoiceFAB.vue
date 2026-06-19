@@ -20,7 +20,9 @@ import { useRoute } from 'vue-router'
 import { useBreakpoint } from '../composables/useBreakpoint'
 import { useVoiceSession } from '../composables/useVoiceSession'
 import { useFabVisibility } from '../composables/useFabVisibility'
+import { useLang } from '../composables/useLang'
 
+const { t } = useLang()
 const route = useRoute()
 const { isMobile } = useBreakpoint()
 const voice = useVoiceSession()
@@ -57,7 +59,7 @@ async function onTap() {
     class="voice-fab jv"
     :class="{ 'voice-fab--active': isActive, 'voice-fab--hidden': !fabShown }"
     :aria-pressed="isActive"
-    :aria-label="isActive ? 'Stop voice' : 'Start voice'"
+    :aria-label="isActive ? t('voiceFab.stop') : t('voiceFab.start')"
     @click="onTap"
   >
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none">

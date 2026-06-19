@@ -45,7 +45,7 @@ const agentsStore = useAgentsStore()
 const crawl = useCrawlStatus()
 // Shared UI language pref (topbar Vi/En toggle) — the crawl banner below
 // renders bilingual copy off this, like every user-visible string.
-const { lang } = useLang()
+const { t } = useLang()
 const { isStreaming, send, cancel } = useChatStream()
 const { confirm } = useConfirm()
 const toast = useToast()
@@ -100,14 +100,10 @@ async function handleStop({ mode }) {
   // shift+stop shouldn't kill 5 agents silently.
   if (mode === 'hard') {
     const proceed = await confirm({
-      title: 'Force stop — terminate subagents?',
-      message:
-        'This will immediately SIGTERM every running subagent. ' +
-        'Any side-effects already committed by them or by the orchestrator ' +
-        '(database rows, written files, external API calls, sent messages) ' +
-        'WILL NOT be rolled back automatically — you may need to clean them up by hand.',
-      confirmText: 'Force stop',
-      cancelText: 'Keep running',
+      title: t('chat.forceStopTitle'),
+      message: t('chat.forceStopMessage'),
+      confirmText: t('chat.forceStopConfirm'),
+      cancelText: t('chat.forceStopCancel'),
       variant: 'danger',
     })
     if (!proceed) return
@@ -122,19 +118,19 @@ async function handleStop({ mode }) {
   // Surface via toast so the user actually notices — a chat bubble can
   // get scrolled past, a toast can't.
   if (mode === 'soft') {
-    toast.info('Stopped', {
-      description: 'Tools the agent already called (DB writes, files, sent messages) are not rolled back.',
+    toast.info(t('chat.stoppedTitle'), {
+      description: t('chat.stoppedDesc'),
       duration: 6000,
     })
   } else if (res?.killed_pids?.length) {
     const names = res.killed_pids.map((k) => k.name).filter(Boolean).join(', ')
-    toast.warning(`Force-stopped — ${res.killed_pids.length} subagent(s) terminated`, {
-      description: `${names}. Side-effects already committed are not rolled back.`,
+    toast.warning(t('chat.forceStoppedCount', { n: res.killed_pids.length }), {
+      description: t('chat.forceStoppedDesc', { names }),
       duration: 8000,
     })
   } else {
-    toast.info('Force-stopped', {
-      description: 'No running subagents to terminate.',
+    toast.info(t('chat.forceStoppedTitle'), {
+      description: t('chat.forceStoppedNone'),
       duration: 4000,
     })
   }
@@ -188,7 +184,7 @@ async function handleSend(payload) {
           if (event.crawl_job_id) crawl.track(event.crawl_job_id)
           break
         case 'error':
-          chatStore.setMessageError(msgId, event.message || 'Unknown error')
+          chatStore.setMessageError(msgId, event.message || t('chat.unknownError'))
           break
       }
     },
@@ -253,12 +249,12 @@ function handleSwitchAgent(name) {
           <div class="tts-bar" style="animation-delay: 0.4s"></div>
           <div class="tts-bar" style="animation-delay: 0.1s"></div>
         </div>
-        <span class="tts-label">Playing response…</span>
+        <span class="tts-label">{{ t('chat.playingResponse') }}</span>
         <button class="tts-stop" @click="chatStore.stopTts()">
           <svg width="9" height="9" viewBox="0 0 10 10" fill="none">
             <rect x="1" y="1" width="8" height="8" rx="1" fill="var(--danger)"/>
           </svg>
-          <span>Stop</span>
+          <span>{{ t('chat.stop') }}</span>
         </button>
       </div>
 
@@ -271,25 +267,25 @@ function handleSwitchAgent(name) {
         <span class="crawl-spinner" v-if="crawl.isActive.value" />
         <span class="crawl-label">
           <template v-if="crawl.status.value === 'completed'">
-            ✓ {{ lang === 'vi' ? 'Tải xong' : 'Downloaded' }}{{ crawl.storyTitle.value ? ` "${crawl.storyTitle.value}"` : '' }} — {{ crawl.current.value }}/{{ crawl.total.value }} {{ lang === 'vi' ? 'chương' : 'chapters' }}
+            ✓ {{ t('chat.crawlDownloaded') }}{{ crawl.storyTitle.value ? ` "${crawl.storyTitle.value}"` : '' }} — {{ crawl.current.value }}/{{ crawl.total.value }} {{ t('chat.crawlChapters') }}
           </template>
           <template v-else-if="crawl.status.value === 'failed' || crawl.status.value === 'error'">
-            ⚠ {{ lang === 'vi' ? 'Tải truyện thất bại' : 'Story download failed' }}{{ crawl.message.value ? `: ${crawl.message.value}` : '' }}
+            ⚠ {{ t('chat.crawlFailed') }}{{ crawl.message.value ? `: ${crawl.message.value}` : '' }}
           </template>
           <template v-else-if="crawl.status.value === 'cancelled'">
-            {{ lang === 'vi' ? 'Đã huỷ tải truyện' : 'Story download cancelled' }}
+            {{ t('chat.crawlCancelled') }}
           </template>
           <template v-else-if="crawl.needsAttention.value">
-            ⚠ {{ lang === 'vi' ? 'Crawl gặp vấn đề — Jarvis đang xử lý…' : 'Crawl hit a snag — Jarvis is on it…' }} {{ crawl.message.value ? `(${crawl.message.value})` : '' }}
+            ⚠ {{ t('chat.crawlSnag') }} {{ crawl.message.value ? `(${crawl.message.value})` : '' }}
           </template>
           <template v-else>
-            {{ lang === 'vi' ? 'Đang tải' : 'Downloading' }}{{ crawl.storyTitle.value ? ` "${crawl.storyTitle.value}"` : (lang === 'vi' ? ' truyện' : ' story') }}…
-            {{ crawl.current.value }}/{{ crawl.total.value || '?' }} {{ lang === 'vi' ? 'chương' : 'chapters' }}
+            {{ t('chat.crawlDownloading') }}{{ crawl.storyTitle.value ? ` "${crawl.storyTitle.value}"` : ` ${t('chat.crawlStory')}` }}…
+            {{ crawl.current.value }}/{{ crawl.total.value || '?' }} {{ t('chat.crawlChapters') }}
             <span v-if="crawl.total.value" class="crawl-pct">{{ crawl.percent.value }}%</span>
           </template>
         </span>
-        <button v-if="crawl.isActive.value" class="crawl-btn" @click="crawl.cancel()">{{ lang === 'vi' ? 'Huỷ' : 'Cancel' }}</button>
-        <button v-else class="crawl-btn" @click="crawl.dismiss()">{{ lang === 'vi' ? 'Ẩn' : 'Dismiss' }}</button>
+        <button v-if="crawl.isActive.value" class="crawl-btn" @click="crawl.cancel()">{{ t('chat.cancel') }}</button>
+        <button v-else class="crawl-btn" @click="crawl.dismiss()">{{ t('chat.dismiss') }}</button>
       </div>
 
       <!-- Status footer (above input) -->

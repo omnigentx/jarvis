@@ -155,37 +155,40 @@ useSSEConnection(buildSSEUrl('/api/mcp/events/stream'), {
 
 // ─── Nav (grouped per redesign/chrome.jsx) ───
 // Each item resolves to a router-link path declared in router.js.
+// `title`/`label` hold i18n KEYS resolved with t() in the template, so the
+// nav re-renders reactively on a language toggle (a const baked with t()
+// values at setup time would not).
 const navSections = [
   {
-    title: 'WORKSPACE',
+    title: 'nav.secWorkspace',
     items: [
-      { path: '/chat',         label: 'Chat',         icon: 'chat' },
-      { path: '/agents',       label: 'Agents',       icon: 'agents' },
-      { path: '/monitor',      label: 'Team monitor', icon: 'monitor' },
-      { path: '/meetings',     label: 'Meeting room', icon: 'meeting' },
+      { path: '/chat',         label: 'nav.chat',         icon: 'chat' },
+      { path: '/agents',       label: 'nav.agents',       icon: 'agents' },
+      { path: '/monitor',      label: 'nav.monitor',      icon: 'monitor' },
+      { path: '/meetings',     label: 'nav.meeting',      icon: 'meeting' },
     ],
   },
   {
-    title: 'OPERATIONS',
+    title: 'nav.secOperations',
     items: [
-      { path: '/scheduler',    label: 'Scheduler',    icon: 'cron' },
-      { path: '/approvals',    label: 'Approvals',    icon: 'approval', hasApprovalBadge: true },
-      { path: '/notifications', label: 'Notifications', icon: 'bell', hasBadge: true },
-      { path: '/token-usage',  label: 'Token usage',  icon: 'usage' },
+      { path: '/scheduler',    label: 'nav.scheduler',    icon: 'cron' },
+      { path: '/approvals',    label: 'nav.approvals',    icon: 'approval', hasApprovalBadge: true },
+      { path: '/notifications', label: 'nav.notifications', icon: 'bell', hasBadge: true },
+      { path: '/token-usage',  label: 'nav.tokenUsage',   icon: 'usage' },
     ],
   },
   {
-    title: 'LIBRARY',
+    title: 'nav.secLibrary',
     items: [
-      { path: '/stories',      label: 'Stories',      icon: 'book' },
-      { path: '/skills',       label: 'Skills',       icon: 'spark' },
-      { path: '/mcp-servers',  label: 'MCP servers',  icon: 'plug' },
+      { path: '/stories',      label: 'nav.stories',      icon: 'book' },
+      { path: '/skills',       label: 'nav.skills',       icon: 'spark' },
+      { path: '/mcp-servers',  label: 'nav.mcpServers',   icon: 'plug' },
     ],
   },
   {
-    title: 'SYSTEM',
+    title: 'nav.secSystem',
     items: [
-      { path: '/settings',     label: 'Settings',     icon: 'settings' },
+      { path: '/settings',     label: 'nav.settings',     icon: 'settings' },
     ],
   },
 ]
@@ -218,11 +221,11 @@ const ICON_PATHS = {
 // MCP / Token usage / Notifications). Drawer stays as overflow surface
 // so the bottom bar only carries the high-frequency destinations.
 const mobileNav = [
-  { path: '/chat',     label: 'Chat',     icon: 'chat' },
-  { path: '/agents',   label: 'Agents',   icon: 'agents' },
-  { path: '/monitor',  label: 'Monitor',  icon: 'monitor' },
-  { path: '/settings', label: 'Settings', icon: 'settings' },
-  { kind: 'more',      label: 'More',     icon: 'menu' },
+  { path: '/chat',     label: 'nav.chat',         icon: 'chat' },
+  { path: '/agents',   label: 'nav.agents',       icon: 'agents' },
+  { path: '/monitor',  label: 'nav.monitorShort', icon: 'monitor' },
+  { path: '/settings', label: 'nav.settings',     icon: 'settings' },
+  { kind: 'more',      label: 'nav.more',         icon: 'menu' },
 ]
 
 function onMobileTabClick(item) {
@@ -280,7 +283,7 @@ const showMobileHeader = computed(() => {
 // ─── Lang / theme persisted prefs ───
 // lang lives in the shared useLang composable so bilingual copy elsewhere
 // (ChatView crawl banner, …) reacts to the topbar toggle live.
-const { lang, toggleLang } = useLang()
+const { lang, toggleLang, t } = useLang()
 const theme = ref(localStorage.getItem('jarvis_theme') || 'dark')
 
 function applyTheme(t) {
@@ -343,14 +346,10 @@ const currentSection = computed(() => {
       if (route.path.startsWith(it.path)) return { section: sec.title, label: it.label }
     }
   }
-  return { section: 'WORKSPACE', label: route.meta?.title || 'Dashboard' }
+  return { section: 'nav.secWorkspace', label: route.meta?.title || 'Dashboard' }
 })
 
-const searchPlaceholder = computed(() =>
-  lang.value === 'vi'
-    ? 'Tìm agents, conversations, settings…'
-    : 'Search agents, conversations, settings…',
-)
+const searchPlaceholder = computed(() => t('nav.searchPlaceholder'))
 </script>
 
 <template>
@@ -397,7 +396,7 @@ const searchPlaceholder = computed(() =>
       <!-- Nav sections -->
       <nav class="nav">
         <div v-for="sec in navSections" :key="sec.title" class="nav-section">
-          <div class="nav-section__title mono-label">{{ sec.title }}</div>
+          <div class="nav-section__title mono-label">{{ t(sec.title) }}</div>
           <RouterLink
             v-for="item in sec.items"
             :key="item.label"
@@ -410,7 +409,7 @@ const searchPlaceholder = computed(() =>
                 :stroke-width="isActive(item) ? 1.8 : 1.6"
                 stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
-            <span class="nav-item__label">{{ item.label }}</span>
+            <span class="nav-item__label">{{ t(item.label) }}</span>
             <span
               v-if="item.hasBadge && unreadCount > 0"
               class="nav-item__badge"
@@ -428,7 +427,7 @@ const searchPlaceholder = computed(() =>
       <div v-if="isMobile" class="drawer-footer">
         <button class="drawer-footer__btn" @click="toggleLang">
           <span class="topbar__lang">{{ lang === 'vi' ? 'Vi' : 'En' }}</span>
-          <span class="drawer-footer__label">Language</span>
+          <span class="drawer-footer__label">{{ t('nav.language') }}</span>
         </button>
         <button class="drawer-footer__btn" @click="toggleTheme">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none">
@@ -436,7 +435,7 @@ const searchPlaceholder = computed(() =>
               stroke="currentColor" stroke-width="1.6"
               stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
-          <span class="drawer-footer__label">{{ theme === 'dark' ? 'Dark' : 'Light' }}</span>
+          <span class="drawer-footer__label">{{ theme === 'dark' ? t('nav.themeDark') : t('nav.themeLight') }}</span>
         </button>
       </div>
     </aside>
@@ -452,11 +451,11 @@ const searchPlaceholder = computed(() =>
       <!-- Top bar (desktop only) -->
       <header v-if="!isMobile" class="topbar">
         <div class="topbar__crumb">
-          <span class="mono-label topbar__crumb-section">{{ currentSection.section }}</span>
+          <span class="mono-label topbar__crumb-section">{{ t(currentSection.section) }}</span>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" class="topbar__crumb-sep">
             <path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
-          <span class="topbar__crumb-leaf">{{ currentSection.label }}</span>
+          <span class="topbar__crumb-leaf">{{ t(currentSection.label) }}</span>
         </div>
 
         <button class="topbar__search" @click="openCmdK">
@@ -516,7 +515,7 @@ const searchPlaceholder = computed(() =>
             :stroke-width="isMobileTabActive(item) ? 2 : 1.6"
             stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
-        <span class="mobile-tab__label">{{ item.label }}</span>
+        <span class="mobile-tab__label">{{ t(item.label) }}</span>
       </button>
     </nav>
 

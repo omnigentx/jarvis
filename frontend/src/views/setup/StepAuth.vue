@@ -9,10 +9,12 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSetupStore, generateApiKey } from '../../stores/setup'
+import { useLang } from '../../composables/useLang'
 import { apiFetch } from '../../api'
 import WizardCard from './WizardCard.vue'
 import './wizard.css'
 
+const { t } = useLang()
 const router = useRouter()
 const store = useSetupStore()
 
@@ -33,10 +35,10 @@ const errors = computed(() => {
   const trimmed = apiKey.value.trim()
   const confirmTrimmed = confirm.value.trim()
   if (trimmed && trimmed.length < MIN_LEN) {
-    errs.push(`API key must be at least ${MIN_LEN} characters.`)
+    errs.push(t('setup.auth.errMinLen', { n: MIN_LEN }))
   }
   if (!keyAlreadyConfigured.value && trimmed && confirmTrimmed && trimmed !== confirmTrimmed) {
-    errs.push('Keys do not match.')
+    errs.push(t('setup.auth.errMismatch'))
   }
   return errs
 })
@@ -94,11 +96,11 @@ onMounted(async () => {
 
 <template>
   <WizardCard
-    :title="keyAlreadyConfigured ? 'Confirm your master API key' : 'Welcome to Jarvis'"
+    :title="keyAlreadyConfigured ? t('setup.auth.titleConfirm') : t('setup.auth.titleWelcome')"
     :subtitle="keyAlreadyConfigured
-      ? 'A master key is already configured on this server (likely from .env or a previous setup). Re-enter it below to confirm and continue.'
-      : `First, protect your instance with an API key. You'll use it to log in and to call the API directly.`"
-    step-label="STEP 01 / 05 · AUTH"
+      ? t('setup.auth.subtitleConfirm')
+      : t('setup.auth.subtitleWelcome')"
+    :step-label="t('setup.auth.stepLabel')"
   >
     <div v-if="keyAlreadyConfigured" class="wizard-callout warn">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--warning)" stroke-width="2" style="flex-shrink:0; margin-top: 2px;">
@@ -107,14 +109,14 @@ onMounted(async () => {
         <line x1="12" y1="17" x2="12.01" y2="17" />
       </svg>
       <div>
-        <strong>Existing key detected.</strong>
-        Paste the key you already have (from your <code>.env</code> or deployment config) and click Continue — we'll confirm it matches and move on.
-        If you've lost the existing key, reset the server with a new value in <code>.env</code> and reload this page.
+        <strong>{{ t('setup.auth.existingTitle') }}</strong>
+        {{ t('setup.auth.existingBody1') }} <code>.env</code> {{ t('setup.auth.existingBody2') }}
+        {{ t('setup.auth.existingBody3') }} <code>.env</code> {{ t('setup.auth.existingBody4') }}
       </div>
     </div>
 
     <div class="wizard-field">
-      <label for="new-key">{{ keyAlreadyConfigured ? 'Existing API Key' : 'New API Key' }}</label>
+      <label for="new-key">{{ keyAlreadyConfigured ? t('setup.auth.labelExisting') : t('setup.auth.labelNew') }}</label>
       <div class="wizard-input-group">
         <input
           id="new-key"
@@ -122,15 +124,15 @@ onMounted(async () => {
           :type="reveal ? 'text' : 'password'"
           autocomplete="new-password"
           :placeholder="keyAlreadyConfigured
-            ? 'Paste the key from your .env / cheatsheet'
-            : `Min ${MIN_LEN} characters, e.g. sk-jarvis-…`"
+            ? t('setup.auth.placeholderExisting')
+            : t('setup.auth.placeholderNew', { n: MIN_LEN })"
           v-model="apiKey"
           @keyup.enter="onSubmit"
         />
         <button
           type="button"
           class="icon-btn"
-          :title="reveal ? 'Hide' : 'Reveal'"
+          :title="reveal ? t('setup.auth.hide') : t('setup.auth.reveal')"
           @click="reveal = !reveal"
         >
           <svg v-if="reveal" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -146,13 +148,13 @@ onMounted(async () => {
     </div>
 
     <div v-if="!keyAlreadyConfigured" class="wizard-field">
-      <label for="confirm-key">Confirm API Key</label>
+      <label for="confirm-key">{{ t('setup.auth.confirmLabel') }}</label>
       <input
         id="confirm-key"
         class="wizard-input"
         :type="reveal ? 'text' : 'password'"
         autocomplete="new-password"
-        placeholder="Re-enter to confirm"
+        :placeholder="t('setup.auth.confirmPlaceholder')"
         v-model="confirm"
         @keyup.enter="onSubmit"
       />
@@ -166,7 +168,7 @@ onMounted(async () => {
           <path d="M3 22v-6h6" />
           <path d="M21 12a9 9 0 0 1-15 6.7L3 16" />
         </svg>
-        Generate secure key
+        {{ t('setup.auth.generate') }}
       </button>
       <button
         type="button"
@@ -178,7 +180,7 @@ onMounted(async () => {
           <rect x="9" y="9" width="13" height="13" rx="2" />
           <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
         </svg>
-        {{ copiedHint ? 'Copied!' : 'Copy' }}
+        {{ copiedHint ? t('setup.auth.copied') : t('common.copy') }}
       </button>
     </div>
 
@@ -189,9 +191,7 @@ onMounted(async () => {
         <line x1="12" y1="16" x2="12.01" y2="16" />
       </svg>
       <div>
-        <strong>Save this key.</strong> It doubles as the encryption master for
-        every other secret Jarvis stores. Losing it means you'll have to
-        reconfigure all secrets from scratch.
+        <strong>{{ t('setup.auth.saveTitle') }}</strong> {{ t('setup.auth.saveBody') }}
       </div>
     </div>
 
@@ -213,7 +213,7 @@ onMounted(async () => {
         :disabled="!canSubmit"
         @click="onSubmit"
       >
-        {{ submitting ? 'Saving…' : 'Continue' }}
+        {{ submitting ? t('common.saving') : t('common.continue') }}
         <svg v-if="!submitting" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <line x1="5" y1="12" x2="19" y2="12" />
           <polyline points="12 5 19 12 12 19" />

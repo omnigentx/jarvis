@@ -4,6 +4,7 @@ import { useChatStore } from '../../stores/chat'
 import ConfirmModal from '../ConfirmModal.vue'
 import { useToast } from '../../composables/useToast'
 import { parseYoutubeTags } from '../../utils/youtubeTags'
+import { useLang } from '../../composables/useLang'
 
 /**
  * ConversationsPanel — left rail with search, new-chat, the conversation list,
@@ -15,6 +16,7 @@ import { parseYoutubeTags } from '../../utils/youtubeTags'
  */
 const toast = useToast()
 const chatStore = useChatStore()
+const { t } = useLang()
 const searchQuery = ref('')
 
 const props = defineProps({
@@ -48,7 +50,7 @@ function formatTime(ts) {
   if (!ts) return ''
   const diff = Date.now() - ts
   const mins = Math.floor(diff / 60000)
-  if (mins < 1) return 'just now'
+  if (mins < 1) return t('chat.justNow')
   if (mins < 60) return `${mins}m`
   const hours = Math.floor(mins / 60)
   if (hours < 24) return `${hours}h`
@@ -103,10 +105,10 @@ async function handleDeleteConfirm() {
     await chatStore.deleteConversation(deleteTarget.value.id)
     showDeleteModal.value = false
     deleteTarget.value = null
-    toast.success('Conversation deleted', { description: `"${title}" has been removed` })
+    toast.success(t('chat.conversationDeleted'), { description: t('chat.conversationRemovedDesc', { title }) })
   } catch (e) {
-    deleteError.value = e.message || 'Failed to delete'
-    toast.error('Failed to delete conversation', { description: e.message })
+    deleteError.value = e.message || t('chat.failedToDelete')
+    toast.error(t('chat.failedToDeleteConversation'), { description: e.message })
   } finally {
     isDeleting.value = false
   }
@@ -135,10 +137,10 @@ async function handleBulkDeleteConfirm() {
     showBulkDeleteModal.value = false
     selectMode.value = false
     selectedIds.value = new Set()
-    toast.success(`Deleted ${ids.length} conversation${ids.length !== 1 ? 's' : ''}`)
+    toast.success(t('chat.deletedCount', { n: ids.length }))
   } catch (e) {
-    bulkDeleteError.value = e.message || 'Failed to delete'
-    toast.error('Bulk delete failed', { description: e.message })
+    bulkDeleteError.value = e.message || t('chat.failedToDelete')
+    toast.error(t('chat.bulkDeleteFailed'), { description: e.message })
   } finally {
     isBulkDeleting.value = false
   }
@@ -185,13 +187,13 @@ onBeforeUnmount(() => observer?.disconnect())
   >
     <div class="conv-head">
       <div class="conv-head-row">
-        <span class="conv-eyebrow">CONVERSATIONS</span>
+        <span class="conv-eyebrow">{{ t('chat.conversations') }}</span>
         <button
           class="conv-icon-btn"
           :class="{ active: selectMode }"
           data-testid="conv-select-toggle"
           @click="toggleSelectMode"
-          :title="selectMode ? 'Exit select mode' : 'Select conversations'"
+          :title="selectMode ? t('chat.exitSelectMode') : t('chat.selectConversations')"
         >
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
             <rect x="2" y="2" width="12" height="12" rx="2.5" stroke="currentColor" stroke-width="1.4"/>
@@ -202,14 +204,14 @@ onBeforeUnmount(() => observer?.disconnect())
           v-if="!selectMode"
           class="conv-icon-btn"
           @click="chatStore.createConversation(chatStore.activeAgentName)"
-          title="New conversation"
+          :title="t('chat.newConversation')"
         >
           <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
             <line x1="7" y1="2" x2="7" y2="12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
             <line x1="2" y1="7" x2="12" y2="7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
           </svg>
         </button>
-        <button v-if="showClose" class="conv-icon-btn" @click="emit('close')" title="Close">
+        <button v-if="showClose" class="conv-icon-btn" @click="emit('close')" :title="t('chat.close')">
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
             <line x1="3" y1="3" x2="11" y2="11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
             <line x1="11" y1="3" x2="3" y2="11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
@@ -225,23 +227,23 @@ onBeforeUnmount(() => observer?.disconnect())
         <input
           v-model="searchQuery"
           type="text"
-          placeholder="Search..."
+          :placeholder="t('chat.searchPlaceholder')"
           class="conv-search-input"
         />
       </div>
 
       <!-- Bulk action bar (select mode) -->
       <div v-if="selectMode" class="conv-bulk-bar">
-        <span class="conv-bulk-count">{{ selectedCount }} selected</span>
+        <span class="conv-bulk-count">{{ t('chat.selectedCount', { n: selectedCount }) }}</span>
         <button
           class="conv-bulk-delete"
           data-testid="conv-bulk-delete"
           :disabled="!selectedCount"
           @click="requestBulkDelete"
         >
-          Delete
+          {{ t('chat.delete') }}
         </button>
-        <button class="conv-bulk-cancel" @click="toggleSelectMode">Cancel</button>
+        <button class="conv-bulk-cancel" @click="toggleSelectMode">{{ t('chat.cancel') }}</button>
       </div>
     </div>
 
@@ -275,7 +277,7 @@ onBeforeUnmount(() => observer?.disconnect())
                 v-if="!selectMode"
                 class="conv-item-delete"
                 @click.stop="confirmDelete(conv.id, conv.title)"
-                title="Delete"
+                :title="t('chat.delete')"
               >
                 <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
                   <path d="M3 4h8M5.5 4V3a1 1 0 011-1h1a1 1 0 011 1v1M4.5 4v7a1 1 0 001 1h3a1 1 0 001-1V4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -284,13 +286,13 @@ onBeforeUnmount(() => observer?.disconnect())
             </div>
           </div>
           <div class="conv-item-preview">
-            {{ getLastMessage(conv) || 'No messages yet' }}
+            {{ getLastMessage(conv) || t('chat.noMessagesYet') }}
           </div>
         </div>
       </div>
 
       <div v-if="!filtered.length" class="conv-empty">
-        {{ searchQuery ? 'No matching conversations' : 'Start a new conversation' }}
+        {{ searchQuery ? t('chat.noMatchingConversations') : t('chat.startNewConversation') }}
       </div>
 
       <!-- Infinite-scroll sentinel + loading footer -->
@@ -300,15 +302,15 @@ onBeforeUnmount(() => observer?.disconnect())
         data-testid="conv-sentinel"
         class="conv-sentinel"
       >
-        <span v-if="chatStore.isLoadingMoreConversations" class="conv-loading">Loading…</span>
+        <span v-if="chatStore.isLoadingMoreConversations" class="conv-loading">{{ t('chat.loading') }}</span>
       </div>
     </div>
 
     <ConfirmModal
       :visible="showDeleteModal"
-      title="Delete Conversation"
-      :message="`Are you sure you want to delete &quot;${deleteTarget?.title || ''}&quot;? This action cannot be undone.`"
-      confirm-text="Delete"
+      :title="t('chat.deleteConversationTitle')"
+      :message="t('chat.deleteConversationConfirm', { title: deleteTarget?.title || '' })"
+      :confirm-text="t('chat.delete')"
       variant="danger"
       :loading="isDeleting"
       :error="deleteError"
@@ -318,9 +320,9 @@ onBeforeUnmount(() => observer?.disconnect())
 
     <ConfirmModal
       :visible="showBulkDeleteModal"
-      title="Delete Conversations"
-      :message="`Delete ${selectedCount} conversation${selectedCount !== 1 ? 's' : ''}? This action cannot be undone.`"
-      confirm-text="Delete"
+      :title="t('chat.deleteConversationsTitle')"
+      :message="t('chat.bulkDeleteConfirm', { n: selectedCount })"
+      :confirm-text="t('chat.delete')"
       variant="danger"
       :loading="isBulkDeleting"
       :error="bulkDeleteError"

@@ -23,8 +23,10 @@ import { useAudioPlayerStore } from '../../stores/audioPlayer.js'
 import { useCrawlStatus } from '../../composables/useCrawlStatus.js'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import { useFabVisibility } from '../../composables/useFabVisibility'
+import { useLang } from '../../composables/useLang'
 import MarkdownRenderer from '../MarkdownRenderer.vue'
 
+const { t } = useLang()
 const chatStore = useChatStore()
 const { send, isStreaming } = useChatStream()
 const audioStore = useAudioPlayerStore()
@@ -158,7 +160,7 @@ async function handleSend() {
           if (event.crawl_job_id) crawl.track(event.crawl_job_id)
           break
         case 'error':
-          chatStore.setMessageError(msgId, event.message || 'Unknown error')
+          chatStore.setMessageError(msgId, event.message || t('floatingChat.unknownError'))
           break
       }
     },
@@ -197,15 +199,15 @@ function handleKeydown(e) {
             <div class="dock-head-name">{{ activeAgentName }}</div>
             <div class="dock-head-meta">
               <span class="dock-head-dot" :class="{ live: isLive }" />
-              <span class="dock-head-sub" :title="activeTitle">{{ isLive ? 'replying…' : activeTitle }}</span>
+              <span class="dock-head-sub" :title="activeTitle">{{ isLive ? t('floatingChat.replying') : activeTitle }}</span>
             </div>
           </div>
-          <button class="dock-icon-btn" type="button" title="Open full chat" @click="popOut" aria-label="Open full chat">
+          <button class="dock-icon-btn" type="button" :title="t('floatingChat.openFullChat')" @click="popOut" :aria-label="t('floatingChat.openFullChat')">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
               <path d="M14 5h5v5M19 5l-9 9M5 7v12h12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
           </button>
-          <button class="dock-icon-btn" type="button" title="Minimise" @click="toggle" aria-label="Minimise">
+          <button class="dock-icon-btn" type="button" :title="t('floatingChat.minimise')" @click="toggle" :aria-label="t('floatingChat.minimise')">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
               <path d="M5 12h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
             </svg>
@@ -214,7 +216,7 @@ function handleKeydown(e) {
 
         <div ref="scrollRef" class="dock-body">
           <div v-if="!recentMessages.length" class="dock-empty">
-            <p>No messages yet. Type below to chat with {{ activeAgentName }} — replies stream here without leaving this view.</p>
+            <p>{{ t('floatingChat.empty', { name: activeAgentName }) }}</p>
           </div>
           <div
             v-for="msg in recentMessages"
@@ -247,7 +249,7 @@ function handleKeydown(e) {
               v-model="draft"
               class="dock-input"
               rows="1"
-              placeholder="Type a message…"
+              :placeholder="t('floatingChat.inputPlaceholder')"
               :disabled="isStreaming"
               @keydown="handleKeydown"
             />
@@ -256,7 +258,7 @@ function handleKeydown(e) {
               type="button"
               :disabled="!draft.trim() || isStreaming"
               @click="handleSend"
-              aria-label="Send"
+              :aria-label="t('common.send')"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
                 <path d="M5 12l14-7-5 14-3-6-6-1z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="currentColor"/>
@@ -288,13 +290,13 @@ function handleKeydown(e) {
         v-if="visible"
         class="dock-fab"
         :class="{ streaming: showStreamingBadge, 'dock-fab--hidden': isMobile && !fabShown }"
-        aria-label="Open chat dock"
+        :aria-label="t('floatingChat.openDock')"
         @click="toggle"
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
           <path d="M21 12a8 8 0 0 1-11.6 7.2L4 21l1.8-5.4A8 8 0 1 1 21 12z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
-        <span v-if="showStreamingBadge" class="fab-badge" title="Agent is replying" />
+        <span v-if="showStreamingBadge" class="fab-badge" :title="t('floatingChat.agentReplying')" />
       </button>
     </transition>
   </div>

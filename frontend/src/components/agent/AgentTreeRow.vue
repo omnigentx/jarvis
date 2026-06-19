@@ -13,6 +13,9 @@ import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { avatarGlyph, roleAvaClass, roleColorToken, statusColor } from './agentMeta.js'
 import { useBreakpoint } from '../../composables/useBreakpoint'
+import { useLang } from '../../composables/useLang'
+
+const { t } = useLang()
 
 const props = defineProps({
   agent: { type: Object, required: true },
@@ -159,7 +162,7 @@ function onClick(e) {
       v-if="hasChildren"
       type="button"
       class="tree-toggle"
-      :aria-label="isCollapsed ? 'Expand team' : 'Collapse team'"
+      :aria-label="isCollapsed ? t('tree.expandTeam') : t('tree.collapseTeam')"
       :aria-expanded="!isCollapsed"
       @click="onToggle"
     >
@@ -216,8 +219,8 @@ function onClick(e) {
       <button
         type="button"
         class="row-action"
-        :title="`Chat with ${agent.name}`"
-        :aria-label="`Chat with ${agent.name}`"
+        :title="t('tree.chatWith', { name: agent.name })"
+        :aria-label="t('tree.chatWith', { name: agent.name })"
         @click="rowAction('chat', $event)"
       >
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -230,9 +233,9 @@ function onClick(e) {
         class="row-action"
         :disabled="!canPauseToggle"
         :title="canPauseToggle
-          ? (isPaused ? `Resume ${agent.name}` : `Pause ${agent.name}`)
-          : `Nothing to pause — ${agent.name} is ${(agent.status || 'idle').toLowerCase()}`"
-        :aria-label="isPaused ? `Resume ${agent.name}` : `Pause ${agent.name}`"
+          ? (isPaused ? t('tree.resume', { name: agent.name }) : t('tree.pause', { name: agent.name }))
+          : t('tree.nothingToPause', { name: agent.name, status: (agent.status || 'idle').toLowerCase() })"
+        :aria-label="isPaused ? t('tree.resume', { name: agent.name }) : t('tree.pause', { name: agent.name })"
         @click="rowAction('pause-toggle', $event)"
       >
         <!-- ▶ when paused (action = resume); ❚❚ otherwise -->
@@ -247,8 +250,8 @@ function onClick(e) {
       <button
         type="button"
         class="row-action row-action-danger"
-        :title="canDelete ? `Delete ${agent.name}` : 'Static agents (built-in or default) cannot be deleted'"
-        :aria-label="`Delete ${agent.name}`"
+        :title="canDelete ? t('tree.delete', { name: agent.name }) : t('tree.staticCannotDelete')"
+        :aria-label="t('tree.delete', { name: agent.name })"
         :disabled="!canDelete"
         @click="rowAction('delete', $event)"
       >

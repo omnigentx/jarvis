@@ -11,6 +11,9 @@
  */
 import { computed } from 'vue'
 import { useAuthStore } from '../stores/auth'
+import { useLang } from '../composables/useLang'
+
+const { t } = useLang()
 
 const props = defineProps({
   status: { type: String, default: 'disconnected' },
@@ -23,14 +26,14 @@ const auth = useAuthStore()
 // Map status → role colour token + label. ``connected`` is the
 // happy-path and is hidden entirely so the banner doesn't burn
 // 26px of vertical space during normal operation.
-const bannerConfig = {
-  connected:    { text: '● Live',                          role: 'success', show: false },
-  connecting:   { text: '● Connecting…',                   role: 'warning', show: true },
-  disconnected: { text: '● Disconnected',                  role: 'danger',  show: true },
-  error:        { text: '● Connection error — retrying…',  role: 'danger',  show: true },
-}
+const bannerConfig = computed(() => ({
+  connected:    { text: `● ${t('connection.live')}`,         role: 'success', show: false },
+  connecting:   { text: `● ${t('connection.connecting')}`,   role: 'warning', show: true },
+  disconnected: { text: `● ${t('connection.disconnected')}`, role: 'danger',  show: true },
+  error:        { text: `● ${t('connection.errorRetrying')}`, role: 'danger', show: true },
+}))
 
-const current = computed(() => bannerConfig[props.status] || bannerConfig.disconnected)
+const current = computed(() => bannerConfig.value[props.status] || bannerConfig.value.disconnected)
 const visible = computed(() => current.value.show !== false)
 </script>
 
@@ -45,7 +48,7 @@ const visible = computed(() => current.value.show !== false)
       class="conn-banner__btn"
       @click="emit('reconnect')"
     >
-      Reconnect
+      {{ t('connection.reconnect') }}
     </button>
   </div>
 </template>

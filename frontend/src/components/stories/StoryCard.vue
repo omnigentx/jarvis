@@ -6,7 +6,10 @@
  * cover gradient · title · progress bar · status chips · delete affordance.
  */
 import { ref, computed } from 'vue'
+import { useLang } from '../../composables/useLang'
 import ConfirmModal from '../ConfirmModal.vue'
+
+const { t } = useLang()
 
 const props = defineProps({
   story: { type: Object, required: true },
@@ -33,10 +36,10 @@ const isComplete = computed(() =>
 const lastPlayedLabel = computed(() => {
   if (!props.story.last_played_at) return null
   const diff = Date.now() / 1000 - props.story.last_played_at
-  if (diff < 60) return 'just now'
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
-  return `${Math.floor(diff / 86400)}d ago`
+  if (diff < 60) return t('stories.justNow')
+  if (diff < 3600) return t('stories.minutesAgo', { n: Math.floor(diff / 60) })
+  if (diff < 86400) return t('stories.hoursAgo', { n: Math.floor(diff / 3600) })
+  return t('stories.daysAgo', { n: Math.floor(diff / 86400) })
 })
 
 // Deterministic cover hue based on title — same title always gets the same color.
@@ -89,7 +92,7 @@ function confirmDelete() {
         <span class="story-card__title">{{ story.title || story.id }}</span>
       </div>
       <div class="story-card__meta">
-        <span>{{ story.chapters || 0 }} chapters</span>
+        <span>{{ t('stories.nChapters', { n: story.chapters || 0 }) }}</span>
         <span v-if="story.size">· {{ story.size }}</span>
       </div>
 
@@ -104,15 +107,15 @@ function confirmDelete() {
       <div class="story-card__badges">
         <span v-if="isComplete" class="story-card__pill story-card__pill--ok">
           <span class="story-card__pill-dot"></span>
-          DONE
+          {{ t('stories.pillDone') }}
         </span>
         <span v-else-if="hasProgress" class="story-card__pill story-card__pill--active">
           <span class="story-card__pill-dot"></span>
-          CONTINUE
+          {{ t('stories.pillContinue') }}
         </span>
         <span v-else class="story-card__pill story-card__pill--muted">
           <span class="story-card__pill-dot"></span>
-          NEW
+          {{ t('stories.pillNew') }}
         </span>
         <span v-if="lastPlayedLabel" class="story-card__last">{{ lastPlayedLabel }}</span>
         <span class="story-card__progress-text">
@@ -123,7 +126,7 @@ function confirmDelete() {
     </div>
 
     <!-- Delete -->
-    <button class="story-card__delete" @click="handleDelete" title="Delete story">
+    <button class="story-card__delete" @click="handleDelete" :title="t('stories.deleteStory')">
       <svg viewBox="0 0 24 24" fill="none" width="13" height="13">
         <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z"
           stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -132,10 +135,10 @@ function confirmDelete() {
 
     <ConfirmModal
       :visible="showDeleteConfirm"
-      title="Delete story"
-      :message="`Are you sure you want to delete the story &quot;${story.title}&quot;?\nThe audio cache will also be removed.`"
-      confirm-text="Delete"
-      cancel-text="Cancel"
+      :title="t('stories.deleteStory')"
+      :message="t('stories.deleteConfirm', { title: story.title })"
+      :confirm-text="t('common.delete')"
+      :cancel-text="t('common.cancel')"
       variant="danger"
       @confirm="confirmDelete"
       @cancel="showDeleteConfirm = false"

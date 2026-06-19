@@ -21,8 +21,10 @@ import { ref, computed, watch, onMounted } from 'vue'
 import { CodeDiff } from 'v-code-diff'
 import { apiFetch, ApiError } from '../../api'
 import { useConfirm } from '../../composables/useConfirm'
+import { useLang } from '../../composables/useLang'
 
 const { confirm } = useConfirm()
+const { t } = useLang()
 
 const sessions = ref([])
 const activeSessionId = ref(null)
@@ -209,7 +211,7 @@ function _buildPatch() {
     try {
       parsedOverrides = JSON.parse(overridesText)
     } catch {
-      throw new Error('server_overrides must be valid JSON')
+      throw new Error(t('settings.runningTemplates.errOverridesJson'))
     }
   } else {
     parsedOverrides = {}
@@ -233,7 +235,7 @@ async function onSaveRole() {
     return
   }
   if (!Object.keys(patch).length) {
-    successMsg.value = 'No changes to save.'
+    successMsg.value = t('settings.runningTemplates.noChanges')
     return
   }
   saving.value = true
@@ -247,7 +249,7 @@ async function onSaveRole() {
         body: JSON.stringify({ patch, comment: 'edited from Settings UI' }),
       },
     )
-    successMsg.value = `Saved · ${r.audit_ids?.length || 0} audit row(s). ${r.warning || ''}`.trim()
+    successMsg.value = `${t('settings.runningTemplates.savedAudit', { n: r.audit_ids?.length || 0 })} ${r.warning || ''}`.trim()
     await loadTemplate(activeSessionId.value)
   } catch (err) {
     error.value = _friendly(err)
@@ -313,14 +315,15 @@ async function onResetModalConfirm(mode) {
     resetModal.value = { visible: false, busy: false, mode: null }
     await loadTemplate(activeSessionId.value)
     if (reloadError) {
-      error.value =
-        `Synced ${fields} field(s) to DB, but force-reload failed — agents are ` +
-        `still running the old template: ${_friendly(reloadError)}`
+      error.value = t('settings.runningTemplates.resetReloadFailed', {
+        n: fields,
+        detail: _friendly(reloadError),
+      })
     } else {
       successMsg.value =
         mode === 'sync-and-reload'
-          ? `Reset · ${fields} field(s) synced from yaml · ${respawned} agent(s) respawned.`
-          : `Reset · ${fields} field(s) synced from yaml. Running agents will pick up the change on next restart — click "Force reload" to apply now.`
+          ? t('settings.runningTemplates.resetSyncedReloaded', { n: fields, respawned })
+          : t('settings.runningTemplates.resetSyncedOnly', { n: fields })
     }
   } catch (err) {
     // Reset itself failed (or the refetch threw). Still refetch so the UI
@@ -344,9 +347,9 @@ function onResetModalCancel() {
 async function _confirmDiscardIfDirty() {
   if (!dirty.value) return true
   return await confirm({
-    title: 'Discard unsaved changes',
-    message: `You have unsaved edits to "${activeRole.value}". Discard and switch?`,
-    confirmText: 'Discard & Switch',
+    title: t('settings.runningTemplates.discardTitle'),
+    message: t('settings.runningTemplates.discardMsg', { role: activeRole.value }),
+    confirmText: t('settings.runningTemplates.discardConfirm'),
     variant: 'warning',
   })
 }
@@ -428,9 +431,9 @@ const diffRolesOrdered = computed(() => {
 async function onReloadRole() {
   if (!activeRole.value || !activeSessionId.value) return
   const ok = await confirm({
-    title: `Force-reload ${activeRole.value}?`,
-    message: `SIGKILL every agent in this role mid-task and respawn with the current template. This is DESTRUCTIVE — in-progress work in those agents is lost. Continue?`,
-    confirmText: 'Force-kill & respawn',
+    title: t('settings.runningTemplates.reloadTitle', { role: activeRole.value }),
+    message: t('settings.runningTemplates.reloadMsg'),
+    confirmText: t('settings.runningTemplates.reloadConfirm'),
     variant: 'danger',
   })
   if (!ok) return
@@ -446,7 +449,7 @@ async function onReloadRole() {
       },
     )
     const respawned = Object.values(r.results || {}).flat().length
-    successMsg.value = `Reload complete · ${respawned} agent(s) respawned.`
+    successMsg.value = t('settings.runningTemplates.reloadComplete', { respawned })
     await loadTemplate(activeSessionId.value)
   } catch (err) {
     error.value = _friendly(err)
@@ -457,9 +460,9 @@ async function onReloadRole() {
 
 async function onRollback(auditId) {
   const ok = await confirm({
-    title: 'Roll back this audit row?',
-    message: 'Writes a new audit row that reverts the field to its previous value. Intermediate edits to the same field will be silently overwritten.',
-    confirmText: 'Rollback',
+    title: t('settings.runningTemplates.rollbackTitle'),
+    message: t('settings.runningTemplates.rollbackMsg'),
+    confirmText: t('settings.runningTemplates.rollbackConfirm'),
     variant: 'warning',
   })
   if (!ok) return
@@ -470,7 +473,7 @@ async function onRollback(auditId) {
       `/api/team-sessions/${encodeURIComponent(activeSessionId.value)}/template/rollback/${auditId}`,
       { method: 'POST', body: JSON.stringify({ comment: 'rollback from Settings UI' }) },
     )
-    successMsg.value = `Rolled back audit #${auditId}.`
+    successMsg.value = t('settings.runningTemplates.rolledBack', { id: auditId })
     await loadTemplate(activeSessionId.value)
   } catch (err) {
     error.value = _friendly(err)
@@ -483,7 +486,7 @@ function _friendly(err) {
   if (err instanceof ApiError && err.body && typeof err.body === 'object') {
     const detail = err.body.detail
     if (detail && typeof detail === 'object') {
-      return `${detail.message || 'Request failed'} — ${detail.error || ''}`.trim()
+      return `${detail.message || t('settings.runningTemplates.requestFailed')} — ${detail.error || ''}`.trim()
     }
     if (typeof detail === 'string') return detail
   }
@@ -514,33 +517,33 @@ onMounted(() => loadSessions())
     <header class="banner">
       <div class="banner-icon">⚠</div>
       <div>
-        <strong>Edits live in this team's DB only.</strong>
-        Save here to take effect now; commit the same change to <code>team_templates/&lt;team&gt;.yaml</code>
-        (YAML Config tab) to survive a recreate. Use "Reset role" to pull a yaml edit into this team.
+        <strong>{{ t('settings.runningTemplates.bannerStrong') }}</strong>
+        {{ t('settings.runningTemplates.bannerPre') }} <code>team_templates/&lt;team&gt;.yaml</code>
+        {{ t('settings.runningTemplates.bannerPost') }}
       </div>
     </header>
 
     <!-- Session selector -->
     <div class="session-bar">
-      <label class="session-label">Team session</label>
+      <label class="session-label">{{ t('settings.runningTemplates.teamSession') }}</label>
       <select :value="activeSessionId" @change="onSelectSession" class="session-select" :disabled="!sessions.length">
-        <option v-if="!sessions.length" :value="null">No active team sessions</option>
+        <option v-if="!sessions.length" :value="null">{{ t('settings.runningTemplates.noSessions') }}</option>
         <option v-for="s in sessions" :key="s.session_id" :value="s.session_id">
-          {{ s.team_name }} · {{ s.session_id.slice(0, 8) }} · {{ s.agents_count }} agent{{ s.agents_count === 1 ? '' : 's' }}
+          {{ s.team_name }} · {{ s.session_id.slice(0, 8) }} · {{ t('settings.runningTemplates.agentCount', { n: s.agents_count }) }}
         </option>
       </select>
       <span v-if="yamlDiff" class="drift-pill" :class="{ insync: yamlDiff.in_sync }">
-        {{ yamlDiff.in_sync ? '✓ in sync with yaml' : `△ ${yamlDiff.diverged_count} role(s) diverged from yaml` }}
+        {{ yamlDiff.in_sync ? t('settings.runningTemplates.inSync') : t('settings.runningTemplates.diverged', { n: yamlDiff.diverged_count }) }}
       </span>
       <button class="btn ghost" type="button" :disabled="loading" @click="onRefresh">
-        Refresh
+        {{ t('settings.runningTemplates.refresh') }}
       </button>
     </div>
 
     <!-- Two-column layout: role list + editor; history rail at far right -->
     <div class="layout">
       <aside class="role-list">
-        <div class="tree-eyebrow">ROLES</div>
+        <div class="tree-eyebrow">{{ t('settings.runningTemplates.rolesEyebrow') }}</div>
         <button
           v-for="[role, cfg] in roleEntries"
           :key="role"
@@ -554,10 +557,10 @@ onMounted(() => loadSessions())
           <span
             v-if="driftByRole[role] && driftByRole[role] !== 'in_sync'"
             class="drift-dot"
-            :title="`Drift from yaml: ${driftByRole[role]}`"
+            :title="t('settings.runningTemplates.driftTitle', { status: driftByRole[role] })"
           >△</span>
         </button>
-        <div v-if="!roleEntries.length && !loading" class="empty">No roles in this template.</div>
+        <div v-if="!roleEntries.length && !loading" class="empty">{{ t('settings.runningTemplates.noRoles') }}</div>
       </aside>
 
       <section class="editor">
@@ -565,54 +568,54 @@ onMounted(() => loadSessions())
           <div class="title">
             <code>{{ activeRole }}</code>
             <span class="muted">·</span>
-            <input v-model="draft.role_display" class="display-input" placeholder="role display name" />
+            <input v-model="draft.role_display" class="display-input" :placeholder="t('settings.runningTemplates.roleDisplayPlaceholder')" />
           </div>
           <div class="actions">
-            <span v-if="dirty" class="pill dirty">● UNSAVED</span>
+            <span v-if="dirty" class="pill dirty">● {{ t('settings.runningTemplates.unsaved') }}</span>
             <button
               type="button"
               class="btn ghost"
               :disabled="!yamlDiff || yamlDiff.in_sync"
-              :title="yamlDiff?.in_sync ? 'DB matches yaml — nothing to diff' : 'Show yaml vs DB diff'"
+              :title="yamlDiff?.in_sync ? t('settings.runningTemplates.nothingToDiff') : t('settings.runningTemplates.showDiff')"
               @click="onShowDiff"
             >
-              View diff
+              {{ t('settings.runningTemplates.viewDiff') }}
             </button>
             <button type="button" class="btn ghost" :disabled="resetting || !activeRole" @click="onResetRole">
-              {{ resetting ? 'Resetting…' : 'Reset to yaml' }}
+              {{ resetting ? t('settings.runningTemplates.resetting') : t('settings.runningTemplates.resetToYaml') }}
             </button>
             <button type="button" class="btn danger" :disabled="reloading || !activeRole" @click="onReloadRole">
-              {{ reloading ? 'Reloading…' : 'Force reload' }}
+              {{ reloading ? t('settings.runningTemplates.reloading') : t('settings.runningTemplates.forceReload') }}
             </button>
             <button type="button" class="btn primary" :disabled="!dirty || saving" @click="onSaveRole">
-              {{ saving ? 'Saving…' : 'Save' }}
+              {{ saving ? t('settings.runningTemplates.saving') : t('common.save') }}
             </button>
           </div>
         </header>
 
-        <div v-if="loading" class="overlay">Loading…</div>
-        <div v-else-if="!activeRole" class="overlay">Pick a role to edit.</div>
+        <div v-if="loading" class="overlay">{{ t('settings.runningTemplates.loading') }}</div>
+        <div v-else-if="!activeRole" class="overlay">{{ t('settings.runningTemplates.pickRole') }}</div>
         <div v-else class="editor-body">
           <label class="field">
-            <span class="fl">Model override</span>
-            <input v-model="draft.model" class="text" placeholder="(empty = inherit team default)" />
+            <span class="fl">{{ t('settings.runningTemplates.modelOverride') }}</span>
+            <input v-model="draft.model" class="text" :placeholder="t('settings.runningTemplates.modelPlaceholder')" />
           </label>
           <label class="field">
-            <span class="fl">Instruction</span>
+            <span class="fl">{{ t('settings.runningTemplates.instruction') }}</span>
             <textarea v-model="draft.instruction" class="textarea" rows="8" />
           </label>
           <div class="field-grid">
             <label class="field">
-              <span class="fl">Servers (one per line)</span>
+              <span class="fl">{{ t('settings.runningTemplates.serversField') }}</span>
               <textarea v-model="draft.servers_text" class="textarea mono" rows="6" />
             </label>
             <label class="field">
-              <span class="fl">Skills (one per line)</span>
+              <span class="fl">{{ t('settings.runningTemplates.skillsField') }}</span>
               <textarea v-model="draft.skills_text" class="textarea mono" rows="6" />
             </label>
           </div>
           <label class="field">
-            <span class="fl">server_overrides (JSON)</span>
+            <span class="fl">{{ t('settings.runningTemplates.serverOverridesField') }}</span>
             <textarea v-model="draft.server_overrides_text" class="textarea mono" rows="6" />
           </label>
         </div>
@@ -620,13 +623,13 @@ onMounted(() => loadSessions())
         <footer class="editor-foot">
           <span v-if="error" class="msg error">✕ {{ error }}</span>
           <span v-else-if="successMsg" class="msg ok">✓ {{ successMsg }}</span>
-          <span v-else class="msg muted">Allowed fields: instruction, servers, skills, server_overrides, model, role_display.</span>
+          <span v-else class="msg muted">{{ t('settings.runningTemplates.allowedFields') }}</span>
         </footer>
       </section>
 
       <aside class="history-rail">
-        <div class="tree-eyebrow">HISTORY</div>
-        <div v-if="!history.length" class="empty">No edits yet.</div>
+        <div class="tree-eyebrow">{{ t('settings.runningTemplates.historyEyebrow') }}</div>
+        <div v-if="!history.length" class="empty">{{ t('settings.runningTemplates.noEdits') }}</div>
         <div
           v-for="row in history"
           :key="row.id"
@@ -650,7 +653,7 @@ onMounted(() => loadSessions())
             class="btn-mini"
             :disabled="rollingBack === row.id"
             @click="onRollback(row.id)"
-          >{{ rollingBack === row.id ? '…' : 'Rollback' }}</button>
+          >{{ rollingBack === row.id ? '…' : t('settings.runningTemplates.rollbackBtn') }}</button>
         </div>
       </aside>
     </div>
@@ -665,33 +668,33 @@ onMounted(() => loadSessions())
           <div class="diff-card">
             <header class="diff-head">
               <div>
-                <h3 class="reset-title">Yaml vs running template</h3>
+                <h3 class="reset-title">{{ t('settings.runningTemplates.diffTitle') }}</h3>
                 <p class="diff-path" v-if="yamlDiff?.yaml_path">
                   <code>{{ yamlDiff.yaml_path }}</code>
                 </p>
               </div>
               <div class="diff-head-actions">
-                <div class="layout-toggle" role="tablist" aria-label="Diff layout">
+                <div class="layout-toggle" role="tablist" :aria-label="t('settings.runningTemplates.diffLayoutAria')">
                   <button
                     type="button"
                     :class="{ active: diffLayout === 'unified' }"
                     role="tab"
                     @click="diffLayout = 'unified'"
-                  >Unified</button>
+                  >{{ t('settings.runningTemplates.unified') }}</button>
                   <button
                     type="button"
                     :class="{ active: diffLayout === 'side-by-side' }"
                     role="tab"
                     @click="diffLayout = 'side-by-side'"
-                  >Side-by-side</button>
+                  >{{ t('settings.runningTemplates.sideBySide') }}</button>
                 </div>
-                <button type="button" class="r-btn cancel diff-close" @click="onCloseDiff">Close</button>
+                <button type="button" class="r-btn cancel diff-close" @click="onCloseDiff">{{ t('common.close') }}</button>
               </div>
             </header>
 
             <div class="diff-body">
               <div v-if="!diffRolesOrdered.length" class="diff-empty">
-                In sync — no diverged roles.
+                {{ t('settings.runningTemplates.diffEmpty') }}
               </div>
               <section
                 v-for="[role, info] in diffRolesOrdered"
@@ -703,7 +706,7 @@ onMounted(() => loadSessions())
                   <code class="diff-role-name">{{ role }}</code>
                   <span class="diff-role-status" :class="info.status">
                     {{ info.status === 'diverged'
-                       ? `${Object.keys(info.fields || {}).length} field(s) drift`
+                       ? t('settings.runningTemplates.fieldsDrift', { n: Object.keys(info.fields || {}).length })
                        : info.status.replace('_', ' ') }}
                   </span>
                 </header>
@@ -726,8 +729,8 @@ onMounted(() => loadSessions())
                       :output-format="diffLayout"
                       :language="diffLanguageFor(field)"
                       :context="3"
-                      filename="YAML (factory)"
-                      new-filename="DB (running)"
+                      :filename="t('settings.runningTemplates.diffFileYaml')"
+                      :new-filename="t('settings.runningTemplates.diffFileDb')"
                       theme="dark"
                     />
                   </div>
@@ -735,11 +738,11 @@ onMounted(() => loadSessions())
 
                 <!-- Whole-role status (added/removed) — no field-level data -->
                 <div v-else-if="info.status === 'added_in_db'" class="diff-fields">
-                  <p class="diff-note">Role exists in DB only — not present in factory yaml. Saving the yaml would lose this role on next recreate.</p>
+                  <p class="diff-note">{{ t('settings.runningTemplates.noteAddedInDb') }}</p>
                   <pre class="diff-pre">{{ formatDiffValue(info.current) }}</pre>
                 </div>
                 <div v-else-if="info.status === 'removed_from_db'" class="diff-fields">
-                  <p class="diff-note">Role exists in factory yaml only — removed from DB. Reset / reload would restore it.</p>
+                  <p class="diff-note">{{ t('settings.runningTemplates.noteRemovedFromDb') }}</p>
                   <pre class="diff-pre">{{ formatDiffValue(info.yaml) }}</pre>
                 </div>
               </section>
@@ -762,15 +765,15 @@ onMounted(() => loadSessions())
         >
           <div class="reset-card">
             <div class="reset-icon">↺</div>
-            <h3 class="reset-title">Reset <code>{{ activeRole }}</code> to factory yaml?</h3>
+            <h3 class="reset-title">{{ t('settings.runningTemplates.resetModalTitlePre') }} <code>{{ activeRole }}</code> {{ t('settings.runningTemplates.resetModalTitlePost') }}</h3>
             <p class="reset-body">
-              Pulls every editable field of <strong>{{ activeRole }}</strong> from
+              {{ t('settings.runningTemplates.resetModalBodyPre') }} <strong>{{ activeRole }}</strong>
+              {{ t('settings.runningTemplates.resetModalBodyMid') }}
               <code>team_templates/{{ template?.name?.replaceAll('-', '_') || 'agile_team' }}.yaml</code>
-              into this team's DB. Other roles are untouched and audited.
+              {{ t('settings.runningTemplates.resetModalBodyPost') }}
             </p>
             <p class="reset-body muted">
-              Already-running agents keep their stale in-memory template
-              until the next restart — pick whether to force-respawn them now.
+              {{ t('settings.runningTemplates.resetModalNote') }}
             </p>
             <div class="reset-actions">
               <button
@@ -778,7 +781,7 @@ onMounted(() => loadSessions())
                 class="r-btn cancel"
                 :disabled="resetModal.busy"
                 @click="onResetModalCancel"
-              >Cancel</button>
+              >{{ t('common.cancel') }}</button>
               <button
                 type="button"
                 class="r-btn sync"
@@ -786,7 +789,7 @@ onMounted(() => loadSessions())
                 @click="onResetModalConfirm('sync-only')"
               >
                 <span v-if="resetModal.busy && resetModal.mode === 'sync-only'" class="r-spin"></span>
-                Sync yaml only
+                {{ t('settings.runningTemplates.syncYamlOnly') }}
               </button>
               <button
                 type="button"
@@ -795,7 +798,7 @@ onMounted(() => loadSessions())
                 @click="onResetModalConfirm('sync-and-reload')"
               >
                 <span v-if="resetModal.busy && resetModal.mode === 'sync-and-reload'" class="r-spin"></span>
-                Sync + force reload
+                {{ t('settings.runningTemplates.syncForceReload') }}
               </button>
             </div>
           </div>
