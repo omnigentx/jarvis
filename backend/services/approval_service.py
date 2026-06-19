@@ -350,6 +350,56 @@ class ApprovalService:
         except Exception as exc:  # scheduler may be down in tests
             logger.debug("[APPROVAL] could not notify scheduler: %s", exc)
 
+    def _apply_memory_candidate_decision(self, candidate_id: Optional[str], decision: str) -> None:
+        """Mirror an approval decision onto the memory candidate (the SSoT).
+        Best-effort: a missing candidate is logged, not raised — the approval
+        itself is already resolved."""
+        if not candidate_id:
+            logger.warning("[APPROVAL] memory_candidate resolved with no candidate_id")
+            return
+        from services.memory import candidate_service
+        db = SessionLocal()
+        try:
+            # _from_approval=True: this resolution ORIGINATED from the inbox, so
+            # candidate_service must NOT loop back to close the card (we already
+            # flipped it above). Prevents inbox→candidate→card re-entrancy.
+            if decision == "approve":
+                candidate_service.approve_candidate(db, candidate_id, _from_approval=True)
+            else:
+                candidate_service.reject_candidate(db, candidate_id,
+                                                   reason="rejected via approvals", _from_approval=True)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[APPROVAL] memory candidate %s apply failed: %s", candidate_id, exc)
+        finally:
+            db.close()
+
+    def resolve_memory_candidate_card(self, candidate_id: Optional[str], decision: str) -> None:
+        """Close the inbox card linked to a memory candidate that was resolved
+        on the Memory page, so the sidebar badge + Approvals list don't show a
+        stale pending card. No-op if there's no pending card. Calls
+        ``resolve_approval`` (which re-enters candidate_service with
+        ``_from_approval=True`` on the now-resolved candidate — idempotent), so
+        this terminates without looping."""
+        if not candidate_id:
+            return
+        db = SessionLocal()
+        try:
+            rows = db.query(ApprovalRequestModel).filter_by(
+                approval_type="memory_candidate", status="pending").all()
+            target_id = None
+            for r in rows:
+                meta = json.loads(r.metadata_json or "{}")
+                if meta.get("candidate_id") == candidate_id:
+                    target_id = r.id
+                    break
+        finally:
+            db.close()
+        if target_id:
+            try:
+                self.resolve_approval(target_id, decision)
+            except ValueError:
+                pass  # already resolved (race) — fine
+
     def resolve_approval(self, approval_id: str, decision: str, comment: Optional[str] = None) -> dict:
         """Resolve an approval request (approve/reject).
 
@@ -392,6 +442,14 @@ class ApprovalService:
         # one write path.
         if resolved_type == "cron_approval":
             self._apply_cron_decision(resolved_meta.get("job_id"), decision)
+
+        # Same write-through pattern for memory candidates: the approval card
+        # is just the inbox surface; ``memory_candidates.status`` is the SSoT.
+        # Resolution here flows back into candidate_service so BOTH surfaces
+        # (Approvals page + Memory page) stay consistent through one path.
+        if resolved_type == "memory_candidate":
+            self._apply_memory_candidate_decision(
+                resolved_meta.get("candidate_id"), decision)
 
         # Resume via PauseController — iterate the authoritative
         # ``paused_agents`` list stored on the approval row. This

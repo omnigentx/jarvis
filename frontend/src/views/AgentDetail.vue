@@ -8,6 +8,7 @@ import StatusBadge from '../components/StatusBadge.vue'
 import MarkdownRenderer from '../components/MarkdownRenderer.vue'
 import SkillEditorModal from '../components/agent/SkillEditorModal.vue'
 import SkillDeleteModal from '../components/agent/SkillDeleteModal.vue'
+import AgentMemoryPanel from './AgentMemoryPanel.vue'
 import {
   roleAvaClass,
   roleColorToken,
@@ -20,7 +21,7 @@ const route = useRoute()
 const router = useRouter()
 const store = useAgentsStore()
 const agentDetail = ref(null)
-const validTabs = ['overview', 'skills', 'servers', 'instruction', 'context', 'versions', 'activity']
+const validTabs = ['overview', 'skills', 'servers', 'instruction', 'context', 'versions', 'memory', 'activity']
 const initialTab = validTabs.includes(route.query.tab) ? route.query.tab : 'overview'
 const activeTab = ref(initialTab)
 const isLoading = ref(true)
@@ -98,6 +99,7 @@ const tabs = [
   { id: 'instruction', label: 'Instruction' },
   { id: 'context', label: 'Context Window' },
   { id: 'versions', label: 'Context Versions' },
+  { id: 'memory', label: 'Memory' },
   { id: 'activity', label: 'History' },
 ]
 
@@ -1328,6 +1330,11 @@ function historyBadgeLabel(type) {
             </div>
           </div>
         </div>
+      </div>
+
+      <!-- ===== MEMORY TAB ===== -->
+      <div v-else-if="activeTab === 'memory'" class="animate-fade-in">
+        <AgentMemoryPanel :agent-name="agentName" />
       </div>
 
       <!-- ===== HISTORY TAB ===== -->

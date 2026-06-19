@@ -26,6 +26,7 @@ import { EVENTS, on } from '../auth/bus.js'
 import { expandToolRequest, expandToolDone } from '../utils/toolEvents.js'
 import { createPlaybackDoneTracker } from './playbackDoneTracker.js'
 import { createWebRtcRecovery } from './webrtcRecovery.js'
+import { applyVoiceUserMessage } from './voiceChatBinding.js'
 
 const PCM_PLAYBACK_RATE = 24000  // RealtimeTTS engines emit 24 kHz mono
 
@@ -221,32 +222,13 @@ function _createVoiceSession() {
           break
 
         case 'user_message': {
-          // Push the user turn into chatStore so it appears in the main
-          // chat panel — same UI as typed messages, no separate voice log.
+          // Push the user turn into chatStore so it appears in the main chat
+          // panel — same UI as typed messages, no separate voice log. The
+          // coalesce/keep logic lives in applyVoiceUserMessage (unit-tested):
+          // a barge-in before the reply lands KEEPS the previous user bubble,
+          // dropping only the orphaned thinking placeholder.
           _ensureActiveConversation()
-          if (typeof chatStore.addUserMessage === 'function' && msg.text) {
-            // STT-correction coalesce: a fresh user_message arriving while
-            // the previous turn is still in the agent_thinking phase
-            // (pendingAgentMsgId set, no assistant_message yet) means the
-            // backend already cancelled that turn via _cancel_inflight on
-            // recording_start. Leaving the previous user bubble + spinner
-            // in place would surface the half-utterance the user is
-            // correcting — drop them so only the latest stands.
-            if (pendingAgentMsgId) {
-              try { chatStore.removeMessage?.(pendingAgentMsgId) } catch {}
-              pendingAgentMsgId = null
-              const conv = chatStore.activeConversation
-              if (conv) {
-                for (let i = conv.messages.length - 1; i >= 0; i--) {
-                  if (conv.messages[i].role === 'user') {
-                    try { chatStore.removeMessage?.(conv.messages[i].id) } catch {}
-                    break
-                  }
-                }
-              }
-            }
-            chatStore.addUserMessage(msg.text)
-          }
+          pendingAgentMsgId = applyVoiceUserMessage(chatStore, pendingAgentMsgId, msg.text)
           // Voice flow guarantees agent_thinking follows user_message —
           // flip status here too so the badge transitions instantly even
           // if the agent_thinking event is delayed by a few ms (avoids

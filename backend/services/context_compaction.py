@@ -662,6 +662,17 @@ async def _llm_one_shot(llm: Any, prompt_text: str) -> str:
         llm.generate([Prompt.user(prompt_text)], request_params=None, tools=None),
         timeout=_COMPACTOR_CALL_TIMEOUT_S,
     )
+    # Attribute the compactor's own spend under a "compaction" category so it's
+    # visible/filterable separately from agent turns (it goes through a raw
+    # generate, so the agent token hook never records it otherwise).
+    try:
+        from services.sse_progress import (_get_token_info,
+                                           _persist_and_broadcast_token_usage)
+        toks = _get_token_info(llm)
+        if toks:
+            _persist_and_broadcast_token_usage("compactor", "", toks, category="compaction")
+    except Exception:  # noqa: BLE001 — never break compaction over telemetry
+        pass
     return _msg_text(response)
 
 
@@ -1107,6 +1118,21 @@ async def maybe_compact_agent(
                 "[COMPACT] Threshold hit for %s: %d/%d tokens (%s, ratio %.2f)",
                 agent_name, current, limit, source, cfg.compact_at_ratio,
             )
+            # Slow-lane memory extraction piggybacks compaction: the threshold IS
+            # the composite trigger (>50% context + many turns). Synthesize
+            # durable workflows/decisions from the OLDER segment ABOUT TO BE
+            # SUMMARIZED AWAY (history minus the recent kept tail) — not the kept
+            # tail itself. The threshold memo (`_last_attempt_len`) gates re-fires
+            # until history grows, giving disjoint windows across compactions.
+            # Fire-and-forget; never blocks or breaks compaction.
+            try:
+                from services.memory.fast_extractor import fire_slow_extraction_from_history
+                keep = max(0, getattr(cfg, "keep_recent_messages", 0))
+                older = history[:-keep] if keep and len(history) > keep else []
+                if older:
+                    fire_slow_extraction_from_history(agent_name, older)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("[COMPACT] slow memory extraction skipped: %s", exc)
 
         lock = _lock_for(agent_name)
         if lock.locked():
@@ -1243,6 +1269,31 @@ async def _run_compaction(
         trigger=reason, confidence=plan.get("confidence", 0.0),
         status="completed", policy_version=POLICY_VERSION,
     )
+
+    # Hand any compactor-extracted memory candidates to the memory pipeline.
+    # AFTER the compaction event is durably saved, gated by the feature flag,
+    # and fully isolated: a failure here must never affect compaction (spec
+    # §11.2). The compactor LLM only emits these once its prompt is extended;
+    # until then ``promote_to_memory`` is empty and this is a no-op.
+    try:
+        promote = plan.get("promote_to_memory") or []
+        if promote:
+            from services.memory.settings import get_memory_settings
+            _mem = get_memory_settings()
+            if _mem.enabled:
+                from services.memory import candidate_service
+                from core.database import get_db_session as _gds
+                _db = _gds()
+                try:
+                    candidate_service.ingest_compactor_candidates(
+                        _db, owner_agent_name=agent_name, candidates=promote,
+                        approval_policy=_mem.approval_policy,
+                        pinned_token_budget=_mem.pinned_token_budget,
+                    )
+                finally:
+                    _db.close()
+    except Exception as exc:  # noqa: BLE001 — memory must not break compaction
+        logger.warning("[COMPACT] memory candidate ingest failed (non-fatal): %s", exc)
 
     saved = tokens_before - tokens_after
     stats = {

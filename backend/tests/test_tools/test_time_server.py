@@ -107,3 +107,21 @@ class TestGetCurrentTime:
         from tools.time_server import get_current_time
         with pytest.raises(ZoneInfoNotFoundError):
             get_current_time()
+
+    def test_includes_weekday(self, monkeypatch):
+        """Regression: gettime omitted the day-of-week, so the agent couldn't
+        tell what weekday it was. The output must name the weekday (English,
+        locale-independent)."""
+        monkeypatch.setenv("JARVIS_TIMEZONE", "Asia/Ho_Chi_Minh")
+        from tools.time_server import get_current_time, _WEEKDAYS
+        result = get_current_time()
+        assert any(w in result for w in _WEEKDAYS), f"no weekday in {result!r}"
+
+
+class TestGetTodayInfo:
+    def test_includes_weekday(self, monkeypatch):
+        monkeypatch.setenv("JARVIS_TIMEZONE", "Asia/Ho_Chi_Minh")
+        from tools.time_server import get_today_info, _WEEKDAYS
+        result = get_today_info()
+        assert any(w in result for w in _WEEKDAYS)
+        assert "Solar" in result and "Lunar" in result
