@@ -42,6 +42,17 @@ class EvidenceScores:
     final: float = 0.0
 
 
+def lanes_of(scores: "EvidenceScores") -> list:
+    """Which retrieval lanes surfaced a result, in fixed order — the debug UI
+    renders these as badges so the graph (MENTIONS co-occurrence) lane's
+    contribution is visible vs keyword (fts) / vector (dense)."""
+    return [name for name, present in (
+        ("fts", scores.bm25_rank is not None),
+        ("dense", scores.dense_rank is not None),
+        ("graph", scores.graph_rank is not None),
+    ) if present]
+
+
 @dataclass
 class Evidence:
     """The common structure every retriever returns (spec §9)."""
@@ -78,14 +89,7 @@ class Evidence:
                 "reranker": self.scores.reranker,
                 "final": self.scores.final,
             },
-            # Which retrieval lanes surfaced this memory — the debug UI shows these
-            # as badges so you can SEE the graph (MENTIONS co-occurrence) lane's
-            # contribution vs pure keyword (fts) / vector (dense).
-            "lanes": [name for name, present in (
-                ("fts", self.scores.bm25_rank is not None),
-                ("dense", self.scores.dense_rank is not None),
-                ("graph", self.scores.graph_rank is not None),
-            ) if present],
+            "lanes": lanes_of(self.scores),   # debug UI badges (see lanes_of)
             "authority": self.authority,
             "confidence": self.confidence,
             "validity": {"valid_from": self.valid_from, "valid_until": self.valid_until},

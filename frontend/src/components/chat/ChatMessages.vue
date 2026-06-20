@@ -5,6 +5,7 @@ import { parseYoutubeTags, youtubeEmbedUrl } from '../../utils/youtubeTags'
 import { normalizeTs } from '../../utils/timeFormat.js'
 import { useVoiceSession } from '../../composables/useVoiceSession.js'
 import { useLang } from '../../composables/useLang'
+import { useMemoryStore } from '../../stores/memory'
 import MarkdownRenderer from '../MarkdownRenderer.vue'
 
 /**
@@ -36,6 +37,7 @@ const expandedRows = reactive({})
 const { isMobile } = useBreakpoint()
 const voice = useVoiceSession()
 const { t } = useLang()
+const memStore = useMemoryStore()
 
 function toggleTools(msgId) { expandedTools[msgId] = !expandedTools[msgId] }
 function toggleRow(msgId, idx) { expandedRows[`${msgId}-${idx}`] = !expandedRows[`${msgId}-${idx}`] }
@@ -59,6 +61,16 @@ function memoryLines(msg) {
     .map((l) => l.replace(/^\s*-\s*/, ''))
 }
 function toggleMemory(msgId) { expandedMemory[msgId] = !expandedMemory[msgId] }
+
+// Lane provenance for a recall line. The line is "[type] excerpt"; strip the
+// type tag to get the excerpt the retrieval SSE keyed lanes by. Live-only (the
+// store fills from retrieval SSE during the turn) — falls back to no badge.
+function lineExcerpt(line) { return String(line || '').replace(/^\s*\[[^\]]*\]\s*/, '').trim() }
+function lineLanes(line) { return memStore.lanesForExcerpt(lineExcerpt(line)) || [] }
+// How many recalled memories the graph (MENTIONS) lane surfaced for this block.
+function memoryGraphCount(msg) {
+  return memoryLines(msg).filter((l) => lineLanes(l).includes('graph')).length
+}
 
 // Auto-scroll to bottom on new messages
 watch(
@@ -207,10 +219,16 @@ function parsedAgentContent(content) {
         <div v-if="isMemoryBlock(msg)" class="row row-memory">
           <button class="memory-chip" @click="toggleMemory(msg.id)">
             🧠 {{ memoryLines(msg).length }} {{ memLabel }}
+            <span v-if="memoryGraphCount(msg)" class="lane lane-graph"
+                  :title="t('memory.lane.graph')">graph {{ memoryGraphCount(msg) }}</span>
             <span class="mc-chevron" :class="{ expanded: !!expandedMemory[msg.id] }">▾</span>
           </button>
           <div v-if="expandedMemory[msg.id]" class="memory-detail">
-            <div v-for="(line, i) in memoryLines(msg)" :key="i" class="memory-line">{{ line }}</div>
+            <div v-for="(line, i) in memoryLines(msg)" :key="i" class="memory-line">
+              <span v-for="ln in lineLanes(line)" :key="ln" class="lane" :class="'lane-' + ln"
+                    :title="t('memory.lane.' + ln)">{{ ln }}</span>
+              {{ line }}
+            </div>
           </div>
         </div>
 
@@ -735,4 +753,10 @@ function parsedAgentContent(content) {
 .memory-line { font-size: 12px; color: var(--text-dim); line-height: 1.5;
   padding: 2px 0; border-bottom: 1px solid var(--border); }
 .memory-line:last-child { border-bottom: none; }
+/* Retrieval-lane provenance chips — graph highlighted (the one to watch). */
+.lane { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
+  padding: 0 5px; border-radius: 999px; border: 1px solid transparent; margin-right: 2px; }
+.lane-fts { color: var(--text-dim); background: var(--bg-4); border-color: var(--border-strong); }
+.lane-dense { color: var(--primary); background: var(--primary-bg); border-color: var(--primary-bg-strong); }
+.lane-graph { color: #fff; background: var(--primary); border-color: var(--primary); }
 </style>
