@@ -34,8 +34,9 @@ class EvidenceSource:
 
 @dataclass
 class EvidenceScores:
-    bm25_rank: Optional[int] = None
-    dense_rank: Optional[int] = None
+    bm25_rank: Optional[int] = None      # FTS/BM25 keyword lane
+    dense_rank: Optional[int] = None     # dense vector lane (LadybugDB HNSW)
+    graph_rank: Optional[int] = None     # GraphRAG MENTIONS co-occurrence lane
     rrf: Optional[float] = None
     reranker: Optional[float] = None
     final: float = 0.0
@@ -72,10 +73,19 @@ class Evidence:
             "scores": {
                 "bm25_rank": self.scores.bm25_rank,
                 "dense_rank": self.scores.dense_rank,
+                "graph_rank": self.scores.graph_rank,
                 "rrf": self.scores.rrf,
                 "reranker": self.scores.reranker,
                 "final": self.scores.final,
             },
+            # Which retrieval lanes surfaced this memory — the debug UI shows these
+            # as badges so you can SEE the graph (MENTIONS co-occurrence) lane's
+            # contribution vs pure keyword (fts) / vector (dense).
+            "lanes": [name for name, present in (
+                ("fts", self.scores.bm25_rank is not None),
+                ("dense", self.scores.dense_rank is not None),
+                ("graph", self.scores.graph_rank is not None),
+            ) if present],
             "authority": self.authority,
             "confidence": self.confidence,
             "validity": {"valid_from": self.valid_from, "valid_until": self.valid_until},

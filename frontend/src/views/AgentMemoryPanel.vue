@@ -37,6 +37,16 @@ const statusFilter = ref('active')
 const searchQuery = ref('')
 const searchResult = ref(null)
 
+// How many search results each retrieval lane surfaced (fts/dense/graph) — lets
+// you SEE the GraphRAG (MENTIONS) lane's contribution at a glance.
+const laneCounts = computed(() => {
+  const c = { fts: 0, dense: 0, graph: 0 }
+  for (const e of searchResult.value?.evidence || []) {
+    for (const ln of e.lanes || []) if (ln in c) c[ln]++
+  }
+  return c
+})
+
 const TYPES = ['', 'pinned', 'episodic', 'semantic', 'procedural']
 const base = computed(() => `/api/agents/${encodeURIComponent(props.agentName)}`)
 
@@ -190,8 +200,17 @@ onMounted(loadAll)
       </div>
       <div v-if="searchResult" class="search-result">
         <div class="muted" v-if="searchResult.degraded">{{ t('memory.degradedShort') }}</div>
+        <!-- Lane provenance summary: how each retrieval lane contributed -->
+        <div v-if="searchResult.evidence.length" class="lane-summary muted">
+          {{ searchResult.evidence.length }} {{ t('memory.results') }} —
+          <span class="lane lane-fts">fts {{ laneCounts.fts }}</span>
+          <span class="lane lane-dense">dense {{ laneCounts.dense }}</span>
+          <span class="lane lane-graph">graph {{ laneCounts.graph }}</span>
+        </div>
         <div v-for="e in searchResult.evidence" :key="e.evidence_id" class="evidence">
           <span class="badge">{{ e.memory_type }}</span>
+          <span v-for="ln in (e.lanes || [])" :key="ln" class="lane" :class="'lane-' + ln"
+                :title="t('memory.lane.' + ln)">{{ ln }}</span>
           <span class="excerpt">{{ e.excerpt }}</span>
         </div>
         <p v-if="!searchResult.evidence.length" class="muted">{{ t('memory.noResults') }}</p>
@@ -319,8 +338,15 @@ onMounted(loadAll)
   border: 1px solid var(--border-strong); border-radius: var(--r-md); padding: 9px 12px; font-size: 13px; }
 .search-input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-bg-strong); }
 .search-result { margin-top: 12px; }
-.evidence { display: flex; gap: 8px; padding: 6px 0; font-size: 13px; align-items: baseline; }
+.lane-summary { font-size: 12px; margin-bottom: 6px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.evidence { display: flex; gap: 6px; padding: 6px 0; font-size: 13px; align-items: baseline; flex-wrap: wrap; }
 .excerpt { color: var(--text-dim); }
+/* Retrieval-lane provenance chips — graph is highlighted (the one to watch). */
+.lane { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
+  padding: 1px 6px; border-radius: 999px; border: 1px solid transparent; line-height: 1.5; }
+.lane-fts { color: var(--text-dim); background: var(--bg-4); border-color: var(--border-strong); }
+.lane-dense { color: var(--primary); background: var(--primary-bg); border-color: var(--primary-bg-strong); }
+.lane-graph { color: #fff; background: var(--primary); border-color: var(--primary); }
 
 /* Filters */
 .filters { display: flex; gap: 8px; flex-wrap: wrap; }

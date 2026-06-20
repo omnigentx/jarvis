@@ -48,6 +48,8 @@ def rrf_fuse(result_lists: list[list[Evidence]], *, k: int = RRF_K) -> list[Evid
                     cur.scores.bm25_rank = ev.scores.bm25_rank
                 if ev.scores.dense_rank is not None:
                     cur.scores.dense_rank = ev.scores.dense_rank
+                if ev.scores.graph_rank is not None:        # keep graph provenance
+                    cur.scores.graph_rank = ev.scores.graph_rank
                 # prefer a non-empty excerpt
                 if not cur.excerpt and ev.excerpt:
                     cur.excerpt = ev.excerpt

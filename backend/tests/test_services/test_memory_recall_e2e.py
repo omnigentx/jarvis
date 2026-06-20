@@ -186,6 +186,11 @@ async def test_graphrag_cooccurrence_and_relevance_gate(monkeypatch):
     ids = {e.record_id for e in res.evidence}
     assert "A" in ids                      # direct vector hit
     assert "B" in ids                      # GraphRAG co-occurrence (vector-far, shared entity)
+    # Lane PROVENANCE (powers the debug UI): A came from the vector lane, B ONLY
+    # from the graph (MENTIONS) lane — so the UI can show graph's unique pull.
+    by_id = {e.record_id: e.scores for e in res.evidence}
+    assert by_id["A"].dense_rank is not None and by_id["A"].graph_rank is None
+    assert by_id["B"].graph_rank is not None and by_id["B"].dense_rank is None
 
     # 2. off-topic: vector-far from everything → relevance gate → nothing injected.
     _CACHE.clear()

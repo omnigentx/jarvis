@@ -545,6 +545,12 @@
     "searchPlaceholder": "Tìm trong bộ nhớ của agent này…",
     "noResults": "Không có kết quả.",
     "degradedShort": "(đang giảm)",
+    "results": "kết quả",
+    "lane": {
+      "fts": "Khớp từ khóa (BM25)",
+      "dense": "Khớp vector (ngữ nghĩa)",
+      "graph": "Đồng xuất hiện trên đồ thị tri thức (MENTIONS) — kéo về qua entity chung"
+    },
     "awaitingApproval": "Chờ duyệt",
     "approve": "Duyệt",
     "reject": "Từ chối",
