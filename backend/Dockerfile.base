@@ -34,6 +34,7 @@
 #           the HF cache so the memory dense lane + knowledge graph load INSTANTLY
 #           at runtime (no first-request download, survives container recreate).
 #           Same pattern as the Playwright pre-download. Bumps the image ~2.3GB.
+#           Also bumped gh 2.92.0 → 2.95.0 (the apt repo pruned 2.92.0).
 #   1.2.0 — added gh=2.92.0 (GitHub CLI) + GH_CONFIG_DIR=/app/.gh-config so
 #           agents can shell out to `gh` for CI/PR/release ops via the
 #           Jarvis-private gh config written by services/gh_credential_sync.py.
@@ -68,7 +69,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         alsa-utils flac ffmpeg docker.io \
         libnspr4 libnss3 libatk1.0-0t64 libatk-bridge2.0-0t64 \
         libcups2t64 libatspi2.0-0t64 libxcomposite1 libxdamage1 \
-        gh=2.92.0 \
+        gh=2.95.0 \
     && rm -rf /var/lib/apt/lists/* \
     && npm install -g gitnexus@1.6.2 \
     && npm cache clean --force
