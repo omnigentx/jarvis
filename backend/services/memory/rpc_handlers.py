@@ -152,7 +152,14 @@ async def memory_forget(*, agent_name: str, memory_id: str, reason: str = "") ->
     db = get_db_session()
     try:
         svc = MemoryService(db, pinned_token_budget=get_memory_settings().pinned_token_budget)
-        rec = svc.archive_memory(memory_id, owner_agent_name=agent_name, changed_by="agent")
+        # memory_search hands the agent CANONICAL evidence ids ("{kind}:{record_id}",
+        # e.g. "memory:fd70…"), but archive_memory takes a RAW record id. Strip a
+        # kind prefix if present (mirrors memory_fetch) so the agent's own search id
+        # resolves — otherwise the lookup misses and returns "memory not found for
+        # this owner". A raw id (no ":") passes through unchanged.
+        _kind, _sep, _rid = str(memory_id).partition(":")
+        record_id = _rid if _sep else memory_id
+        rec = svc.archive_memory(record_id, owner_agent_name=agent_name, changed_by="agent")
         return {"status": "archived", "memory_id": rec.id}
     except MemoryWriteError as exc:
         return {"error": str(exc)}

@@ -114,3 +114,24 @@ async def test_fetch_comm_evidence_authorized(wired):
     # A non-participant cannot fetch it even with the raw id.
     denied = await rpc_handlers.memory_fetch(agent_name="Mallory", evidence_ids=["comm:c1"])
     assert denied["items"] == []
+
+
+async def test_forget_accepts_evidence_id_prefix(wired):
+    # Regression: memory_search hands the agent "memory:<record_id>"; memory_forget
+    # passed that straight to a RAW record lookup → "memory not found for this
+    # owner" even for the agent's OWN memory. It must strip the kind prefix.
+    res = await rpc_handlers.memory_forget(agent_name="Jarvis", memory_id="memory:m1",
+                                           reason="wrong info — STT misheard")
+    assert res.get("status") == "archived" and res["memory_id"] == "m1"
+
+
+async def test_forget_raw_id_still_works(wired):
+    # A raw record id (no kind prefix) must still resolve unchanged.
+    res = await rpc_handlers.memory_forget(agent_name="Riley [SA]", memory_id="r1")
+    assert res.get("status") == "archived" and res["memory_id"] == "r1"
+
+
+async def test_forget_is_owner_scoped(wired):
+    # Even with the right evidence id, an agent can't forget another agent's memory.
+    res = await rpc_handlers.memory_forget(agent_name="Jarvis", memory_id="memory:r1")
+    assert "error" in res
