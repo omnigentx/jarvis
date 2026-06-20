@@ -42,10 +42,14 @@ class EvidenceScores:
     final: float = 0.0
 
 
-def lanes_of(scores: "EvidenceScores") -> list:
+def lanes_of(scores: "Optional[EvidenceScores]") -> list:
     """Which retrieval lanes surfaced a result, in fixed order — the debug UI
     renders these as badges so the graph (MENTIONS co-occurrence) lane's
-    contribution is visible vs keyword (fts) / vector (dense)."""
+    contribution is visible vs keyword (fts) / vector (dense). Tolerates ``None``
+    so this debug-only annotation can never break a caller (recall must not fail
+    because lane provenance is missing)."""
+    if scores is None:
+        return []
     return [name for name, present in (
         ("fts", scores.bm25_rank is not None),
         ("dense", scores.dense_rank is not None),

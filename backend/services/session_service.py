@@ -116,12 +116,35 @@ def _extract_display_messages(history_path: Path) -> List[Dict]:
         if not text:
             continue
 
-        display.append({
+        entry = {
             "role": role,
             "content": text,
-        })
+        }
+        # Recall blocks carry per-memory lane provenance (fts/dense/graph) in a
+        # channel — expose it (ordered, one list per recalled line) so the chat
+        # "memories used" chip can show which lane surfaced each memory. Durable
+        # (persisted with the block) → survives reload, unlike a live SSE.
+        lanes = _recall_lanes_from_channels(msg)
+        if lanes is not None:
+            entry["recall_lanes"] = lanes
+        display.append(entry)
 
     return display
+
+
+def _recall_lanes_from_channels(msg: Dict) -> Optional[List[List[str]]]:
+    """Read the ``jarvis:recall_lanes`` channel off a raw history message. Returns
+    one lane-list per recalled memory (same order as the rendered ``- `` lines),
+    or ``None`` if this isn't a recall block / predates the feature."""
+    from services.memory.retrieval_hook import RECALL_LANES_CHANNEL
+    entries = (msg.get("channels") or {}).get(RECALL_LANES_CHANNEL)
+    if not entries:
+        return None
+    out: List[List[str]] = []
+    for c in entries:
+        text = c.get("text", "") if isinstance(c, dict) else ""
+        out.append([lane for lane in text.split(",") if lane])
+    return out
 
 
 def _resolve_primary_agent(session) -> Optional[str]:

@@ -5,7 +5,6 @@ import { parseYoutubeTags, youtubeEmbedUrl } from '../../utils/youtubeTags'
 import { normalizeTs } from '../../utils/timeFormat.js'
 import { useVoiceSession } from '../../composables/useVoiceSession.js'
 import { useLang } from '../../composables/useLang'
-import { useMemoryStore } from '../../stores/memory'
 import MarkdownRenderer from '../MarkdownRenderer.vue'
 
 /**
@@ -37,7 +36,6 @@ const expandedRows = reactive({})
 const { isMobile } = useBreakpoint()
 const voice = useVoiceSession()
 const { t } = useLang()
-const memStore = useMemoryStore()
 
 function toggleTools(msgId) { expandedTools[msgId] = !expandedTools[msgId] }
 function toggleRow(msgId, idx) { expandedRows[`${msgId}-${idx}`] = !expandedRows[`${msgId}-${idx}`] }
@@ -62,14 +60,14 @@ function memoryLines(msg) {
 }
 function toggleMemory(msgId) { expandedMemory[msgId] = !expandedMemory[msgId] }
 
-// Lane provenance for a recall line. The line is "[type] excerpt"; strip the
-// type tag to get the excerpt the retrieval SSE keyed lanes by. Live-only (the
-// store fills from retrieval SSE during the turn) — falls back to no badge.
-function lineExcerpt(line) { return String(line || '').replace(/^\s*\[[^\]]*\]\s*/, '').trim() }
-function lineLanes(line) { return memStore.lanesForExcerpt(lineExcerpt(line)) || [] }
+// Lane provenance per recalled line (fts/dense/graph). Comes from the backend
+// `recall_lanes` field — ONE list per line, SAME ORDER as memoryLines — which
+// rides the recall block's persisted channel, so it's correct on reload (not a
+// live-only signal). Empty for blocks recalled before this shipped.
+function laneFor(msg, i) { return (msg.recallLanes && msg.recallLanes[i]) || [] }
 // How many recalled memories the graph (MENTIONS) lane surfaced for this block.
 function memoryGraphCount(msg) {
-  return memoryLines(msg).filter((l) => lineLanes(l).includes('graph')).length
+  return (msg.recallLanes || []).filter((ls) => Array.isArray(ls) && ls.includes('graph')).length
 }
 
 // Auto-scroll to bottom on new messages
@@ -225,7 +223,7 @@ function parsedAgentContent(content) {
           </button>
           <div v-if="expandedMemory[msg.id]" class="memory-detail">
             <div v-for="(line, i) in memoryLines(msg)" :key="i" class="memory-line">
-              <span v-for="ln in lineLanes(line)" :key="ln" class="lane" :class="'lane-' + ln"
+              <span v-for="ln in laneFor(msg, i)" :key="ln" class="lane" :class="'lane-' + ln"
                     :title="t('memory.lane.' + ln)">{{ ln }}</span>
               {{ line }}
             </div>

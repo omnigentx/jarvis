@@ -45,6 +45,13 @@ PROVENANCE_RECALL = "memory_recall"
 # set no longer re-injects the overlap. record_id is the cheapest, O(1)-compare,
 # restart-stable identity; near-duplicate *content* is the capture side's job.
 RECALL_IDS_CHANNEL = "jarvis:recall_ids"
+# Per-evidence retrieval-lane provenance (fts/dense/graph), one comma-joined
+# entry per evidence, SAME ORDER as RECALL_IDS_CHANNEL and the rendered lines.
+# Computed once at recall time and persisted with the block (channels survive
+# save/load), so the debug UI can show which lane surfaced each memory WITHOUT
+# costing a single prompt token (channels never reach the LLM as content). This
+# is the durable replacement for a live-only SSE: it's correct on reload too.
+RECALL_LANES_CHANNEL = "jarvis:recall_lanes"
 # Recall is ALWAYS-ON now (no intent gate): retrieve across these types every
 # turn and let relevance ranking decide what (if anything) is worth injecting.
 RECALL_TYPES = ["episodic", "semantic", "procedural"]
@@ -119,11 +126,13 @@ def _build_block_message(evidence):
     unmarked user message."""
     from fast_agent.mcp.helpers.content_helpers import text_content
     from fast_agent.mcp.prompt_message_extended import PromptMessageExtended
+    from services.retrieval.contracts import lanes_of
     return PromptMessageExtended(
         role="user",
         content=[text_content(_render_block(evidence))],
         channels={PROVENANCE_CHANNEL: [text_content(PROVENANCE_RECALL)],
-                  RECALL_IDS_CHANNEL: [text_content(e.record_id) for e in evidence]},
+                  RECALL_IDS_CHANNEL: [text_content(e.record_id) for e in evidence],
+                  RECALL_LANES_CHANNEL: [text_content(",".join(lanes_of(getattr(e, "scores", None)))) for e in evidence]},
     )
 
 

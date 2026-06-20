@@ -14,38 +14,9 @@ export const useMemoryStore = defineStore('memory', () => {
   const degradedByAgent = ref({})
   // bumped whenever something is indexed → views can re-fetch index-status
   const indexTick = ref(0)
-  // Retrieval-lane provenance (fts/dense/graph) per recalled excerpt, captured
-  // live from retrieval SSE so the chat "memories used" chip can SHOW which lane
-  // surfaced each memory — without baking it into the prompt (which is kept lean).
-  // Keyed by excerpt prefix (the SSE truncates to 160 chars); accumulates across
-  // recalls. Live-only (lost on reload — use the Memory tab search for history).
-  const recallLanes = ref({})
 
   function isDegraded(agent) {
     return Boolean(degradedByAgent.value[agent])
-  }
-
-  // Best-prefix match: the chip line holds the FULL excerpt, the stored key is
-  // the SSE-truncated one, so either may be a prefix of the other.
-  function lanesForExcerpt(text) {
-    const t = (text || '').trim()
-    if (!t) return null
-    const map = recallLanes.value
-    if (map[t]) return map[t]
-    for (const k in map) {
-      if (k && (t.startsWith(k) || k.startsWith(t))) return map[k]
-    }
-    return null
-  }
-
-  function _captureLanes(event) {
-    const ev = event?.data?.evidence
-    if (!Array.isArray(ev)) return
-    const next = { ...recallLanes.value }
-    for (const e of ev) {
-      if (e?.excerpt && Array.isArray(e.lanes)) next[e.excerpt.trim()] = e.lanes
-    }
-    recallLanes.value = next
   }
 
   function processMemoryEvent(event) {
@@ -60,7 +31,6 @@ export const useMemoryStore = defineStore('memory', () => {
     switch (event.event_type) {
       case 'retrieval_degraded':
         degradedByAgent.value = { ...degradedByAgent.value, [agent]: true }
-        _captureLanes(event)
         break
       default:
         if (event.event_type === 'retrieval_completed') {
@@ -68,13 +38,12 @@ export const useMemoryStore = defineStore('memory', () => {
           if (degradedByAgent.value[agent]) {
             degradedByAgent.value = { ...degradedByAgent.value, [agent]: false }
           }
-          _captureLanes(event)
         }
     }
   }
 
   return {
-    degradedByAgent, indexTick, recallLanes,
-    isDegraded, lanesForExcerpt, processMemoryEvent,
+    degradedByAgent, indexTick,
+    isDegraded, processMemoryEvent,
   }
 })

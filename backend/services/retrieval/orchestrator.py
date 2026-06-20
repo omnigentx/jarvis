@@ -22,7 +22,7 @@ from services.indexing.embedding_provider import get_shared_embedding_provider
 from services.retrieval import fusion
 from services.retrieval.budget import build_budget
 from services.retrieval.cache import RetrievalCache, cache_key, normalize_query
-from services.retrieval.contracts import Evidence, RetrievalRequest, RetrievalResult, lanes_of
+from services.retrieval.contracts import Evidence, RetrievalRequest, RetrievalResult
 from services.retrieval.evidence_builder import build_evidence
 from services.retrieval.intent_router import (
     LEVEL_AGENTIC,
@@ -222,8 +222,7 @@ class RetrievalOrchestrator:
                 "message": f"{len(result.evidence)} memories recalled", "timestamp": now,
                 "data": {"count": len(result.evidence), "level": result.level,
                          "evidence": [{"id": e.evidence_id, "type": e.memory_type,
-                                       "excerpt": e.excerpt[:160],
-                                       "lanes": lanes_of(e.scores)} for e in result.evidence]},
+                                       "excerpt": e.excerpt[:160]} for e in result.evidence]},
             })
         except Exception:  # noqa: BLE001
             pass

@@ -197,3 +197,41 @@ async def test_query_falls_back_to_history_when_delta_has_no_text(wired):
     agent.message_history.extend(delta)               # framework merges delta after
     assert captured.get("q") == "what is my job?"
     assert len(_injected(agent)) == 1
+
+
+# ── Lane provenance: durable channel → display exposure (persistent, no token) ──
+
+def test_recall_lanes_channel_survives_to_display(tmp_path):
+    """The recall block carries per-memory lane provenance in a channel; it must
+    survive save/load history AND be exposed by ``_extract_display_messages`` —
+    one lane-list per rendered line, SAME order — so the chat 'memories used' chip
+    can show which lane (fts/dense/graph) surfaced each memory after a reload,
+    WITHOUT any prompt tokens (channels never reach the LLM as content)."""
+    from fast_agent.mcp.prompt_serialization import to_json
+    from services.retrieval.contracts import (
+        Evidence, EvidenceScores, EvidenceSource, evidence_kind,
+    )
+    from services.session_service import _extract_display_messages
+
+    def _ev_scored(rid, excerpt, **ranks):
+        return Evidence(
+            evidence_id=f"{evidence_kind('semantic')}:{rid}", record_id=rid,
+            owner_agent_name="Jarvis", memory_type="semantic", excerpt=excerpt,
+            source=EvidenceSource(type="memory", id=rid),
+            scores=EvidenceScores(**ranks), authority="user_confirmed", confidence=0.9)
+
+    # A: vector hit only; B: graph (MENTIONS) only — the case the chip exists to show.
+    evidence = [_ev_scored("A", "user works at fpt", dense_rank=1),
+                _ev_scored("B", "fpt office is in hanoi", graph_rank=1)]
+    block = rh._build_block_message(evidence)
+
+    history_path = tmp_path / "history_Jarvis.json"
+    history_path.write_text(to_json([block]), encoding="utf-8")
+
+    display = _extract_display_messages(history_path)
+    assert len(display) == 1
+    lanes = display[0]["recall_lanes"]
+    assert lanes == [["dense"], ["graph"]]            # ordered, one list per line
+    # Order matches the rendered "- " lines the chip parses.
+    lines = [l for l in display[0]["content"].split("\n") if l.startswith("- ")]
+    assert len(lines) == len(lanes) == 2
