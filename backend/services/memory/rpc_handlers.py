@@ -127,13 +127,21 @@ async def memory_remember(*, agent_name: str, content: str,
     if not is_valid_subject_scope(scope):
         scope = "user"
     requires_approval = settings.approval_policy != "auto_low_risk"
+    # The agent's explicit "remember" tool has no snippet to validate an excerpt
+    # against (excerpt_ok=None) → confidence is authority-derived (agent_observed
+    # → 0.6), NOT the flat 0.5 default. Same deterministic source as the extractor.
+    from services.memory.confidence import assess_confidence
+    verdict = assess_confidence(reasoning_type=None, excerpt_ok=None,
+                                authority="agent_observed")
     db = get_db_session()
     try:
         cand = cnd.create_candidate(
             db, owner_agent_name=agent_name, candidate_type="agent_remember",
             payload={"memory_type": memory_type, "content": content,
                      "subject_scope": scope, "authority": "agent_observed",
-                     "pinned": pinned},
+                     "pinned": pinned, "confidence": verdict.confidence,
+                     "confidence_method": verdict.method},
+            confidence=verdict.confidence,
             requires_approval=requires_approval,
             pinned_token_budget=settings.pinned_token_budget,
         )

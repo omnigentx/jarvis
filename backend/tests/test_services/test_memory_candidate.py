@@ -210,3 +210,22 @@ def test_confidence_flows_from_candidate_to_memory(db):
                          confidence=0.8, now=200.0)
     rec_b = db.query(MemoryRecord).filter_by(content="user likes dark mode").one()
     assert rec_b.confidence == 0.8
+
+
+def test_confidence_metadata_reaches_version(db):
+    """How confidence was derived (method + signals) is recorded in
+    MemoryVersion.metadata_json → auditable + migratable when the formula changes."""
+    import json as _json
+
+    from core.database import MemoryVersion
+    cnd.create_candidate(
+        db, owner_agent_name="Jarvis", candidate_type="extracted",
+        payload=_payload(content="user works at fpt", memory_type="semantic",
+                         confidence=0.9, confidence_method="evidence_alignment_v1:direct",
+                         reasoning_type="direct", excerpt_ok=True),
+        confidence=0.9, now=100.0)
+    rec = db.query(MemoryRecord).filter_by(content="user works at fpt").one()
+    v = db.query(MemoryVersion).filter_by(memory_id=rec.id, version=1).one()
+    meta = _json.loads(v.metadata_json)
+    assert meta["confidence_method"] == "evidence_alignment_v1:direct"
+    assert meta["reasoning_type"] == "direct" and meta["excerpt_ok"] is True

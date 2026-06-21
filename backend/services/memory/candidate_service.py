@@ -191,6 +191,17 @@ def ingest_compactor_candidates(
     return ids
 
 
+def _confidence_metadata(payload: dict) -> dict:
+    """The provenance of a memory's confidence, for MemoryVersion.metadata_json.
+    Only the keys the capture lane actually recorded (absent for legacy/manual
+    paths) so the blob stays honest about what's known."""
+    meta = {}
+    for key in ("confidence_method", "reasoning_type", "excerpt_ok"):
+        if payload.get(key) is not None:
+            meta[key] = payload[key]
+    return meta
+
+
 def _persist_from_candidate(db, cand, status, *, now, changed_by="system",
                             pinned_token_budget=1500):
     payload = json.loads(cand.payload_json)
@@ -214,6 +225,9 @@ def _persist_from_candidate(db, cand, status, *, now, changed_by="system",
         # this, create_memory defaulted to 0.5 and confidence never reached a
         # memory (the policy's confidence rank-boost was permanently a no-op).
         confidence=payload.get("confidence", cand.confidence),
+        # Audit trail: HOW this confidence was derived (method + signals) →
+        # MemoryVersion.metadata_json. Lets a future formula change migrate safely.
+        version_metadata=_confidence_metadata(payload),
         now=now, entities=payload.get("entities"), subtype=payload.get("subtype"),
         # A SECRET only reaches persistence via EXPLICIT user approval: secrets
         # force requires_approval=True in create_candidate, so they never hit

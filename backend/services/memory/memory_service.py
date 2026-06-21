@@ -64,6 +64,7 @@ class MemoryService:
         pinned: bool = False, sources: list[dict] | None = None,
         changed_by: str = "system", reason: str | None = None,
         allow_secret: bool = False, entities: list | None = None,
+        version_metadata: dict | None = None,
     ) -> MemoryRecord:
         now = time.time() if now is None else now
         if not owner_agent_name:
@@ -109,7 +110,8 @@ class MemoryService:
         )
         self.db.add(rec)
         self.db.flush()
-        self._add_version(rec, content, "create", changed_by, reason, now)
+        self._add_version(rec, content, "create", changed_by, reason, now,
+                          metadata=version_metadata)
         self._add_sources(rec, sources, now)
         ob.enqueue(self.db, event_type=ob.EVENT_MEMORY_UPSERT, aggregate_id=rec.id,
                    aggregate_revision=rec.current_version, now=now)
@@ -234,10 +236,15 @@ class MemoryService:
         _emit(event, owner, now, {"memory_id": rec.id})
         return rec
 
-    def _add_version(self, rec, content, change_type, changed_by, reason, now) -> None:
+    def _add_version(self, rec, content, change_type, changed_by, reason, now,
+                     metadata: dict | None = None) -> None:
+        # metadata_json records HOW this version's confidence was derived
+        # (confidence_method + signals) so a later formula change is auditable
+        # and migratable — see services.memory.confidence.
         self.db.add(MemoryVersion(
             memory_id=rec.id, version=rec.current_version, content=content,
-            metadata_json="{}", change_type=change_type, changed_by=changed_by,
+            metadata_json=json.dumps(metadata or {}, ensure_ascii=False),
+            change_type=change_type, changed_by=changed_by,
             reason=reason, created_at=now))
 
     def _add_sources(self, rec, sources, now) -> None:
