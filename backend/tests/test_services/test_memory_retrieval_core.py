@@ -12,7 +12,7 @@ from services.retrieval import cache as cache_mod
 from services.retrieval import fusion
 from services.retrieval.budget import build_budget
 from services.retrieval.contracts import (
-    Evidence, EvidenceScores, EvidenceSource, RetrievalRequest,
+    Evidence, EvidenceScores, EvidenceSource, RetrievalRequest
 )
 from services.retrieval.evidence_builder import build_evidence
 from services.retrieval.ledger import EvidenceLedger
@@ -168,7 +168,6 @@ def _orch_settings():
     import types
     return types.SimpleNamespace(
         embedding_model="BAAI/bge-m3", embedding_revision="",
-        vector_backend="qdrant", qdrant_url="http://localhost:59999",
         evidence_token_budget=2500, trigger_lexicon_overrides={},
         quality_gate_thresholds={}, mode="balanced")
 

@@ -241,3 +241,65 @@ async def test_fire_slow_extraction_gated_by_settings(monkeypatch):
     fx.fire_slow_extraction_from_history("Jarvis", [_M("we decided to deploy via staging")])
     await asyncio.sleep(0)
     assert fired == ["Jarvis"]
+
+
+# ── evidence-grounded confidence (decision: backend verifies, not LLM number) ──
+
+_CFG_AUTO = types.SimpleNamespace(approval_policy="auto_low_risk", pinned_token_budget=1500)
+_SNIPPET = "user: I work as a software engineer at FPT and I love pho"
+
+
+async def _extract_auto(scripted: str):
+    return await fx.run_fast_extraction("Jarvis", _SNIPPET, _CFG_AUTO,
+                                        generate_fn=_playback_generate_fn(scripted))
+
+
+async def test_e2e_verified_evidence_auto_saves_with_source(test_db):
+    """Evidence quote present in the snippet → verified → confidence by reasoning_type,
+    auto-saves, and the verbatim quote is stored as provenance in memory_sources."""
+    await _extract_auto('[{"kind":"fact","content":"user works at FPT",'
+                        '"evidence_excerpt":"software engineer at FPT","reasoning_type":"direct"}]')
+    rows = _cands(test_db)
+    assert len(rows) == 1
+    c = rows[0]
+    assert c.confidence == 0.9 and c.status == "auto_approved"   # direct + verified → high, saved
+    payload = json.loads(c.payload_json)
+    assert payload["excerpt_ok"] is True
+    assert payload["confidence_method"] == "evidence_alignment_v1:direct"
+    # provenance reaches memory_sources after auto-persist (was empty before this work)
+    from core.database import MemoryRecord, MemorySource
+    db = test_db()
+    try:
+        rec = db.query(MemoryRecord).filter_by(owner_agent_name="Jarvis").one()
+        srcs = db.query(MemorySource).filter_by(memory_id=rec.id).all()
+        assert any("software engineer at FPT" in (s.source_excerpt or "") for s in srcs)
+    finally:
+        db.close()
+
+
+async def test_e2e_fabricated_evidence_blocks_autosave(test_db):
+    """Evidence quote NOT in the snippet → fabricated → never auto-saves (routes to
+    approval), low confidence, no memory persisted."""
+    await _extract_auto('[{"kind":"fact","content":"user works at Google",'
+                        '"evidence_excerpt":"I work at Google","reasoning_type":"direct"}]')
+    rows = _cands(test_db)
+    assert len(rows) == 1
+    c = rows[0]
+    assert c.status == "pending" and c.confidence == 0.4         # blocked, distrusted
+    assert json.loads(c.payload_json)["excerpt_ok"] is False
+    from core.database import MemoryRecord
+    db = test_db()
+    try:
+        assert db.query(MemoryRecord).filter_by(owner_agent_name="Jarvis").count() == 0
+    finally:
+        db.close()
+
+
+async def test_e2e_missing_evidence_is_not_trusted(test_db):
+    """Fail-loud: the extracted lane MUST cite verifiable evidence. A memory with
+    NO evidence_excerpt is never auto-saved (treated like fabricated → approval),
+    even under auto_low_risk — we never silently trust an unverifiable extraction."""
+    await _extract_auto('[{"kind":"fact","content":"user works at FPT"}]')   # no evidence
+    c = _cands(test_db)[0]
+    assert c.status == "pending" and c.confidence == 0.4    # not auto-saved
+    assert json.loads(c.payload_json)["excerpt_ok"] is False

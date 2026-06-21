@@ -27,11 +27,12 @@
   },
   "settings": {
     "memory": {
-      "intro": "Mỗi agent có một bộ nhớ riêng, lưu lâu dài: ghim các sở thích, nhớ lại hội thoại và quyết định cũ, tìm kiếm kết hợp cả từ khóa (BM25) lẫn vector. Dữ liệu thật nằm ở SQLite; Qdrant chỉ là chỉ mục tìm kiếm và có thể dựng lại bất cứ lúc nào.",
-      "qdrant": "Qdrant",
-      "qdrantConnected": "Đã kết nối",
-      "qdrantPoints": "Đã lập chỉ mục {points} vector",
-      "qdrantDownPrefix": "Chưa kết nối — tìm theo ngữ nghĩa đang bị giảm, tạm chuyển sang tìm theo từ khóa. Hãy kiểm tra container Qdrant tại",
+      "intro": "Mỗi agent có một bộ nhớ riêng, lưu lâu dài: ghim các sở thích, nhớ lại hội thoại và quyết định cũ, tìm kiếm kết hợp cả từ khóa (BM25) lẫn vector. Dữ liệu thật nằm ở SQLite; LadybugDB là chỉ mục vector + đồ thị tri thức, dựng lại được bất cứ lúc nào.",
+      "dense": "Chỉ mục ngữ nghĩa (LadybugDB)",
+      "denseConnected": "Đã kết nối",
+      "densePoints": "Đã lập chỉ mục {points} ký ức",
+      "denseNoEmbeddings": "Thiếu embeddings — tìm theo ngữ nghĩa và đồ thị tri thức đang TẮT (chỉ còn tìm theo từ khóa). Hãy cài extra 'memory' (FlagEmbedding) ở backend.",
+      "denseDown": "Chỉ mục không khả dụng — tìm theo ngữ nghĩa bị giảm, tạm chuyển sang tìm theo từ khóa.",
       "indexQueue": "Hàng đợi lập chỉ mục",
       "queuePending": "{n} đang chờ",
       "queueDead": "{n} lỗi",
@@ -55,7 +56,6 @@
       "providerDefault": "Mặc định (kế thừa)",
       "curatorBaseUrl": "Base URL curator (tùy chọn)",
       "embeddingModel": "Model embedding",
-      "qdrantUrl": "Qdrant URL",
       "curatorApiKey": "API key curator",
       "curatorApiKeySet": "Đã đặt rồi — nhập key mới để thay, hoặc để trống nếu muốn giữ nguyên.",
       "curatorApiKeyUnset": "Chưa đặt. Dùng cùng với base URL của một router rẻ hơn.",
@@ -538,13 +538,24 @@
     }
   },
   "memory": {
-    "degraded": "Tìm theo ngữ nghĩa đang bị giảm (Qdrant không khả dụng) — tạm dùng tìm theo từ khóa.",
+    "degraded": "Tìm theo ngữ nghĩa đang bị giảm (chỉ mục vector không khả dụng) — tạm dùng tìm theo từ khóa.",
     "episodic": "Hội thoại",
     "indexPending": "Đang lập chỉ mục",
     "indexDead": "Lỗi chỉ mục",
     "searchPlaceholder": "Tìm trong bộ nhớ của agent này…",
     "noResults": "Không có kết quả.",
     "degradedShort": "(đang giảm)",
+    "results": "kết quả",
+    "lane": {
+      "fts": "Khớp từ khóa (BM25)",
+      "dense": "Khớp vector (ngữ nghĩa)",
+      "graph": "Đồng xuất hiện trên đồ thị tri thức (MENTIONS) — kéo về qua entity chung"
+    },
+    "scoreHint": "rrf = điểm khớp truy xuất thô (cao = khớp câu hỏi hơn). conf = độ tin fact đúng (0–1). ✓ = đã xác minh (user xác nhận hoặc tool kiểm chứng).",
+    "approvalReason": {
+      "unverified_evidence": "Vẫn cần duyệt dù đã bật tự lưu: không xác minh được bằng chứng cho ký ức này trong tin nhắn của bạn, nên nó không được tự lưu.",
+      "secret": "Cần duyệt: nội dung có vẻ nhạy cảm/bí mật, loại này không bao giờ tự lưu."
+    },
     "awaitingApproval": "Chờ duyệt",
     "approve": "Duyệt",
     "reject": "Từ chối",

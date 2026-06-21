@@ -34,11 +34,27 @@ class EvidenceSource:
 
 @dataclass
 class EvidenceScores:
-    bm25_rank: Optional[int] = None
-    dense_rank: Optional[int] = None
+    bm25_rank: Optional[int] = None      # FTS/BM25 keyword lane
+    dense_rank: Optional[int] = None     # dense vector lane (LadybugDB HNSW)
+    graph_rank: Optional[int] = None     # GraphRAG MENTIONS co-occurrence lane
     rrf: Optional[float] = None
     reranker: Optional[float] = None
     final: float = 0.0
+
+
+def lanes_of(scores: "Optional[EvidenceScores]") -> list:
+    """Which retrieval lanes surfaced a result, in fixed order — the debug UI
+    renders these as badges so the graph (MENTIONS co-occurrence) lane's
+    contribution is visible vs keyword (fts) / vector (dense). Tolerates ``None``
+    so this debug-only annotation can never break a caller (recall must not fail
+    because lane provenance is missing)."""
+    if scores is None:
+        return []
+    return [name for name, present in (
+        ("fts", scores.bm25_rank is not None),
+        ("dense", scores.dense_rank is not None),
+        ("graph", scores.graph_rank is not None),
+    ) if present]
 
 
 @dataclass
@@ -72,10 +88,12 @@ class Evidence:
             "scores": {
                 "bm25_rank": self.scores.bm25_rank,
                 "dense_rank": self.scores.dense_rank,
+                "graph_rank": self.scores.graph_rank,
                 "rrf": self.scores.rrf,
                 "reranker": self.scores.reranker,
                 "final": self.scores.final,
             },
+            "lanes": lanes_of(self.scores),   # debug UI badges (see lanes_of)
             "authority": self.authority,
             "confidence": self.confidence,
             "validity": {"valid_from": self.valid_from, "valid_until": self.valid_until},
@@ -167,7 +185,7 @@ class CandidatePayload:
 
 
 class RetrievalProvider(ABC):
-    """A pluggable retrieval backend (Qdrant, SQLite FTS, communications)."""
+    """A pluggable retrieval backend (LadybugDB, SQLite FTS, communications)."""
 
     @abstractmethod
     async def search(self, request: RetrievalRequest, *, limit: int) -> list[Evidence]:

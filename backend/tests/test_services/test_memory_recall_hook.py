@@ -36,8 +36,7 @@ def _settings():
         enabled=True, auto_capture_preferences=False, mode="balanced",
         embedding_model="BAAI/bge-m3", embedding_revision="",
         trigger_lexicon_overrides={}, approval_policy="manual",
-        pinned_token_budget=1500, evidence_token_budget=2500,
-        qdrant_url="http://localhost:59999", vector_backend="qdrant")
+        pinned_token_budget=1500, evidence_token_budget=2500)
 
 
 def _user(text):
@@ -198,3 +197,51 @@ async def test_query_falls_back_to_history_when_delta_has_no_text(wired):
     agent.message_history.extend(delta)               # framework merges delta after
     assert captured.get("q") == "what is my job?"
     assert len(_injected(agent)) == 1
+
+
+# ── Lane provenance: durable channel → display exposure (persistent, no token) ──
+
+def test_recall_lanes_channel_survives_to_display(tmp_path):
+    """The recall block carries per-memory lane provenance in a channel; it must
+    survive save/load history AND be exposed by ``_extract_display_messages`` —
+    one lane-list per rendered line, SAME order — so the chat 'memories used' chip
+    can show which lane (fts/dense/graph) surfaced each memory after a reload,
+    WITHOUT any prompt tokens (channels never reach the LLM as content)."""
+    from fast_agent.mcp.prompt_serialization import to_json
+    from services.retrieval.contracts import (
+        Evidence, EvidenceScores, EvidenceSource, evidence_kind,
+    )
+    from services.session_service import _extract_display_messages
+
+    def _ev_scored(rid, excerpt, *, authority="user_confirmed", confidence=0.9, **ranks):
+        sc = EvidenceScores(**ranks)
+        sc.final = 0.03 if ranks.get("dense_rank") else 0.016   # raw RRF-ish
+        return Evidence(
+            evidence_id=f"{evidence_kind('semantic')}:{rid}", record_id=rid,
+            owner_agent_name="Jarvis", memory_type="semantic", excerpt=excerpt,
+            source=EvidenceSource(type="memory", id=rid),
+            scores=sc, authority=authority, confidence=confidence)
+
+    # A: vector hit only; B: graph (MENTIONS) only — the case the chip exists to show.
+    evidence = [_ev_scored("A", "user works at fpt", dense_rank=1),
+                _ev_scored("B", "fpt office is in hanoi", graph_rank=1,
+                           authority="inferred", confidence=0.6)]
+    block = rh._build_block_message(evidence)
+
+    history_path = tmp_path / "history_Jarvis.json"
+    history_path.write_text(to_json([block]), encoding="utf-8")
+
+    display = _extract_display_messages(history_path)
+    assert len(display) == 1
+    lanes = display[0]["recall_lanes"]
+    assert lanes == [["dense"], ["graph"]]            # ordered, one list per line
+    # Order matches the rendered "- " lines the chip parses.
+    lines = [l for l in display[0]["content"].split("\n") if l.startswith("- ")]
+    assert len(lines) == len(lanes) == 2
+
+    # RAW scores ride the same way (no %): rel = RRF, conf = fact-truth, authority.
+    scores = display[0]["recall_scores"]
+    assert scores == [
+        {"rel": 0.03, "conf": 0.9, "authority": "user_confirmed"},
+        {"rel": 0.016, "conf": 0.6, "authority": "inferred"},
+    ]

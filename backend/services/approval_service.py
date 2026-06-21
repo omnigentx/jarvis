@@ -797,6 +797,10 @@ class ApprovalService:
             "previous_id": record.previous_id,
             "created_at": record.created_at,
             "resolved_at": record.resolved_at,
+            # Expose ONLY the ``reason`` code from metadata (full metadata_json is
+            # intentionally omitted) so the inbox can explain why a memory still
+            # needs review under auto-save. None for approval types without one.
+            "reason": json.loads(record.metadata_json or "{}").get("reason"),
         }
 
     @staticmethod

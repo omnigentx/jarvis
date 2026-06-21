@@ -2,7 +2,7 @@
 # System deps (apt + npm + uv + gitnexus) live in the public base image so CI
 # doesn't re-run apt-get / npm install on every build. Rebuild + bump the tag
 # only when Dockerfile.base changes — see Dockerfile.base header for steps.
-ARG BASE_IMAGE=omnigentx/jarvis-backend-base:1.2.0
+ARG BASE_IMAGE=omnigentx/jarvis-backend-base:1.3.0
 FROM ${BASE_IMAGE} AS base
 
 # ─── Stage 2: Python dependencies (cached unless pyproject/lock/fast-agent change) ───
@@ -27,9 +27,14 @@ COPY pyproject.toml uv.lock ./
 #    editable below so the forks beat any stock PyPI release.
 # 3. Sync the remainder using the lockfile, then install our forks editable
 #    (extras for realtimetts mirror the dev-time pyproject extras).
+# ``--extra memory`` ships FlagEmbedding (BAAI/bge-m3) so the dense/vector lane +
+# knowledge graph work in prod. WITHOUT it, embeddings are absent and the memory
+# subsystem silently degrades to FTS-only (the empty-graph incident). It is an
+# APP dep (pyproject/uv.lock), so it belongs here in the deps stage — NOT the
+# base image, which is system-only and rebuilds on a separate cadence.
 RUN sed -i '/\[tool\.uv\.sources\]/,/^$/d' pyproject.toml \
     && sed -i '/fast-agent-mcp/d;/^  "realtimestt/d;/^  "realtimetts/d' pyproject.toml \
-    && uv sync --frozen --no-dev \
+    && uv sync --frozen --no-dev --extra memory \
     && uv pip install -e ./fast-agent \
     && uv pip install -e ./realtimestt_src \
     && uv pip install -e './realtimetts_src[edge,system,azure,elevenlabs,openai]'

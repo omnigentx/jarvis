@@ -437,6 +437,10 @@ const knownTypes = computed(() => [
             — {{ t('approvals.agentsPaused', { n: detail.paused_agents.length }) }}
           </template>
         </div>
+        <!-- Why this still needs review even with auto-save on (fail-loud). -->
+        <div v-if="detail.reason" class="approvals__reason">
+          ⚠ {{ t('memory.approvalReason.' + detail.reason) }}
+        </div>
 
         <!-- Content viewer -->
         <div class="approvals__viewer">
@@ -947,6 +951,17 @@ const knownTypes = computed(() => [
   border: 1px solid rgba(245, 158, 11, 0.25);
   border-radius: var(--r-md);
   font-size: 12.5px;
+  color: var(--warning);
+}
+/* Explains why a memory still needs review under auto-save (fail-loud). */
+.approvals__reason {
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: rgba(245, 158, 11, 0.10);
+  border: 1px solid rgba(245, 158, 11, 0.30);
+  border-radius: var(--r-md);
+  font-size: 12.5px;
+  line-height: 1.5;
   color: var(--warning);
 }
 

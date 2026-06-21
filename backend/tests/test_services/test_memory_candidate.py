@@ -189,3 +189,51 @@ def test_compactor_ingest_auto_policy_persists(db):
                                           now=100.0, approval_policy="auto_low_risk")
     assert db.get(MemoryCandidate, ids[0]).status == "auto_approved"
     assert db.query(MemoryRecord).filter_by(owner_agent_name="Jarvis").count() == 1
+
+
+def test_confidence_flows_from_candidate_to_memory(db):
+    """Regression: confidence must reach the persisted memory, not default to 0.5.
+    The extracted/fast lane carries it in the payload; the compaction lane sets
+    the candidate column. _persist_from_candidate prefers payload, falls back to
+    the column. Before the fix every memory defaulted to 0.5 and the relevance
+    policy's (confidence - 0.5) rank-boost was a permanent no-op."""
+    # payload-carried (fast/extracted lane): real LLM value wins over the column.
+    cnd.create_candidate(db, owner_agent_name="Jarvis", candidate_type="extracted",
+                         payload=_payload(content="user works at fpt",
+                                          memory_type="semantic", confidence=0.95), now=100.0)
+    rec_a = db.query(MemoryRecord).filter_by(content="user works at fpt").one()
+    assert rec_a.confidence == 0.95
+
+    # column-carried (compaction lane): payload has no confidence → use the column.
+    cnd.create_candidate(db, owner_agent_name="Jarvis", candidate_type="preference",
+                         payload=_payload(content="user likes dark mode"),
+                         confidence=0.8, now=200.0)
+    rec_b = db.query(MemoryRecord).filter_by(content="user likes dark mode").one()
+    assert rec_b.confidence == 0.8
+
+
+def test_confidence_metadata_reaches_version(db):
+    """How confidence was derived (method + signals) is recorded in
+    MemoryVersion.metadata_json → auditable + migratable when the formula changes."""
+    import json as _json
+
+    from core.database import MemoryVersion
+    cnd.create_candidate(
+        db, owner_agent_name="Jarvis", candidate_type="extracted",
+        payload=_payload(content="user works at fpt", memory_type="semantic",
+                         confidence=0.9, confidence_method="evidence_alignment_v1:direct",
+                         reasoning_type="direct", excerpt_ok=True),
+        confidence=0.9, now=100.0)
+    rec = db.query(MemoryRecord).filter_by(content="user works at fpt").one()
+    v = db.query(MemoryVersion).filter_by(memory_id=rec.id, version=1).one()
+    meta = _json.loads(v.metadata_json)
+    assert meta["confidence_method"] == "evidence_alignment_v1:direct"
+    assert meta["reasoning_type"] == "direct" and meta["excerpt_ok"] is True
+
+
+def test_approval_reason_codes(db):
+    from services.memory.candidate_service import approval_reason
+    assert approval_reason({"excerpt_ok": False}, "x") == "unverified_evidence"
+    assert approval_reason({"excerpt_ok": True}, "x") is None
+    assert approval_reason({}, "x") is None
+    assert approval_reason({"excerpt_ok": True}, "password: hunter2secret") == "secret"

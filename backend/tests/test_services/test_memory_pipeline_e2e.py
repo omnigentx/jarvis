@@ -90,7 +90,7 @@ def pipeline(monkeypatch):
                         lambda cid, decision: None)
 
     worker = MemoryIndexWorker()
-    monkeypatch.setattr(worker, "_qd", lambda: LadybugIndexer(store))
+    monkeypatch.setattr(worker, "_dense", lambda: LadybugIndexer(store))
     monkeypatch.setattr(worker, "_emb", lambda: emb)
     yield types.SimpleNamespace(Factory=Factory, store=store, emb=emb, worker=worker)
     store.close()

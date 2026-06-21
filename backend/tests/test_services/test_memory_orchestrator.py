@@ -1,4 +1,4 @@
-"""WS04 orchestrator: Level 0 short-circuit, Level 1 FTS retrieval (Qdrant
+"""WS04 orchestrator: Level 0 short-circuit, Level 1 FTS retrieval (dense
 degraded), telemetry, ledger dedup."""
 
 import types
@@ -16,13 +16,12 @@ from services.retrieval.orchestrator import RetrievalOrchestrator, _CACHE
 
 
 def _settings():
-    # Unreachable Qdrant so the suite deterministically exercises the FTS
-    # (degraded) path regardless of whether a real Qdrant is running locally.
+    # Dense disabled so the suite deterministically exercises the FTS
+    # (degraded) path regardless of the dense backend.
     return types.SimpleNamespace(
-        qdrant_url="http://localhost:59999", vector_backend="qdrant",
         embedding_model="BAAI/bge-m3", embedding_revision="",
         evidence_token_budget=2500, trigger_lexicon_overrides={},
-        quality_gate_thresholds={},
+        quality_gate_thresholds={}
     )
 
 
@@ -62,7 +61,7 @@ async def test_level0_short_circuits(db):
 async def test_recency_ranks_newer_fact_first_on_happy_path(db):
     # ADD-only read-side (#3): two facts on the same topic; the NEWER one must
     # rank first on the FAST/happy path — recency now runs there, not only on
-    # escalation. FTS-only path (Qdrant unreachable), no embeddings needed.
+    # escalation. FTS-only path (dense unavailable), no embeddings needed.
     NOW = 1_000_000_000.0
     for rid, content, ca in [("old", "user works at Techcombank office", NOW - 120 * 86400),
                              ("new", "user works at FPT office", NOW - 1 * 86400)]:
@@ -89,7 +88,7 @@ async def test_level1_fts_retrieval_and_telemetry(db):
     assert res.level == 1
     assert any(e.record_id == "m1" for e in res.evidence)
     assert all(e.owner_agent_name == "Jarvis" for e in res.evidence)
-    assert res.degraded is True                 # Qdrant unavailable in this env
+    assert res.degraded is True                 # dense unavailable in this env
     # telemetry row written
     run = db.query(RetrievalRun).one()
     assert run.owner_agent_name == "Jarvis" and run.mode == "balanced"

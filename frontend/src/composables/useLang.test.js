@@ -37,7 +37,7 @@ test('missing vi key falls back to English', () => {
 test('interpolates {placeholders}', () => {
   const { lang, t } = useLang()
   lang.value = 'en'
-  assert.equal(t('settings.memory.qdrantPoints', { points: 12 }), '12 vectors indexed')
+  assert.equal(t('settings.memory.densePoints', { points: 12 }), '12 memories indexed')
 })
 
 test('unknown key returns the key itself', () => {

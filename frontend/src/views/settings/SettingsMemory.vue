@@ -26,7 +26,7 @@ const showKey = ref(false)
 const config = ref(null)
 const draft = ref(null)
 const apiKeyInput = ref('')   // write-only; never populated from server
-const indexStatus = ref(null) // Qdrant reachability + index counts
+const indexStatus = ref(null) // dense (LadybugDB) + embedding health + index counts
 
 const MODES = ['economical', 'balanced', 'deep']
 const POLICIES = ['manual', 'auto_low_risk']
@@ -52,7 +52,6 @@ const CURATOR_PROVIDERS = [
 // Always-shown text fields (independent of the curator provider choice).
 const REST_FIELDS = [
   { key: 'embedding_model', labelKey: 'settings.memory.embeddingModel' },
-  { key: 'qdrant_url', labelKey: 'settings.memory.qdrantUrl' },
 ]
 
 const dirtyKeys = computed(() => {
@@ -128,13 +127,16 @@ onMounted(load)
 
     <div v-if="indexStatus" class="status-card">
       <div class="status-line">
-        <span class="dot" :class="indexStatus.qdrant?.reachable ? 'ok' : 'down'"></span>
-        <strong>{{ t('settings.memory.qdrant') }}</strong>
-        <span v-if="indexStatus.qdrant?.reachable" class="muted">
-          {{ t('settings.memory.qdrantConnected') }} · {{ t('settings.memory.qdrantPoints', { points: indexStatus.qdrant.points ?? 0 }) }}
+        <span class="dot" :class="(indexStatus.dense?.reachable && indexStatus.dense?.embeddings) ? 'ok' : 'down'"></span>
+        <strong>{{ t('settings.memory.dense') }}</strong>
+        <span v-if="indexStatus.dense?.reachable && indexStatus.dense?.embeddings" class="muted">
+          {{ t('settings.memory.denseConnected') }} · {{ t('settings.memory.densePoints', { points: indexStatus.dense.points ?? 0 }) }}
+        </span>
+        <span v-else-if="indexStatus.dense && !indexStatus.dense.embeddings" class="warn">
+          {{ t('settings.memory.denseNoEmbeddings') }}
         </span>
         <span v-else class="warn">
-          {{ t('settings.memory.qdrantDownPrefix') }} <code>{{ indexStatus.qdrant?.configured_url }}</code>.
+          {{ t('settings.memory.denseDown') }}
         </span>
       </div>
       <div class="status-line muted" v-if="indexStatus.outbox">
@@ -211,7 +213,7 @@ onMounted(load)
         <input v-model="draft.graph_max_hops" class="num-input" type="number" min="1" max="3" step="1" />
       </div>
 
-      <!-- Curator / embedding / Qdrant — labelled fields, like the LLM Provider screen -->
+      <!-- Curator / embedding — labelled fields, like the LLM Provider screen -->
       <div class="fieldset">
         <div class="field">
           <label>{{ t('settings.memory.curatorModel') }}</label>

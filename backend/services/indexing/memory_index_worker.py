@@ -1,11 +1,11 @@
-"""Memory index worker — drains the outbox into FTS5 (always) and Qdrant
-(when available). Runs its OWN lightweight asyncio loop (the existing
-BackgroundJobScheduler is idle-gated, which is wrong for continuous indexing —
-see docs/memory-impl/03). The durable queue is the outbox, so restart recovery
-is just reclaiming expired leases.
+"""Memory index worker — drains the outbox into FTS5 (always) and the LadybugDB
+graph/vector projection (when available). Runs its OWN lightweight asyncio loop
+(the existing BackgroundJobScheduler is idle-gated, which is wrong for continuous
+indexing — see docs/memory-impl/03). The durable queue is the outbox, so restart
+recovery is just reclaiming expired leases.
 
-Degraded modes (spec §20): FTS is updated immediately for degraded search;
-the dense/Qdrant part is DEFERRED (not failed) when Qdrant/embeddings are
+Degraded modes (spec §20): FTS is updated immediately for degraded search; the
+dense/graph part is DEFERRED (not failed) when LadybugDB or embeddings are
 unavailable, so a long outage never dead-letters healthy work and recovery
 drains automatically.
 """
@@ -18,7 +18,6 @@ import time
 from core.database import EpisodicDocument, MemoryRecord, SessionLocal
 from services.indexing import chunker, fts_index
 from services.indexing import outbox_service as ob
-from services.indexing import qdrant_indexer as qi
 from services.indexing.embedding_provider import get_shared_embedding_provider
 
 logger = logging.getLogger("memory.index_worker")
@@ -60,51 +59,58 @@ class MemoryIndexWorker:
     # (it isn't, single-process). NOT a poll — a long idle re-check, not 2s.
     SAFETY_WATCHDOG_S = 300.0
 
-    def __init__(self, *, qdrant_url: str = "http://localhost:6333",
-                 embedding_model: str = "BAAI/bge-m3", embedding_revision: str = ""):
-        self._qdrant_url = qdrant_url
+    def __init__(self, *, embedding_model: str = "BAAI/bge-m3", embedding_revision: str = ""):
         self._embedding_model = embedding_model
         self._embedding_revision = embedding_revision
         self._embedding = None
-        self._qdrant = None
         self._running = False
         self._wake: "asyncio.Event | None" = None
         self._loop: "asyncio.AbstractEventLoop | None" = None
+        self._dense_down_logged = False     # so a degraded-defer isn't silent
 
-    # Lazy providers — re-instantiate Qdrant probe each batch so an outage
-    # that ends is detected without a restart.
+    def _note_dense_state(self, qd, emb) -> bool:
+        """Return whether the dense leg is writable; LOG the first time it isn't
+        (and on recovery) so an indefinite defer isn't silent — the prod symptom
+        where 4 rows deferred forever with no log while the graph stayed empty."""
+        up = qd.is_available() and emb.is_available()
+        if not up and not self._dense_down_logged:
+            self._dense_down_logged = True
+            why = ([] + (["embeddings unavailable"] if not emb.is_available() else [])
+                   + (["vector store unavailable"] if not qd.is_available() else []))
+            logger.warning("[MEMORY] dense index DEFERRED (%s) — FTS still written, "
+                           "but vectors + knowledge-graph edges are NOT projected "
+                           "until it recovers", ", ".join(why) or "dense backend down")
+        elif up and self._dense_down_logged:
+            self._dense_down_logged = False
+            logger.info("[MEMORY] dense index recovered — resuming vector/graph projection")
+        return up
+
+    # Lazy providers — the LadybugDB indexer is re-resolved each batch (via the
+    # store singleton) so an outage that ends is detected without a restart.
     def _emb(self):
         if self._embedding is None:
             self._embedding = get_shared_embedding_provider(
                 self._embedding_model, self._embedding_revision)
         return self._embedding
 
-    def _qd(self):
-        # ONE authoritative backend decision (hot-reloadable via settings),
-        # SYMMETRIC with the reader (orchestrator). When the configured backend
-        # is LadybugDB but it can't be opened, we DEFER the dense write (return a
-        # LadybugIndexer with store=None → is_available()==False) — we do NOT
-        # silently divert writes to Qdrant, which would land data the reader
-        # (FTS-only on the same failure) can't see (writer≠reader SSoT bug).
+    def _dense(self):
+        """The dense/graph indexer (LadybugDB). When the store can't be opened we
+        DEFER the dense write (LadybugIndexer with store=None → is_available()
+        False) — FTS is still written, the row retries; we never silently lose
+        the writer≠reader symmetry the orchestrator depends on."""
+        from services.indexing.ladybug_store import LadybugIndexer, get_ladybug_store
+        store = None
         try:
             from services.memory.settings import get_memory_settings
-            cfg = get_memory_settings()
-            backend = getattr(cfg, "vector_backend", "ladybug")
+            path = get_memory_settings().ladybug_path
         except Exception:  # noqa: BLE001
-            backend, cfg = "ladybug", None
-        if backend == "ladybug":
-            from services.indexing.ladybug_store import LadybugIndexer, get_ladybug_store
-            store = None
-            try:
-                path = getattr(cfg, "ladybug_path", "data/memory_graph") if cfg else "data/memory_graph"
-                store = get_ladybug_store(path)
-            except Exception as exc:  # noqa: BLE001
-                import logging
-                logging.getLogger("memory.index_worker").warning(
-                    "[MEMORY] LadybugDB unavailable; deferring dense index "
-                    "(FTS still written, will retry): %s", exc)
-            return LadybugIndexer(store)
-        return qi.get_qdrant_indexer(self._qdrant_url, dim=self._emb().dim())
+            path = "data/memory_graph"
+        try:
+            store = get_ladybug_store(path)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[MEMORY] LadybugDB unavailable; deferring dense index "
+                           "(FTS still written, will retry): %s", exc)
+        return LadybugIndexer(store)
 
     async def process_pending(self, *, now: float, limit: int = 20) -> dict:
         """Drain up to ``limit`` due rows. Returns per-status counts. This is
@@ -133,6 +139,25 @@ class MemoryIndexWorker:
         finally:
             db.close()
 
+    def _delete_dense(self, record_id: str) -> bool:
+        """Remove a record's dense/graph node, or DEFER if the store is down.
+        Symmetric with the upsert defer: a delete that lands during a dense outage
+        must RETRY on recovery, never be marked done — otherwise the SQLite row is
+        gone but its dense node survives until a full rebuild, leaving an
+        archived/pruned memory semantically searchable (read-after-delete leak).
+        Delete needs no embeddings, so it gates on the store alone. Returns True
+        to defer (FTS already removed → degraded search is already correct)."""
+        qd = self._dense()
+        if not qd.is_available():
+            if not self._dense_down_logged:
+                self._dense_down_logged = True
+                logger.warning("[MEMORY] dense removal DEFERRED (vector store "
+                               "unavailable) — FTS already removed; the dense node "
+                               "is purged on recovery, not silently left searchable")
+            return True
+        qd.delete_by_record(record_id)
+        return False
+
     # returns True if the dense part was deferred (FTS still updated)
     def _handle(self, db, row, now: float) -> bool:
         et = row.event_type
@@ -146,17 +171,11 @@ class MemoryIndexWorker:
             # _index_episodic writes a dense node too — prune must remove it
             # symmetrically (same as EVENT_MEMORY_DELETE), else a pruned doc
             # stays permanently dense-searchable (read-after-prune SSoT leak).
-            qd = self._qd()
-            if qd.is_available():
-                qd.delete_by_record(row.aggregate_id)
-            return False
+            return self._delete_dense(row.aggregate_id)
         if et == ob.EVENT_MEMORY_DELETE:
             fts_index.fts_delete(db, doc_kind=fts_index.KIND_MEMORY, doc_id=row.aggregate_id)
             db.commit()
-            qd = self._qd()
-            if qd.is_available():
-                qd.delete_by_record(row.aggregate_id)
-            return False
+            return self._delete_dense(row.aggregate_id)
         if et == ob.EVENT_REBUILD_ALL:
             return False  # fan-out is performed by consistency_service.rebuild()
         logger.warning("[MEMORY] unknown outbox event_type %r", et)
@@ -169,18 +188,16 @@ class MemoryIndexWorker:
         fts_index.fts_upsert(db, doc_kind=fts_index.KIND_EPISODIC, doc_id=doc.id,
                              owner_agent_name=doc.owner_agent_name, content=doc.content)
         db.commit()
-        qd = self._qd()
+        qd = self._dense()
         emb = self._emb()
-        if not (qd.is_available() and emb.is_available()):
+        if not self._note_dense_state(qd, emb):
             return True  # defer dense part; FTS already serves degraded search
         qd.ensure_collection()
         chunks = chunker.chunk_document(doc.document_type, doc.content)
         vecs = emb.embed_documents(chunks)
         points = [{
-            "id": qi.point_id(doc.id, i, revision),
             "dense": vec,
             "payload": {
-                "chunk_id": qi.point_id(doc.id, i, revision),
                 "record_id": doc.id,
                 "owner_agent_name": doc.owner_agent_name,
                 "memory_type": "episodic",
@@ -205,7 +222,7 @@ class MemoryIndexWorker:
             # archived/deleted memory: ensure it is not searchable.
             fts_index.fts_delete(db, doc_kind=fts_index.KIND_MEMORY, doc_id=record_id)
             db.commit()
-            qd = self._qd()
+            qd = self._dense()
             if qd.is_available():
                 qd.delete_by_record(record_id)
             return False
@@ -213,18 +230,16 @@ class MemoryIndexWorker:
                              owner_agent_name=rec.owner_agent_name,
                              content=rec.normalized_content)
         db.commit()
-        qd = self._qd()
+        qd = self._dense()
         emb = self._emb()
-        if not (qd.is_available() and emb.is_available()):
+        if not self._note_dense_state(qd, emb):
             return True
         qd.ensure_collection()
         chunks = chunker.chunk_document(chunker.DOC_FACT, rec.normalized_content)
         vecs = emb.embed_documents(chunks)
         points = [{
-            "id": qi.point_id(rec.id, i, revision),
             "dense": vec,
             "payload": {
-                "chunk_id": qi.point_id(rec.id, i, revision),
                 "record_id": rec.id,
                 "owner_agent_name": rec.owner_agent_name,
                 "memory_type": rec.memory_type,

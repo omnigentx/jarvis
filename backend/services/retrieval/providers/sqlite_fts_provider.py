@@ -1,7 +1,7 @@
 """SQLite FTS5 retrieval provider — the degraded / always-available BM25 leg.
 
-Used as the BM25 source when Qdrant's sparse vectors aren't wired, and as the
-sole retrieval path when Qdrant is unreachable. The owner filter is applied in
+Used as the BM25 source when dense vectors are not wired, and as the
+sole retrieval path when the dense backend is unreachable. The owner filter is applied in
 SQL by ``fts_index.fts_search`` — there is no code path here that can query
 across agents.
 """

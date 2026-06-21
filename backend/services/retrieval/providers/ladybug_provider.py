@@ -3,8 +3,7 @@
 The dense leg (HNSW ``QUERY_VECTOR_INDEX``) PLUS a one-hop entity-linking boost
 (memories that share an entity with the top vector hits — the multi-hop signal),
 both owner-scoped. Returns [] when the store or embedder is unavailable so the
-orchestrator degrades to FTS-only. Drop-in alternative to ``QdrantProvider``,
-selected by ``settings.vector_backend``.
+orchestrator degrades to FTS-only. The sole dense/graph retrieval backend.
 """
 from __future__ import annotations
 
@@ -49,24 +48,32 @@ class LadybugProvider(RetrievalProvider):
             owner=request.owner_agent_name,
             record_ids=[h.record_id for h in hits], limit=limit, max_hops=self.max_hops)
 
+        # Tag dense vs graph PROVENANCE distinctly so the debug UI can show each
+        # lane's contribution. A memory reachable by BOTH (a vector hit that also
+        # shares an entity) keeps its dense_rank — the dedup below adds it from the
+        # vector list first — so graph_rank marks memories the GRAPH uniquely
+        # surfaced (vector-far but entity-linked). Separate rank counters per lane.
         evidence: list[Evidence] = []
         seen: set[str] = set()
-        rank = 0
-        for h in list(hits) + list(linked):
-            if h.owner != request.owner_agent_name:          # defense in depth
-                continue
-            if request.types and h.memory_type not in request.types:
-                continue
-            if h.record_id in seen:
-                continue
-            seen.add(h.record_id)
-            rank += 1
-            evidence.append(Evidence(
-                evidence_id=f"{evidence_kind(h.memory_type)}:{h.record_id}",
-                record_id=h.record_id,
-                owner_agent_name=request.owner_agent_name, memory_type=h.memory_type,
-                excerpt=h.content,
-                source=EvidenceSource("memory_record", h.record_id, h.created_at),
-                scores=EvidenceScores(dense_rank=rank),
-                authority=h.authority, confidence=h.confidence))
+        for is_graph, lst in ((False, hits), (True, linked)):
+            rank = 0
+            for h in lst:
+                if h.owner != request.owner_agent_name:      # defense in depth
+                    continue
+                if request.types and h.memory_type not in request.types:
+                    continue
+                if h.record_id in seen:
+                    continue
+                seen.add(h.record_id)
+                rank += 1
+                scores = (EvidenceScores(graph_rank=rank) if is_graph
+                          else EvidenceScores(dense_rank=rank))
+                evidence.append(Evidence(
+                    evidence_id=f"{evidence_kind(h.memory_type)}:{h.record_id}",
+                    record_id=h.record_id,
+                    owner_agent_name=request.owner_agent_name, memory_type=h.memory_type,
+                    excerpt=h.content,
+                    source=EvidenceSource("memory_record", h.record_id, h.created_at),
+                    scores=scores,
+                    authority=h.authority, confidence=h.confidence))
         return evidence

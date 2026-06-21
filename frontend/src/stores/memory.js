@@ -33,9 +33,11 @@ export const useMemoryStore = defineStore('memory', () => {
         degradedByAgent.value = { ...degradedByAgent.value, [agent]: true }
         break
       default:
-        // a healthy retrieval clears the degraded flag
-        if (event.event_type === 'retrieval_completed' && degradedByAgent.value[agent]) {
-          degradedByAgent.value = { ...degradedByAgent.value, [agent]: false }
+        if (event.event_type === 'retrieval_completed') {
+          // a healthy retrieval clears the degraded flag
+          if (degradedByAgent.value[agent]) {
+            degradedByAgent.value = { ...degradedByAgent.value, [agent]: false }
+          }
         }
     }
   }

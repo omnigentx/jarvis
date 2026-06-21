@@ -32,7 +32,7 @@ def _settings():
     # independent of any locally-running Qdrant. The dense gate below opts into
     # a fully-wired dense setup separately.
     return types.SimpleNamespace(
-        qdrant_url="http://localhost:59999", vector_backend="qdrant", embedding_model="BAAI/bge-m3",
+        embedding_model="BAAI/bge-m3",
         embedding_revision="", evidence_token_budget=2500,
         trigger_lexicon_overrides={}, quality_gate_thresholds={})
 
@@ -123,7 +123,7 @@ async def test_authorization_correctness_zero_leaks(orch):
 @pytest.mark.skipif(
     not (_DENSE_AVAILABLE and os.environ.get("MEMORY_EVAL_DENSE")),
     reason="dense paraphrase eval needs the BGE stack + a Qdrant-indexed corpus; "
-           "opt in with MEMORY_EVAL_DENSE=1 against a live backend setup",
+           "opt in with MEMORY_EVAL_DENSE=1 against a live backend setup"
 )
 async def test_dense_paraphrase_recall():
     # Cross-lingual dense recall is verified live against the running backend

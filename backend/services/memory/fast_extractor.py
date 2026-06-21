@@ -14,8 +14,10 @@ write), no network.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 
 logger = logging.getLogger("memory.fast_extractor")
@@ -46,7 +48,9 @@ _TYPE_MAP = {"preference": "semantic", "fact": "semantic", "instruction": "pinne
 EXTRACTION_PROMPT = """You extract DURABLE long-term memories about the USER from a chat snippet, for a personal assistant.
 
 Return ONLY a JSON array (no prose, no code fence). Each item:
-{"kind": "preference|fact|instruction", "content": "<clear third-person statement>", "entities": [{"name": "<entity>", "etype": "person|org|place|topic"}], "confidence": 0.0-1.0}
+{"kind": "preference|fact|instruction", "content": "<clear third-person statement>", "entities": [{"name": "<entity>", "etype": "person|org|place|topic"}], "evidence_excerpt": "<exact words COPIED VERBATIM from the snippet that state this>", "reasoning_type": "direct|synthesis|inference"}
+
+evidence_excerpt is REQUIRED and MUST be copied verbatim from the snippet (do NOT paraphrase) — it is the proof. If you cannot quote the exact supporting words from the snippet, DO NOT extract that memory. reasoning_type: "direct" = the snippet states it almost word-for-word; "synthesis" = you combined it across several turns; "inference" = reasonably inferred, not explicitly said. Do NOT output a confidence number; the system computes confidence from the verified evidence.
 
 Extract ONLY things worth remembering for months:
 - stable personal facts (job, employer, location, family, name)
@@ -66,7 +70,11 @@ class ExtractedMemory:
     kind: str
     content: str
     entities: list[dict] = field(default_factory=list)
-    confidence: float = 0.6
+    # Evidence the BACKEND verifies (not a confidence number the LLM guesses):
+    # a verbatim quote from the snippet + how the memory relates to it. Confidence
+    # is DERIVED from these by services.memory.confidence — never trusted raw.
+    evidence_excerpt: str = ""
+    reasoning_type: str = "direct"
 
     @property
     def memory_type(self) -> str:
@@ -97,12 +105,11 @@ def parse_extraction(raw: str) -> list[ExtractedMemory]:
         if not content:
             continue
         ents = [e for e in (it.get("entities") or []) if isinstance(e, dict) and e.get("name")]
-        try:
-            conf = float(it.get("confidence", 0.6))
-        except (ValueError, TypeError):
-            conf = 0.6
+        excerpt = str(it.get("evidence_excerpt") or "").strip()
+        rtype = str(it.get("reasoning_type") or "direct").lower().strip()
         out.append(ExtractedMemory(kind=str(it.get("kind") or "fact").lower().strip(),
-                                   content=content, entities=ents, confidence=conf))
+                                   content=content, entities=ents,
+                                   evidence_excerpt=excerpt, reasoning_type=rtype))
     return out
 
 
@@ -176,21 +183,52 @@ async def run_fast_extraction(owner: str, snippet: str, cfg, *, generate_fn=None
     except Exception as exc:  # noqa: BLE001 — extractor is best-effort
         logger.warning("[MEMORY] fast extractor LLM failed: %s", exc)
         return []
-    return _persist_candidates(owner, parse_extraction(raw), cfg, "extracted")
+    return _persist_candidates(owner, parse_extraction(raw), cfg, "extracted", snippet=snippet)
 
 
-def _persist_candidates(owner, mems, cfg, candidate_type: str) -> list[str]:
+def _snippet_ref(snippet: str) -> str:
+    """A stable-ish id for the extraction batch this evidence came from. The
+    snippet is ephemeral (no durable message store), so this is a best-effort
+    grouping key — the DURABLE proof is the verbatim excerpt in memory_sources."""
+    return "snippet:" + hashlib.sha1((snippet or "").encode("utf-8")).hexdigest()[:12]
+
+
+def _persist_candidates(owner, mems, cfg, candidate_type: str, snippet: str = "") -> list[str]:
     """Propose extracted memories as candidates (ADD-only path). Shared by the
-    fast and slow lanes."""
+    fast and slow lanes.
+
+    Confidence is NOT taken from the LLM — it is DERIVED (services.memory.confidence)
+    from evidence the backend verifies: the LLM's ``evidence_excerpt`` must appear
+    verbatim in ``snippet`` (else the claim is unverified → no auto-save, route to
+    approval). The verified excerpt is stored as provenance in memory_sources."""
     if not mems:
         return []
     from core.database import get_db_session
     from services.memory import candidate_service as cnd
+    from services.memory import confidence as conf
     ids: list[str] = []
+    now = time.time()
     db = get_db_session()
     try:
         for m in mems:
             try:
+                excerpt = (m.evidence_excerpt or "").strip()
+                # The extraction lanes ALWAYS have a snippet, so evidence is
+                # REQUIRED here (fail-loud): a missing OR fabricated excerpt both
+                # yield False → not auto-saved, routed to human approval. We never
+                # silently trust an extracted memory we couldn't verify. (excerpt_ok
+                # is only None for the agent_remember tool, which has no snippet.)
+                excerpt_ok = conf.evidence_supports(excerpt, snippet)
+                verdict = conf.assess_confidence(
+                    reasoning_type=m.reasoning_type, excerpt_ok=excerpt_ok,
+                    authority="agent_observed")
+                # Store the VERIFIED quote as durable provenance (was empty before).
+                sources = ([{"source_type": "conversation_snippet",
+                             "source_id": _snippet_ref(snippet),
+                             "source_excerpt": excerpt,
+                             "source_hash": hashlib.sha256(excerpt.encode("utf-8")).hexdigest()[:16],
+                             "source_timestamp": now, "authority": "agent_observed"}]
+                           if excerpt_ok else [])
                 # subject_scope="user" is intentional and asymmetric vs the
                 # compactor lane (which uses "agent:<owner>"): the fast lane
                 # extracts facts/preferences ABOUT THE USER from their messages,
@@ -201,8 +239,13 @@ def _persist_candidates(owner, mems, cfg, candidate_type: str) -> list[str]:
                     db, owner_agent_name=owner, candidate_type=candidate_type,
                     payload={"memory_type": m.memory_type, "content": m.content,
                              "subject_scope": "user", "authority": "agent_observed",
-                             "confidence": m.confidence, "entities": m.entities},
-                    requires_approval=(cfg.approval_policy != "auto_low_risk"),
+                             "confidence": verdict.confidence, "entities": m.entities,
+                             "reasoning_type": m.reasoning_type, "excerpt_ok": excerpt_ok,
+                             "confidence_method": verdict.method},
+                    confidence=verdict.confidence, sources=sources,
+                    # Fabricated/unverified evidence never auto-saves — a human vets it.
+                    requires_approval=(not verdict.auto_save_ok
+                                       or cfg.approval_policy != "auto_low_risk"),
                     pinned_token_budget=getattr(cfg, "pinned_token_budget", 1500))
                 ids.append(cand.id)
             except Exception as exc:  # noqa: BLE001 — one bad item never drops the rest
@@ -291,7 +334,9 @@ def build_extractor_generate_fn(category: str = "memory:fast"):
 SLOW_EXTRACTION_PROMPT = """You extract DURABLE long-term memories that require SYNTHESIS across a whole conversation, for a personal assistant.
 
 Return ONLY a JSON array (no prose, no code fence). Each item:
-{"kind": "workflow|procedural|episodic|decision", "content": "<clear third-person statement>", "entities": [{"name": "<entity>", "etype": "person|org|place|topic"}], "confidence": 0.0-1.0}
+{"kind": "workflow|procedural|episodic|decision", "content": "<clear third-person statement>", "entities": [{"name": "<entity>", "etype": "person|org|place|topic"}], "evidence_excerpt": "<exact words COPIED VERBATIM from the conversation that support this>", "reasoning_type": "direct|synthesis|inference"}
+
+evidence_excerpt is REQUIRED and MUST be copied verbatim from the conversation (the proof). If you cannot quote the exact supporting words, DO NOT extract that memory. These are synthesized memories, so reasoning_type is usually "synthesis" (combined across turns) — use "direct" only if stated almost word-for-word. Do NOT output a confidence number; the system computes confidence from the verified evidence.
 
 Extract ONLY synthesized, multi-turn memories:
 - reusable workflows / procedures the user established
@@ -316,7 +361,7 @@ async def run_slow_extraction(owner: str, snippet: str, cfg, *, generate_fn=None
     except Exception as exc:  # noqa: BLE001
         logger.warning("[MEMORY] slow extractor LLM failed: %s", exc)
         return []
-    return _persist_candidates(owner, parse_extraction(raw), cfg, "extracted_slow")
+    return _persist_candidates(owner, parse_extraction(raw), cfg, "extracted_slow", snippet=snippet)
 
 
 def _history_to_text(history, max_msgs: int = 40) -> str:

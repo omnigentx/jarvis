@@ -60,6 +60,23 @@ function memoryLines(msg) {
 }
 function toggleMemory(msgId) { expandedMemory[msgId] = !expandedMemory[msgId] }
 
+// Lane provenance per recalled line (fts/dense/graph). Comes from the backend
+// `recall_lanes` field — ONE list per line, SAME ORDER as memoryLines — which
+// rides the recall block's persisted channel, so it's correct on reload (not a
+// live-only signal). Empty for blocks recalled before this shipped.
+function laneFor(msg, i) { return (msg.recallLanes && msg.recallLanes[i]) || [] }
+// How many recalled memories the graph (MENTIONS) lane surfaced for this block.
+function memoryGraphCount(msg) {
+  return (msg.recallLanes || []).filter((ls) => Array.isArray(ls) && ls.includes('graph')).length
+}
+
+// RAW retrieval scores per line: { rel (RRF match score), conf (fact-truth),
+// authority }. Shown as-is (no %) — the unit is opaque on purpose; a reader who
+// cares learns it. Null for blocks recalled before this shipped.
+const VERIFIED_AUTHORITIES = ['user_confirmed', 'tool_verified']
+function scoreFor(msg, i) { return (msg.recallScores && msg.recallScores[i]) || null }
+function isVerified(s) { return !!s && VERIFIED_AUTHORITIES.includes(s.authority) }
+
 // Auto-scroll to bottom on new messages
 watch(
   () => props.messages.length,
@@ -207,10 +224,20 @@ function parsedAgentContent(content) {
         <div v-if="isMemoryBlock(msg)" class="row row-memory">
           <button class="memory-chip" @click="toggleMemory(msg.id)">
             🧠 {{ memoryLines(msg).length }} {{ memLabel }}
+            <span v-if="memoryGraphCount(msg)" class="lane lane-graph"
+                  :title="t('memory.lane.graph')">graph {{ memoryGraphCount(msg) }}</span>
             <span class="mc-chevron" :class="{ expanded: !!expandedMemory[msg.id] }">▾</span>
           </button>
           <div v-if="expandedMemory[msg.id]" class="memory-detail">
-            <div v-for="(line, i) in memoryLines(msg)" :key="i" class="memory-line">{{ line }}</div>
+            <div v-for="(line, i) in memoryLines(msg)" :key="i" class="memory-line">
+              <span v-for="ln in laneFor(msg, i)" :key="ln" class="lane" :class="'lane-' + ln"
+                    :title="t('memory.lane.' + ln)">{{ ln }}</span>
+              {{ line }}
+              <span v-if="scoreFor(msg, i)" class="mscore" :title="t('memory.scoreHint')">
+                rrf {{ scoreFor(msg, i).rel }} · conf {{ scoreFor(msg, i).conf
+                }}<span v-if="isVerified(scoreFor(msg, i))" class="ok">✓</span>
+              </span>
+            </div>
           </div>
         </div>
 
@@ -735,4 +762,15 @@ function parsedAgentContent(content) {
 .memory-line { font-size: 12px; color: var(--text-dim); line-height: 1.5;
   padding: 2px 0; border-bottom: 1px solid var(--border); }
 .memory-line:last-child { border-bottom: none; }
+/* Retrieval-lane provenance chips — graph highlighted (the one to watch). */
+.lane { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
+  padding: 0 5px; border-radius: 999px; border: 1px solid transparent; margin-right: 2px; }
+.lane-fts { color: var(--text-dim); background: var(--bg-4); border-color: var(--border-strong); }
+.lane-dense { color: var(--primary); background: var(--primary-bg); border-color: var(--primary-bg-strong); }
+.lane-graph { color: #fff; background: var(--primary); border-color: var(--primary); }
+/* RAW relevance/confidence — dim, right of the line, monospace so the numbers
+   line up; intentionally unobtrusive (debug detail, not primary content). */
+.mscore { font-size: 10px; color: var(--text-faint); font-family: var(--font-mono, monospace);
+  white-space: nowrap; margin-left: 4px; cursor: help; }
+.mscore .ok { color: var(--success, #16a34a); margin-left: 2px; font-weight: 700; }
 </style>

@@ -30,6 +30,11 @@
 #   docker push omnigentx/jarvis-backend-base:${VERSION}
 #
 # Version log:
+#   1.3.0 — pre-download the default embedding model (BAAI/bge-m3, ~2.3GB) into
+#           the HF cache so the memory dense lane + knowledge graph load INSTANTLY
+#           at runtime (no first-request download, survives container recreate).
+#           Same pattern as the Playwright pre-download. Bumps the image ~2.3GB.
+#           Also bumped gh 2.92.0 → 2.95.0 (the apt repo pruned 2.92.0).
 #   1.2.0 — added gh=2.92.0 (GitHub CLI) + GH_CONFIG_DIR=/app/.gh-config so
 #           agents can shell out to `gh` for CI/PR/release ops via the
 #           Jarvis-private gh config written by services/gh_credential_sync.py.
@@ -64,7 +69,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         alsa-utils flac ffmpeg docker.io \
         libnspr4 libnss3 libatk1.0-0t64 libatk-bridge2.0-0t64 \
         libcups2t64 libatspi2.0-0t64 libxcomposite1 libxdamage1 \
-        gh=2.92.0 \
+        gh=2.95.0 \
     && rm -rf /var/lib/apt/lists/* \
     && npm install -g gitnexus@1.6.2 \
     && npm cache clean --force
@@ -89,4 +94,19 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uvx /bin/uvx
 # (libnspr4/libnss3/libatk…) are what Playwright's dependency check requires
 # at runtime — without them the browser binary downloads but won't launch.
 RUN uvx --from "scrapling[ai]" scrapling install \
+    && rm -rf /root/.cache/uv
+
+# Pre-download the DEFAULT embedding model (BAAI/bge-m3, ~2.3GB) into the HF cache
+# so the memory subsystem's dense lane + knowledge graph load INSTANTLY at runtime
+# — no first-request download, and it survives container recreation (baked into
+# this layer, exactly like the Playwright browsers above). It's a large, STABLE
+# runtime asset, so the base is the right home: built once, every app image
+# inherits it, app builds stay fast. FlagEmbedding (the loader) stays an app dep
+# (Dockerfile deps stage, `--extra memory`); a different `embedding_model` in
+# settings still works — it just downloads on first use (only the default is
+# pre-baked). HF_HOME is pinned so the build and the root runtime agree on the
+# cache path. bge-m3 is public (no HF_TOKEN needed; pass one as a build secret if
+# rate-limited).
+ENV HF_HOME=/root/.cache/huggingface
+RUN uvx --from huggingface_hub hf download BAAI/bge-m3 \
     && rm -rf /root/.cache/uv

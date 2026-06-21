@@ -460,12 +460,25 @@ async def lifespan(app: FastAPI):
         _mem_cfg = get_memory_settings()
         from services.indexing.memory_index_worker import MemoryIndexWorker
         state.memory_index_worker = MemoryIndexWorker(
-            qdrant_url=_mem_cfg.qdrant_url,
             embedding_model=_mem_cfg.embedding_model,
             embedding_revision=_mem_cfg.embedding_revision,
         )
         memory_index_task = asyncio.create_task(state.memory_index_worker.run_loop())
         logger.info("Memory index worker started (drains only when memory enabled).")
+        # FAIL LOUD at boot if memory is enabled but dense embeddings are missing:
+        # otherwise the dense leg DEFERS forever and the knowledge graph stays
+        # empty with no signal (the prod incident). FTS-only is supported, but a
+        # memory-enabled deployment expecting dense must be told, not left to
+        # guess. is_available() does NOT load the 2.3GB model — cheap probe.
+        if _mem_cfg and _mem_cfg.enabled:
+            from services.indexing.embedding_provider import get_shared_embedding_provider
+            if not get_shared_embedding_provider(
+                    _mem_cfg.embedding_model, _mem_cfg.embedding_revision).is_available():
+                logger.error(
+                    "[MEMORY] memory is ENABLED but embeddings are UNAVAILABLE — "
+                    "dense recall + knowledge graph are OFF, index writes will "
+                    "defer, the graph will stay empty. Install the 'memory' extra "
+                    "(FlagEmbedding) or disable memory to silence this.")
     except Exception:
         logger.exception("Failed to start memory index worker")
 
@@ -477,7 +490,7 @@ async def lifespan(app: FastAPI):
     # under-populated, with no record-level watermark to detect it. Best-effort;
     # the index is a disposable projection.
     try:
-        if _mem_cfg and _mem_cfg.enabled and getattr(_mem_cfg, "vector_backend", "ladybug") == "ladybug":
+        if _mem_cfg and _mem_cfg.enabled:
             from sqlalchemy import func
 
             from core.database import MemoryRecord, get_db_session

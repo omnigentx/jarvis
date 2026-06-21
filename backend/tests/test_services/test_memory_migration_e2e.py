@@ -56,7 +56,7 @@ async def test_rebuild_repopulates_ladybug_from_sqlite(monkeypatch):
     import services.indexing.memory_index_worker as wmod
     monkeypatch.setattr(wmod, "SessionLocal", F)
     worker = MemoryIndexWorker()
-    monkeypatch.setattr(worker, "_qd", lambda: LadybugIndexer(store))
+    monkeypatch.setattr(worker, "_dense", lambda: LadybugIndexer(store))
     monkeypatch.setattr(worker, "_emb", lambda: _FakeEmb())
     stats = await worker.process_pending(now=20.0)
 

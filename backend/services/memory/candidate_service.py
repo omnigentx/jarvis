@@ -191,6 +191,30 @@ def ingest_compactor_candidates(
     return ids
 
 
+def approval_reason(payload: dict, content: str = "") -> str | None:
+    """Why this candidate needs human approval — a STABLE CODE the UI localizes
+    (never UI copy here). Lets the inbox explain why a memory still needs review
+    even when the user enabled auto-save: ``unverified_evidence`` = the extractor
+    couldn't cite verifiable evidence (fail-loud), ``secret`` = sensitive content
+    always needs a human. None = no special reason (e.g. the policy is manual)."""
+    if content and has_secret(content):
+        return "secret"
+    if payload.get("excerpt_ok") is False:
+        return "unverified_evidence"
+    return None
+
+
+def _confidence_metadata(payload: dict) -> dict:
+    """The provenance of a memory's confidence, for MemoryVersion.metadata_json.
+    Only the keys the capture lane actually recorded (absent for legacy/manual
+    paths) so the blob stays honest about what's known."""
+    meta = {}
+    for key in ("confidence_method", "reasoning_type", "excerpt_ok"):
+        if payload.get(key) is not None:
+            meta[key] = payload[key]
+    return meta
+
+
 def _persist_from_candidate(db, cand, status, *, now, changed_by="system",
                             pinned_token_budget=1500):
     payload = json.loads(cand.payload_json)
@@ -207,6 +231,16 @@ def _persist_from_candidate(db, cand, status, *, now, changed_by="system",
         owner_agent_name=cand.owner_agent_name, memory_type=payload["memory_type"],
         content=payload["content"], subject_scope=payload["subject_scope"],
         authority=payload["authority"], sources=sources, changed_by=changed_by,
+        # SINGLE chokepoint for confidence: every capture path funnels through
+        # here, so threading it ONCE fixes all of them. The extracted/fast lane
+        # stores the LLM's confidence in the payload; the compaction lane sets
+        # the candidate column. Prefer payload, fall back to the column — without
+        # this, create_memory defaulted to 0.5 and confidence never reached a
+        # memory (the policy's confidence rank-boost was permanently a no-op).
+        confidence=payload.get("confidence", cand.confidence),
+        # Audit trail: HOW this confidence was derived (method + signals) →
+        # MemoryVersion.metadata_json. Lets a future formula change migrate safely.
+        version_metadata=_confidence_metadata(payload),
         now=now, entities=payload.get("entities"), subtype=payload.get("subtype"),
         # A SECRET only reaches persistence via EXPLICIT user approval: secrets
         # force requires_approval=True in create_candidate, so they never hit
@@ -241,7 +275,8 @@ def _create_approval_row(cand: MemoryCandidate) -> None:
     inbox, blocking nothing (same as cron deferred gates)."""
     try:
         from services.approval_service import approval_service
-        content = json.loads(cand.payload_json).get("content", "")
+        payload = json.loads(cand.payload_json)
+        content = payload.get("content", "")
         # NEVER render a detected secret on the Approvals page. The card is a
         # more-visible surface than memory_records; mask the preview so the
         # cleartext value isn't exposed in the inbox. The real value stays in
@@ -254,7 +289,10 @@ def _create_approval_row(cand: MemoryCandidate) -> None:
             "title": f"Remember: {display[:80]}",
             "content": display,
             "pause": False,
-            "metadata": {"candidate_id": cand.id},
+            # ``reason`` (a stable code, localized by the UI) explains why this
+            # still needs review even under auto-save — see approval_reason.
+            "metadata": {"candidate_id": cand.id,
+                         "reason": approval_reason(payload, content)},
         })
     except Exception as exc:  # noqa: BLE001 — inbox mirror is best-effort
         logger.warning("[MEMORY] approval row create failed: %s", exc)

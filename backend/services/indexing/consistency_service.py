@@ -1,6 +1,6 @@
 """Rebuild + status + retention for the memory index.
 
-SQLite is the source of truth; this module re-derives the Qdrant/FTS index
+SQLite is the source of truth; this module re-derives the LadybugDB/FTS index
 from it (acceptance criterion 6) and prunes unbounded-growth tables.
 """
 from __future__ import annotations
@@ -80,7 +80,7 @@ def prune_retrieval_runs(db: Session, *, older_than: float) -> int:
 def prune_episodic(db: Session, *, older_than: float, now: float) -> int:
     """Delete episodic documents older than the cutoff UNLESS still referenced
     by an active memory's provenance. Enqueues an ``episodic_prune`` so the
-    index projection (FTS/Qdrant) is removed too. Returns rows removed."""
+    index projection (FTS/LadybugDB) is removed too. Returns rows removed."""
     referenced = {
         sid for (sid,) in db.query(MemorySource.source_id).distinct()
     }

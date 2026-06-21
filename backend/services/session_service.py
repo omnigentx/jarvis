@@ -116,12 +116,66 @@ def _extract_display_messages(history_path: Path) -> List[Dict]:
         if not text:
             continue
 
-        display.append({
+        entry = {
             "role": role,
             "content": text,
-        })
+        }
+        # Recall blocks carry per-memory lane provenance (fts/dense/graph) in a
+        # channel — expose it (ordered, one list per recalled line) so the chat
+        # "memories used" chip can show which lane surfaced each memory. Durable
+        # (persisted with the block) → survives reload, unlike a live SSE.
+        lanes = _recall_lanes_from_channels(msg)
+        if lanes is not None:
+            entry["recall_lanes"] = lanes
+        scores = _recall_scores_from_channels(msg)
+        if scores is not None:
+            entry["recall_scores"] = scores
+        display.append(entry)
 
     return display
+
+
+def _recall_lanes_from_channels(msg: Dict) -> Optional[List[List[str]]]:
+    """Read the ``jarvis:recall_lanes`` channel off a raw history message. Returns
+    one lane-list per recalled memory (same order as the rendered ``- `` lines),
+    or ``None`` if this isn't a recall block / predates the feature."""
+    from services.memory.retrieval_hook import RECALL_LANES_CHANNEL
+    entries = (msg.get("channels") or {}).get(RECALL_LANES_CHANNEL)
+    if not entries:
+        return None
+    out: List[List[str]] = []
+    for c in entries:
+        text = c.get("text", "") if isinstance(c, dict) else ""
+        out.append([lane for lane in text.split(",") if lane])
+    return out
+
+
+def _recall_scores_from_channels(msg: Dict) -> Optional[List[Dict]]:
+    """Read the ``jarvis:recall_scores`` channel — one ``{rel, conf, authority}``
+    per recalled line (RAW values; see RECALL_SCORES_CHANNEL). ``None`` if absent
+    (not a recall block, or recalled before this shipped)."""
+    from services.memory.retrieval_hook import RECALL_SCORES_CHANNEL
+    entries = (msg.get("channels") or {}).get(RECALL_SCORES_CHANNEL)
+    if not entries:
+        return None
+    out: List[Dict] = []
+    for c in entries:
+        text = c.get("text", "") if isinstance(c, dict) else ""
+        rel_s, _sep, rest = text.partition("|")
+        conf_s, _sep2, authority = rest.partition("|")
+        out.append({
+            "rel": _safe_float(rel_s),
+            "conf": _safe_float(conf_s),
+            "authority": authority,
+        })
+    return out
+
+
+def _safe_float(s: str) -> Optional[float]:
+    try:
+        return float(s)
+    except (TypeError, ValueError):
+        return None
 
 
 def _resolve_primary_agent(session) -> Optional[str]:

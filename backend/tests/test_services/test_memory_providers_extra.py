@@ -1,4 +1,4 @@
-"""WS04: Qdrant provider degraded behavior + communication authorization."""
+"""WS04: communication-provider authorization."""
 
 import pytest
 from sqlalchemy import create_engine
@@ -8,24 +8,6 @@ from sqlalchemy.pool import StaticPool
 from core.database import Base, CommunicationRecord
 from services.retrieval.contracts import RetrievalRequest
 from services.retrieval.providers.communication_provider import CommunicationProvider
-from services.retrieval.providers.qdrant_provider import QdrantProvider
-
-
-class _Idx:
-    def __init__(self, ok): self._ok = ok
-    def is_available(self): return self._ok
-
-
-class _Emb:
-    def is_available(self): return True
-    def embed_query(self, q): return [0.0, 0.0]
-
-
-async def test_qdrant_provider_degraded_returns_empty():
-    prov = QdrantProvider(_Idx(False), _Emb())
-    assert prov.is_available() is False
-    res = await prov.search(RetrievalRequest(owner_agent_name="J", query="x"), limit=5)
-    assert res == []
 
 
 @pytest.fixture()

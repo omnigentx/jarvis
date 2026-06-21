@@ -29,7 +29,7 @@ def svc(db):
 def _create(svc, **kw):
     base = dict(owner_agent_name="Jarvis", memory_type="semantic",
                 content="use a dedicated compactor agent", subject_scope="project:jarvis",
-                authority="user_confirmed", now=100.0)
+                authority="user_confirmed", confidence=0.5, now=100.0)
     base.update(kw)
     return svc.create_memory(**base)
 

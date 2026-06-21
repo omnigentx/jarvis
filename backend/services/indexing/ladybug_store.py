@@ -10,7 +10,7 @@ LadybugDB (``ladybug`` pkg, Kùzu-lineage) gives us, in ONE embedded engine:
     linking + multi-hop GraphRAG — vector hits feed straight into MATCH.
 
 Owner scoping is a hard invariant: every read filters by ``owner`` so an agent
-only ever sees its own memory (mirrors the SQLite/Qdrant rules).
+only ever sees its own memory (mirrors the SQLite rules).
 """
 from __future__ import annotations
 
@@ -402,10 +402,10 @@ def get_ladybug_store(path: str) -> LadybugStore:
 
 class LadybugIndexer:
     """Worker-facing adapter: lets the outbox worker target LadybugDB with the
-    SAME interface it used for Qdrant (is_available / ensure_collection /
+    same indexer interface (is_available / ensure_collection /
     upsert_points / delete_by_record), so swapping the backend is a drop-in.
 
-    Maps per-chunk Qdrant points → ONE graph node per memory record. Memories
+    Maps per-chunk points → ONE graph node per memory record. Memories
     are short facts (≈1 chunk), so the first point per record represents it; its
     ``dense`` vector becomes the node embedding."""
 
