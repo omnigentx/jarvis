@@ -139,6 +139,25 @@ class MemoryIndexWorker:
         finally:
             db.close()
 
+    def _delete_dense(self, record_id: str) -> bool:
+        """Remove a record's dense/graph node, or DEFER if the store is down.
+        Symmetric with the upsert defer: a delete that lands during a dense outage
+        must RETRY on recovery, never be marked done — otherwise the SQLite row is
+        gone but its dense node survives until a full rebuild, leaving an
+        archived/pruned memory semantically searchable (read-after-delete leak).
+        Delete needs no embeddings, so it gates on the store alone. Returns True
+        to defer (FTS already removed → degraded search is already correct)."""
+        qd = self._dense()
+        if not qd.is_available():
+            if not self._dense_down_logged:
+                self._dense_down_logged = True
+                logger.warning("[MEMORY] dense removal DEFERRED (vector store "
+                               "unavailable) — FTS already removed; the dense node "
+                               "is purged on recovery, not silently left searchable")
+            return True
+        qd.delete_by_record(record_id)
+        return False
+
     # returns True if the dense part was deferred (FTS still updated)
     def _handle(self, db, row, now: float) -> bool:
         et = row.event_type
@@ -152,17 +171,11 @@ class MemoryIndexWorker:
             # _index_episodic writes a dense node too — prune must remove it
             # symmetrically (same as EVENT_MEMORY_DELETE), else a pruned doc
             # stays permanently dense-searchable (read-after-prune SSoT leak).
-            qd = self._dense()
-            if qd.is_available():
-                qd.delete_by_record(row.aggregate_id)
-            return False
+            return self._delete_dense(row.aggregate_id)
         if et == ob.EVENT_MEMORY_DELETE:
             fts_index.fts_delete(db, doc_kind=fts_index.KIND_MEMORY, doc_id=row.aggregate_id)
             db.commit()
-            qd = self._dense()
-            if qd.is_available():
-                qd.delete_by_record(row.aggregate_id)
-            return False
+            return self._delete_dense(row.aggregate_id)
         if et == ob.EVENT_REBUILD_ALL:
             return False  # fan-out is performed by consistency_service.rebuild()
         logger.warning("[MEMORY] unknown outbox event_type %r", et)

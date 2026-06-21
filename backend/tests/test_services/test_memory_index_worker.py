@@ -287,3 +287,36 @@ def test_embedding_provider_missing_deps_is_loud(monkeypatch, caplog):
         prov = ep.get_embedding_provider()
     assert prov.is_available() is False
     assert any("FlagEmbedding is NOT installed" in r.message for r in caplog.records)
+
+
+async def test_worker_prune_defers_dense_when_store_down(Session, monkeypatch):
+    """#1 fix: a prune/delete that lands while the dense store is DOWN must DEFER
+    (retry on recovery), NOT mark done — otherwise the SQLite row is gone but its
+    dense node survives until a full rebuild, leaving a pruned/archived memory
+    semantically searchable (read-after-delete leak). Symmetric with upsert."""
+    _seed_episodic(Session)
+    worker = MemoryIndexWorker()
+    up = _FakeDenseIndexer(available=True)
+    monkeypatch.setattr(worker, "_dense", lambda: up)
+    monkeypatch.setattr(worker, "_emb", lambda: _FakeEmbedding())
+    await worker.process_pending(now=200.0)                  # index: a dense point exists
+
+    # Prune while the dense store is unavailable.
+    down = _FakeDenseIndexer(available=False)
+    monkeypatch.setattr(worker, "_dense", lambda: down)
+    db = Session()
+    ob.enqueue(db, event_type=ob.EVENT_EPISODIC_PRUNE, aggregate_id="doc-1",
+               aggregate_revision=2, now=300.0)
+    db.commit(); db.close()
+    stats = await worker.process_pending(now=400.0)
+
+    assert stats == {"done": 0, "deferred": 1, "failed": 0}  # deferred, NOT done
+    assert "doc-1" not in down.deleted                       # removal not lost
+    db = Session()
+    row = (db.query(MemoryIndexOutbox)
+           .filter_by(event_type=ob.EVENT_EPISODIC_PRUNE).one())
+    assert row.status == ob.PENDING                          # retries on recovery
+    assert row.attempt_count == 0
+    # FTS already removed → degraded search won't surface it meanwhile.
+    assert not fts_index.fts_search(db, owner_agent_name="Jarvis", query="compactor")
+    db.close()

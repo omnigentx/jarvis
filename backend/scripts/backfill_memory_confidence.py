@@ -82,7 +82,12 @@ def plan_backfill(db_path: Path) -> list[dict]:
             if rec is None or not content:
                 continue
             key = (r["owner_agent_name"], content)
-            # Prefer the highest recovered value if a content appears twice.
+            # Collision assumption: we match memory→candidate by (owner, content)
+            # only — there's no candidate_id FK on memory_records. Two DISTINCT
+            # memories with identical content+owner would both receive the max()
+            # recovered confidence here. Acceptable: this is a one-time, idempotent
+            # (--dry-run-able) repair, and identical content+owner is itself the
+            # exact-dedup key, so genuine distinct duplicates shouldn't coexist.
             cand_conf[key] = max(cand_conf.get(key, 0.0), rec)
 
         plan: list[dict] = []
