@@ -551,7 +551,7 @@
       "dense": "Khớp vector (ngữ nghĩa)",
       "graph": "Đồng xuất hiện trên đồ thị tri thức (MENTIONS) — kéo về qua entity chung"
     },
-    "scoreHint": "rrf = điểm khớp truy xuất thô (cao = khớp câu hỏi hơn). tin = độ tin fact đúng (0–1). ✓ = đã xác minh (user xác nhận hoặc tool kiểm chứng).",
+    "scoreHint": "rrf = điểm khớp truy xuất thô (cao = khớp câu hỏi hơn). conf = độ tin fact đúng (0–1). ✓ = đã xác minh (user xác nhận hoặc tool kiểm chứng).",
     "awaitingApproval": "Chờ duyệt",
     "approve": "Duyệt",
     "reject": "Từ chối",

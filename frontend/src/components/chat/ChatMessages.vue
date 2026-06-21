@@ -234,7 +234,7 @@ function parsedAgentContent(content) {
                     :title="t('memory.lane.' + ln)">{{ ln }}</span>
               {{ line }}
               <span v-if="scoreFor(msg, i)" class="mscore" :title="t('memory.scoreHint')">
-                rrf {{ scoreFor(msg, i).rel }} · tin {{ scoreFor(msg, i).conf
+                rrf {{ scoreFor(msg, i).rel }} · conf {{ scoreFor(msg, i).conf
                 }}<span v-if="isVerified(scoreFor(msg, i))" class="ok">✓</span>
               </span>
             </div>
