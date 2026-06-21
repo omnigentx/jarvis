@@ -85,6 +85,18 @@ def apply_policy(evidence: list[Evidence], *, now: float) -> list[Evidence]:
     fact outranked a rank-3 "agent_observed" one. ``scores.final`` keeps the
     relevance value for telemetry; the boosts only change ORDER.
 
+    INTENTIONAL DIVERGENCE FROM SPEC §ranking: the spec models these as
+    MULTIPLICATIVE score weights (``adjusted_score = rrf * authority_weight *
+    confidence_weight * ...``). We deliberately use a BOUNDED additive RANK boost
+    instead. Reason: a multiplicative confidence/authority weight can let a very
+    confident but loosely-relevant memory scale its way above a clearly-more-
+    relevant one — exactly the distortion above. A capped rank nudge guarantees
+    relevance always dominates (a memory can only climb a few ranks, never
+    leapfrog several), which is the property we actually want. The spec's intent
+    ("bounded modifiers, not replacements for relevance") is preserved; only the
+    mechanism differs. If aligning to the literal formula later, clamp the product
+    so it cannot reorder beyond this bound.
+
     Supersession is NOT handled here: providers return only ``status='active'``
     rows (superseded/archived are filtered at query time)."""
     evidence.sort(key=lambda e: e.scores.rrf or 0.0, reverse=True)   # relevance baseline
