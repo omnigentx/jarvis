@@ -50,7 +50,7 @@ EXTRACTION_PROMPT = """You extract DURABLE long-term memories about the USER fro
 Return ONLY a JSON array (no prose, no code fence). Each item:
 {"kind": "preference|fact|instruction", "content": "<clear third-person statement>", "entities": [{"name": "<entity>", "etype": "person|org|place|topic"}], "evidence_excerpt": "<exact words COPIED VERBATIM from the snippet that state this>", "reasoning_type": "direct|synthesis|inference"}
 
-evidence_excerpt MUST be copied verbatim from the snippet (do NOT paraphrase it) — it is the proof. reasoning_type: "direct" = the snippet states it almost word-for-word; "synthesis" = you combined it across several turns; "inference" = reasonably inferred, not explicitly said. Do NOT output a confidence number; the system computes confidence from the verified evidence.
+evidence_excerpt is REQUIRED and MUST be copied verbatim from the snippet (do NOT paraphrase) — it is the proof. If you cannot quote the exact supporting words from the snippet, DO NOT extract that memory. reasoning_type: "direct" = the snippet states it almost word-for-word; "synthesis" = you combined it across several turns; "inference" = reasonably inferred, not explicitly said. Do NOT output a confidence number; the system computes confidence from the verified evidence.
 
 Extract ONLY things worth remembering for months:
 - stable personal facts (job, employer, location, family, name)
@@ -213,9 +213,12 @@ def _persist_candidates(owner, mems, cfg, candidate_type: str, snippet: str = ""
         for m in mems:
             try:
                 excerpt = (m.evidence_excerpt or "").strip()
-                # None = no evidence to check (shouldn't happen for the extractor,
-                # but stays robust); True/False = verified / fabricated.
-                excerpt_ok = conf.evidence_supports(excerpt, snippet) if excerpt else None
+                # The extraction lanes ALWAYS have a snippet, so evidence is
+                # REQUIRED here (fail-loud): a missing OR fabricated excerpt both
+                # yield False → not auto-saved, routed to human approval. We never
+                # silently trust an extracted memory we couldn't verify. (excerpt_ok
+                # is only None for the agent_remember tool, which has no snippet.)
+                excerpt_ok = conf.evidence_supports(excerpt, snippet)
                 verdict = conf.assess_confidence(
                     reasoning_type=m.reasoning_type, excerpt_ok=excerpt_ok,
                     authority="agent_observed")
@@ -333,7 +336,7 @@ SLOW_EXTRACTION_PROMPT = """You extract DURABLE long-term memories that require 
 Return ONLY a JSON array (no prose, no code fence). Each item:
 {"kind": "workflow|procedural|episodic|decision", "content": "<clear third-person statement>", "entities": [{"name": "<entity>", "etype": "person|org|place|topic"}], "evidence_excerpt": "<exact words COPIED VERBATIM from the conversation that support this>", "reasoning_type": "direct|synthesis|inference"}
 
-evidence_excerpt MUST be copied verbatim from the conversation (the proof). These are synthesized memories, so reasoning_type is usually "synthesis" (combined across turns) — use "direct" only if stated almost word-for-word. Do NOT output a confidence number; the system computes confidence from the verified evidence.
+evidence_excerpt is REQUIRED and MUST be copied verbatim from the conversation (the proof). If you cannot quote the exact supporting words, DO NOT extract that memory. These are synthesized memories, so reasoning_type is usually "synthesis" (combined across turns) — use "direct" only if stated almost word-for-word. Do NOT output a confidence number; the system computes confidence from the verified evidence.
 
 Extract ONLY synthesized, multi-turn memories:
 - reusable workflows / procedures the user established

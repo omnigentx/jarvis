@@ -293,3 +293,13 @@ async def test_e2e_fabricated_evidence_blocks_autosave(test_db):
         assert db.query(MemoryRecord).filter_by(owner_agent_name="Jarvis").count() == 0
     finally:
         db.close()
+
+
+async def test_e2e_missing_evidence_is_not_trusted(test_db):
+    """Fail-loud: the extracted lane MUST cite verifiable evidence. A memory with
+    NO evidence_excerpt is never auto-saved (treated like fabricated → approval),
+    even under auto_low_risk — we never silently trust an unverifiable extraction."""
+    await _extract_auto('[{"kind":"fact","content":"user works at FPT"}]')   # no evidence
+    c = _cands(test_db)[0]
+    assert c.status == "pending" and c.confidence == 0.4    # not auto-saved
+    assert json.loads(c.payload_json)["excerpt_ok"] is False
