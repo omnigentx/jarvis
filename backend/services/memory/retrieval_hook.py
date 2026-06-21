@@ -52,6 +52,17 @@ RECALL_IDS_CHANNEL = "jarvis:recall_ids"
 # costing a single prompt token (channels never reach the LLM as content). This
 # is the durable replacement for a live-only SSE: it's correct on reload too.
 RECALL_LANES_CHANNEL = "jarvis:recall_lanes"
+# Per-evidence relevance + confidence for the debug chip, one ``rel|conf|authority``
+# entry per evidence (SAME order as the lines). RAW values, not percentages —
+# deliberately: a normalized % makes the top hit always "100%" (looks like a
+# perfect match when it's just the batch max) and invites confusing relevance
+# with confidence. ``rel`` is the raw RRF fusion score (higher = better match,
+# typically ~0.01–0.05); ``conf`` is the memory's intrinsic confidence that the
+# FACT is true (0–1); ``authority`` lets the UI mark verified memories. The unit
+# is opaque on purpose — a reader who cares learns it. Persisted like the lanes.
+RECALL_SCORES_CHANNEL = "jarvis:recall_scores"
+# Authorities the UI marks as "verified" (hard-confirmed, not soft-observed).
+VERIFIED_AUTHORITIES = {"user_confirmed", "tool_verified"}
 # Recall is ALWAYS-ON now (no intent gate): retrieve across these types every
 # turn and let relevance ranking decide what (if anything) is worth injecting.
 RECALL_TYPES = ["episodic", "semantic", "procedural"]
@@ -95,6 +106,21 @@ def _render_block(evidence) -> str:
     return "\n".join(lines)
 
 
+def _block_scores(evidence) -> list[str]:
+    """One ``rel|conf|authority`` string per evidence for the debug chip —
+    RAW relevance (RRF fusion score) + RAW confidence + authority. No
+    normalization (see RECALL_SCORES_CHANNEL). Tolerant of partial stubs so a
+    debug annotation never breaks recall."""
+    out: list[str] = []
+    for e in evidence:
+        scores = getattr(e, "scores", None)
+        rel = getattr(scores, "final", None) or getattr(scores, "rrf", None) or 0.0
+        conf = max(0.0, min(1.0, getattr(e, "confidence", 0.0) or 0.0))
+        authority = getattr(e, "authority", "") or ""
+        out.append(f"{round(rel, 4)}|{round(conf, 2)}|{authority}")
+    return out
+
+
 def _block_recall_ids(msg) -> list[str]:
     """The record_ids a recall block carries — one per channel entry (no join/
     split, so it's robust to any id format)."""
@@ -132,7 +158,8 @@ def _build_block_message(evidence):
         content=[text_content(_render_block(evidence))],
         channels={PROVENANCE_CHANNEL: [text_content(PROVENANCE_RECALL)],
                   RECALL_IDS_CHANNEL: [text_content(e.record_id) for e in evidence],
-                  RECALL_LANES_CHANNEL: [text_content(",".join(lanes_of(getattr(e, "scores", None)))) for e in evidence]},
+                  RECALL_LANES_CHANNEL: [text_content(",".join(lanes_of(getattr(e, "scores", None)))) for e in evidence],
+                  RECALL_SCORES_CHANNEL: [text_content(s) for s in _block_scores(evidence)]},
     )
 
 

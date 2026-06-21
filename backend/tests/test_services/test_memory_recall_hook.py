@@ -213,16 +213,19 @@ def test_recall_lanes_channel_survives_to_display(tmp_path):
     )
     from services.session_service import _extract_display_messages
 
-    def _ev_scored(rid, excerpt, **ranks):
+    def _ev_scored(rid, excerpt, *, authority="user_confirmed", confidence=0.9, **ranks):
+        sc = EvidenceScores(**ranks)
+        sc.final = 0.03 if ranks.get("dense_rank") else 0.016   # raw RRF-ish
         return Evidence(
             evidence_id=f"{evidence_kind('semantic')}:{rid}", record_id=rid,
             owner_agent_name="Jarvis", memory_type="semantic", excerpt=excerpt,
             source=EvidenceSource(type="memory", id=rid),
-            scores=EvidenceScores(**ranks), authority="user_confirmed", confidence=0.9)
+            scores=sc, authority=authority, confidence=confidence)
 
     # A: vector hit only; B: graph (MENTIONS) only — the case the chip exists to show.
     evidence = [_ev_scored("A", "user works at fpt", dense_rank=1),
-                _ev_scored("B", "fpt office is in hanoi", graph_rank=1)]
+                _ev_scored("B", "fpt office is in hanoi", graph_rank=1,
+                           authority="inferred", confidence=0.6)]
     block = rh._build_block_message(evidence)
 
     history_path = tmp_path / "history_Jarvis.json"
@@ -235,3 +238,10 @@ def test_recall_lanes_channel_survives_to_display(tmp_path):
     # Order matches the rendered "- " lines the chip parses.
     lines = [l for l in display[0]["content"].split("\n") if l.startswith("- ")]
     assert len(lines) == len(lanes) == 2
+
+    # RAW scores ride the same way (no %): rel = RRF, conf = fact-truth, authority.
+    scores = display[0]["recall_scores"]
+    assert scores == [
+        {"rel": 0.03, "conf": 0.9, "authority": "user_confirmed"},
+        {"rel": 0.016, "conf": 0.6, "authority": "inferred"},
+    ]

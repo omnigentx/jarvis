@@ -189,6 +189,8 @@ export const useChatStore = defineStore('chat', () => {
         // Per-memory retrieval-lane provenance for recall blocks (one list per
         // recalled line, same order). Durable debug surface — see ChatMessages.
         recallLanes: msg.recall_lanes || null,
+        // Per-memory RAW scores ({rel, conf, authority}) — same order as lines.
+        recallScores: msg.recall_scores || null,
         timestamp: conv.createdAt + idx * 1000, // Approximate ordering
         isStreaming: false,
         // Each backend entry is already a paired (call, result) — emit it in

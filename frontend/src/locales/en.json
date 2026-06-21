@@ -574,6 +574,7 @@
       "dense": "Vector (semantic) match",
       "graph": "Knowledge-graph co-occurrence (MENTIONS) — surfaced via a shared entity"
     },
+    "scoreHint": "rrf = raw fusion relevance score (higher = better query match). tin = confidence the fact is true (0–1). ✓ = verified (user-confirmed or tool-verified).",
     "awaitingApproval": "Awaiting approval",
     "approve": "Approve",
     "reject": "Reject",
