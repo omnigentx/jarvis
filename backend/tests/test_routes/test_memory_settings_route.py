@@ -127,7 +127,7 @@ def _seed_memory():
         rec = MemoryService(db).create_memory(
             owner_agent_name="Jarvis", memory_type="semantic",
             content="seeded decision about caching strategy",
-            subject_scope="project:jarvis", authority="user_confirmed", now=100.0)
+            subject_scope="project:jarvis", authority="user_confirmed", confidence=0.5, now=100.0)
         return rec.id
     finally:
         db.close()

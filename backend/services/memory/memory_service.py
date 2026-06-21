@@ -60,7 +60,7 @@ class MemoryService:
     def create_memory(
         self, *, owner_agent_name: str, memory_type: str, content: str,
         subject_scope: str, authority: str, now: float | None = None,
-        subtype: str | None = None, importance: float = 0.5, confidence: float = 0.5,
+        subtype: str | None = None, importance: float = 0.5, confidence: float,
         pinned: bool = False, sources: list[dict] | None = None,
         changed_by: str = "system", reason: str | None = None,
         allow_secret: bool = False, entities: list | None = None,

@@ -82,7 +82,7 @@ async def test_remember_then_recall_through_full_pipeline(stack):
     rec = svc.create_memory(
         owner_agent_name="Jarvis", memory_type="semantic",
         content="We decided to use a dedicated compactor agent for context.",
-        subject_scope="project:jarvis", authority="user_confirmed", now=100.0)
+        subject_scope="project:jarvis", authority="user_confirmed", confidence=0.5, now=100.0)
 
     # 2. the background worker drains the outbox into the (FTS) index
     stats = await _drain(stack.worker, now=110.0)
@@ -105,7 +105,7 @@ async def test_exact_identifier_recalled_via_bm25(stack):
     rec = svc.create_memory(
         owner_agent_name="Jarvis", memory_type="episodic",
         content="The crash was a NULL deref in backend/services/foo.py at line 42.",
-        subject_scope="project:jarvis", authority="agent_observed", now=100.0)
+        subject_scope="project:jarvis", authority="agent_observed", confidence=0.5, now=100.0)
     await _drain(stack.worker, now=110.0)
     res = await rpc_handlers.memory_search(agent_name="Jarvis", query="backend/services/foo.py")
     assert any(e["id"].endswith(rec.id) for e in res["memories"])
@@ -115,7 +115,7 @@ async def test_cross_agent_memory_denied_end_to_end(stack):
     svc = MemoryService(stack.Factory())
     svc.create_memory(owner_agent_name="Jarvis", memory_type="semantic",
                       content="Jarvis private architecture note about caching.",
-                      subject_scope="project:jarvis", authority="user_confirmed", now=100.0)
+                      subject_scope="project:jarvis", authority="user_confirmed", confidence=0.5, now=100.0)
     await _drain(stack.worker, now=110.0)
     # another agent must not retrieve it
     res = await rpc_handlers.memory_search(agent_name="Riley [SA]", query="architecture caching")
@@ -139,7 +139,7 @@ async def test_dense_outage_keeps_writes_and_chat(stack):
     svc = MemoryService(stack.Factory())
     rec = svc.create_memory(owner_agent_name="Jarvis", memory_type="semantic",
                             content="resilience note: outbox keeps dense work pending",
-                            subject_scope="system", authority="tool_verified", now=100.0)
+                            subject_scope="system", authority="tool_verified", confidence=0.5, now=100.0)
     await _drain(stack.worker, now=110.0)
     # write survived + dense intent still pending (deferred), not lost / dead
     db = stack.Factory()
@@ -165,7 +165,7 @@ async def test_agent_forget_archives_and_drops_from_search(stack):
     svc = MemoryService(stack.Factory())
     rec = svc.create_memory(owner_agent_name="Jarvis", memory_type="semantic",
                             content="temporary note to forget about caching",
-                            subject_scope="system", authority="agent_observed", now=100.0)
+                            subject_scope="system", authority="agent_observed", confidence=0.5, now=100.0)
     await _drain(stack.worker)
     assert (await rpc_handlers.memory_search(agent_name="Jarvis", query="caching"))["memories"]
     # forget → archive. Retrieval excludes non-active memory immediately (the
