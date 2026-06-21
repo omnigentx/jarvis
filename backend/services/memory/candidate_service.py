@@ -207,6 +207,13 @@ def _persist_from_candidate(db, cand, status, *, now, changed_by="system",
         owner_agent_name=cand.owner_agent_name, memory_type=payload["memory_type"],
         content=payload["content"], subject_scope=payload["subject_scope"],
         authority=payload["authority"], sources=sources, changed_by=changed_by,
+        # SINGLE chokepoint for confidence: every capture path funnels through
+        # here, so threading it ONCE fixes all of them. The extracted/fast lane
+        # stores the LLM's confidence in the payload; the compaction lane sets
+        # the candidate column. Prefer payload, fall back to the column — without
+        # this, create_memory defaulted to 0.5 and confidence never reached a
+        # memory (the policy's confidence rank-boost was permanently a no-op).
+        confidence=payload.get("confidence", cand.confidence),
         now=now, entities=payload.get("entities"), subtype=payload.get("subtype"),
         # A SECRET only reaches persistence via EXPLICIT user approval: secrets
         # force requires_approval=True in create_candidate, so they never hit

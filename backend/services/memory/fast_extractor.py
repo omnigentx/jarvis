@@ -202,6 +202,9 @@ def _persist_candidates(owner, mems, cfg, candidate_type: str) -> list[str]:
                     payload={"memory_type": m.memory_type, "content": m.content,
                              "subject_scope": "user", "authority": "agent_observed",
                              "confidence": m.confidence, "entities": m.entities},
+                    # Also set the candidate column (not just the payload) so
+                    # confidence-based gating reads the LLM value, not the default.
+                    confidence=m.confidence,
                     requires_approval=(cfg.approval_policy != "auto_low_risk"),
                     pinned_token_budget=getattr(cfg, "pinned_token_budget", 1500))
                 ids.append(cand.id)
