@@ -229,3 +229,11 @@ def test_confidence_metadata_reaches_version(db):
     meta = _json.loads(v.metadata_json)
     assert meta["confidence_method"] == "evidence_alignment_v1:direct"
     assert meta["reasoning_type"] == "direct" and meta["excerpt_ok"] is True
+
+
+def test_approval_reason_codes(db):
+    from services.memory.candidate_service import approval_reason
+    assert approval_reason({"excerpt_ok": False}, "x") == "unverified_evidence"
+    assert approval_reason({"excerpt_ok": True}, "x") is None
+    assert approval_reason({}, "x") is None
+    assert approval_reason({"excerpt_ok": True}, "password: hunter2secret") == "secret"

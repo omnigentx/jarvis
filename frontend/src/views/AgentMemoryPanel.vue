@@ -164,6 +164,12 @@ function payloadContent(c) {
   try { return JSON.parse(c.payload).content || '' } catch { return c.payload }
 }
 
+// Localized explanation of why a candidate needs review despite auto-save being
+// on. The backend sends a stable reason code; unknown codes fall back to the key.
+function reasonNote(c) {
+  return c.reason ? t('memory.approvalReason.' + c.reason) : ''
+}
+
 watch([typeFilter, statusFilter], loadAll)
 watch(() => memStore.indexTick, loadAll)
 onMounted(loadAll)
@@ -241,6 +247,8 @@ onMounted(loadAll)
         <div class="card-body">
           <span class="badge">{{ c.candidate_type }}</span>
           <span class="content">{{ payloadContent(c) }}</span>
+          <!-- Why this still needs review even under auto-save (fail-loud). -->
+          <div v-if="c.reason" class="reason-note">⚠ {{ reasonNote(c) }}</div>
         </div>
         <div class="card-actions">
           <button class="btn primary" :disabled="isRowBusy(c.id)" @click="approve(c.id)">{{ t('memory.approve') }}</button>
@@ -371,6 +379,10 @@ onMounted(loadAll)
 .row-card:last-child { border-bottom: none; padding-bottom: 0; }
 .card-body { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; flex: 1; min-width: 0; }
 .content { flex: 1; min-width: 0; line-height: 1.5; }
+/* Why review is still needed under auto-save — a calm warning, not an error. */
+.reason-note { flex-basis: 100%; font-size: 11.5px; color: var(--warn, #b45309);
+  background: var(--warn-bg, color-mix(in srgb, #f59e0b 12%, transparent));
+  border-radius: var(--r-sm, 6px); padding: 3px 8px; margin-top: 4px; line-height: 1.45; }
 .meta { color: var(--text-dim); font-size: 11px; }
 .badge { font-size: 10px; text-transform: uppercase; background: var(--bg-3);
   border-radius: var(--r-sm); padding: 2px 6px; color: var(--text-dim); white-space: nowrap;

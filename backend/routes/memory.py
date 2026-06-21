@@ -210,9 +210,22 @@ async def list_candidates(name: str, status: str = "pending",
         if status:
             q = q.filter(MemoryCandidate.status == status)
         rows = q.order_by(MemoryCandidate.created_at.desc()).limit(limit).all()
+        import json as _json
+
+        from services.memory.candidate_service import approval_reason
+
+        def _reason(c):
+            try:
+                p = _json.loads(c.payload_json)
+                return approval_reason(p, p.get("content", ""))
+            except (ValueError, TypeError):
+                return None
         return {"items": [{
             "id": c.id, "candidate_type": c.candidate_type, "status": c.status,
             "payload": c.payload_json, "confidence": c.confidence,
+            # Why this still awaits review (localized by the UI) — e.g. the
+            # extractor couldn't verify its evidence, so it wasn't auto-saved.
+            "reason": _reason(c),
             "requires_curator": bool(c.requires_curator),
             "requires_approval": bool(c.requires_approval), "created_at": c.created_at,
         } for c in rows]}

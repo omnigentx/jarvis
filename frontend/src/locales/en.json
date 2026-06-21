@@ -575,6 +575,10 @@
       "graph": "Knowledge-graph co-occurrence (MENTIONS) — surfaced via a shared entity"
     },
     "scoreHint": "rrf = raw fusion relevance score (higher = better query match). conf = confidence the fact is true (0–1). ✓ = verified (user-confirmed or tool-verified).",
+    "approvalReason": {
+      "unverified_evidence": "Needs review even with auto-save on: the evidence for this memory couldn't be verified against your messages, so it wasn't auto-saved.",
+      "secret": "Needs review: this looks like sensitive/secret content, which is never auto-saved."
+    },
     "awaitingApproval": "Awaiting approval",
     "approve": "Approve",
     "reject": "Reject",

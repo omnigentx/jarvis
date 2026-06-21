@@ -191,6 +191,19 @@ def ingest_compactor_candidates(
     return ids
 
 
+def approval_reason(payload: dict, content: str = "") -> str | None:
+    """Why this candidate needs human approval — a STABLE CODE the UI localizes
+    (never UI copy here). Lets the inbox explain why a memory still needs review
+    even when the user enabled auto-save: ``unverified_evidence`` = the extractor
+    couldn't cite verifiable evidence (fail-loud), ``secret`` = sensitive content
+    always needs a human. None = no special reason (e.g. the policy is manual)."""
+    if content and has_secret(content):
+        return "secret"
+    if payload.get("excerpt_ok") is False:
+        return "unverified_evidence"
+    return None
+
+
 def _confidence_metadata(payload: dict) -> dict:
     """The provenance of a memory's confidence, for MemoryVersion.metadata_json.
     Only the keys the capture lane actually recorded (absent for legacy/manual
@@ -262,7 +275,8 @@ def _create_approval_row(cand: MemoryCandidate) -> None:
     inbox, blocking nothing (same as cron deferred gates)."""
     try:
         from services.approval_service import approval_service
-        content = json.loads(cand.payload_json).get("content", "")
+        payload = json.loads(cand.payload_json)
+        content = payload.get("content", "")
         # NEVER render a detected secret on the Approvals page. The card is a
         # more-visible surface than memory_records; mask the preview so the
         # cleartext value isn't exposed in the inbox. The real value stays in
@@ -275,7 +289,10 @@ def _create_approval_row(cand: MemoryCandidate) -> None:
             "title": f"Remember: {display[:80]}",
             "content": display,
             "pause": False,
-            "metadata": {"candidate_id": cand.id},
+            # ``reason`` (a stable code, localized by the UI) explains why this
+            # still needs review even under auto-save — see approval_reason.
+            "metadata": {"candidate_id": cand.id,
+                         "reason": approval_reason(payload, content)},
         })
     except Exception as exc:  # noqa: BLE001 — inbox mirror is best-effort
         logger.warning("[MEMORY] approval row create failed: %s", exc)

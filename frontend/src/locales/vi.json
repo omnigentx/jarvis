@@ -552,6 +552,10 @@
       "graph": "Đồng xuất hiện trên đồ thị tri thức (MENTIONS) — kéo về qua entity chung"
     },
     "scoreHint": "rrf = điểm khớp truy xuất thô (cao = khớp câu hỏi hơn). conf = độ tin fact đúng (0–1). ✓ = đã xác minh (user xác nhận hoặc tool kiểm chứng).",
+    "approvalReason": {
+      "unverified_evidence": "Vẫn cần duyệt dù đã bật tự lưu: không xác minh được bằng chứng cho ký ức này trong tin nhắn của bạn, nên nó không được tự lưu.",
+      "secret": "Cần duyệt: nội dung có vẻ nhạy cảm/bí mật, loại này không bao giờ tự lưu."
+    },
     "awaitingApproval": "Chờ duyệt",
     "approve": "Duyệt",
     "reject": "Từ chối",
