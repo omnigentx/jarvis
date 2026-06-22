@@ -364,3 +364,56 @@ def test_delete_to_empty_rebuilds_vector_index(store):
     # Without the post-empty index rebuild this returns < 3 (usually 0).
     hits = store.vector_search(owner="J", query_embedding=_vec(0), limit=10)
     assert len(hits) == 3, f"dense recall dead after wipe+re-add: got {len(hits)}"
+
+
+# ── query-anchored GraphRAG + hub suppression (the 2026-06-22 relevance fix) ──
+def _put_ents(store, rid, axis, content, owner, entities):
+    store.upsert_memory(record_id=rid, owner=owner, memory_type="semantic",
+                        subject_scope="user", content=content, embedding=_vec(axis),
+                        authority="user_confirmed", confidence=0.9, created_at=1.0, valid_from=1.0)
+    for nm in entities:
+        store.link_entity(record_id=rid, entity_id=f"kg:{owner}:{nm}", name=nm,
+                          etype="topic", normalized=nm)
+
+
+def _seed_hub_graph(store):
+    # 'user' is a HUB (mentioned by 5/6 memories); 'fpt' is specific (2/6).
+    for i, (rid, content, ents) in enumerate([
+        ("m1", "user works at fpt", ["user", "fpt"]),
+        ("m2", "fpt is in hanoi", ["fpt", "hanoi"]),
+        ("m3", "user likes pho", ["user", "pho"]),
+        ("m4", "user has a cat", ["user", "cat"]),
+        ("m5", "user plays tennis", ["user", "tennis"]),
+        ("m6", "user reads books", ["user", "books"]),
+    ]):
+        _put_ents(store, rid, i, content, "J", ents)
+
+
+def test_query_anchored_pulls_only_named_entity(store):
+    # GraphRAG anchored to the QUERY's entities: naming a specific (non-hub)
+    # entity pulls exactly the memories that MENTION it.
+    _seed_hub_graph(store)
+    hits = store.query_anchored_memories(owner="J", query="where is fpt located", limit=10)
+    assert {h.record_id for h in hits} == {"m1", "m2"}
+
+
+def test_query_anchored_empty_when_no_entity_named(store):
+    # The bug guard: a query naming no entity must NOT expand the graph, so
+    # unrelated memories are never dragged in via the ubiquitous user entity.
+    _seed_hub_graph(store)
+    assert store.query_anchored_memories(owner="J", query="what should i cook tonight", limit=10) == []
+
+
+def test_query_anchored_skips_hub_entity(store):
+    # Naming the hub entity ('user', mentioned by most memories) must NOT anchor —
+    # it co-occurs with nearly everything → no signal → [] (caller uses dense+FTS).
+    _seed_hub_graph(store)
+    assert store.query_anchored_memories(owner="J", query="tell me about the user", limit=10) == []
+
+
+def test_query_anchored_is_owner_scoped(store):
+    _seed_hub_graph(store)
+    _put_ents(store, "k1", 7, "other works at fpt", "K", ["fpt"])   # different owner
+    hits = store.query_anchored_memories(owner="J", query="where is fpt", limit=10)
+    assert "k1" not in {h.record_id for h in hits}
+    assert all(h.owner == "J" for h in hits)

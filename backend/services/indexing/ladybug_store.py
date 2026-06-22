@@ -373,6 +373,56 @@ class LadybugStore:
                                       auth or "agent_observed", float(conf or 0.5)))
             return hits
 
+    def query_anchored_memories(self, *, owner: str, query: str, limit: int = 5,
+                                hub_max_df: float = 0.5) -> list[VectorHit]:
+        """GraphRAG recall ANCHORED to entities NAMED IN THE QUERY — not blind
+        co-occurrence off the vector seeds (``linked_memories``). Pulls memories
+        that MENTION an entity whose normalized name appears as a whole token-run
+        in the query.
+
+        Hub entities — mentioned by >= ``hub_max_df`` of the owner's active
+        memories (e.g. the user's own name, which co-occurs with nearly every
+        personal fact) — are SKIPPED: anchoring on them re-introduces the
+        tangential pulls this replaces. (Measured 2026-06-22: 'Nguyễn Văn Phúc'
+        at 64% df dragged an AI-career memory into a baby-age query via seed
+        co-occurrence.) Returns [] when the query names no non-hub entity → the
+        caller falls back to dense + FTS only. One hop (entity → mentioning
+        memory): on the bipartite MENTIONS graph deeper walks just re-hit hubs."""
+        qn = f" {_norm(query)} "
+        with self._lock:
+            tot = self.count(owner)
+            if tot == 0:
+                return []
+            hub_cut = max(2, int(tot * hub_max_df))   # floor keeps tiny stores sane
+            # Owner-scoped entities + document frequency (how many memories MENTION
+            # each). df is the hub signal: a high-df entity carries no discriminative
+            # power for co-occurrence recall.
+            res = self._exec(
+                "MATCH (e:Entity)<-[:MENTIONS]-(m:Memory) "
+                "WHERE m.owner = $owner AND m.status = 'active' "
+                "RETURN e.id, e.normalized, count(m)", {"owner": owner})
+            anchors: list[str] = []
+            while res.has_next():
+                eid, norm, df = res.get_next()
+                if not norm or int(df) >= hub_cut:
+                    continue                          # unnamed or hub → drop
+                if f" {norm} " in qn:                 # entity named in the query
+                    anchors.append(eid)
+            if not anchors:
+                return []
+            res = self._exec(
+                "MATCH (e:Entity)<-[:MENTIONS]-(m:Memory) "
+                "WHERE e.id IN $ids AND m.owner = $owner AND m.status = 'active' "
+                "RETURN DISTINCT m.id, m.owner, m.memory_type, m.content, "
+                "m.created_at, m.authority, m.confidence LIMIT $lim",
+                {"ids": anchors, "owner": owner, "lim": limit})
+            hits = []
+            while res.has_next():
+                rid, own, mt, content, ca, auth, conf = res.get_next()
+                hits.append(VectorHit(rid, own, mt, content, 1.0, float(ca or 0.0),
+                                      auth or "agent_observed", float(conf or 0.5)))
+            return hits
+
     def count(self, owner: str | None = None) -> int:
         with self._lock:
             if owner:

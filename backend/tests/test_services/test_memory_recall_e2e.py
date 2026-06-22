@@ -114,16 +114,20 @@ async def test_recall_injects_real_orchestrator_result(wired):
 
 # ── GraphRAG co-occurrence + relevance gate (real orchestrator, fake embed) ───
 
-async def test_graphrag_cooccurrence_and_relevance_gate(monkeypatch):
-    """E2E through the REAL orchestrator (LadybugProvider dense + linked_memories
-    + FTS + fusion + gate); only the embedder is faked.
+async def test_graphrag_query_anchored_and_relevance_gate(monkeypatch):
+    """E2E through the REAL orchestrator (LadybugProvider dense + query-anchored
+    graph + FTS + fusion + gate); only the embedder is faked.
 
-    Proves two behaviours end-to-end:
-    1. GraphRAG co-occurrence — a memory that SHARES an entity with the vector hit
-       is pulled in via MENTIONS even though its OWN embedding is far from the
-       query (the value the dense gate would otherwise miss).
-    2. Relevance gate — an off-topic query (vector-far from everything) injects
-       nothing.
+    Proves the QUERY-ANCHORED GraphRAG contract (replaces blind seed co-occurrence,
+    the 2026-06-22 'AI-career memory in a baby-age query' bug):
+    1. A memory whose OWN embedding is far from the query is pulled via the graph
+       ONLY when the query NAMES the shared entity ('acme').
+    2. A query that does NOT name the entity ('plan a trip') does NOT drag that
+       memory in — even though it shares an entity with a vector hit.
+    3. Relevance gate — an off-topic query injects nothing.
+
+    Six memories so 'acme' (df 2/6) is below the hub cut (≥3) and stays usable;
+    fillers also give the off-topic query genuinely-empty vector results.
     """
     _CACHE.clear()
     eng = create_engine("sqlite:///:memory:",
@@ -136,6 +140,8 @@ async def test_graphrag_cooccurrence_and_relevance_gate(monkeypatch):
     F = sessionmaker(bind=eng)
     store = LadybugStore(f"{tempfile.mkdtemp()}/g")
 
+    _AXIS = {"trip": 0, "address": 5, "milk": 1, "blue": 2, "jazz": 3, "tennis": 4}
+
     class _Emb:
         def is_available(self): return True
         def dim(self): return EMBED_DIM
@@ -143,15 +149,25 @@ async def test_graphrag_cooccurrence_and_relevance_gate(monkeypatch):
         def _v(self, t):
             t = (t or "").lower()
             v = [0.0] * EMBED_DIM
-            v[0 if "trip" in t else 5 if "address" in t else 9] = 1.0
+            v[next((ax for kw, ax in _AXIS.items() if kw in t), 9)] = 1.0
             return v
         def embed_documents(self, ts): return [self._v(t) for t in ts]
         def embed_query(self, q): return self._v(q)
     emb = _Emb()
 
-    # A is near the query ("trip"); B is far ("address"); BOTH mention "Acme".
+    # A near "trip"; B vector-far ("address") and its CONTENT has no 'acme' token
+    # (so B can ONLY arrive via the graph anchor, not FTS). Both MENTION entity
+    # Acme. C–F are distinct fillers that dilute Acme's df below the hub cut.
+    rows = [
+        ("A", "trip planning notes", "acme"),
+        ("B", "office address downtown", "acme"),   # NB: no 'acme' word in content
+        ("C", "buy milk today", "grocery"),
+        ("D", "the sky is blue", "color"),
+        ("E", "jazz playlist", "music"),
+        ("F", "tennis match", "sport"),
+    ]
     seed = F()
-    for rid, content in [("A", "trip planning notes"), ("B", "acme office address")]:
+    for rid, content, ent in rows:
         seed.add(MemoryRecord(id=rid, owner_agent_name="Jarvis", memory_type="semantic",
                               subject_scope="user", content=content, normalized_content=content,
                               status="active", authority="user_confirmed", confidence=0.9,
@@ -161,8 +177,8 @@ async def test_graphrag_cooccurrence_and_relevance_gate(monkeypatch):
         store.upsert_memory(record_id=rid, owner="Jarvis", memory_type="semantic",
                             subject_scope="user", content=content, embedding=emb._v(content),
                             authority="user_confirmed", confidence=0.9, created_at=1.0, valid_from=1.0)
-        store.link_entity(record_id=rid, entity_id="ent:acme", name="Acme",
-                          etype="org", normalized="acme")     # shared entity → MENTIONS
+        store.link_entity(record_id=rid, entity_id=f"ent:{ent}", name=ent,
+                          etype="org", normalized=ent)
     seed.commit(); seed.close()
 
     import core.database as cd
@@ -179,23 +195,28 @@ async def test_graphrag_cooccurrence_and_relevance_gate(monkeypatch):
     from services.retrieval.contracts import RetrievalRequest
     from services.retrieval.orchestrator import RetrievalOrchestrator
 
-    # 1. on-topic: vector hits A; B is pulled via shared-entity MENTIONS (Lane C).
+    # 1. Query NAMES 'acme' → B (vector-far, content has no 'acme' word) is pulled
+    #    ONLY via the graph anchor.
     res = await RetrievalOrchestrator(F(), _cfg()).retrieve(
-        RetrievalRequest(owner_agent_name="Jarvis", query="plan a trip"),
+        RetrievalRequest(owner_agent_name="Jarvis", query="tell me about acme"),
         now=time.time(), agent_requested=True)
-    ids = {e.record_id for e in res.evidence}
-    assert "A" in ids                      # direct vector hit
-    assert "B" in ids                      # GraphRAG co-occurrence (vector-far, shared entity)
-    # Lane PROVENANCE (powers the debug UI): A came from the vector lane, B ONLY
-    # from the graph (MENTIONS) lane — so the UI can show graph's unique pull.
     by_id = {e.record_id: e.scores for e in res.evidence}
-    assert by_id["A"].dense_rank is not None and by_id["A"].graph_rank is None
+    assert "B" in by_id
     assert by_id["B"].graph_rank is not None and by_id["B"].dense_rank is None
 
-    # 2. off-topic: vector-far from everything → relevance gate → nothing injected.
+    # 2. Query does NOT name the entity → graph must NOT drag B in (the bug guard).
     _CACHE.clear()
     res2 = await RetrievalOrchestrator(F(), _cfg()).retrieve(
+        RetrievalRequest(owner_agent_name="Jarvis", query="plan a trip"),
+        now=time.time(), agent_requested=True)
+    ids2 = {e.record_id for e in res2.evidence}
+    assert "A" in ids2                     # direct vector hit
+    assert "B" not in ids2                 # NOT pulled — query named no entity
+
+    # 3. off-topic: vector-far from everything + names no entity → nothing.
+    _CACHE.clear()
+    res3 = await RetrievalOrchestrator(F(), _cfg()).retrieve(
         RetrievalRequest(owner_agent_name="Jarvis", query="quantum chromodynamics lecture"),
         now=time.time(), agent_requested=True)
-    assert res2.evidence == []
+    assert res3.evidence == []
     store.close()
