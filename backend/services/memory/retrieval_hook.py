@@ -106,19 +106,24 @@ def _render_block(evidence) -> str:
     return "\n".join(lines)
 
 
+def _score_dict(e) -> dict:
+    """RAW ``{rel, conf, authority}`` for one evidence — the per-line debug score
+    (RRF match score, fact-truth confidence, authority). No normalization (see
+    RECALL_SCORES_CHANNEL). SINGLE SOURCE OF TRUTH for both the persisted channel
+    string (``_block_scores``) and the live SSE chip (``_emit_recall_block``), so
+    the real-time chip and the reloaded one never diverge. Tolerant of partial
+    stubs so a debug annotation never breaks recall."""
+    scores = getattr(e, "scores", None)
+    rel = getattr(scores, "final", None) or getattr(scores, "rrf", None) or 0.0
+    conf = max(0.0, min(1.0, getattr(e, "confidence", 0.0) or 0.0))
+    return {"rel": round(rel, 4), "conf": round(conf, 2),
+            "authority": getattr(e, "authority", "") or ""}
+
+
 def _block_scores(evidence) -> list[str]:
-    """One ``rel|conf|authority`` string per evidence for the debug chip —
-    RAW relevance (RRF fusion score) + RAW confidence + authority. No
-    normalization (see RECALL_SCORES_CHANNEL). Tolerant of partial stubs so a
-    debug annotation never breaks recall."""
-    out: list[str] = []
-    for e in evidence:
-        scores = getattr(e, "scores", None)
-        rel = getattr(scores, "final", None) or getattr(scores, "rrf", None) or 0.0
-        conf = max(0.0, min(1.0, getattr(e, "confidence", 0.0) or 0.0))
-        authority = getattr(e, "authority", "") or ""
-        out.append(f"{round(rel, 4)}|{round(conf, 2)}|{authority}")
-    return out
+    """One ``rel|conf|authority`` string per evidence for the persisted channel —
+    derived from ``_score_dict`` so it stays identical to the live SSE payload."""
+    return [f"{s['rel']}|{s['conf']}|{s['authority']}" for s in map(_score_dict, evidence)]
 
 
 def _block_recall_ids(msg) -> list[str]:
@@ -161,6 +166,31 @@ def _build_block_message(evidence):
                   RECALL_LANES_CHANNEL: [text_content(",".join(lanes_of(getattr(e, "scores", None)))) for e in evidence],
                   RECALL_SCORES_CHANNEL: [text_content(s) for s in _block_scores(evidence)]},
     )
+
+
+def _emit_recall_block(owner: str, fresh) -> None:
+    """Live SSE mirror of the recall block just injected, so the chat UI shows the
+    "memories used" chip in REAL TIME instead of only after a page reload (the
+    chip was previously built solely from persisted history fetched on mount).
+
+    Carries exactly what the block persists — the rendered prose + per-line lanes
+    + per-line scores, all from ``fresh`` (the deduped set actually injected) — so
+    the live chip is byte-identical to the one rebuilt from history on reload.
+    Best-effort: a broadcast failure must never break the LLM call."""
+    try:
+        from services.activity_stream import activity_stream_manager
+        from services.retrieval.contracts import lanes_of
+        activity_stream_manager.broadcast({
+            "agent_name": owner,
+            "event_type": "memory_recalled",
+            "data": {
+                "content": _render_block(fresh),
+                "recall_lanes": [lanes_of(getattr(e, "scores", None)) for e in fresh],
+                "recall_scores": [_score_dict(e) for e in fresh],
+            },
+        })
+    except Exception as exc:  # noqa: BLE001 — never break the LLM call
+        logger.debug("[MEMORY] recall SSE emit failed: %s", exc)
 
 
 def create_memory_retrieval_hooks():
@@ -221,6 +251,8 @@ def create_memory_retrieval_hooks():
             # the turn commits, so the block persists & dedups exactly as before,
             # just correctly ordered. Never mutate earlier history → KV cache safe.
             delta_messages.append(_build_block_message(fresh))
+            # Mirror the block to the chat UI live (chip shows now, not on reload).
+            _emit_recall_block(owner, fresh)
         except Exception as exc:  # noqa: BLE001 — never break the LLM call
             logger.error("[MEMORY] retrieval hook error: %s", exc, exc_info=True)
 

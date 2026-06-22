@@ -1,7 +1,7 @@
 import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
-import { apiFetch } from '../api'
-import { useAudioPlayerStore } from './audioPlayer'
+import { apiFetch } from '../api.js'
+import { useAudioPlayerStore } from './audioPlayer.js'
 
 const META_STORAGE_KEY = 'jarvis_chat_meta'
 const TTS_STORAGE_KEY = 'jarvis_tts_enabled'
@@ -390,6 +390,42 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   /**
+   * Insert a live "memories used" recall block from the `memory_recalled` SSE
+   * event so the chip shows DURING the turn (previously only after a page
+   * reload, because the chip was built solely from fetched history). The payload
+   * mirrors the persisted block (content + recall_lanes + recall_scores), so on
+   * the next history fetch the persisted block replaces this one with no visible
+   * change. Inserted BEFORE the in-flight assistant placeholder so it renders
+   * above the reply, matching the persisted order.
+   */
+  function addMemoryRecallBlock(data, agentName) {
+    if (!data || !data.content) return
+    const conv = activeConversation.value
+    // Only the conversation currently streaming this agent's turn gets the live
+    // block; persisted history is the source of truth and fixes any drift on
+    // reload. Guard on agent + streaming so a background agent's recall never
+    // lands in the wrong open conversation.
+    if (!conv || !isStreaming.value) return
+    if (agentName && conv.agentName && agentName !== conv.agentName) return
+    const block = {
+      id: `mem-live-${crypto.randomUUID()}`,
+      role: 'user',
+      content: data.content,
+      recallLanes: data.recall_lanes || null,
+      recallScores: data.recall_scores || null,
+      timestamp: Date.now(),
+      isStreaming: false,
+      toolCalls: [],
+    }
+    // Place it just before the last assistant message (the streaming placeholder).
+    const msgs = conv.messages
+    let i = msgs.length - 1
+    while (i >= 0 && msgs[i].role !== 'assistant') i--
+    if (i >= 0) msgs.splice(i, 0, block)
+    else msgs.push(block)
+  }
+
+  /**
    * Push a tool call event into the current streaming message (in-memory only).
    */
   function pushToolCall(messageId, toolCall) {
@@ -521,6 +557,7 @@ export const useChatStore = defineStore('chat', () => {
     stopTts,
     addUserMessage,
     addAgentMessagePlaceholder,
+    addMemoryRecallBlock,
     pushToolCall,
     finalizeAgentMessage,
     removeMessage,

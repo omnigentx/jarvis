@@ -382,6 +382,15 @@ export const useAgentsStore = defineStore('agents', () => {
           }).catch(e => console.warn('[Store] Failed to forward approval event:', e))
           break
         }
+        // Live recall block → chat store, so the "memories used" chip renders
+        // during the turn (not only after a reload). Intercept before the
+        // generic memory_ forward below (which routes to the memory store).
+        if (event_type === 'memory_recalled') {
+          import('./chat').then(({ useChatStore }) => {
+            useChatStore().addMemoryRecallBlock(event.data, agent_name)
+          }).catch(e => console.warn('[Store] Failed to forward memory_recalled:', e))
+          break
+        }
         // Forward the live-reactive memory events (spec §17 subset) to the
         // memory store: candidate badge, index refresh, degraded banner.
         if (event_type.startsWith('memory_') || event_type === 'retrieval_degraded'
