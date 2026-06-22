@@ -36,22 +36,31 @@ class MemorySettings:
     curator_provider: str = ""
     curator_base_url: str = ""
     curator_api_key_set: bool = False  # masked; raw via get_curator_api_key()
-    # Embeddings / index
-    embedding_model: str = "BAAI/bge-m3"
+    # Embeddings / index. Qwen3-Embedding-0.6B (sentence-transformers, dim 1024 —
+    # same as bge-m3, so no LadybugDB schema change) measured 2026-06-22 to
+    # separate on-topic/off-topic better than bge-m3 on short Vietnamese
+    # question→fact recall. Switching the model re-embeds the whole store
+    # (startup migration on a revision change); bge-m3 is still selectable.
+    embedding_model: str = "Qwen/Qwen3-Embedding-0.6B"
     embedding_revision: str = ""
+    # Cross-encoder reranker (precision stage): re-scores the fused candidates by
+    # reading (query, memory) jointly — what the bi-encoder can't do. ON by default.
     reranker_enabled: bool = True
+    rerank_model: str = "BAAI/bge-reranker-v2-m3"
+    rerank_top_k: int = 20            # how many fused candidates to rerank
+    rerank_min_score: float = 0.005   # drop candidates scoring below this
     # Dense/graph backend = LadybugDB (embedded property graph + HNSW vectors).
     # ``ladybug_path`` is the embedded DB directory.
     ladybug_path: str = "data/memory_graph"
     # Retention (days)
     retention_episodic_days: int = 90
     retention_retrieval_runs_days: int = 30
-    # Recall relevance gate: drop a dense hit whose cosine similarity to the
-    # query is below this (distance = 1 - similarity). Calibrated 2026-06-17 on
-    # real BGE-M3 distances: on-topic queries match ≤0.53 distance, off-topic
-    # ≥0.59 — so 0.44 similarity (≤0.56 distance) keeps on-topic, drops off-topic
-    # (→ no memory injected for an unrelated turn).
-    recall_min_similarity: float = 0.44
+    # Recall relevance gate: drop a dense hit whose cosine similarity to the query
+    # is below this (distance = 1 - similarity). Re-tuned 2026-06-22 for
+    # Qwen3-Embedding-0.6B over 19 on-topic + 12 off-topic queries: on-topic
+    # top-sim ≥0.335, off-topic ≤0.333, so 0.34 keeps on-topic / drops off-topic.
+    # (bge-m3's scale was higher: it used 0.44. Re-tune if the model changes.)
+    recall_min_similarity: float = 0.34
     # GraphRAG traversal depth for RELATES expansion. 1 is the sweet spot for the
     # star-shaped personal graph (the user hub is a super-node — 2 hops through it
     # pulls the whole profile = noise). Bump to 2 only with hop-decay.
@@ -72,13 +81,16 @@ _SCHEMA: dict[str, tuple[str, Any]] = {
     "curator_model": ("str", ""),
     "curator_provider": ("str", ""),
     "curator_base_url": ("str", ""),
-    "embedding_model": ("str", "BAAI/bge-m3"),
+    "embedding_model": ("str", "Qwen/Qwen3-Embedding-0.6B"),
     "embedding_revision": ("str", ""),
     "reranker_enabled": ("bool", True),
+    "rerank_model": ("str", "BAAI/bge-reranker-v2-m3"),
+    "rerank_top_k": ("int", 20),
+    "rerank_min_score": ("float", 0.005),
     "ladybug_path": ("str", "data/memory_graph"),
     "retention_episodic_days": ("int", 90),
     "retention_retrieval_runs_days": ("int", 30),
-    "recall_min_similarity": ("float", 0.44),
+    "recall_min_similarity": ("float", 0.34),
     "graph_max_hops": ("int", 1),
     "trigger_lexicon_overrides": ("json", {}),
     "quality_gate_thresholds": ("json", {}),

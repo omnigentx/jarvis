@@ -43,7 +43,7 @@ def test_defaults_when_empty(fake_cfg):
     assert s.enabled is False           # feature flag OFF by default
     assert s.mode == "balanced"
     assert s.pinned_token_budget == 1500
-    assert s.embedding_model == "BAAI/bge-m3"
+    assert s.embedding_model == "Qwen/Qwen3-Embedding-0.6B"
     assert s.curator_api_key_set is False
 
 
@@ -72,7 +72,7 @@ def test_recall_gate_and_hops_round_trip_and_validation(fake_cfg):
     # defaults
     fake_cfg.store.clear()
     d = ms.get_memory_settings()
-    assert d.recall_min_similarity == 0.44 and d.graph_max_hops == 1
+    assert d.recall_min_similarity == 0.34 and d.graph_max_hops == 1
     # range validation
     with pytest.raises(ValueError, match="recall_min_similarity"):
         ms.update_memory_settings({"recall_min_similarity": 1.5})

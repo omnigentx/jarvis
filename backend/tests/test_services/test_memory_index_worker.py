@@ -281,10 +281,10 @@ def test_embedding_provider_missing_deps_is_loud(monkeypatch, caplog):
     import logging
 
     from services.indexing import embedding_provider as ep
-    monkeypatch.setattr(ep, "_deps_available", lambda: False)
+    monkeypatch.setattr(ep, "_have", lambda pkg: False)
     monkeypatch.setattr(ep, "_WARNED_MISSING_DEPS", False)
     with caplog.at_level(logging.ERROR, logger="memory.embedding"):
-        prov = ep.get_embedding_provider()
+        prov = ep.get_embedding_provider("BAAI/bge-m3")   # bge → needs FlagEmbedding
     assert prov.is_available() is False
     assert any("FlagEmbedding is NOT installed" in r.message for r in caplog.records)
 
