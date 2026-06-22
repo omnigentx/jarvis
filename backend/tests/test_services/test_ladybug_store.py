@@ -335,3 +335,32 @@ def test_upsert_drops_edges_contract(store):
                         content="re-indexed", embedding=_vec(0), authority="user_confirmed",
                         confidence=0.9, created_at=9.0, valid_from=9.0)
     assert store.linked_memories(owner="Jarvis", record_ids=["m1"]) == []   # edge dropped → caller re-links
+
+
+def test_delete_to_empty_rebuilds_vector_index(store):
+    # Regression (2026-06-22 prod recall outage): on LadybugDB 0.17.1, emptying the
+    # Memory table (the "forget all memories" op) leaves the HNSW vector index dead
+    # — rows inserted afterward exist (count>0, valid embeddings) but
+    # QUERY_VECTOR_INDEX returns nothing, so dense recall silently dies for every
+    # new memory until a full rebuild. Reproduced 12/12. delete_memory must rebuild
+    # the index the instant the table empties. Partial deletes/updates are safe;
+    # only deletion-to-empty triggers it, so this test wipes ALL rows then re-adds.
+    def _put(rid, axis, t):
+        store.upsert_memory(record_id=rid, owner="J", memory_type="semantic",
+                            subject_scope="user", content=rid, embedding=_vec(axis),
+                            authority="user_confirmed", confidence=0.9,
+                            created_at=t, valid_from=t)
+
+    for i in range(4):
+        _put(f"a{i}", i, 1.0)
+    assert len(store.vector_search(owner="J", query_embedding=_vec(0), limit=10)) == 4
+
+    for i in range(4):
+        store.delete_memory(f"a{i}")
+    assert store.count() == 0
+
+    for i in range(3):
+        _put(f"b{i}", i, 2.0)
+    # Without the post-empty index rebuild this returns < 3 (usually 0).
+    hits = store.vector_search(owner="J", query_embedding=_vec(0), limit=10)
+    assert len(hits) == 3, f"dense recall dead after wipe+re-add: got {len(hits)}"

@@ -162,13 +162,36 @@ class LadybugStore:
             self._exec("CREATE REL TABLE IF NOT EXISTS RELATES("
                        "FROM Entity TO Entity, predicate STRING, owner STRING, mem STRING)")
             # Vector index — created once; ignore "already exists" on re-open.
-            try:
-                self._exec(
-                    f"CALL CREATE_VECTOR_INDEX('Memory', '{_VECTOR_INDEX}', 'emb', "
-                    f"metric := 'cosine')")
-            except Exception as exc:  # noqa: BLE001
-                if "exist" not in str(exc).lower():
-                    raise
+            self._create_vector_index()
+
+    def _create_vector_index(self) -> None:
+        """CREATE the HNSW vector index; ignore "already exists". Single source of
+        truth for the index name/params — used by schema bring-up AND the
+        post-empty rebuild (``_rebuild_vector_index``)."""
+        try:
+            self._exec(
+                f"CALL CREATE_VECTOR_INDEX('Memory', '{_VECTOR_INDEX}', 'emb', "
+                f"metric := 'cosine')")
+        except Exception as exc:  # noqa: BLE001
+            if "exist" not in str(exc).lower():
+                raise
+
+    def _rebuild_vector_index(self) -> None:
+        """DROP + re-CREATE the vector index. REQUIRED after the Memory table is
+        emptied: LadybugDB 0.17.1 leaves the HNSW index DEAD once all indexed rows
+        are deleted (count→0) — rows inserted afterward exist (count>0, valid
+        embeddings) but QUERY_VECTOR_INDEX returns NOTHING until the index is
+        rebuilt (reproduced 12/12). This was the 2026-06-22 prod recall outage: a
+        "forget all memories" emptied the table, so every memory added afterward
+        was invisible to dense search while index-status still read healthy.
+        Partial deletes and updates do NOT trigger it — only deletion-to-empty.
+        Caller must hold ``self._lock``."""
+        try:
+            self._exec(f"CALL DROP_VECTOR_INDEX('Memory', '{_VECTOR_INDEX}')")
+        except Exception as exc:  # noqa: BLE001 — index may already be absent
+            if "exist" not in str(exc).lower():
+                raise
+        self._create_vector_index()
 
     # ---- writes (ADD-only; SQLite is the SoT) ---------------------------
     def upsert_memory(self, *, record_id: str, owner: str, memory_type: str,
@@ -213,6 +236,13 @@ class LadybugStore:
             # RELATES edges live between Entity nodes (not the Memory node), so
             # deleting the memory won't drop them — remove this memory's triples.
             self._exec("MATCH ()-[r:RELATES {mem: $id}]->() DELETE r", {"id": record_id})
+            # Emptying the Memory table kills the HNSW vector index on LadybugDB
+            # 0.17.1 (see _rebuild_vector_index): without this, "forget all" leaves
+            # dense search permanently dead for every memory added afterward.
+            # Rebuild the instant the last row goes — cheap on an empty table, and
+            # count() is reentrant under self._lock (RLock).
+            if self.count() == 0:
+                self._rebuild_vector_index()
 
     def link_entity(self, *, record_id: str, entity_id: str, name: str,
                     etype: str, normalized: str) -> None:
