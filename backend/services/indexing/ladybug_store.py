@@ -480,6 +480,26 @@ def get_ladybug_store(path: str) -> LadybugStore:
     return _STORE_SINGLETON
 
 
+def reset_ladybug_store(path: str) -> None:
+    """Close (if open) + WIPE the graph projection + drop the singleton, so the
+    next ``get_ladybug_store`` rebuilds it from scratch.
+
+    Required when the EMBEDDING MODEL changes: the HNSW vector index is built at
+    ``CREATE_VECTOR_INDEX`` time and is effectively STATIC (Kùzu/LadybugDB
+    lineage) — re-embedding nodes in place (delete+create) does NOT reliably
+    re-index them ('unreachable points' after delete/insert churn; index keeps
+    the stale vectors). A clean wipe + re-project from SQLite guarantees the
+    index is rebuilt over the NEW vectors. Caller re-enqueues the rebuild."""
+    global _STORE_SINGLETON
+    if _STORE_SINGLETON is not None:
+        try:
+            _STORE_SINGLETON.close()
+        except Exception:  # noqa: BLE001
+            pass
+        _STORE_SINGLETON = None
+    _wipe_graph_files(path)
+
+
 class LadybugIndexer:
     """Worker-facing adapter: lets the outbox worker target LadybugDB with the
     same indexer interface (is_available / ensure_collection /

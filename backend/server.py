@@ -517,9 +517,11 @@ async def lifespan(app: FastAPI):
     # from what the graph was last projected with, the stored vectors live in a
     # DIFFERENT vector space (e.g. bge-m3 → Qwen3-Embedding) — query vectors (new
     # model) vs stored vectors (old) compare as garbage and recall silently dies.
-    # Both are dim 1024, so we re-embed IN PLACE (rebuild → worker re-upserts each
-    # node with the new model's vector); no wipe/schema change. The under-populated
-    # check above misses this (count is unchanged), so it needs its own trigger.
+    # We WIPE the graph (not re-embed in place): the HNSW index is built at
+    # CREATE_VECTOR_INDEX time and is effectively static (Kùzu/LadybugDB lineage),
+    # so re-embedding nodes in place does NOT reliably re-index them. The wipe makes
+    # count() < SQLite, so the rebuild we enqueue re-projects everything into a
+    # FRESH graph + index with the new model's vectors.
     try:
         if _mem_cfg and _mem_cfg.enabled:
             from services.config_service import config_service
@@ -530,6 +532,8 @@ async def lifespan(app: FastAPI):
 
                 from core.database import get_db_session
                 from services.indexing import consistency_service as cs
+                from services.indexing.ladybug_store import reset_ladybug_store
+                reset_ladybug_store(getattr(_mem_cfg, "ladybug_path", "data/memory_graph"))
                 _db = get_db_session()
                 try:
                     enq = cs.rebuild(_db, now=_t.time())
@@ -538,8 +542,8 @@ async def lifespan(app: FastAPI):
                 # Mark AFTER enqueue (the outbox intents persist across restarts, so
                 # a crash mid-drain just re-drains; the marker won't wrongly skip).
                 config_service.set("memory", "indexed_embedding_revision", cur_rev)
-                logger.info("[MEMORY] embedding model changed (%r → %r) → re-embedding "
-                            "%d records", prev_rev, cur_rev, enq)
+                logger.info("[MEMORY] embedding model changed (%r → %r) → wiped graph + "
+                            "re-embedding %d records with the new model", prev_rev, cur_rev, enq)
     except Exception:
         logger.exception("[MEMORY] embedding-revision migration check failed")
 
