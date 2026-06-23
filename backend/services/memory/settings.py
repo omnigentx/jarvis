@@ -50,23 +50,23 @@ class MemorySettings:
     # memory) relevance — the bi-encoder can't. ON by default. It is a RANKER, not
     # a precision GATE: see rerank_min_score.
     reranker_enabled: bool = True
-    rerank_model: str = "BAAI/bge-reranker-v2-m3"
+    # Qwen3-Reranker-0.6B (causal LM, yes/no logit) measured 2026-06-23 to rank the
+    # direct answer FIRST on the live Vietnamese store and give a usable score
+    # spread, where bge-reranker-v2-m3 compressed everything near 0 (ungateable,
+    # mis-ranked). bge still selectable. Slower (autoregressive) but worth it.
+    rerank_model: str = "Qwen/Qwen3-Reranker-0.6B"
     rerank_top_k: int = 20            # how many fused candidates to rerank
-    # Drop candidates scoring below this. Grid-searched 2026-06-23 (real reranker,
-    # 78-query labelled set): the reranker score CANNOT separate on-topic from
-    # off-topic-keyword — on-topic-INDIRECT targets score as low as 0.0000 ("Repo
-    # trợ lý tôi làm nằm ở đâu?" → 0.0000) while off-topic-keyword candidates score
-    # up to 0.44 (bge) / 0.98 (Qwen3-Reranker), because those queries are genuinely
-    # topically similar. Any floor > 0 that drops the off-topic noise ALSO drops
-    # ~20%+ of indirect-phrased on-topic recall (the original recall=0 failure mode
-    # — verified: floor 0.005 → on-topic recall@5 drops 100%→80%). So the floor is
-    # 0.0: the reranker only ORDERS; the dense gate controls recall/precision.
-    # Off-topic-keyword false-positives (a topically-related memory injected for a
-    # general question) are an ACCEPTED trade — mild noise the LLM ignores. The
-    # real fix is an upstream personal-intent gate (deferred), NOT this floor:
-    # an instruction-tuned reranker was tested and did NOT help (it rates topical
-    # relevance, which is the wrong question — "is it NEEDED?" needs reasoning).
-    rerank_min_score: float = 0.0
+    # Drop candidates scoring below this. With bge-reranker this had to be 0.0 (it
+    # compressed every Vietnamese score near 0 — a floor couldn't separate on-topic
+    # from off-keyword without killing recall). Qwen3-Reranker fixes that: measured
+    # live 2026-06-23, real on-topic answers score >= 0.003 (e.g. "where do I work"
+    # → Techcombank 0.245) while off-keyword / general-knowledge candidates score
+    # <= 0.0009 ("Angular latest version" → 0.0002). So 0.001 cleanly gates: it
+    # drops off-keyword noise (the q2/q3 acceptance cases → 0 memory) while keeping
+    # the direct answers (q1/q4/q7), which now also rank #1. Residual: a real memory
+    # the reranker scores high for the WRONG query (the con/Milo adversarial pair)
+    # still leaks — no scalar floor catches that (needs intent/LLM, deferred).
+    rerank_min_score: float = 0.001
     # Dense/graph backend = LadybugDB (embedded property graph + HNSW vectors).
     # ``ladybug_path`` is the embedded DB directory.
     ladybug_path: str = "data/memory_graph"
@@ -116,9 +116,9 @@ _SCHEMA: dict[str, tuple[str, Any]] = {
     "embedding_model": ("str", "Qwen/Qwen3-Embedding-0.6B"),
     "embedding_revision": ("str", ""),
     "reranker_enabled": ("bool", True),
-    "rerank_model": ("str", "BAAI/bge-reranker-v2-m3"),
+    "rerank_model": ("str", "Qwen/Qwen3-Reranker-0.6B"),
     "rerank_top_k": ("int", 20),
-    "rerank_min_score": ("float", 0.0),
+    "rerank_min_score": ("float", 0.001),
     "ladybug_path": ("str", "data/memory_graph"),
     "retention_episodic_days": ("int", 90),
     "retention_retrieval_runs_days": ("int", 30),

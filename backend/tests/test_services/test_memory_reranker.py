@@ -63,3 +63,12 @@ def test_apply_policy_orders_by_reranker_over_rrf():
     out = fusion.apply_policy([a, b], now=1000.0)
     assert [e.record_id for e in out] == ["b", "a"]   # reranker is authoritative
     assert out[0].scores.final == 0.9
+
+
+def test_get_reranker_dispatches_by_model():
+    # qwen name → causal-LM Qwen3Reranker; anything else → CrossEncoder. (Lazy:
+    # constructing does NOT load the model, so this needs no weights.)
+    from services.retrieval import reranker as rr
+    assert isinstance(rr.get_reranker("Qwen/Qwen3-Reranker-0.6B"), rr.Qwen3Reranker)
+    assert isinstance(rr.get_reranker("BAAI/bge-reranker-v2-m3"), rr.CrossEncoderReranker)
+    assert rr.DEFAULT_RERANKER.startswith("Qwen/")

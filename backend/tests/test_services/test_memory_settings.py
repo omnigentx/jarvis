@@ -127,7 +127,7 @@ def test_new_tuning_knobs_config(fake_cfg):
     # config keys (promoted from hardcoded). Defaults + round-trip + validation.
     d = ms.get_memory_settings()
     assert d.hub_max_df == 0.5 and d.extract_every_n == 4
-    assert d.rerank_top_k == 20 and d.rerank_min_score == 0.0
+    assert d.rerank_top_k == 20 and d.rerank_min_score == 0.001
     ms.update_memory_settings({"hub_max_df": 0.6, "extract_every_n": 3,
                                "rerank_top_k": 10, "rerank_min_score": 0.01})
     s = ms.get_memory_settings()
