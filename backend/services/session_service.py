@@ -155,8 +155,9 @@ def _recall_scores_from_channels(msg: Dict) -> Optional[List[Dict]]:
     ``{rrf, rerank, conf, authority}`` per recalled line (RAW values; see
     RECALL_SCORES_CHANNEL). ``None`` if absent (not a recall block, or recalled
     before this shipped). Back-compat: older blocks stored a 3-field
-    ``rel|conf|authority`` where ``rel`` was the post-rerank ``final`` score — map
-    it onto ``rerank`` so reloaded old chips still render."""
+    ``rel|conf|authority`` where ``rel`` was a single conflated score (``final or
+    rrf`` — could be either). We can't know which, so keep it as a NEUTRAL ``rel``
+    and let the chip render "score …" rather than mislabel it rrf or rerank."""
     from services.memory.retrieval_hook import RECALL_SCORES_CHANNEL
     entries = (msg.get("channels") or {}).get(RECALL_SCORES_CHANNEL)
     if not entries:
@@ -175,7 +176,8 @@ def _recall_scores_from_channels(msg: Dict) -> Optional[List[Dict]]:
         else:                                     # legacy rel|conf|authority
             out.append({
                 "rrf": None,
-                "rerank": _safe_float(parts[0] if parts else ""),
+                "rerank": None,
+                "rel": _safe_float(parts[0] if parts else ""),   # neutral → "score"
                 "conf": _safe_float(parts[1] if len(parts) > 1 else ""),
                 "authority": parts[2] if len(parts) > 2 else "",
             })
