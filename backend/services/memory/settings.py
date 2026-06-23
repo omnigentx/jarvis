@@ -28,6 +28,9 @@ class MemorySettings:
     enabled: bool = False
     mode: str = RetrievalMode.BALANCED.value
     auto_capture_preferences: bool = True
+    # Fast-lane capture frequency gate: run the cheap extractor every N user turns
+    # (cost knob — a frequency gate can't misclassify content; the LLM decides).
+    extract_every_n: int = 4
     approval_policy: str = "manual"
     pinned_token_budget: int = 1500
     evidence_token_budget: int = 2500
@@ -65,6 +68,10 @@ class MemorySettings:
     # star-shaped personal graph (the user hub is a super-node — 2 hops through it
     # pulls the whole profile = noise). Bump to 2 only with hop-decay.
     graph_max_hops: int = 1
+    # GraphRAG hub suppression: an entity mentioned by >= this fraction of the
+    # owner's active memories (e.g. the user's own name) is a hub that co-occurs
+    # with everything → carries no signal → excluded from query-anchored expansion.
+    hub_max_df: float = 0.5
     # Tuning overrides (JSON)
     trigger_lexicon_overrides: dict = field(default_factory=dict)
     quality_gate_thresholds: dict = field(default_factory=dict)
@@ -75,6 +82,7 @@ _SCHEMA: dict[str, tuple[str, Any]] = {
     "enabled": ("bool", False),
     "mode": ("str", RetrievalMode.BALANCED.value),
     "auto_capture_preferences": ("bool", True),
+    "extract_every_n": ("int", 4),
     "approval_policy": ("str", "manual"),
     "pinned_token_budget": ("int", 1500),
     "evidence_token_budget": ("int", 2500),
@@ -92,6 +100,7 @@ _SCHEMA: dict[str, tuple[str, Any]] = {
     "retention_retrieval_runs_days": ("int", 30),
     "recall_min_similarity": ("float", 0.34),
     "graph_max_hops": ("int", 1),
+    "hub_max_df": ("float", 0.5),
     "trigger_lexicon_overrides": ("json", {}),
     "quality_gate_thresholds": ("json", {}),
 }
@@ -165,6 +174,18 @@ def validate_settings_updates(updates: dict[str, Any]) -> list[str]:
         v = updates["graph_max_hops"]
         if not isinstance(v, int) or isinstance(v, bool) or not (1 <= v <= 3):
             errors.append("graph_max_hops must be an integer in [1, 3]")
+    if "hub_max_df" in updates:
+        v = updates["hub_max_df"]
+        if not isinstance(v, (int, float)) or isinstance(v, bool) or not (0.0 < float(v) <= 1.0):
+            errors.append("hub_max_df must be a number in (0, 1]")
+    for k in ("extract_every_n", "rerank_top_k"):
+        if k in updates and (not isinstance(updates[k], int) or isinstance(updates[k], bool)
+                             or updates[k] < 1):
+            errors.append(f"{k} must be an integer >= 1")
+    if "rerank_min_score" in updates:
+        v = updates["rerank_min_score"]
+        if not isinstance(v, (int, float)) or isinstance(v, bool) or float(v) < 0.0:
+            errors.append("rerank_min_score must be a number >= 0")
     unknown = set(updates) - set(_SCHEMA) - {_CURATOR_API_KEY}
     if unknown:
         errors.append(f"unknown settings: {sorted(unknown)}")

@@ -63,8 +63,9 @@ class RetrievalOrchestrator:
         # is beyond this distance contributes nothing → no injection.
         min_sim = getattr(settings, "recall_min_similarity", 0.44)
         max_hops = int(getattr(settings, "graph_max_hops", 1) or 1)
+        hub_max_df = float(getattr(settings, "hub_max_df", 0.5) or 0.5)
         self._dense = LadybugProvider(store, emb, max_distance=1.0 - float(min_sim),
-                                      max_hops=max_hops)
+                                      max_hops=max_hops, hub_max_df=hub_max_df)
         # Cross-encoder reranker (precision stage) — re-scores the fused candidates
         # by reading (query, memory) jointly. None when disabled/unavailable →
         # recall keeps fusion order (never breaks). Shared singleton (model loaded once).

@@ -216,7 +216,8 @@ def create_memory_retrieval_hooks():
             # turns, fire-and-forget so it never adds latency to this LLM call.
             if cfg.auto_capture_preferences:
                 cnt = getattr(agent, "_jarvis_extract_turns", 0) + 1
-                if cnt >= EXTRACT_EVERY_N:
+                every_n = int(getattr(cfg, "extract_every_n", EXTRACT_EVERY_N) or EXTRACT_EVERY_N)
+                if cnt >= every_n:
                     agent._jarvis_extract_turns = 0
                     asyncio.create_task(_run_extraction(owner, _recent_snippet(agent, query), cfg))
                     # NOTE: KG triples are now extracted per-memory at persist time

@@ -120,3 +120,20 @@ def test_gate_mistuned_warning():
     assert gate_mistuned_warning("BAAI/bge-m3", 0.44) is None                 # matched
     assert gate_mistuned_warning("BAAI/bge-m3", 0.34) is not None             # bge at Qwen floor
     assert gate_mistuned_warning("Qwen/Qwen3-Embedding-0.6B", 0.44) is not None  # qwen at bge floor
+
+
+def test_new_tuning_knobs_config(fake_cfg):
+    # hub_max_df / extract_every_n / rerank_top_k / rerank_min_score are now
+    # config keys (promoted from hardcoded). Defaults + round-trip + validation.
+    d = ms.get_memory_settings()
+    assert d.hub_max_df == 0.5 and d.extract_every_n == 4
+    assert d.rerank_top_k == 20 and d.rerank_min_score == 0.005
+    ms.update_memory_settings({"hub_max_df": 0.6, "extract_every_n": 3,
+                               "rerank_top_k": 10, "rerank_min_score": 0.01})
+    s = ms.get_memory_settings()
+    assert (s.hub_max_df, s.extract_every_n, s.rerank_top_k, s.rerank_min_score) == (0.6, 3, 10, 0.01)
+    for bad, match in [({"hub_max_df": 0}, "hub_max_df"), ({"hub_max_df": 1.5}, "hub_max_df"),
+                       ({"extract_every_n": 0}, "extract_every_n"), ({"rerank_top_k": 0}, "rerank_top_k"),
+                       ({"rerank_min_score": -0.1}, "rerank_min_score")]:
+        with pytest.raises(ValueError, match=match):
+            ms.update_memory_settings(bad)
