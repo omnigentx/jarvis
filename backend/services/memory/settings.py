@@ -46,12 +46,27 @@ class MemorySettings:
     # (startup migration on a revision change); bge-m3 is still selectable.
     embedding_model: str = "Qwen/Qwen3-Embedding-0.6B"
     embedding_revision: str = ""
-    # Cross-encoder reranker (precision stage): re-scores the fused candidates by
-    # reading (query, memory) jointly — what the bi-encoder can't do. ON by default.
+    # Cross-encoder reranker: re-ORDERS the fused candidates by joint (query,
+    # memory) relevance — the bi-encoder can't. ON by default. It is a RANKER, not
+    # a precision GATE: see rerank_min_score.
     reranker_enabled: bool = True
     rerank_model: str = "BAAI/bge-reranker-v2-m3"
     rerank_top_k: int = 20            # how many fused candidates to rerank
-    rerank_min_score: float = 0.005   # drop candidates scoring below this
+    # Drop candidates scoring below this. Grid-searched 2026-06-23 (real reranker,
+    # 78-query labelled set): the reranker score CANNOT separate on-topic from
+    # off-topic-keyword — on-topic-INDIRECT targets score as low as 0.0000 ("Repo
+    # trợ lý tôi làm nằm ở đâu?" → 0.0000) while off-topic-keyword candidates score
+    # up to 0.44 (bge) / 0.98 (Qwen3-Reranker), because those queries are genuinely
+    # topically similar. Any floor > 0 that drops the off-topic noise ALSO drops
+    # ~20%+ of indirect-phrased on-topic recall (the original recall=0 failure mode
+    # — verified: floor 0.005 → on-topic recall@5 drops 100%→80%). So the floor is
+    # 0.0: the reranker only ORDERS; the dense gate controls recall/precision.
+    # Off-topic-keyword false-positives (a topically-related memory injected for a
+    # general question) are an ACCEPTED trade — mild noise the LLM ignores. The
+    # real fix is an upstream personal-intent gate (deferred), NOT this floor:
+    # an instruction-tuned reranker was tested and did NOT help (it rates topical
+    # relevance, which is the wrong question — "is it NEEDED?" needs reasoning).
+    rerank_min_score: float = 0.0
     # Dense/graph backend = LadybugDB (embedded property graph + HNSW vectors).
     # ``ladybug_path`` is the embedded DB directory.
     ladybug_path: str = "data/memory_graph"
@@ -59,11 +74,20 @@ class MemorySettings:
     retention_episodic_days: int = 90
     retention_retrieval_runs_days: int = 30
     # Recall relevance gate: drop a dense hit whose cosine similarity to the query
-    # is below this (distance = 1 - similarity). Re-tuned 2026-06-22 for
-    # Qwen3-Embedding-0.6B over 19 on-topic + 12 off-topic queries: on-topic
-    # top-sim ≥0.335, off-topic ≤0.333, so 0.34 keeps on-topic / drops off-topic.
-    # (bge-m3's scale was higher: it used 0.44. Re-tune if the model changes.)
-    recall_min_similarity: float = 0.34
+    # is below this (distance = 1 - similarity). RECALL-oriented, NOT precision.
+    # Grid-searched 2026-06-23 with the real Qwen3-Embedding + bge reranker over a
+    # 78-query labelled set (on-topic clear/indirect + off-topic clear/keyword-
+    # overlap, real memories): on-topic recall@5 is a FLAT 100% across [0.05, 0.39]
+    # and only falls off from 0.40 (the cliff). The dense gate therefore does NOT
+    # bound recall anywhere in that band — it is a candidate-pool / false-positive
+    # knob. 0.30 sits mid-plateau: ~0.10 margin below the 0.40 cliff (robust to
+    # unseen / semantic-only phrasings the labelled set under-represents) while
+    # trimming more off-topic-clear noise than a very low gate. The old 0.34 sat
+    # right at the cliff; bge-m3's scale was higher (~0.44 — gate_mistuned_warning
+    # flags the mismatch). NOTE: off-topic-KEYWORD rejection is intentionally NOT
+    # solved here — the reranker scores topical similarity, which those queries
+    # genuinely have; see rerank_min_score.
+    recall_min_similarity: float = 0.30
     # GraphRAG traversal depth for RELATES expansion. 1 is the sweet spot for the
     # star-shaped personal graph (the user hub is a super-node — 2 hops through it
     # pulls the whole profile = noise). Bump to 2 only with hop-decay.
@@ -94,11 +118,11 @@ _SCHEMA: dict[str, tuple[str, Any]] = {
     "reranker_enabled": ("bool", True),
     "rerank_model": ("str", "BAAI/bge-reranker-v2-m3"),
     "rerank_top_k": ("int", 20),
-    "rerank_min_score": ("float", 0.005),
+    "rerank_min_score": ("float", 0.0),
     "ladybug_path": ("str", "data/memory_graph"),
     "retention_episodic_days": ("int", 90),
     "retention_retrieval_runs_days": ("int", 30),
-    "recall_min_similarity": ("float", 0.34),
+    "recall_min_similarity": ("float", 0.30),
     "graph_max_hops": ("int", 1),
     "hub_max_df": ("float", 0.5),
     "trigger_lexicon_overrides": ("json", {}),
