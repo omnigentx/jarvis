@@ -162,13 +162,36 @@ class LadybugStore:
             self._exec("CREATE REL TABLE IF NOT EXISTS RELATES("
                        "FROM Entity TO Entity, predicate STRING, owner STRING, mem STRING)")
             # Vector index — created once; ignore "already exists" on re-open.
-            try:
-                self._exec(
-                    f"CALL CREATE_VECTOR_INDEX('Memory', '{_VECTOR_INDEX}', 'emb', "
-                    f"metric := 'cosine')")
-            except Exception as exc:  # noqa: BLE001
-                if "exist" not in str(exc).lower():
-                    raise
+            self._create_vector_index()
+
+    def _create_vector_index(self) -> None:
+        """CREATE the HNSW vector index; ignore "already exists". Single source of
+        truth for the index name/params — used by schema bring-up AND the
+        post-empty rebuild (``_rebuild_vector_index``)."""
+        try:
+            self._exec(
+                f"CALL CREATE_VECTOR_INDEX('Memory', '{_VECTOR_INDEX}', 'emb', "
+                f"metric := 'cosine')")
+        except Exception as exc:  # noqa: BLE001
+            if "exist" not in str(exc).lower():
+                raise
+
+    def _rebuild_vector_index(self) -> None:
+        """DROP + re-CREATE the vector index. REQUIRED after the Memory table is
+        emptied: LadybugDB 0.17.1 leaves the HNSW index DEAD once all indexed rows
+        are deleted (count→0) — rows inserted afterward exist (count>0, valid
+        embeddings) but QUERY_VECTOR_INDEX returns NOTHING until the index is
+        rebuilt (reproduced 12/12). This was the 2026-06-22 prod recall outage: a
+        "forget all memories" emptied the table, so every memory added afterward
+        was invisible to dense search while index-status still read healthy.
+        Partial deletes and updates do NOT trigger it — only deletion-to-empty.
+        Caller must hold ``self._lock``."""
+        try:
+            self._exec(f"CALL DROP_VECTOR_INDEX('Memory', '{_VECTOR_INDEX}')")
+        except Exception as exc:  # noqa: BLE001 — index may already be absent
+            if "exist" not in str(exc).lower():
+                raise
+        self._create_vector_index()
 
     # ---- writes (ADD-only; SQLite is the SoT) ---------------------------
     def upsert_memory(self, *, record_id: str, owner: str, memory_type: str,
@@ -213,6 +236,13 @@ class LadybugStore:
             # RELATES edges live between Entity nodes (not the Memory node), so
             # deleting the memory won't drop them — remove this memory's triples.
             self._exec("MATCH ()-[r:RELATES {mem: $id}]->() DELETE r", {"id": record_id})
+            # Emptying the Memory table kills the HNSW vector index on LadybugDB
+            # 0.17.1 (see _rebuild_vector_index): without this, "forget all" leaves
+            # dense search permanently dead for every memory added afterward.
+            # Rebuild the instant the last row goes — cheap on an empty table, and
+            # count() is reentrant under self._lock (RLock).
+            if self.count() == 0:
+                self._rebuild_vector_index()
 
     def link_entity(self, *, record_id: str, entity_id: str, name: str,
                     etype: str, normalized: str) -> None:
@@ -343,6 +373,56 @@ class LadybugStore:
                                       auth or "agent_observed", float(conf or 0.5)))
             return hits
 
+    def query_anchored_memories(self, *, owner: str, query: str, limit: int = 5,
+                                hub_max_df: float = 0.5) -> list[VectorHit]:
+        """GraphRAG recall ANCHORED to entities NAMED IN THE QUERY — not blind
+        co-occurrence off the vector seeds (``linked_memories``). Pulls memories
+        that MENTION an entity whose normalized name appears as a whole token-run
+        in the query.
+
+        Hub entities — mentioned by >= ``hub_max_df`` of the owner's active
+        memories (e.g. the user's own name, which co-occurs with nearly every
+        personal fact) — are SKIPPED: anchoring on them re-introduces the
+        tangential pulls this replaces. (Measured 2026-06-22: 'Nguyễn Văn Phúc'
+        at 64% df dragged an AI-career memory into a baby-age query via seed
+        co-occurrence.) Returns [] when the query names no non-hub entity → the
+        caller falls back to dense + FTS only. One hop (entity → mentioning
+        memory): on the bipartite MENTIONS graph deeper walks just re-hit hubs."""
+        qn = f" {_norm(query)} "
+        with self._lock:
+            tot = self.count(owner)
+            if tot == 0:
+                return []
+            hub_cut = max(2, int(tot * hub_max_df))   # floor keeps tiny stores sane
+            # Owner-scoped entities + document frequency (how many memories MENTION
+            # each). df is the hub signal: a high-df entity carries no discriminative
+            # power for co-occurrence recall.
+            res = self._exec(
+                "MATCH (e:Entity)<-[:MENTIONS]-(m:Memory) "
+                "WHERE m.owner = $owner AND m.status = 'active' "
+                "RETURN e.id, e.normalized, count(m)", {"owner": owner})
+            anchors: list[str] = []
+            while res.has_next():
+                eid, norm, df = res.get_next()
+                if not norm or int(df) >= hub_cut:
+                    continue                          # unnamed or hub → drop
+                if f" {norm} " in qn:                 # entity named in the query
+                    anchors.append(eid)
+            if not anchors:
+                return []
+            res = self._exec(
+                "MATCH (e:Entity)<-[:MENTIONS]-(m:Memory) "
+                "WHERE e.id IN $ids AND m.owner = $owner AND m.status = 'active' "
+                "RETURN DISTINCT m.id, m.owner, m.memory_type, m.content, "
+                "m.created_at, m.authority, m.confidence LIMIT $lim",
+                {"ids": anchors, "owner": owner, "lim": limit})
+            hits = []
+            while res.has_next():
+                rid, own, mt, content, ca, auth, conf = res.get_next()
+                hits.append(VectorHit(rid, own, mt, content, 1.0, float(ca or 0.0),
+                                      auth or "agent_observed", float(conf or 0.5)))
+            return hits
+
     def count(self, owner: str | None = None) -> int:
         with self._lock:
             if owner:
@@ -398,6 +478,26 @@ def get_ladybug_store(path: str) -> LadybugStore:
     if _STORE_SINGLETON is None:
         _STORE_SINGLETON = LadybugStore(path)
     return _STORE_SINGLETON
+
+
+def reset_ladybug_store(path: str) -> None:
+    """Close (if open) + WIPE the graph projection + drop the singleton, so the
+    next ``get_ladybug_store`` rebuilds it from scratch.
+
+    Required when the EMBEDDING MODEL changes: the HNSW vector index is built at
+    ``CREATE_VECTOR_INDEX`` time and is effectively STATIC (Kùzu/LadybugDB
+    lineage) — re-embedding nodes in place (delete+create) does NOT reliably
+    re-index them ('unreachable points' after delete/insert churn; index keeps
+    the stale vectors). A clean wipe + re-project from SQLite guarantees the
+    index is rebuilt over the NEW vectors. Caller re-enqueues the rebuild."""
+    global _STORE_SINGLETON
+    if _STORE_SINGLETON is not None:
+        try:
+            _STORE_SINGLETON.close()
+        except Exception:  # noqa: BLE001
+            pass
+        _STORE_SINGLETON = None
+    _wipe_graph_files(path)
 
 
 class LadybugIndexer:

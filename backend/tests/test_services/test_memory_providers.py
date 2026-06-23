@@ -6,8 +6,9 @@ from services.indexing import embedding_provider as ep
 
 
 def test_embedding_factory_returns_null_when_deps_missing(monkeypatch):
-    # Force "deps missing" regardless of environment.
-    monkeypatch.setattr(ep, "_deps_available", lambda: False)
+    # Force "the model's backend package is missing" regardless of environment
+    # (dispatch is per-model now: bge-m3→FlagEmbedding, else→sentence-transformers).
+    monkeypatch.setattr(ep, "_have", lambda pkg: False)
     prov = ep.get_embedding_provider()
     assert isinstance(prov, ep.NullEmbeddingProvider)
     assert prov.is_available() is False

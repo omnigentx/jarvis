@@ -63,8 +63,17 @@ class RetrievalOrchestrator:
         # is beyond this distance contributes nothing → no injection.
         min_sim = getattr(settings, "recall_min_similarity", 0.44)
         max_hops = int(getattr(settings, "graph_max_hops", 1) or 1)
+        hub_max_df = float(getattr(settings, "hub_max_df", 0.5) or 0.5)
         self._dense = LadybugProvider(store, emb, max_distance=1.0 - float(min_sim),
-                                      max_hops=max_hops)
+                                      max_hops=max_hops, hub_max_df=hub_max_df)
+        # Cross-encoder reranker (precision stage) — re-scores the fused candidates
+        # by reading (query, memory) jointly. None when disabled/unavailable →
+        # recall keeps fusion order (never breaks). Shared singleton (model loaded once).
+        self._reranker = None
+        if getattr(settings, "reranker_enabled", False):
+            from services.retrieval.reranker import get_shared_reranker
+            self._reranker = get_shared_reranker(
+                getattr(settings, "rerank_model", None) or "BAAI/bge-reranker-v2-m3")
 
     async def retrieve(self, request: RetrievalRequest, *, now: float,
                        ledger: EvidenceLedger | None = None, turn: int = 0,
@@ -119,10 +128,50 @@ class RetrievalOrchestrator:
             fusion.apply_policy(fused, now=now)
             level = LEVEL_AGENTIC
 
+        # Precision stage: cross-encoder rerank of the fused candidates. Sets
+        # scores.reranker (apply_policy then orders by it) and drops off-topic /
+        # low-relevance candidates below the floor — what the bi-encoder lanes
+        # can't do (the 2026-06-22 "cat memory in a baby-age query" case).
+        fused = self._apply_rerank(request, fused)
+
         _CACHE.set(key, fused)
         return self._finalize(request, fused, level=level, cache_hit=False,
                               budget=budget, ledger=ledger, turn=turn, now=now,
                               dense_failed=dense_failed)
+
+    def _apply_rerank(self, request: RetrievalRequest, fused: list[Evidence]) -> list[Evidence]:
+        """Cross-encoder rerank of the top fused candidates (precision stage).
+        Re-scores into ``scores.reranker``, drops those below ``rerank_min_score``,
+        returns them ordered by reranker. No-op when disabled/unavailable → fusion
+        order kept. Best-effort: a rerank error must never break recall.
+
+        INTENTIONAL GATE (review #2): the floor can legitimately return [] when every
+        candidate scores below it — i.e. the cross-encoder judged them all off-topic
+        (measured: an off-topic query reranks the whole set to ~0). This is the
+        desired off-topic→nothing behavior; it is NOT the silent-veto bug the dense
+        off-topic gate had, because the reranker scored each candidate against THIS
+        query (it didn't drop a high-precision lane on a sibling lane's emptiness).
+        Keep ``rerank_min_score`` low (0.005) so a weak-but-relevant hit survives."""
+        if not fused or self._reranker is None or not self._reranker.is_available():
+            return fused
+        top_k = int(getattr(self.settings, "rerank_top_k", 20) or 20)
+        floor = float(getattr(self.settings, "rerank_min_score", 0.0) or 0.0)
+        # Tail beyond top_k is intentionally DROPPED from recall (not just from
+        # reranking): for personal-memory recall we inject far fewer than top_k, and
+        # the tail is the lowest-fusion-ranked anyway (review #4).
+        cand = fused[:top_k]
+        try:
+            scores = self._reranker.rerank(request.query, [c.excerpt for c in cand])
+        except Exception as exc:  # noqa: BLE001 — keep fusion order on rerank failure
+            logger.warning("[MEMORY] rerank failed, keeping fusion order: %s", exc)
+            return fused
+        kept = []
+        for c, s in zip(cand, scores):
+            c.scores.reranker = s
+            if s >= floor:
+                kept.append(c)
+        kept.sort(key=lambda e: e.scores.reranker or 0.0, reverse=True)
+        return kept
 
     async def _fast_round(self, request: RetrievalRequest, budget, *,
                           bm25_first: bool = False) -> tuple[list[Evidence], bool]:

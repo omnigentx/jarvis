@@ -281,10 +281,10 @@ def test_embedding_provider_missing_deps_is_loud(monkeypatch, caplog):
     import logging
 
     from services.indexing import embedding_provider as ep
-    monkeypatch.setattr(ep, "_deps_available", lambda: False)
+    monkeypatch.setattr(ep, "_have", lambda pkg: False)
     monkeypatch.setattr(ep, "_WARNED_MISSING_DEPS", False)
     with caplog.at_level(logging.ERROR, logger="memory.embedding"):
-        prov = ep.get_embedding_provider()
+        prov = ep.get_embedding_provider("BAAI/bge-m3")   # bge → needs FlagEmbedding
     assert prov.is_available() is False
     assert any("FlagEmbedding is NOT installed" in r.message for r in caplog.records)
 
@@ -320,3 +320,49 @@ async def test_worker_prune_defers_dense_when_store_down(Session, monkeypatch):
     # FTS already removed → degraded search won't surface it meanwhile.
     assert not fts_index.fts_search(db, owner_agent_name="Jarvis", query="compactor")
     db.close()
+
+
+def test_migrate_on_embedding_change(monkeypatch):
+    """Review #3: lock the embedding-swap migration — unchanged → no-op; changed +
+    deps present → wipe + rebuild + marker set AFTER enqueue; changed + deps MISSING
+    → SKIP the wipe (never self-inflict a dead graph) and leave the marker."""
+    import types
+
+    import services.config_service as cfgmod
+    import services.indexing.embedding_provider as ep
+    import services.indexing.ladybug_store as lbs
+    from services.indexing import consistency_service as cs
+
+    store = {}
+    monkeypatch.setattr(cfgmod.config_service, "get", lambda cat, key: store.get((cat, key)))
+    monkeypatch.setattr(cfgmod.config_service, "set",
+                        lambda cat, key, val, **kw: store.__setitem__((cat, key), val))
+    wiped = []
+    monkeypatch.setattr(lbs, "reset_ladybug_store", lambda p: wiped.append(p))
+    monkeypatch.setattr(cs, "rebuild", lambda db, *, now: 7)
+    avail = {"ok": True}
+    monkeypatch.setattr(ep, "get_embedding_provider",
+                        lambda m, r="": types.SimpleNamespace(is_available=lambda: avail["ok"]))
+    cfg = types.SimpleNamespace(embedding_model="Qwen/Qwen3-Embedding-0.6B",
+                                embedding_revision="", ladybug_path="data/g")
+
+    # 1. unchanged → no-op (no wipe, no marker churn)
+    store[("memory", "indexed_embedding_revision")] = "Qwen/Qwen3-Embedding-0.6B"
+    r = cs.migrate_on_embedding_change(None, cfg, now=1.0)
+    assert r == {"migrated": False, "reason": "unchanged"} and wiped == []
+
+    # 2. changed + deps available → wipe + rebuild + marker set
+    store[("memory", "indexed_embedding_revision")] = "BAAI/bge-m3"
+    r = cs.migrate_on_embedding_change("db", cfg, now=2.0)
+    assert r == {"migrated": True, "enqueued": 7}
+    assert wiped == ["data/g"]
+    assert store[("memory", "indexed_embedding_revision")] == "Qwen/Qwen3-Embedding-0.6B"
+
+    # 3. changed + deps MISSING → SKIP wipe, marker untouched
+    wiped.clear()
+    store[("memory", "indexed_embedding_revision")] = "BAAI/bge-m3"
+    avail["ok"] = False
+    r = cs.migrate_on_embedding_change("db", cfg, now=3.0)
+    assert r == {"migrated": False, "reason": "deps_missing"}
+    assert wiped == []                                   # did NOT wipe a healthy graph
+    assert store[("memory", "indexed_embedding_revision")] == "BAAI/bge-m3"

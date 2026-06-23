@@ -55,7 +55,9 @@ dependencies = [
 # SQLite FTS5 keyword search. The vector + graph store is LadybugDB (an embedded
 # dependency, not a separate container).
 memory = [
-  "FlagEmbedding>=1.4.0",   # BAAI/bge-m3 multilingual embeddings + reranker
+  "FlagEmbedding>=1.4.0",        # BAAI/bge-m3 (optional, still selectable)
+  "sentence-transformers>=3.0",  # Qwen3-Embedding (default) + bge-reranker-v2-m3 cross-encoder
+  "einops",                      # required by some sentence-transformers models
 ]
 
 [tool.uv]

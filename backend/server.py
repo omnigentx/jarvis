@@ -479,6 +479,12 @@ async def lifespan(app: FastAPI):
                     "dense recall + knowledge graph are OFF, index writes will "
                     "defer, the graph will stay empty. Install the 'memory' extra "
                     "(FlagEmbedding) or disable memory to silence this.")
+            # Advisory: the recall gate is on the embedding's score scale (review #5).
+            from services.memory.settings import gate_mistuned_warning
+            _gw = gate_mistuned_warning(_mem_cfg.embedding_model, _mem_cfg.recall_min_similarity)
+            if _gw:
+                logger.warning("[MEMORY] recall gate may be mistuned for the embedding "
+                               "model: %s", _gw)
     except Exception:
         logger.exception("Failed to start memory index worker")
 
@@ -512,6 +518,24 @@ async def lifespan(app: FastAPI):
                 _db.close()
     except Exception:
         logger.exception("[MEMORY] ladybug migration check failed")
+
+    # Embedding-model migration: on a model/revision change, WIPE the graph + re-embed
+    # (the HNSW index is static — re-embedding in place leaves stale vectors). The
+    # helper guards on the new model's deps being installed BEFORE wiping (never
+    # self-inflict a dead graph). See consistency_service.migrate_on_embedding_change.
+    try:
+        if _mem_cfg and _mem_cfg.enabled:
+            import time as _t
+
+            from core.database import get_db_session
+            from services.indexing import consistency_service as cs
+            _db = get_db_session()
+            try:
+                cs.migrate_on_embedding_change(_db, _mem_cfg, now=_t.time())
+            finally:
+                _db.close()
+    except Exception:
+        logger.exception("[MEMORY] embedding-revision migration check failed")
 
     # Enable shell execution runtime (equivalent to --shell CLI flag)
     await fast.app.initialize()

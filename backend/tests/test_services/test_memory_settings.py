@@ -43,7 +43,7 @@ def test_defaults_when_empty(fake_cfg):
     assert s.enabled is False           # feature flag OFF by default
     assert s.mode == "balanced"
     assert s.pinned_token_budget == 1500
-    assert s.embedding_model == "BAAI/bge-m3"
+    assert s.embedding_model == "Qwen/Qwen3-Embedding-0.6B"
     assert s.curator_api_key_set is False
 
 
@@ -72,7 +72,7 @@ def test_recall_gate_and_hops_round_trip_and_validation(fake_cfg):
     # defaults
     fake_cfg.store.clear()
     d = ms.get_memory_settings()
-    assert d.recall_min_similarity == 0.44 and d.graph_max_hops == 1
+    assert d.recall_min_similarity == 0.34 and d.graph_max_hops == 1
     # range validation
     with pytest.raises(ValueError, match="recall_min_similarity"):
         ms.update_memory_settings({"recall_min_similarity": 1.5})
@@ -111,3 +111,29 @@ def test_curator_api_key_is_secret_and_masked(fake_cfg):
     # empty string clears it
     ms.update_memory_settings({"curator_api_key": ""})
     assert ms.get_memory_settings().curator_api_key_set is False
+
+
+def test_gate_mistuned_warning():
+    # Review #5: advisory mismatch between embedding model and the gate scale.
+    from services.memory.settings import gate_mistuned_warning
+    assert gate_mistuned_warning("Qwen/Qwen3-Embedding-0.6B", 0.34) is None   # matched
+    assert gate_mistuned_warning("BAAI/bge-m3", 0.44) is None                 # matched
+    assert gate_mistuned_warning("BAAI/bge-m3", 0.34) is not None             # bge at Qwen floor
+    assert gate_mistuned_warning("Qwen/Qwen3-Embedding-0.6B", 0.44) is not None  # qwen at bge floor
+
+
+def test_new_tuning_knobs_config(fake_cfg):
+    # hub_max_df / extract_every_n / rerank_top_k / rerank_min_score are now
+    # config keys (promoted from hardcoded). Defaults + round-trip + validation.
+    d = ms.get_memory_settings()
+    assert d.hub_max_df == 0.5 and d.extract_every_n == 4
+    assert d.rerank_top_k == 20 and d.rerank_min_score == 0.005
+    ms.update_memory_settings({"hub_max_df": 0.6, "extract_every_n": 3,
+                               "rerank_top_k": 10, "rerank_min_score": 0.01})
+    s = ms.get_memory_settings()
+    assert (s.hub_max_df, s.extract_every_n, s.rerank_top_k, s.rerank_min_score) == (0.6, 3, 10, 0.01)
+    for bad, match in [({"hub_max_df": 0}, "hub_max_df"), ({"hub_max_df": 1.5}, "hub_max_df"),
+                       ({"extract_every_n": 0}, "extract_every_n"), ({"rerank_top_k": 0}, "rerank_top_k"),
+                       ({"rerank_min_score": -0.1}, "rerank_min_score")]:
+        with pytest.raises(ValueError, match=match):
+            ms.update_memory_settings(bad)

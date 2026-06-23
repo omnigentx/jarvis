@@ -128,6 +128,55 @@ async def test_capture_to_retrieve_full_pipeline(pipeline):
     assert other == []
 
 
+async def test_forget_all_then_readd_keeps_dense_recall(pipeline):
+    # Real user click-flow: "forget all memories" empties the Memory table, then
+    # new facts are stated and recalled. On LadybugDB 0.17.1 emptying the table
+    # kills the HNSW index, so a re-added memory is invisible to dense search
+    # (count>0 yet QUERY_VECTOR_INDEX returns nothing) until delete_memory rebuilds
+    # the index. Drives the REAL worker delete path (EVENT_MEMORY_DELETE →
+    # _delete_dense → LadybugIndexer.delete_by_record → store.delete_memory), not
+    # the store in isolation — so it guards the actual archive→worker→recall flow.
+    import time
+
+    from services.memory.memory_service import MemoryService
+    p = pipeline
+    now = time.time()
+
+    def _create(content):
+        db = p.Factory()
+        rec = MemoryService(db).create_memory(
+            owner_agent_name="Jarvis", memory_type="semantic", content=content,
+            subject_scope="user", authority="user_confirmed", confidence=0.9, now=now)
+        rid = rec.id
+        db.commit()
+        db.close()
+        return rid
+
+    # 1) seed two memories → worker projects → dense recall works.
+    ids = [_create("user works at FPT as an engineer"), _create("user likes pho")]
+    await p.worker.process_pending(now=now + 100)
+    assert p.store.count("Jarvis") == 2
+
+    # 2) FORGET ALL → worker drains the deletes → the table empties (count 0).
+    for rid in ids:
+        db = p.Factory()
+        MemoryService(db).archive_memory(rid, owner_agent_name="Jarvis", now=now)
+        db.close()
+    await p.worker.process_pending(now=now + 200)
+    assert p.store.count("Jarvis") == 0
+
+    # 3) state a NEW fact → worker projects it into the (rebuilt) index.
+    new_id = _create("user works as a software engineer")
+    await p.worker.process_pending(now=now + 300)
+    assert p.store.count("Jarvis") == 1
+
+    # 4) dense recall must surface it — returned [] before the index-rebuild fix.
+    prov = LadybugProvider(p.store, p.emb)
+    ev = await prov.search(
+        RetrievalRequest(owner_agent_name="Jarvis", query="where do I work", types=[]), limit=5)
+    assert ev and ev[0].record_id == new_id
+
+
 async def test_entity_link_survives_pipeline_multi_hop(pipeline):
     p = pipeline
     # two memories mentioning the same entity (FPT) → linked in the graph e2e.

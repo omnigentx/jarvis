@@ -38,6 +38,10 @@ const NUMBER_FIELDS = [
   { key: 'retention_retrieval_runs_days', labelKey: 'settings.memory.retentionRuns', min: 1, max: 365, step: 1 },
   { key: 'recall_min_similarity', labelKey: 'settings.memory.recallMinSim', min: 0, max: 1, step: 0.01 },
   { key: 'graph_max_hops', labelKey: 'settings.memory.graphMaxHops', min: 1, max: 3, step: 1 },
+  { key: 'rerank_top_k', labelKey: 'settings.memory.rerankTopK', min: 1, max: 100, step: 1 },
+  { key: 'rerank_min_score', labelKey: 'settings.memory.rerankMinScore', min: 0, max: 1, step: 0.001 },
+  { key: 'hub_max_df', labelKey: 'settings.memory.hubMaxDf', min: 0.05, max: 1, step: 0.05 },
+  { key: 'extract_every_n', labelKey: 'settings.memory.extractEveryN', min: 1, max: 50, step: 1 },
 ]
 
 // Curator provider is a known choice (mirrors the LLM Provider screen), not
@@ -52,6 +56,7 @@ const CURATOR_PROVIDERS = [
 // Always-shown text fields (independent of the curator provider choice).
 const REST_FIELDS = [
   { key: 'embedding_model', labelKey: 'settings.memory.embeddingModel' },
+  { key: 'rerank_model', labelKey: 'settings.memory.rerankModel' },
 ]
 
 const dirtyKeys = computed(() => {
@@ -211,6 +216,24 @@ onMounted(load)
         <div class="row-info"><h3>{{ t(NUMBER_FIELDS[5].labelKey) }}</h3>
           <p class="hint">{{ t('settings.memory.graphMaxHopsHint') }}</p></div>
         <input v-model="draft.graph_max_hops" class="num-input" type="number" min="1" max="3" step="1" />
+      </div>
+      <div class="row">
+        <div class="row-info"><h3>{{ t(NUMBER_FIELDS[6].labelKey) }}</h3></div>
+        <input v-model="draft.rerank_top_k" class="num-input" type="number" min="1" max="100" step="1" />
+      </div>
+      <div class="row">
+        <div class="row-info"><h3>{{ t(NUMBER_FIELDS[7].labelKey) }}</h3>
+          <p class="hint">{{ t('settings.memory.rerankMinScoreHint') }}</p></div>
+        <input v-model="draft.rerank_min_score" class="num-input" type="number" min="0" max="1" step="0.001" />
+      </div>
+      <div class="row">
+        <div class="row-info"><h3>{{ t(NUMBER_FIELDS[8].labelKey) }}</h3>
+          <p class="hint">{{ t('settings.memory.hubMaxDfHint') }}</p></div>
+        <input v-model="draft.hub_max_df" class="num-input" type="number" min="0.05" max="1" step="0.05" />
+      </div>
+      <div class="row">
+        <div class="row-info"><h3>{{ t(NUMBER_FIELDS[9].labelKey) }}</h3></div>
+        <input v-model="draft.extract_every_n" class="num-input" type="number" min="1" max="50" step="1" />
       </div>
 
       <!-- Curator / embedding — labelled fields, like the LLM Provider screen -->

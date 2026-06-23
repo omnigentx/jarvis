@@ -1,9 +1,9 @@
 """LadybugDB dense + GraphRAG retrieval provider (memory v2).
 
-The dense leg (HNSW ``QUERY_VECTOR_INDEX``) PLUS a one-hop entity-linking boost
-(memories that share an entity with the top vector hits — the multi-hop signal),
-both owner-scoped. Returns [] when the store or embedder is unavailable so the
-orchestrator degrades to FTS-only. The sole dense/graph retrieval backend.
+The dense leg (HNSW ``QUERY_VECTOR_INDEX``) PLUS a query-entity-anchored graph
+boost (memories mentioning an entity NAMED IN THE QUERY, ubiquitous hub entities
+excluded), both owner-scoped. Returns [] when the store or embedder is unavailable
+so the orchestrator degrades to FTS-only. The sole dense/graph retrieval backend.
 """
 from __future__ import annotations
 
@@ -21,7 +21,8 @@ from services.retrieval.contracts import (
 
 class LadybugProvider(RetrievalProvider):
     def __init__(self, store: LadybugStore, embedding: EmbeddingProvider,
-                 max_distance: float | None = None, max_hops: int = 1):
+                 max_distance: float | None = None, max_hops: int = 1,
+                 hub_max_df: float = 0.5):
         self.store = store
         self.embedding = embedding
         # Relevance gate: drop dense hits whose cosine distance exceeds this
@@ -30,6 +31,10 @@ class LadybugProvider(RetrievalProvider):
         # GraphRAG expansion depth (memory→memory steps through shared entities);
         # user-configurable via settings.graph_max_hops.
         self.max_hops = max_hops
+        # Hub-entity suppression threshold for query-anchored graph expansion
+        # (settings.hub_max_df): entities mentioned by >= this fraction of the
+        # owner's memories are excluded as no-signal super-nodes.
+        self.hub_max_df = hub_max_df
 
     def is_available(self) -> bool:
         return self.store is not None and self.embedding.is_available()
@@ -41,12 +46,15 @@ class LadybugProvider(RetrievalProvider):
         hits = self.store.vector_search(
             owner=request.owner_agent_name, query_embedding=qvec, limit=limit,
             max_distance=self.max_distance)
-        # One graph hop: memories sharing an entity with the vector hits. The
-        # GraphRAG multi-hop signal — pulls in related context a pure-vector
-        # search misses (mem0's +23.1 multi-hop class).
-        linked = self.store.linked_memories(
-            owner=request.owner_agent_name,
-            record_ids=[h.record_id for h in hits], limit=limit, max_hops=self.max_hops)
+        # GraphRAG, QUERY-ENTITY-ANCHORED (not blind seed co-occurrence): expand
+        # only from entities the query actually names, skipping ubiquitous hub
+        # entities. This stops the user's own entity — which co-occurs with nearly
+        # every personal fact — from dragging tangential memories into unrelated
+        # queries (the 2026-06-22 "AI-career memory in a baby-age query" bug).
+        # ``graph_max_hops <= 0`` disables the lane entirely (off-switch).
+        linked = ([] if self.max_hops <= 0 else self.store.query_anchored_memories(
+            owner=request.owner_agent_name, query=request.query, limit=limit,
+            hub_max_df=self.hub_max_df))
 
         # Tag dense vs graph PROVENANCE distinctly so the debug UI can show each
         # lane's contribution. A memory reachable by BOTH (a vector hit that also

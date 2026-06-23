@@ -27,6 +27,7 @@ class MemorySettingsPatch(BaseModel):
     enabled: bool | None = None
     mode: str | None = None
     auto_capture_preferences: bool | None = None
+    extract_every_n: int | None = None
     approval_policy: str | None = None
     pinned_token_budget: int | None = None
     evidence_token_budget: int | None = None
@@ -37,10 +38,14 @@ class MemorySettingsPatch(BaseModel):
     embedding_model: str | None = None
     embedding_revision: str | None = None
     reranker_enabled: bool | None = None
+    rerank_model: str | None = None
+    rerank_top_k: int | None = None
+    rerank_min_score: float | None = None
     retention_episodic_days: int | None = None
     retention_retrieval_runs_days: int | None = None
     recall_min_similarity: float | None = None
     graph_max_hops: int | None = None
+    hub_max_df: float | None = None
     trigger_lexicon_overrides: dict | None = None
     quality_gate_thresholds: dict | None = None
 

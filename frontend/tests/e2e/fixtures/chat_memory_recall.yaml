@@ -1,0 +1,37 @@
+# Realtime "memories used" chip — boot endpoints for the chat view.
+#
+# The chat-stream and activity-stream SSE are served by CUSTOM page.route
+# handlers in chat-memory-recall.spec.ts, NOT here: the mock harness serves SSE
+# bodies atomically (no inter-event timing) and the activity-stream opens at
+# mount, so the spec coordinates the two streams to mirror production order
+# (recall is broadcast DURING the turn). This fixture only covers the static
+# boot REST calls the chat view makes on mount.
+
+backend_source:
+  - "backend/services/memory/retrieval_hook.py::_emit_recall_block"
+  - "frontend/src/composables/useRealtimeStream.js::handleMessage -> agents.processEvent"
+  - "frontend/src/stores/agents.js::processEvent (memory_recalled -> chat store)"
+  - "frontend/src/stores/chat.js::addMemoryRecallBlock"
+  - "frontend/src/components/chat/ChatMessages.vue::memory-used chip"
+  - "backend/routes/sessions.py::list_conversations"
+  - "backend/routes/agents.py::list_agents"
+
+responses:
+  "GET /api/conversations":
+    status: 200
+    json:
+      items: []
+      total: 0
+
+  "GET /api/agents":
+    status: 200
+    json:
+      - name: "Jarvis"
+        description: "Main orchestrator"
+        status: "idle"
+        is_default: true
+        team_name: null
+
+  "GET /api/agents/activities/recent":
+    status: 200
+    json: {}

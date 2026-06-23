@@ -78,6 +78,36 @@ async def test_no_injection_when_disabled(monkeypatch):
     assert not any(rh.is_injected_memory(m) for m in agent.message_history)
 
 
+async def test_emits_live_recall_sse_matching_the_block(monkeypatch):
+    # The "memories used" chip must render DURING the turn (not only after a
+    # reload): on a fresh injection the hook broadcasts a `memory_recalled`
+    # activity event carrying the SAME content + per-line lanes + scores the
+    # block persists, so the live chip equals the reloaded one.
+    events = []
+    import services.activity_stream as asm
+    monkeypatch.setattr(asm.activity_stream_manager, "broadcast", lambda ev: events.append(ev))
+    await _run_hook(monkeypatch, query="what was the fix in backend/server.py",
+                    settings=_settings(), evidence=[_ev()])
+    recalls = [e for e in events if e.get("event_type") == "memory_recalled"]
+    assert len(recalls) == 1
+    data = recalls[0]["data"]
+    assert recalls[0]["agent_name"] == "Jarvis"
+    assert rh.MEMORY_MARKER in data["content"]
+    assert "dedicated compactor" in data["content"]
+    # one lane-list and one score per injected line, SAME order as the block.
+    assert len(data["recall_lanes"]) == 1
+    assert len(data["recall_scores"]) == 1
+    assert set(data["recall_scores"][0]) == {"rel", "conf", "authority"}
+
+
+async def test_no_recall_sse_when_no_evidence(monkeypatch):
+    events = []
+    import services.activity_stream as asm
+    monkeypatch.setattr(asm.activity_stream_manager, "broadcast", lambda ev: events.append(ev))
+    await _run_hook(monkeypatch, query="hello there", settings=_settings(), evidence=[])
+    assert not any(e.get("event_type") == "memory_recalled" for e in events)
+
+
 # NOTE: v1 "Level 0 gating", "self-replacing block" and "strips stale block"
 # tests were removed — recall v2 is ALWAYS-retrieve + append-only + change-gate
 # (no intent gate deciding recall, no mid-history strip). The v2

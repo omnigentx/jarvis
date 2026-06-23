@@ -98,7 +98,21 @@ def apply_policy(evidence: list[Evidence], *, now: float) -> list[Evidence]:
     so it cannot reorder beyond this bound.
 
     Supersession is NOT handled here: providers return only ``status='active'``
-    rows (superseded/archived are filtered at query time)."""
+    rows (superseded/archived are filtered at query time).
+
+    RERANKER OVERRIDE: once a cross-encoder reranker has scored the candidates
+    (``scores.reranker`` set), THAT is the authoritative relevance order — it read
+    (query, memory) jointly, far better than the bi-encoder ranks RRF fuses. So we
+    sort by reranker and skip the rrf-based reorder (the bounded recency/authority
+    nudges below are for the rrf regime; applying them on top of a cross-encoder
+    score would just add noise)."""
+    if any(e.scores.reranker is not None for e in evidence):
+        for e in evidence:
+            if e.scores.reranker is not None:
+                e.scores.final = e.scores.reranker
+        evidence.sort(key=lambda e: (e.scores.reranker if e.scores.reranker is not None
+                                     else float("-inf")), reverse=True)
+        return evidence
     evidence.sort(key=lambda e: e.scores.rrf or 0.0, reverse=True)   # relevance baseline
 
     def _boost(e) -> float:
