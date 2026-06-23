@@ -607,7 +607,15 @@
     "recentRetrievals": "Recent searches",
     "confirmDelete": "Permanently delete this memory?",
     "graph": "Memory graph",
-    "restore": "Restore"
+    "restore": "Restore",
+    "saved": {
+      "remembered": "remembered",
+      "pending": "pending review",
+      "undo": "Undo",
+      "approve": "Approve",
+      "reject": "Dismiss",
+      "archived": "removed"
+    }
   },
   "chat": {
     "memoryUsed": "memories used",

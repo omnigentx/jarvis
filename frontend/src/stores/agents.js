@@ -391,6 +391,15 @@ export const useAgentsStore = defineStore('agents', () => {
           }).catch(e => console.warn('[Store] Failed to forward memory_recalled:', e))
           break
         }
+        // Live "memory saved/pending" chip → chat store, so the user knows the
+        // moment Jarvis stores or proposes a memory (with inline undo/approve).
+        // The Memory tab still refreshes via its own memory_indexed tick.
+        if (event_type === 'memory_saved') {
+          import('./chat').then(({ useChatStore }) => {
+            useChatStore().addMemorySavedBlock(event.data, agent_name)
+          }).catch(e => console.warn('[Store] Failed to forward memory_saved:', e))
+          break
+        }
         // Forward the live-reactive memory events (spec §17 subset) to the
         // memory store: candidate badge, index refresh, degraded banner.
         if (event_type.startsWith('memory_') || event_type === 'retrieval_degraded'

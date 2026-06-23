@@ -584,7 +584,15 @@
     "recentRetrievals": "Lần tìm gần đây",
     "confirmDelete": "Xóa vĩnh viễn ký ức này?",
     "graph": "Đồ thị ký ức",
-    "restore": "Khôi phục"
+    "restore": "Khôi phục",
+    "saved": {
+      "remembered": "đã nhớ",
+      "pending": "chờ duyệt",
+      "undo": "Bỏ nhớ",
+      "approve": "Duyệt",
+      "reject": "Bỏ",
+      "archived": "đã bỏ"
+    }
   },
   "chat": {
     "memoryUsed": "ký ức đã dùng",

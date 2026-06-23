@@ -103,6 +103,9 @@ def create_candidate(
         return cand                                  # await curator decision
     if requires_approval:
         _create_approval_row(cand)
+        # Live chat chip: surface the pending memory IN CONTEXT (with inline
+        # approve/reject) instead of leaving it silent until the Approvals tab.
+        _emit_saved(cand, status="pending")
         return cand
     # Deterministic, unambiguous → persist now.
     _persist_from_candidate(db, cand, CandidateStatus.AUTO_APPROVED.value,
@@ -138,6 +141,7 @@ def reject_candidate(db: Session, candidate_id: str, *, now: float | None = None
     cand.resolution_json = json.dumps({"reason": reason}) if reason else None
     db.commit()
     _emit("memory_candidate_rejected", cand)
+    _emit_saved(cand, status="rejected")    # live chat chip: pending → dismissed
     if not _from_approval:
         _close_linked_approval(candidate_id, "reject")
     return cand
@@ -252,6 +256,9 @@ def _persist_from_candidate(db, cand, status, *, now, changed_by="system",
     cand.resolved_at = now
     db.commit()
     _emit("memory_candidate_approved", cand)
+    # Live chat chip: this candidate is now an ACTIVE memory (covers BOTH the
+    # auto-approved path and a human approval) → tell the chat the moment it lands.
+    _emit_saved(cand, status="saved", record_id=(rec.id if rec is not None else None))
 
     # SINGLE-SOURCE graph projection: extract this memory's triples (→ RELATES +
     # MENTIONS) off the hot path, for EVERY lane incl. the agent's free-text
@@ -307,4 +314,36 @@ def _emit(event_type: str, cand: MemoryCandidate) -> None:
             "data": {"candidate_id": cand.id, "candidate_type": cand.candidate_type},
         })
     except Exception:  # noqa: BLE001
+        pass
+
+
+def _emit_saved(cand: MemoryCandidate, *, status: str, record_id: str | None = None) -> None:
+    """Live SSE for the CHAT "memory saved" chip — so the user knows the moment
+    Jarvis stores something, in context, instead of discovering it later in the
+    Memory tab. Distinct from ``_emit`` (which feeds the Memory tab) so the two
+    surfaces stay decoupled, mirroring how recall has its own ``memory_recalled``.
+
+    ``status``: ``saved`` (auto-approved OR human-approved → now active),
+    ``pending`` (manual policy / secret / high-risk → awaiting approval), or
+    ``rejected``. The chat store keys items by ``candidate_id`` so a later
+    transition (pending→saved/rejected) updates the SAME chip in place. Secrets
+    are MASKED here too — the cleartext never rides the SSE bus into the chat."""
+    try:
+        from services.activity_stream import activity_stream_manager
+        payload = json.loads(cand.payload_json or "{}")
+        raw = payload.get("content", "") or ""
+        sensitive = has_secret(raw)
+        activity_stream_manager.broadcast({
+            "agent_name": cand.owner_agent_name, "event_type": "memory_saved",
+            "message": "memory_saved", "timestamp": cand.resolved_at or cand.created_at,
+            "data": {
+                "candidate_id": cand.id,
+                "record_id": record_id,
+                "content": "🔒 hidden secret" if sensitive else raw,
+                "memory_type": payload.get("memory_type", "semantic"),
+                "status": status,
+                "sensitive": sensitive,
+            },
+        })
+    except Exception:  # noqa: BLE001 — never break a write over a UI mirror
         pass
