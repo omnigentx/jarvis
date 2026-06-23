@@ -395,8 +395,10 @@ export const useChatStore = defineStore('chat', () => {
    * reload, because the chip was built solely from fetched history). The payload
    * mirrors the persisted block (content + recall_lanes + recall_scores), so on
    * the next history fetch the persisted block replaces this one with no visible
-   * change. Inserted BEFORE the in-flight assistant placeholder so it renders
-   * above the reply, matching the persisted order.
+   * change. (fetchHistory is a FULL replace — `conv.messages = history.map(...)`,
+   * not a merge — so the `mem-live-*` block is discarded, never duplicated.)
+   * Inserted BEFORE the in-flight assistant placeholder so it renders above the
+   * reply, matching the persisted order.
    */
   function addMemoryRecallBlock(data, agentName) {
     if (!data || !data.content) return

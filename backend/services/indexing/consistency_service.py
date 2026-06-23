@@ -47,6 +47,50 @@ def rebuild(db: Session, *, now: float) -> int:
     return count
 
 
+_MEMORY_CATEGORY = "memory"
+_EMBED_REV_KEY = "indexed_embedding_revision"
+
+
+def migrate_on_embedding_change(db: Session, cfg, *, now: float) -> dict:
+    """If the configured embedding model/revision differs from what the graph was
+    last projected with, WIPE the graph + re-project from SQLite so the HNSW index
+    is rebuilt over the NEW vectors (the index is static — in-place re-embed leaves
+    stale vectors). Returns what happened (for logging/tests).
+
+    GUARD (review #1): probe that the NEW model's backend is importable BEFORE
+    wiping. Otherwise a deploy that ships this code but hasn't installed the new
+    dep would wipe a HEALTHY graph and then fail to re-embed (Null provider) →
+    dense recall dead with no rollback. If the dep is missing we skip the wipe and
+    log loud — degrade in place, never self-inflict the very total-recall failure
+    this subsystem guards against."""
+    from services.config_service import config_service
+    cur_rev = (getattr(cfg, "embedding_revision", "") or getattr(cfg, "embedding_model", "") or "")
+    if not cur_rev:
+        return {"migrated": False, "reason": "no_model"}
+    prev_rev = config_service.get(_MEMORY_CATEGORY, _EMBED_REV_KEY)
+    if prev_rev == cur_rev:
+        return {"migrated": False, "reason": "unchanged"}
+
+    from services.indexing.embedding_provider import get_embedding_provider
+    if not get_embedding_provider(getattr(cfg, "embedding_model", ""),
+                                  getattr(cfg, "embedding_revision", "")).is_available():
+        logger.error("[MEMORY] embedding model changed (%r → %r) but its backend is "
+                     "NOT installed — SKIPPING the graph wipe (run the 'memory' extra "
+                     "/ uv sync). Keeping the existing graph rather than wiping it into "
+                     "a dead state.", prev_rev, cur_rev)
+        return {"migrated": False, "reason": "deps_missing"}
+
+    from services.indexing.ladybug_store import reset_ladybug_store
+    reset_ladybug_store(getattr(cfg, "ladybug_path", "data/memory_graph"))
+    enq = rebuild(db, now=now)
+    # Mark AFTER enqueue: outbox intents persist across restarts, so a crash
+    # mid-drain just re-drains; the marker won't wrongly skip a half-done migration.
+    config_service.set(_MEMORY_CATEGORY, _EMBED_REV_KEY, cur_rev)
+    logger.info("[MEMORY] embedding model changed (%r → %r) → wiped graph + "
+                "re-embedding %d records with the new model", prev_rev, cur_rev, enq)
+    return {"migrated": True, "enqueued": enq}
+
+
 def status(db: Session) -> dict:
     """Counts for the index-status route: SQLite truth vs outbox backlog."""
     mem_by_status = dict(

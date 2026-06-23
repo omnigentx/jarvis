@@ -513,37 +513,21 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("[MEMORY] ladybug migration check failed")
 
-    # Embedding-model migration: if the configured embedding model/revision differs
-    # from what the graph was last projected with, the stored vectors live in a
-    # DIFFERENT vector space (e.g. bge-m3 → Qwen3-Embedding) — query vectors (new
-    # model) vs stored vectors (old) compare as garbage and recall silently dies.
-    # We WIPE the graph (not re-embed in place): the HNSW index is built at
-    # CREATE_VECTOR_INDEX time and is effectively static (Kùzu/LadybugDB lineage),
-    # so re-embedding nodes in place does NOT reliably re-index them. The wipe makes
-    # count() < SQLite, so the rebuild we enqueue re-projects everything into a
-    # FRESH graph + index with the new model's vectors.
+    # Embedding-model migration: on a model/revision change, WIPE the graph + re-embed
+    # (the HNSW index is static — re-embedding in place leaves stale vectors). The
+    # helper guards on the new model's deps being installed BEFORE wiping (never
+    # self-inflict a dead graph). See consistency_service.migrate_on_embedding_change.
     try:
         if _mem_cfg and _mem_cfg.enabled:
-            from services.config_service import config_service
-            cur_rev = (_mem_cfg.embedding_revision or _mem_cfg.embedding_model or "")
-            prev_rev = config_service.get("memory", "indexed_embedding_revision")
-            if cur_rev and prev_rev != cur_rev:
-                import time as _t
+            import time as _t
 
-                from core.database import get_db_session
-                from services.indexing import consistency_service as cs
-                from services.indexing.ladybug_store import reset_ladybug_store
-                reset_ladybug_store(getattr(_mem_cfg, "ladybug_path", "data/memory_graph"))
-                _db = get_db_session()
-                try:
-                    enq = cs.rebuild(_db, now=_t.time())
-                finally:
-                    _db.close()
-                # Mark AFTER enqueue (the outbox intents persist across restarts, so
-                # a crash mid-drain just re-drains; the marker won't wrongly skip).
-                config_service.set("memory", "indexed_embedding_revision", cur_rev)
-                logger.info("[MEMORY] embedding model changed (%r → %r) → wiped graph + "
-                            "re-embedding %d records with the new model", prev_rev, cur_rev, enq)
+            from core.database import get_db_session
+            from services.indexing import consistency_service as cs
+            _db = get_db_session()
+            try:
+                cs.migrate_on_embedding_change(_db, _mem_cfg, now=_t.time())
+            finally:
+                _db.close()
     except Exception:
         logger.exception("[MEMORY] embedding-revision migration check failed")
 

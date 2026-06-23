@@ -142,11 +142,22 @@ class RetrievalOrchestrator:
         """Cross-encoder rerank of the top fused candidates (precision stage).
         Re-scores into ``scores.reranker``, drops those below ``rerank_min_score``,
         returns them ordered by reranker. No-op when disabled/unavailable → fusion
-        order kept. Best-effort: a rerank error must never break recall."""
+        order kept. Best-effort: a rerank error must never break recall.
+
+        INTENTIONAL GATE (review #2): the floor can legitimately return [] when every
+        candidate scores below it — i.e. the cross-encoder judged them all off-topic
+        (measured: an off-topic query reranks the whole set to ~0). This is the
+        desired off-topic→nothing behavior; it is NOT the silent-veto bug the dense
+        off-topic gate had, because the reranker scored each candidate against THIS
+        query (it didn't drop a high-precision lane on a sibling lane's emptiness).
+        Keep ``rerank_min_score`` low (0.005) so a weak-but-relevant hit survives."""
         if not fused or self._reranker is None or not self._reranker.is_available():
             return fused
         top_k = int(getattr(self.settings, "rerank_top_k", 20) or 20)
         floor = float(getattr(self.settings, "rerank_min_score", 0.0) or 0.0)
+        # Tail beyond top_k is intentionally DROPPED from recall (not just from
+        # reranking): for personal-memory recall we inject far fewer than top_k, and
+        # the tail is the lowest-fusion-ranked anyway (review #4).
         cand = fused[:top_k]
         try:
             scores = self._reranker.rerank(request.query, [c.excerpt for c in cand])
