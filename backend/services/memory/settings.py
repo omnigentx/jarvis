@@ -191,3 +191,20 @@ def update_memory_settings(updates: dict[str, Any], *, user: str = "user") -> Me
         config_service.set(MEMORY_CATEGORY, key, _coerce_write(kind, value), user=user)
 
     return get_memory_settings()
+
+
+def gate_mistuned_warning(embedding_model: str, recall_min_similarity: float) -> str | None:
+    """Advisory check (review #5): the recall gate is a cosine-similarity floor on
+    the EMBEDDING's score scale, which differs by model (bge-m3 ~0.44,
+    Qwen3-Embedding ~0.34). ``embedding_model`` is independently configurable, so
+    swapping the model without re-tuning the gate leaves it mistuned (e.g. bge-m3
+    at a Qwen 0.34 floor injects loosely-related rows). Returns a warning string
+    when the pair looks mismatched, else None — heuristic, never raises."""
+    m = (embedding_model or "").lower()
+    if "bge-m3" in m and recall_min_similarity < 0.40:
+        return (f"recall_min_similarity={recall_min_similarity} is Qwen-scale but "
+                f"embedding_model is bge-m3 (expected ~0.44) — gate too permissive")
+    if "qwen" in m and recall_min_similarity > 0.42:
+        return (f"recall_min_similarity={recall_min_similarity} is bge-scale but "
+                f"embedding_model is {embedding_model} (expected ~0.34) — gate too strict")
+    return None

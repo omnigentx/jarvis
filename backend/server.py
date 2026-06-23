@@ -479,6 +479,12 @@ async def lifespan(app: FastAPI):
                     "dense recall + knowledge graph are OFF, index writes will "
                     "defer, the graph will stay empty. Install the 'memory' extra "
                     "(FlagEmbedding) or disable memory to silence this.")
+            # Advisory: the recall gate is on the embedding's score scale (review #5).
+            from services.memory.settings import gate_mistuned_warning
+            _gw = gate_mistuned_warning(_mem_cfg.embedding_model, _mem_cfg.recall_min_similarity)
+            if _gw:
+                logger.warning("[MEMORY] recall gate may be mistuned for the embedding "
+                               "model: %s", _gw)
     except Exception:
         logger.exception("Failed to start memory index worker")
 

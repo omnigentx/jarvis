@@ -111,3 +111,12 @@ def test_curator_api_key_is_secret_and_masked(fake_cfg):
     # empty string clears it
     ms.update_memory_settings({"curator_api_key": ""})
     assert ms.get_memory_settings().curator_api_key_set is False
+
+
+def test_gate_mistuned_warning():
+    # Review #5: advisory mismatch between embedding model and the gate scale.
+    from services.memory.settings import gate_mistuned_warning
+    assert gate_mistuned_warning("Qwen/Qwen3-Embedding-0.6B", 0.34) is None   # matched
+    assert gate_mistuned_warning("BAAI/bge-m3", 0.44) is None                 # matched
+    assert gate_mistuned_warning("BAAI/bge-m3", 0.34) is not None             # bge at Qwen floor
+    assert gate_mistuned_warning("Qwen/Qwen3-Embedding-0.6B", 0.44) is not None  # qwen at bge floor
