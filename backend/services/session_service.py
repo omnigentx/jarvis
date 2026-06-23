@@ -151,9 +151,12 @@ def _recall_lanes_from_channels(msg: Dict) -> Optional[List[List[str]]]:
 
 
 def _recall_scores_from_channels(msg: Dict) -> Optional[List[Dict]]:
-    """Read the ``jarvis:recall_scores`` channel — one ``{rel, conf, authority}``
-    per recalled line (RAW values; see RECALL_SCORES_CHANNEL). ``None`` if absent
-    (not a recall block, or recalled before this shipped)."""
+    """Read the ``jarvis:recall_scores`` channel — one
+    ``{rrf, rerank, conf, authority}`` per recalled line (RAW values; see
+    RECALL_SCORES_CHANNEL). ``None`` if absent (not a recall block, or recalled
+    before this shipped). Back-compat: older blocks stored a 3-field
+    ``rel|conf|authority`` where ``rel`` was the post-rerank ``final`` score — map
+    it onto ``rerank`` so reloaded old chips still render."""
     from services.memory.retrieval_hook import RECALL_SCORES_CHANNEL
     entries = (msg.get("channels") or {}).get(RECALL_SCORES_CHANNEL)
     if not entries:
@@ -161,13 +164,21 @@ def _recall_scores_from_channels(msg: Dict) -> Optional[List[Dict]]:
     out: List[Dict] = []
     for c in entries:
         text = c.get("text", "") if isinstance(c, dict) else ""
-        rel_s, _sep, rest = text.partition("|")
-        conf_s, _sep2, authority = rest.partition("|")
-        out.append({
-            "rel": _safe_float(rel_s),
-            "conf": _safe_float(conf_s),
-            "authority": authority,
-        })
+        parts = text.split("|")
+        if len(parts) >= 4:                       # rrf|rerank|conf|authority
+            out.append({
+                "rrf": _safe_float(parts[0]),
+                "rerank": _safe_float(parts[1]),
+                "conf": _safe_float(parts[2]),
+                "authority": parts[3],
+            })
+        else:                                     # legacy rel|conf|authority
+            out.append({
+                "rrf": None,
+                "rerank": _safe_float(parts[0] if parts else ""),
+                "conf": _safe_float(parts[1] if len(parts) > 1 else ""),
+                "authority": parts[2] if len(parts) > 2 else "",
+            })
     return out
 
 

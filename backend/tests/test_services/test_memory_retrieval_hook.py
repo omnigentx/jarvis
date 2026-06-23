@@ -97,7 +97,7 @@ async def test_emits_live_recall_sse_matching_the_block(monkeypatch):
     # one lane-list and one score per injected line, SAME order as the block.
     assert len(data["recall_lanes"]) == 1
     assert len(data["recall_scores"]) == 1
-    assert set(data["recall_scores"][0]) == {"rel", "conf", "authority"}
+    assert set(data["recall_scores"][0]) == {"rrf", "rerank", "conf", "authority"}
 
 
 async def test_no_recall_sse_when_no_evidence(monkeypatch):

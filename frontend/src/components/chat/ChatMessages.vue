@@ -76,6 +76,18 @@ function memoryGraphCount(msg) {
 const VERIFIED_AUTHORITIES = ['user_confirmed', 'tool_verified']
 function scoreFor(msg, i) { return (msg.recallScores && msg.recallScores[i]) || null }
 function isVerified(s) { return !!s && VERIFIED_AUTHORITIES.includes(s.authority) }
+// Show rrf (lane fusion) and rerank (cross-encoder) SEPARATELY — they answer
+// different questions and diverge a lot (rerank ~1.0 on a near-verbatim restate).
+// `rel` fallback keeps any pre-split cached block rendering until its next reload.
+function scoreLabel(s) {
+  if (!s) return ''
+  const p = []
+  if (s.rrf != null) p.push(`rrf ${s.rrf}`)
+  if (s.rerank != null) p.push(`rerank ${s.rerank}`)
+  if (s.rrf == null && s.rerank == null && s.rel != null) p.push(`score ${s.rel}`)
+  if (s.conf != null) p.push(`conf ${s.conf}`)
+  return p.join(' · ')
+}
 
 // Auto-scroll to bottom on new messages
 watch(
@@ -234,7 +246,7 @@ function parsedAgentContent(content) {
                     :title="t('memory.lane.' + ln)">{{ ln }}</span>
               {{ line }}
               <span v-if="scoreFor(msg, i)" class="mscore" :title="t('memory.scoreHint')">
-                rrf {{ scoreFor(msg, i).rel }} · conf {{ scoreFor(msg, i).conf
+                {{ scoreLabel(scoreFor(msg, i))
                 }}<span v-if="isVerified(scoreFor(msg, i))" class="ok">✓</span>
               </span>
             </div>

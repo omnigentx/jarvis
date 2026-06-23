@@ -35,7 +35,7 @@ function recallData() {
   return {
     content: `${MARKER} [System memory recall — not user input]:\n- [semantic] nguyễn văn phúc là người tạo ra ai agent`,
     recall_lanes: [['fts', 'dense']],
-    recall_scores: [{ rel: 0.0325, conf: 0.6, authority: 'user_confirmed' }],
+    recall_scores: [{ rrf: 0.0325, rerank: 0.9993, conf: 0.6, authority: 'user_confirmed' }],
   }
 }
 
@@ -50,7 +50,8 @@ test('memory_recalled inserts a recall block before the streaming reply', () => 
   assert.ok(memIdx >= 0, 'memory block inserted')
   assert.ok(memIdx < asstIdx, 'memory block sits before the assistant placeholder')
   assert.deepEqual(msgs[memIdx].recallLanes, [['fts', 'dense']])
-  assert.equal(msgs[memIdx].recallScores[0].rel, 0.0325)
+  assert.equal(msgs[memIdx].recallScores[0].rrf, 0.0325)
+  assert.equal(msgs[memIdx].recallScores[0].rerank, 0.9993)
   assert.equal(msgs[memIdx].role, 'user') // isMemoryBlock() in ChatMessages keys on role=user + marker
 })
 
