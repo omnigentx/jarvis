@@ -79,18 +79,19 @@ test('memory_saved paints the chip mid-turn with inline actions', async ({ page 
   await textarea.fill('tôi tên Phúc, đây là số thẻ của tôi')
   await textarea.press('Enter')
 
-  // Chip paints live, summarising BOTH states (✏️ saved + ⏳ pending).
+  // Chip paints live. A mixed batch (1 saved + 1 pending) takes the warning
+  // (pending) tint — `chip-pending` — and keeps the 🧠 memory motif.
   const messages = page.getByTestId('chat-messages')
-  const chip = messages.locator('.memory-chip.saved')
+  const chip = messages.locator('.memory-chip.chip-pending')
   await expect(chip).toBeVisible()
-  await expect(chip).toContainText('✏️')
-  await expect(chip).toContainText('⏳')
+  await expect(chip).toContainText('🧠')
 
-  // Expand → both memories + their per-state actions.
+  // Expand → both memories + their per-state actions (design-system .btn pattern:
+  // approve = primary, undo/reject = ghost).
   await chip.click()
   await expect(messages.getByText(/Phúc là chủ nhân của OmnigentX/i)).toBeVisible()
-  await expect(messages.locator('.saved-btn.undo')).toBeVisible()       // auto-saved → undo
-  const approveBtn = messages.locator('.saved-btn.approve')
+  await expect(messages.locator('.s-btn.ghost').first()).toBeVisible()  // auto-saved → undo
+  const approveBtn = messages.locator('.s-btn.primary')
   await expect(approveBtn).toBeVisible()                                // pending → approve
 
   // Inline approve hits the real candidate route (approve-in-context).

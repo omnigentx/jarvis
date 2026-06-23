@@ -264,21 +264,21 @@ function parsedAgentContent(content) {
 
         <!-- ── MEMORY-SAVED CHIP (live capture: auto-saved or pending) ──── -->
         <div v-else-if="msg.isMemorySaved" class="row row-memory">
-          <button class="memory-chip saved" @click="toggleMemory(msg.id)">
-            <span v-if="savedCount(msg, 'saved')">✏️ {{ savedCount(msg, 'saved') }} {{ t('memory.saved.remembered') }}</span>
-            <span v-if="savedCount(msg, 'pending')">{{ savedCount(msg, 'saved') ? ' · ' : '' }}⏳ {{ savedCount(msg, 'pending') }} {{ t('memory.saved.pending') }}</span>
+          <button class="memory-chip" :class="savedCount(msg, 'pending') ? 'chip-pending' : 'chip-saved'"
+                  @click="toggleMemory(msg.id)">
+            <span v-if="savedCount(msg, 'saved')">🧠 {{ savedCount(msg, 'saved') }} {{ t('memory.saved.remembered') }}</span>
+            <span v-if="savedCount(msg, 'pending')">{{ savedCount(msg, 'saved') ? ' · ' : '' }}{{ savedCount(msg, 'pending') }} {{ t('memory.saved.pending') }}</span>
             <span class="mc-chevron" :class="{ expanded: !!expandedMemory[msg.id] }">▾</span>
           </button>
           <div v-if="expandedMemory[msg.id]" class="memory-detail">
             <div v-for="it in savedVisible(msg)" :key="it.candidateId" class="memory-line saved-line"
                  :class="{ archived: it.status === 'archived' }">
-              <span class="lane" :class="it.status === 'pending' ? 'lane-graph' : 'lane-dense'">{{ it.memoryType }}</span>
-              {{ it.content }}
+              <span class="mtype">[{{ it.memoryType }}]</span> {{ it.content }}
               <span class="saved-actions">
-                <button v-if="it.status === 'saved'" class="saved-btn undo" @click="chat.archiveSavedMemory(it)">↩ {{ t('memory.saved.undo') }}</button>
+                <button v-if="it.status === 'saved'" class="s-btn ghost" @click="chat.archiveSavedMemory(it)">{{ t('memory.saved.undo') }}</button>
                 <template v-else-if="it.status === 'pending'">
-                  <button class="saved-btn approve" @click="chat.approveSavedMemory(it)">✓ {{ t('memory.saved.approve') }}</button>
-                  <button class="saved-btn reject" @click="chat.rejectSavedMemory(it)">✗ {{ t('memory.saved.reject') }}</button>
+                  <button class="s-btn primary" @click="chat.approveSavedMemory(it)">{{ t('memory.saved.approve') }}</button>
+                  <button class="s-btn ghost" @click="chat.rejectSavedMemory(it)">{{ t('memory.saved.reject') }}</button>
                 </template>
                 <span v-else-if="it.status === 'archived'" class="archived-tag">{{ t('memory.saved.archived') }}</span>
               </span>
@@ -819,19 +819,25 @@ function parsedAgentContent(content) {
   white-space: nowrap; margin-left: 4px; cursor: help; }
 .mscore .ok { color: var(--success, #16a34a); margin-left: 2px; font-weight: 700; }
 
-/* ── Memory-saved chip (live capture) — green-tinted to read as WRITE, vs the
-   indigo recall chip (READ). Pending items keep an amber cue via the actions. */
-.memory-chip.saved { background: color-mix(in srgb, var(--success, #16a34a) 12%, transparent);
-  color: var(--success, #16a34a); border-color: color-mix(in srgb, var(--success, #16a34a) 35%, transparent); }
-.memory-chip.saved:hover { background: color-mix(in srgb, var(--success, #16a34a) 20%, transparent); }
+/* ── Memory-saved chip (live capture). Reuses the recall chip base (.memory-chip)
+   and tints by STATE with the design-system semantic tokens — success (saved) /
+   warning (pending, needs review). Hover fills the colour, mirroring .btn.danger
+   in AgentMemoryPanel. Action buttons reuse that same .btn pattern. */
+.memory-chip.chip-saved { background: var(--success-bg); color: var(--success); border-color: var(--success); }
+.memory-chip.chip-saved:hover { background: var(--success); color: #fff; }
+.memory-chip.chip-pending { background: var(--warning-bg); color: var(--warning); border-color: var(--warning); }
+.memory-chip.chip-pending:hover { background: var(--warning); color: #fff; }
 .saved-line { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
 .saved-line.archived { opacity: .5; text-decoration: line-through; }
+.mtype { color: var(--text-faint); font-family: var(--font-mono, monospace); }
 .saved-actions { margin-left: auto; display: inline-flex; gap: 6px; white-space: nowrap; }
-.saved-btn { font-size: 11px; padding: 1px 8px; border-radius: var(--r-full); cursor: pointer;
-  border: 1px solid var(--border-strong); background: var(--bg-3); color: var(--text-dim); }
-.saved-btn:hover { background: var(--bg-4); }
-.saved-btn.approve { color: var(--success, #16a34a); border-color: color-mix(in srgb, var(--success, #16a34a) 40%, transparent); }
-.saved-btn.reject { color: var(--danger, #dc2626); border-color: color-mix(in srgb, var(--danger, #dc2626) 40%, transparent); }
-.saved-btn.undo { color: var(--text-faint); }
+/* Mirrors AgentMemoryPanel's .btn / .btn.primary / .btn.ghost (same tokens,
+   tightened for the inline chip context). */
+.s-btn { background: transparent; color: var(--text-dim); border: 1px solid var(--border-strong);
+  border-radius: var(--r-md); padding: 2px 10px; font-size: 11px; cursor: pointer; transition: all .15s; }
+.s-btn:hover { color: var(--text); background: rgba(255,255,255,0.04); }
+.s-btn.primary { background: var(--primary); color: #fff; border-color: var(--primary); }
+.s-btn.primary:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
+.s-btn.ghost { border-color: transparent; }
 .archived-tag { font-size: 11px; color: var(--text-faint); margin-left: auto; }
 </style>
