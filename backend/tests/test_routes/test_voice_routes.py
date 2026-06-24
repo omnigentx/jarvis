@@ -272,3 +272,28 @@ class TestEnginesVoicesEndpoint:
         voices = resp.json()["voices"]
         ids = {v["id"] for v in voices}
         assert {"alloy", "echo"} <= ids
+
+
+class TestIceConfigEndpoint:
+    """``GET /api/voice/ice`` mints billable Cloudflare TURN credentials, so it
+    must be gated like the rest of the voice API. Before the #4 audit fix it had
+    no auth dependency — an anonymous caller could harvest a renewable stream of
+    relay creds and abuse the owner's Cloudflare account as a free relay.
+    """
+
+    def test_requires_auth(self, client):
+        # `client` sets JARVIS_API_KEY so verify_api_key enforces; a header-less
+        # client against the same app must be rejected.
+        from fastapi.testclient import TestClient
+
+        from server import app
+        noauth = TestClient(app)
+        resp = noauth.get("/api/voice/ice")
+        assert resp.status_code in (401, 403), resp.text
+
+    def test_returns_ice_servers_when_authed(self, client):
+        # No CF/TURN env configured in the test → falls back to public STUN, but
+        # the authed call still succeeds with the expected shape.
+        resp = client.get("/api/voice/ice")
+        assert resp.status_code == 200, resp.text
+        assert "iceServers" in resp.json()

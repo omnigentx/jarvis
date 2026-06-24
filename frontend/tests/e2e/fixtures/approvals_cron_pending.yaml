@@ -13,7 +13,7 @@ responses:
       - id: "appr_cron_1"
         status: "pending"
         approval_type: "cron_first_fire"
-        title: "Cron first run: Kiểm tra thời tiết Gia Lâm buổi sáng"
+        title: "Cron first run: Kiểm tra thời tiết Hà Nội buổi sáng"
         agent_name: "ResearchAgent"
         created_at: 1780000000
         content_format: "markdown"
@@ -33,12 +33,12 @@ responses:
       id: "appr_cron_1"
       status: "pending"
       approval_type: "cron_first_fire"
-      title: "Cron first run: Kiểm tra thời tiết Gia Lâm buổi sáng"
+      title: "Cron first run: Kiểm tra thời tiết Hà Nội buổi sáng"
       agent_name: "ResearchAgent"
       created_at: 1780000000
       content_format: "markdown"
       content: |
-        ## Cron job: Kiểm tra thời tiết Gia Lâm buổi sáng
+        ## Cron job: Kiểm tra thời tiết Hà Nội buổi sáng
 
         **Schedule:** `0 8 * * *` (solar)
         **Target agent:** ResearchAgent

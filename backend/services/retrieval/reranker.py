@@ -83,7 +83,7 @@ class CrossEncoderReranker(Reranker):
 
 # Query-side instruction for Qwen3-Reranker — the personal-relevance framing.
 # Measured 2026-06-23 head-to-head on the live Vietnamese store: Qwen3-Reranker
-# ranks the direct answer #1 ("where do I work" → Techcombank 0.245 live) where
+# ranks the direct answer #1 ("where do I work" → AcmeCorp 0.245 live) where
 # bge-reranker-v2-m3 buried it at 0.0013, and gives a usable score SPREAD (so a
 # floor can gate) — bge compressed every score near 0, ungateable. The cost is
 # latency: one batched forward pass of a 0.6B LM over the candidates (~1.2–1.4s

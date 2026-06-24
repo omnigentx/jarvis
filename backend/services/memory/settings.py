@@ -4,8 +4,6 @@
 Single source for defaults + validation, shared by the HTTP route and any
 backend caller (router, indexer, curator). The feature flag ``enabled``
 gates the entire subsystem (default OFF).
-
-See docs/agent-memory-adaptive-rag-spec.md §18.3 and docs/memory-impl/02.
 """
 from __future__ import annotations
 
@@ -60,11 +58,11 @@ class MemorySettings:
     # compressed every Vietnamese score near 0 — a floor couldn't separate on-topic
     # from off-keyword without killing recall). Qwen3-Reranker fixes that: measured
     # live 2026-06-23, real on-topic answers score >= 0.003 (e.g. "where do I work"
-    # → Techcombank 0.245) while off-keyword / general-knowledge candidates score
+    # → AcmeCorp 0.245) while off-keyword / general-knowledge candidates score
     # <= 0.0009 ("Angular latest version" → 0.0002). So 0.001 cleanly gates: it
     # drops off-keyword noise (the q2/q3 acceptance cases → 0 memory) while keeping
     # the direct answers (q1/q4/q7), which now also rank #1. Residual: a real memory
-    # the reranker scores high for the WRONG query (the con/Milo adversarial pair)
+    # the reranker scores high for the WRONG query (the child-name adversarial pair)
     # still leaks — no scalar floor catches that (needs intent/LLM, deferred).
     rerank_min_score: float = 0.001
     # Dense/graph backend = LadybugDB (embedded property graph + HNSW vectors).

@@ -1,1 +1,1 @@
-"""Agent memory subsystem (docs/agent-memory-adaptive-rag-spec.md)."""
+"""Agent memory subsystem."""

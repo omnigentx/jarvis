@@ -1,6 +1,5 @@
 """Typed contracts crossing the retrieval boundary — no raw dicts between
-modules. See docs/agent-memory-adaptive-rag-spec.md §7.4, §9, §15.
-"""
+modules."""
 from __future__ import annotations
 
 from abc import ABC, abstractmethod

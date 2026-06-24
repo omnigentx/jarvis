@@ -54,7 +54,7 @@ responses:
           message:
             role: "user"
             content:
-              - { type: "text", text: "thời tiết Gia Lâm hôm nay" }
+              - { type: "text", text: "thời tiết Hà Nội hôm nay" }
         - turn_idx: 1
           role: "assistant"
           message:
@@ -92,10 +92,10 @@ sse_streams:
           message:
             role: "assistant"
             content:
-              - { type: "text", text: "Hôm nay Gia Lâm 28°C, ít mây." }
+              - { type: "text", text: "Hôm nay Hà Nội 28°C, ít mây." }
             tool_calls:
               "tu_xyz":
                 params:
                   name: "search_weather"
-                  arguments: { location: "Gia Lâm", date: "today" }
+                  arguments: { location: "Hà Nội", date: "today" }
             stop_reason: "toolUse"

@@ -1,7 +1,7 @@
 """Memory index worker — drains the outbox into FTS5 (always) and the LadybugDB
 graph/vector projection (when available). Runs its OWN lightweight asyncio loop
 (the existing BackgroundJobScheduler is idle-gated, which is wrong for continuous
-indexing — see docs/memory-impl/03). The durable queue is the outbox, so restart
+indexing). The durable queue is the outbox, so restart
 recovery is just reclaiming expired leases.
 
 Degraded modes (spec §20): FTS is updated immediately for degraded search; the

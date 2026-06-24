@@ -228,7 +228,7 @@ def _persist_from_candidate(db, cand, status, *, now, changed_by="system",
     # conflicts at write time with a curator LLM (lossy supersede + a cost per
     # conflicting write). We just ADD the fact — create_memory already exact-
     # dedups identical content, so literal dups are no-ops while a changed fact
-    # (Techcombank→FPT) keeps BOTH, dated. Conflicting versions are resolved at
+    # (AcmeCorp→NovaCorp) keeps BOTH, dated. Conflicting versions are resolved at
     # READ time by recency-weighted ranking. Lossless + cheaper.
     svc = MemoryService(db, pinned_token_budget=pinned_token_budget)
     rec = svc.create_memory(
@@ -330,6 +330,7 @@ def _emit_saved(cand: MemoryCandidate, *, status: str, record_id: str | None = N
     are MASKED here too — the cleartext never rides the SSE bus into the chat."""
     try:
         from services.activity_stream import activity_stream_manager
+        from services.sse_progress import current_conversation_id
         payload = json.loads(cand.payload_json or "{}")
         raw = payload.get("content", "") or ""
         sensitive = has_secret(raw)
@@ -337,6 +338,11 @@ def _emit_saved(cand: MemoryCandidate, *, status: str, record_id: str | None = N
             "agent_name": cand.owner_agent_name, "event_type": "memory_saved",
             "message": "memory_saved", "timestamp": cand.resolved_at or cand.created_at,
             "data": {
+                # Route to the originating conversation (see _emit_recall_block):
+                # the async extractor inherits this ContextVar from the turn that
+                # spawned it, so a saved chip lands in the right conversation even
+                # when it fires after the reply completed.
+                "conversation_id": current_conversation_id.get() or None,
                 "candidate_id": cand.id,
                 "record_id": record_id,
                 "content": "🔒 hidden secret" if sensitive else raw,

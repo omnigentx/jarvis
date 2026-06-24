@@ -34,7 +34,7 @@ test('mobile: long approval title gets full width, not crushed into a column', a
 
   const title = page.locator('.approvals__detail-title')
   await expect(title).toBeVisible()
-  await expect(title).toHaveText(/Kiểm tra thời tiết Gia Lâm buổi sáng/)
+  await expect(title).toHaveText(/Kiểm tra thời tiết Hà Nội buổi sáng/)
 
   const box = await title.boundingBox()
   expect(box).not.toBeNull()

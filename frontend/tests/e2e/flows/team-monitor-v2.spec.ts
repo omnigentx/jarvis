@@ -50,12 +50,12 @@ test('team monitor v2 — terminal renders persisted history + SSE delta turn', 
 
   // Initial user turn text visible.
   await expect(
-    page.locator('.turn-row.role-user', { hasText: 'thời tiết Gia Lâm hôm nay' }),
+    page.locator('.turn-row.role-user', { hasText: 'thời tiết Hà Nội hôm nay' }),
   ).toBeVisible()
 
   // ── 3. SSE delta turn appears (turn_idx=2 with a tool_call) ────────
   const deltaRow = page.locator('.turn-row.role-assistant', {
-    hasText: 'Hôm nay Gia Lâm 28°C',
+    hasText: 'Hôm nay Hà Nội 28°C',
   })
   await expect(deltaRow).toBeVisible()
   await expect(deltaRow.locator('.tool-name')).toHaveText('search_weather')

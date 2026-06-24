@@ -95,3 +95,12 @@ frontend/.vite/
 
 # ─── Skill auto-backups (.bak siblings created on edit) ──
 backend/.fast-agent/skills/**/*.bak
+
+# ─── Internal dev specs / planning — kept LOCAL, not for the public OSS repo ──
+# (working copies remain on disk; only un-tracked so they stop being pushed.
+#  These are personal design/spec/backlog notes, not user- or contributor-facing.)
+docs/*-spec.md
+docs/memory-v2-plan.md
+docs/oss-i18n-backlog.md
+docs/memory-impl/
+scripts/scan_vietnamese.py

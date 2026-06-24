@@ -726,7 +726,7 @@ class PasskeyCredential(Base):
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Agent memory + adaptive RAG (docs/agent-memory-adaptive-rag-spec.md)
+# Agent memory + adaptive RAG
 #
 # SQLite is the source of truth for all memory state; LadybugDB is a
 # rebuildable index. Every table keys on ``owner_agent_name`` (the
@@ -758,7 +758,7 @@ class MemoryRecord(Base):
     valid_until = Column(Float, nullable=True)
     entities_json = Column(Text, nullable=True)   # [{name,etype}] for the graph (memory v2)
     # [{s,p,o}] knowledge-graph triples (subject—predicate—object) extracted from
-    # this memory, e.g. {"s":"Người dùng","p":"thích","o":"phở"}. Projected to
+    # this memory, e.g. {"s":"User","p":"likes","o":"tea"}. Projected to
     # LadybugDB as RELATES edges so the graph view is a real knowledge graph, not
     # opaque memory blobs. SQLite is the SoT; the graph is rebuilt from this.
     relations_json = Column(Text, nullable=True)

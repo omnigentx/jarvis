@@ -291,3 +291,37 @@ def test_approval_reason_codes(db):
     assert approval_reason({"excerpt_ok": True}, "x") is None
     assert approval_reason({}, "x") is None
     assert approval_reason({"excerpt_ok": True}, "password: hunter2secret") == "secret"
+
+
+async def test_saved_sse_conversation_id_survives_create_task(monkeypatch):
+    """#2 saved-path: the fast-lane extractor is spawned via asyncio.create_task
+    DURING the turn, so it must SNAPSHOT current_conversation_id and still emit it
+    after the chat route's `finally` resets the var. The recall test covers the
+    synchronous path; this guards the cross-task hop — if the extractor is ever
+    refactored to a persistent worker/thread the snapshot breaks and the saved
+    chip silently mis-routes, so this must fail loudly."""
+    import asyncio
+    import types
+
+    import services.activity_stream as as_mod
+    from services.sse_progress import current_conversation_id
+
+    captured = []
+    monkeypatch.setattr(as_mod.activity_stream_manager, "broadcast",
+                        lambda ev: captured.append(ev))
+    cand = types.SimpleNamespace(
+        id="cand1", owner_agent_name="Jarvis",
+        payload_json='{"content": "User likes tea", "memory_type": "semantic"}',
+        resolved_at=None, created_at=123.0,
+    )
+
+    async def _emit(): cnd._emit_saved(cand, status="saved")
+
+    tok = current_conversation_id.set("conv-SAVED")
+    task = asyncio.create_task(_emit())        # snapshots the ContextVar at creation
+    current_conversation_id.reset(tok)         # the route turn ends BEFORE the task runs
+    await task
+
+    saved = [e for e in captured if e.get("event_type") == "memory_saved"]
+    assert saved, "a memory_saved event was broadcast"
+    assert saved[0]["data"]["conversation_id"] == "conv-SAVED"

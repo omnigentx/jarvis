@@ -64,7 +64,7 @@ def rrf_fuse(result_lists: list[list[Evidence]], *, k: int = RRF_K) -> list[Evid
 
 def _recency_rank_boost(now: float, created_at: float | None) -> float:
     """How many ranks a fact climbs for being recent — the read-side of ADD-only
-    ('works at FPT' should outrank the older 'works at Techcombank' for the same
+    ('works at NovaCorp' should outrank the older 'works at AcmeCorp' for the same
     query). Bounded so it tunes near-ties, never overrides clear relevance."""
     if not created_at:
         return 0.0

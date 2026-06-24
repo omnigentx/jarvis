@@ -112,8 +112,8 @@ class RetrievalOrchestrator:
         fused, dense_failed = await self._fast_round(
             request, budget, bm25_first=decision.bm25_first)
         # Recency/authority/freshness ranking on the HAPPY path too — this is the
-        # read-side of ADD-only (a newer fact, e.g. "works at FPT", outranks the
-        # superseded "Techcombank" for "where do I work now"). Previously this
+        # read-side of ADD-only (a newer fact, e.g. "works at NovaCorp", outranks the
+        # superseded "AcmeCorp" for "where do I work now"). Previously this
         # only ran on escalation, so the recency promise never fired on the
         # common balanced-mode path.
         fusion.apply_policy(fused, now=now)

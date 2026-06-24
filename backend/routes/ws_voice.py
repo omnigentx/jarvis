@@ -51,8 +51,9 @@ import uuid
 import wave
 from typing import Any, Optional
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
+from core.auth import verify_api_key
 from core.session import SESSION_COOKIE_NAME, SessionVerifyError, verify_session_token
 from core.webauthn import _is_loopback_host
 from services import shared_state as state
@@ -80,15 +81,19 @@ router = APIRouter(tags=["voice-ws"])
 
 
 @router.get("/api/voice/ice")
-def voice_ice_config() -> dict:
+def voice_ice_config(_=Depends(verify_api_key)) -> dict:
     """ICE servers (STUN/TURN) for the browser's RTCPeerConnection.
 
     Sourced from ``get_ice_servers`` — Cloudflare-minted TURN creds when
     ``JARVIS_CF_TURN_KEY_ID``/``JARVIS_CF_TURN_API_TOKEN`` are set (needed for
     symmetric-NAT / iPhone-on-cellular; this deployment has no public UDP),
-    else ``JARVIS_WEBRTC_ICE``, else public STUN. Not secret (TURN creds here
-    are the short-lived kind); behind the same auth as the app. Sync def on
-    purpose: FastAPI runs it in the threadpool, so a cold-cache CF mint
+    else ``JARVIS_WEBRTC_ICE``, else public STUN. The master CF token stays
+    server-side, but the minted relay creds are billable, so this route is
+    gated by ``verify_api_key`` like the rest of the voice API — without it an
+    anonymous caller could harvest a renewable stream of TURN creds and abuse
+    the owner's Cloudflare account as a free relay. The SPA already holds the
+    session cookie before it negotiates, so the gate is transparent to it. Sync
+    def on purpose: FastAPI runs it in the threadpool, so a cold-cache CF mint
     (blocking HTTPS) never stalls the event loop.
     """
     return {"iceServers": get_ice_servers()}

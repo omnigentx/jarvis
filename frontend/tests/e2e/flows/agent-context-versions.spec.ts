@@ -1,7 +1,7 @@
 /**
  * E2E: Context Versions tab — compaction visibility on AgentDetail.
  *
- * Contract under test (docs/context-compaction-versioned-visibility-spec.md §11):
+ * Contract under test:
  *   - The versions timeline lists compaction events with token savings
  *     (before → after, saved, %) and surfaces failed compactions inline.
  *   - Expanding a version lazy-loads the summary; "Before / After"
