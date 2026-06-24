@@ -43,6 +43,18 @@ logger = logging.getLogger(__name__)
 # ──────────────────────────────────────────────────────────────
 current_run_id: ContextVar[str] = ContextVar("current_run_id", default="")
 
+# The conversation (session) id of the in-flight turn. Set alongside
+# ``current_run_id`` by the chat route so the memory hooks can STAMP the
+# ``memory_recalled`` / ``memory_saved`` SSE with the conversation it belongs
+# to — the activity stream fans out per-agent only, and one agent owns many
+# conversations, so without this a recall/saved chip from conversation A could
+# paint into conversation B (same agent, another tab). ContextVar is copied into
+# ``asyncio.create_task`` at creation time, so the async fire-and-forget extractor
+# still sees the right conversation when it emits after the turn. Empty when no
+# caller set it (legacy / voice) → the frontend keeps its old active-conversation
+# routing for back-compat.
+current_conversation_id: ContextVar[str] = ContextVar("current_conversation_id", default="")
+
 # Lazy import to avoid circular — resolved at first use
 _activity_stream = None
 def _get_activity_stream():

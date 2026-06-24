@@ -392,6 +392,18 @@ export const useChatStore = defineStore('chat', () => {
     return id
   }
 
+  // A memory SSE event (recall/saved) fans out per-agent, but one agent owns
+  // many conversations. The backend stamps the originating conversation id; drop
+  // an event whose id doesn't match this conversation so a recall/saved chip from
+  // conversation A never paints into conversation B (another tab, same agent).
+  // Only excludes when BOTH ids are known — a brand-new conversation has no
+  // backendConversationId until its first reply, so its first turn still shows
+  // live (back-compat with events that carry no conversation_id).
+  function belongsToConversation(data, conv) {
+    return !(data.conversation_id && conv.backendConversationId
+      && data.conversation_id !== conv.backendConversationId)
+  }
+
   /**
    * Insert a live "memories used" recall block from the `memory_recalled` SSE
    * event so the chip shows DURING the turn (previously only after a page
@@ -412,6 +424,7 @@ export const useChatStore = defineStore('chat', () => {
     // lands in the wrong open conversation.
     if (!conv || !isStreaming.value) return
     if (agentName && conv.agentName && agentName !== conv.agentName) return
+    if (!belongsToConversation(data, conv)) return
     const block = {
       id: `mem-live-${crypto.randomUUID()}`,
       role: 'user',
@@ -446,6 +459,7 @@ export const useChatStore = defineStore('chat', () => {
     const conv = activeConversation.value
     if (!conv) return
     if (agentName && conv.agentName && agentName !== conv.agentName) return
+    if (!belongsToConversation(data, conv)) return
     // Transition: update the existing item in place (status / arriving record_id).
     for (const m of conv.messages) {
       if (!m.memorySaved) continue

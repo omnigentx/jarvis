@@ -383,9 +383,9 @@ class LadybugStore:
         Hub entities — mentioned by >= ``hub_max_df`` of the owner's active
         memories (e.g. the user's own name, which co-occurs with nearly every
         personal fact) — are SKIPPED: anchoring on them re-introduces the
-        tangential pulls this replaces. (Measured 2026-06-22: 'Nguyễn Văn Phúc'
-        at 64% df dragged an AI-career memory into a baby-age query via seed
-        co-occurrence.) Returns [] when the query names no non-hub entity → the
+        tangential pulls this replaces. (Measured 2026-06-22: the owner's own
+        name at 64% df dragged an unrelated career memory into a different topic's
+        query via seed co-occurrence.) Returns [] when the query names no non-hub entity → the
         caller falls back to dense + FTS only. One hop (entity → mentioning
         memory): on the bipartite MENTIONS graph deeper walks just re-hit hubs."""
         qn = f" {_norm(query)} "
@@ -433,8 +433,8 @@ class LadybugStore:
 
     def graph_dump(self, *, owner: str, limit: int = 400) -> dict:
         """Owner-scoped KNOWLEDGE GRAPH for the UI: entity nodes connected by
-        typed RELATES edges, i.e. (Người dùng)-[thích]->(phở),
-        (Người dùng)-[làm việc tại]->(Techcombank). Built from the triples
+        typed RELATES edges, i.e. (User)-[likes]->(tea),
+        (User)-[works at]->(AcmeCorp). Built from the triples
         projected from each memory's ``relations_json``. Returns ``{nodes,
         edges}``; a node is ``subject`` (the user hub) when it is ever a relation
         source, else ``object``. Duplicate triples collapse to one edge."""

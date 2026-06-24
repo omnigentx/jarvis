@@ -3,8 +3,8 @@
  * MemoryGraph — the agent's memory as a KNOWLEDGE GRAPH.
  *
  * Renders GET /api/agents/{name}/memory-graph: entity nodes connected by typed
- * RELATES edges — (Người dùng)-[thích]->(phở), (Người dùng)-[làm việc tại]->
- * (Techcombank). The user hub ('subject') sits at the centre; leaves are
+ * RELATES edges — (User)-[likes]->(tea), (User)-[works at]->
+ * (AcmeCorp). The user hub ('subject') sits at the centre; leaves are
  * 'object' entities. Each edge is labelled with its predicate, so the graph
  * reads like a property-graph DB rather than a blob of memory text.
  *

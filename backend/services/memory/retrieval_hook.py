@@ -189,10 +189,15 @@ def _emit_recall_block(owner: str, fresh) -> None:
     try:
         from services.activity_stream import activity_stream_manager
         from services.retrieval.contracts import lanes_of
+        from services.sse_progress import current_conversation_id
         activity_stream_manager.broadcast({
             "agent_name": owner,
             "event_type": "memory_recalled",
             "data": {
+                # Route to the originating conversation: the stream fans out
+                # per-agent, and one agent owns many conversations, so the UI
+                # must drop a recall block that isn't this conversation's.
+                "conversation_id": current_conversation_id.get() or None,
                 "content": _render_block(fresh),
                 "recall_lanes": [lanes_of(getattr(e, "scores", None)) for e in fresh],
                 "recall_scores": [_score_dict(e) for e in fresh],

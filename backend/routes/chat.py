@@ -437,8 +437,12 @@ async def chat_stream(raw_request: Request, _=Depends(verify_api_key)):
         # Tag every LLM call this request makes with ``request_id`` so the
         # always-on token-persistence hook (attached at app startup) can
         # write rows the dashboard can correlate back to this request.
-        from services.sse_progress import current_run_id
+        from services.sse_progress import current_conversation_id, current_run_id
         _run_token = current_run_id.set(request_id)
+        # Stamp the conversation so memory recall/saved SSE can be routed to the
+        # right conversation in the UI (one agent owns many conversations). The
+        # async extractor task spawned during the turn inherits this ContextVar.
+        _conv_token = current_conversation_id.set(conversation_id or "")
         try:
             original_hooks = {}
             progress_hooks = create_progress_hooks(request_id, session_id=conversation_id)
@@ -594,6 +598,7 @@ async def chat_stream(raw_request: Request, _=Depends(verify_api_key)):
                 pass
         finally:
             current_run_id.reset(_run_token)
+            current_conversation_id.reset(_conv_token)
 
     asyncio.create_task(run_chat())
     

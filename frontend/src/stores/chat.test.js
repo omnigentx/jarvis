@@ -126,6 +126,51 @@ test('memory_saved is ignored for a different agent', () => {
   assert.equal(savedBlock(s), undefined)
 })
 
+// ── conversation scoping: drop memory SSE that belongs to ANOTHER conversation ──
+// (one agent owns many conversations; the backend stamps the originating id)
+test('memory_recalled is dropped when conversation_id != the active conversation', () => {
+  const s = useChatStore()
+  startStreamingTurn(s)
+  s.activeConversation.backendConversationId = 'conv-A'
+  s.addMemoryRecallBlock({ ...recallData(), conversation_id: 'conv-B' }, 'Jarvis')
+  assert.ok(!s.activeConversation.messages.some(m => (m.content || '').includes(MARKER)),
+    'recall from another conversation must not paint here')
+})
+
+test('memory_recalled is inserted when conversation_id matches', () => {
+  const s = useChatStore()
+  startStreamingTurn(s)
+  s.activeConversation.backendConversationId = 'conv-A'
+  s.addMemoryRecallBlock({ ...recallData(), conversation_id: 'conv-A' }, 'Jarvis')
+  assert.ok(s.activeConversation.messages.some(m => (m.content || '').includes(MARKER)))
+})
+
+test('memory_recalled still shows on a fresh conversation (no backendConversationId yet)', () => {
+  const s = useChatStore()
+  startStreamingTurn(s)               // backendConversationId is null on a new conv
+  s.addMemoryRecallBlock({ ...recallData(), conversation_id: 'conv-A' }, 'Jarvis')
+  assert.ok(s.activeConversation.messages.some(m => (m.content || '').includes(MARKER)),
+    'first turn (id not resolved yet) is back-compat: still shows')
+})
+
+test('memory_saved is dropped when conversation_id != the active conversation', () => {
+  const s = useChatStore()
+  s.createConversation('Jarvis')
+  s.addUserMessage('hi')
+  s.activeConversation.backendConversationId = 'conv-A'
+  s.addMemorySavedBlock(saved('c1', 'saved', { record_id: 'r1', conversation_id: 'conv-B' }), 'Jarvis')
+  assert.equal(savedBlock(s), undefined, 'saved chip from another conversation must not paint here')
+})
+
+test('memory_saved is inserted when conversation_id matches', () => {
+  const s = useChatStore()
+  s.createConversation('Jarvis')
+  s.addUserMessage('hi')
+  s.activeConversation.backendConversationId = 'conv-A'
+  s.addMemorySavedBlock(saved('c1', 'saved', { record_id: 'r1', conversation_id: 'conv-A' }), 'Jarvis')
+  assert.ok(savedBlock(s), 'matching conversation shows the chip')
+})
+
 // ── inline chip actions: optimistic flip + revert-on-error (real apiFetch → fetch) ──
 function stubFetch(impl) {
   const calls = []

@@ -63,8 +63,8 @@ async def test_recency_ranks_newer_fact_first_on_happy_path(db):
     # rank first on the FAST/happy path — recency now runs there, not only on
     # escalation. FTS-only path (dense unavailable), no embeddings needed.
     NOW = 1_000_000_000.0
-    for rid, content, ca in [("old", "user works at Techcombank office", NOW - 120 * 86400),
-                             ("new", "user works at FPT office", NOW - 1 * 86400)]:
+    for rid, content, ca in [("old", "user works at AcmeCorp office", NOW - 120 * 86400),
+                             ("new", "user works at NovaCorp office", NOW - 1 * 86400)]:
         db.add(MemoryRecord(id=rid, owner_agent_name="Jarvis", memory_type="semantic",
                             subject_scope="user", content=content, normalized_content=content,
                             status="active", authority="user_confirmed", confidence=0.9,
@@ -77,7 +77,7 @@ async def test_recency_ranks_newer_fact_first_on_happy_path(db):
                               now=NOW, agent_requested=True)
     ids = [e.record_id for e in res.evidence]
     assert "new" in ids and "old" in ids
-    assert ids.index("new") < ids.index("old")     # newer (FPT) outranks older (Techcombank)
+    assert ids.index("new") < ids.index("old")     # newer (NovaCorp) outranks older (AcmeCorp)
 
 
 async def test_level1_fts_retrieval_and_telemetry(db):

@@ -59,7 +59,7 @@ Relationship tables:
 - `(Memory)-[:ABOUT]->(Entity)` — the memory's subject.
 - `(Entity)-[:RELATES {type, valid_from, source_memory}]->(Entity)` — e.g.
   `User -[:WORKS_AT {valid_from}]-> Org`. **ADD-only:** multiple dated edges
-  coexist (Techcombank@t1, FPT@t2); read-time recency picks current.
+  coexist (AcmeCorp@t1, NovaCorp@t2); read-time recency picks current.
 
 Vector index: HNSW on `Memory.embedding` (cosine), via `CREATE_VECTOR_INDEX`.
 
@@ -136,9 +136,9 @@ call is a future cost optimization.
 - **No write-time curator call.** On persist: cheap **exact-dedup** (skip if
   `normalized_content + subject_scope` already exists). Otherwise ADD a dated
   node/edge.
-- Changed facts (Techcombank→FPT) → BOTH kept, dated. **Resolve at READ** via
+- Changed facts (AcmeCorp→NovaCorp) → BOTH kept, dated. **Resolve at READ** via
   recency-weighted ranking; "where did I used to work" still answerable
-  (lossless), "where do I work now" ranks FPT.
+  (lossless), "where do I work now" ranks NovaCorp.
 - Near-dup accumulation is bounded by: cleaner LLM-extracted facts +
   exact-dedup + entity linking collapsing references + **retention pruning**
   (already exists). Kills the v1 near-dup-candidate spam at the source.

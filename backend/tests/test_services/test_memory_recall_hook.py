@@ -101,6 +101,25 @@ async def test_provenance_channel_and_sentinel(wired):
     assert rh.is_injected_memory(_user("just a normal message")) is False
 
 
+async def test_recall_sse_carries_conversation_id(wired):
+    """The memory_recalled SSE must stamp the originating conversation so the UI
+    can drop a recall block belonging to another conversation of the same agent.
+    The id comes from the current_conversation_id ContextVar set by the chat route."""
+    import services.activity_stream as as_mod
+    from services.sse_progress import current_conversation_id
+    captured = []
+    wired.setattr(as_mod.activity_stream_manager, "broadcast", lambda ev: captured.append(ev))
+    tok = current_conversation_id.set("conv-XYZ")
+    try:
+        agent = _Agent()
+        await _run(agent, "what is my job?", [_ev("semantic", "User is a Software Engineer")], wired)
+    finally:
+        current_conversation_id.reset(tok)
+    recalled = [e for e in captured if e.get("event_type") == "memory_recalled"]
+    assert recalled, "a memory_recalled event was broadcast"
+    assert recalled[0]["data"]["conversation_id"] == "conv-XYZ"
+
+
 async def test_change_gate_skips_same_set(wired):
     agent = _Agent()
     ev = [_ev("semantic", "User is a Software Engineer")]
