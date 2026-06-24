@@ -111,17 +111,30 @@ jobs:
           # can verify the process is up without needing a bearer token.
           # /api/setup/status would work pre-master-key (dev mode) but starts
           # returning 401 once core_auth.JARVIS_API_KEY is populated.
-          echo "Waiting for backend to start (up to 120s)..."
-          for i in $(seq 1 24); do
+          # 360s window: a FIRST deploy with a new embedding/reranker model
+          # downloads ~1.2GB from HF Hub AND re-embeds the store at boot, which
+          # blocks startup well past the old 120s (the v2.7.0 Qwen swap false-
+          # failed here while the backend was in fact coming up). A crashed
+          # container fails fast below, so the long window only ever waits on a
+          # genuinely-slow-but-healthy boot.
+          echo "Waiting for backend to start (up to 360s; first deploy downloads models)..."
+          for i in $(seq 1 72); do
             code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/api/setup/auth/probe || echo 000)
             if [ "$code" = "200" ]; then
               echo "✅ Backend up after $((i*5))s (auth/probe=200)"
               break
             fi
-            echo "  Attempt $i/24 — auth/probe=$code, waiting 5s..."
+            # Fast-fail on a real crash instead of waiting out the whole window.
+            if docker compose ps jarvis-backend 2>/dev/null | grep -qiE "exit|dead"; then
+              echo "❌ jarvis-backend exited (crash) — failing fast."
+              docker compose ps
+              docker compose logs --tail=150 jarvis-backend
+              exit 1
+            fi
+            echo "  Attempt $i/72 — auth/probe=$code, waiting 5s..."
             sleep 5
-            if [ "$i" -eq 24 ]; then
-              echo "⚠️ Backend not ready after 120s — collecting logs..."
+            if [ "$i" -eq 72 ]; then
+              echo "⚠️ Backend not ready after 360s — collecting logs..."
               echo "--- Docker containers status ---"
               docker compose ps
               echo ""
