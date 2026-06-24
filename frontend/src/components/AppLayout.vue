@@ -125,8 +125,8 @@ useSSEConnection(buildSSEUrl('/api/scheduler/stream'), {
       if (data.type === 'new_notification') {
         unreadCount.value += 1
         document.title = unreadCount.value > 0
-          ? `(${unreadCount.value}) ${route.meta.title || 'Dashboard'} — My Jarvis`
-          : `${route.meta.title || 'Dashboard'} — My Jarvis`
+          ? `(${unreadCount.value}) ${route.meta.title || 'Dashboard'} — Jarvis`
+          : `${route.meta.title || 'Dashboard'} — Jarvis`
       }
     } catch (_) {}
   },
