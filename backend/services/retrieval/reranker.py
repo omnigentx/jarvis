@@ -34,6 +34,40 @@ class Reranker(ABC):
         """Relevance score per document (higher = more relevant), SAME order as
         ``documents``."""
 
+    def is_loaded(self) -> bool:
+        """True once the model is warm in memory. Default True (no lazy cost);
+        only the lazy LM rerankers override it. The recall path checks this so it
+        NEVER blocks a turn on a cold model load — it skips to fusion order until
+        the model is warm."""
+        return True
+
+    def warm(self) -> None:
+        """Block-load the model. Call OFF the request path (boot / background)."""
+
+    def warm_async(self) -> None:
+        """Kick off a ONE-SHOT background load — idempotent, non-blocking. Safe to
+        call from a request path: returns immediately, the model loads in a daemon
+        thread, and the caller keeps fusion order until ``is_loaded()`` flips."""
+        if self.is_loaded():
+            return
+        import threading
+        lock = self.__dict__.setdefault("_warm_lock", threading.Lock())
+        with lock:
+            if self.__dict__.get("_warming") or self.is_loaded():
+                return
+            self.__dict__["_warming"] = True
+
+        def _bg() -> None:
+            try:
+                self.warm()
+                logger.info("[MEMORY] reranker warm complete (background)")
+            except Exception as exc:  # noqa: BLE001 — warm is best-effort
+                logger.warning("[MEMORY] reranker background warm failed: %s", exc)
+            finally:
+                self.__dict__["_warming"] = False
+
+        threading.Thread(target=_bg, name="reranker-warm", daemon=True).start()
+
 
 class NullReranker(Reranker):
     """Used when the reranker dep/model is unavailable — callers check
@@ -61,6 +95,12 @@ class CrossEncoderReranker(Reranker):
 
     def is_available(self) -> bool:
         return True
+
+    def is_loaded(self) -> bool:
+        return self._model is not None
+
+    def warm(self) -> None:
+        self._ensure_model()
 
     def _ensure_model(self):
         if self._model is not None:
@@ -114,6 +154,12 @@ class Qwen3Reranker(Reranker):
 
     def is_available(self) -> bool:
         return True
+
+    def is_loaded(self) -> bool:
+        return self._model is not None
+
+    def warm(self) -> None:
+        self._ensure_model()
 
     def _ensure_model(self):
         if self._model is not None:

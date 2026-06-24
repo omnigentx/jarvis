@@ -154,6 +154,14 @@ class RetrievalOrchestrator:
         Keep ``rerank_min_score`` low (0.005) so a weak-but-relevant hit survives."""
         if not fused or self._reranker is None or not self._reranker.is_available():
             return fused
+        # NEVER block a recall turn on the reranker's cold load. The 0.6B causal
+        # LM's first load is slow (~tens of s on CPU); if it isn't warm yet, kick
+        # off a one-shot background load and keep fusion order for THIS turn. The
+        # lifespan eager-warms it at boot, so this skip window is normally empty —
+        # it only catches a turn that races the warm right after startup.
+        if hasattr(self._reranker, "is_loaded") and not self._reranker.is_loaded():
+            self._reranker.warm_async()
+            return fused
         top_k = int(getattr(self.settings, "rerank_top_k", 20) or 20)
         floor = float(getattr(self.settings, "rerank_min_score", 0.0) or 0.0)
         # Tail beyond top_k is intentionally DROPPED from recall (not just from

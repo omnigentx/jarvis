@@ -485,6 +485,16 @@ async def lifespan(app: FastAPI):
             if _gw:
                 logger.warning("[MEMORY] recall gate may be mistuned for the embedding "
                                "model: %s", _gw)
+            # Eager-warm the reranker OFF the request path. It's a 0.6B causal LM
+            # whose first cold-load is slow (~tens of s on CPU). Warming it in a
+            # daemon thread at boot means the FIRST chat never blocks on it — the
+            # recall path keeps fusion order until it's ready (see _apply_rerank).
+            if getattr(_mem_cfg, "reranker_enabled", False):
+                from services.retrieval.reranker import get_shared_reranker
+                get_shared_reranker(
+                    getattr(_mem_cfg, "rerank_model", None) or "Qwen/Qwen3-Reranker-0.6B"
+                ).warm_async()
+                logger.info("[MEMORY] reranker eager-warm kicked off (background)")
     except Exception:
         logger.exception("Failed to start memory index worker")
 

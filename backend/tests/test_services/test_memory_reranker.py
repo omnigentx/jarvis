@@ -57,6 +57,36 @@ def test_rerank_failure_keeps_fusion_order():
     assert out is fused                               # best-effort: never break recall
 
 
+def test_rerank_skips_and_warms_when_model_not_loaded_yet():
+    """The cold reranker must NEVER block a recall turn: until is_loaded() flips,
+    recall keeps fusion order and a ONE-SHOT background warm is kicked off — the
+    first chat after a fresh boot can't hang on the ~tens-of-seconds CPU load."""
+    calls = {"warm": 0, "rerank": 0}
+
+    class _Cold:
+        def is_available(self): return True
+        def is_loaded(self): return False
+        def warm_async(self): calls["warm"] += 1
+        def rerank(self, q, docs): calls["rerank"] += 1; return [0.0] * len(docs)
+
+    fused = [_ev("a", 0.05, "x"), _ev("b", 0.01, "y")]
+    out = RetrievalOrchestrator._apply_rerank(
+        _stub(_Cold()), RetrievalRequest(owner_agent_name="J", query="q"), fused)
+    assert out is fused              # fusion order kept — no reorder, no block
+    assert calls["warm"] == 1        # background warm kicked off
+    assert calls["rerank"] == 0      # rerank NOT called (would cold-load → block)
+
+
+def test_qwen3_warm_async_is_nonblocking_and_idempotent():
+    from services.retrieval.reranker import Qwen3Reranker
+    rr = Qwen3Reranker("Qwen/Qwen3-Reranker-0.6B")
+    assert rr.is_loaded() is False
+    rr.warm_async()                  # returns immediately; bg thread can't load
+    rr.warm_async()                  # idempotent — no second thread, no raise
+    import time; time.sleep(0.2)     # let the bg thread fail fast (not main process)
+    assert rr.is_loaded() is False   # never loaded here, and never blocked/crashed
+
+
 def test_apply_policy_orders_by_reranker_over_rrf():
     a = _ev("a", 0.9, "x"); a.scores.reranker = 0.1   # high rrf, low rerank
     b = _ev("b", 0.1, "y"); b.scores.reranker = 0.9   # low rrf, high rerank

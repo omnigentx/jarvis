@@ -2,6 +2,9 @@
 # System deps (apt + npm + uv + gitnexus) live in the public base image so CI
 # doesn't re-run apt-get / npm install on every build. Rebuild + bump the tag
 # only when Dockerfile.base changes — see Dockerfile.base header for steps.
+# NOTE: bump to :1.4.0 ONLY after building + pushing that base (it pre-bakes the
+# Qwen3 embedder+reranker — see Dockerfile.base 1.4.0). Until then 1.3.0 is live;
+# the lazy reranker warm is handled at runtime (server lifespan eager-warm).
 ARG BASE_IMAGE=omnigentx/jarvis-backend-base:1.3.0
 FROM ${BASE_IMAGE} AS base
 
