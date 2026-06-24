@@ -75,10 +75,12 @@ class MemorySettings:
     retention_retrieval_runs_days: int = 30
     # Recall relevance gate: drop a dense hit whose cosine similarity to the query
     # is below this (distance = 1 - similarity). RECALL-oriented, NOT precision.
-    # Grid-searched 2026-06-23 with the real Qwen3-Embedding + bge reranker over a
-    # 78-query labelled set (on-topic clear/indirect + off-topic clear/keyword-
-    # overlap, real memories): on-topic recall@5 is a FLAT 100% across [0.05, 0.39]
-    # and only falls off from 0.40 (the cliff). The dense gate therefore does NOT
+    # Grid-searched 2026-06-23 with the real Qwen3-Embedding over a 78-query
+    # labelled set (on-topic clear/indirect + off-topic clear/keyword-overlap, real
+    # memories): on-topic recall@5 is a FLAT 100% across [0.05, 0.39] and only falls
+    # off from 0.40 (the cliff). This is a DENSE-lane property measured PRE-rerank-
+    # gate (the gate applies before reranking), so it holds regardless of which
+    # reranker ships — the bge→Qwen3 swap does not move it. The dense gate does NOT
     # bound recall anywhere in that band — it is a candidate-pool / false-positive
     # knob. 0.30 sits mid-plateau: ~0.10 margin below the 0.40 cliff (robust to
     # unseen / semantic-only phrasings the labelled set under-represents) while

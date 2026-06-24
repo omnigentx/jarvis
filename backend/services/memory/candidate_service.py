@@ -345,5 +345,5 @@ def _emit_saved(cand: MemoryCandidate, *, status: str, record_id: str | None = N
                 "sensitive": sensitive,
             },
         })
-    except Exception:  # noqa: BLE001 — never break a write over a UI mirror
-        pass
+    except Exception as exc:  # noqa: BLE001 — never break a write over a UI mirror
+        logger.debug("[MEMORY] memory_saved SSE emit failed: %s", exc)
