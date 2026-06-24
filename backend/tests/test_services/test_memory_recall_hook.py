@@ -215,7 +215,8 @@ def test_recall_lanes_channel_survives_to_display(tmp_path):
 
     def _ev_scored(rid, excerpt, *, authority="user_confirmed", confidence=0.9, **ranks):
         sc = EvidenceScores(**ranks)
-        sc.final = 0.03 if ranks.get("dense_rank") else 0.016   # raw RRF-ish
+        sc.rrf = 0.03 if ranks.get("dense_rank") else 0.016        # raw RRF fusion
+        sc.reranker = 0.88 if ranks.get("dense_rank") else 0.21    # cross-encoder
         return Evidence(
             evidence_id=f"{evidence_kind('semantic')}:{rid}", record_id=rid,
             owner_agent_name="Jarvis", memory_type="semantic", excerpt=excerpt,
@@ -239,9 +240,10 @@ def test_recall_lanes_channel_survives_to_display(tmp_path):
     lines = [l for l in display[0]["content"].split("\n") if l.startswith("- ")]
     assert len(lines) == len(lanes) == 2
 
-    # RAW scores ride the same way (no %): rel = RRF, conf = fact-truth, authority.
+    # RAW scores ride the same way (no %): rrf = lane fusion, rerank = cross-encoder,
+    # conf = fact-truth, authority. Both scores survive persist→display separately.
     scores = display[0]["recall_scores"]
     assert scores == [
-        {"rel": 0.03, "conf": 0.9, "authority": "user_confirmed"},
-        {"rel": 0.016, "conf": 0.6, "authority": "inferred"},
+        {"rrf": 0.03, "rerank": 0.88, "conf": 0.9, "authority": "user_confirmed"},
+        {"rrf": 0.016, "rerank": 0.21, "conf": 0.6, "authority": "inferred"},
     ]

@@ -558,7 +558,7 @@
       "dense": "Khớp vector (ngữ nghĩa)",
       "graph": "Đồng xuất hiện trên đồ thị tri thức (MENTIONS) — kéo về qua entity chung"
     },
-    "scoreHint": "rrf = điểm khớp truy xuất thô (cao = khớp câu hỏi hơn). conf = độ tin fact đúng (0–1). ✓ = đã xác minh (user xác nhận hoặc tool kiểm chứng).",
+    "scoreHint": "rrf = điểm gộp lane thô (keyword + vector). rerank = điểm cross-encoder chấm chung (query, memory) — thứ tự quyết định, gần 1.0 khi câu hỏi gần như lặp lại memory. conf = độ tin fact đúng (0–1). ✓ = đã xác minh (user xác nhận hoặc tool kiểm chứng).",
     "approvalReason": {
       "unverified_evidence": "Vẫn cần duyệt dù đã bật tự lưu: không xác minh được bằng chứng cho ký ức này trong tin nhắn của bạn, nên nó không được tự lưu.",
       "secret": "Cần duyệt: nội dung có vẻ nhạy cảm/bí mật, loại này không bao giờ tự lưu."
@@ -584,7 +584,15 @@
     "recentRetrievals": "Lần tìm gần đây",
     "confirmDelete": "Xóa vĩnh viễn ký ức này?",
     "graph": "Đồ thị ký ức",
-    "restore": "Khôi phục"
+    "restore": "Khôi phục",
+    "saved": {
+      "remembered": "đã nhớ",
+      "pending": "chờ duyệt",
+      "undo": "Bỏ nhớ",
+      "approve": "Duyệt",
+      "reject": "Bỏ",
+      "archived": "đã bỏ"
+    }
   },
   "chat": {
     "memoryUsed": "ký ức đã dùng",

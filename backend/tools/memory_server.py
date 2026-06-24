@@ -49,7 +49,15 @@ def memory_search(query: str, types: list[str] | None = None,
     """Search YOUR durable memory (episodic history, decisions, preferences,
     procedures). Returns {"memories": [{"id", "type", "text"}, ...]} ordered by
     relevance — ``text`` is the content to use; pass ``id`` to memory_fetch for
-    the full source. ``types`` optionally restricts to e.g. ["episodic","semantic"]."""
+    the full source. ``types`` optionally restricts to e.g. ["episodic","semantic"].
+
+    QUERY PHRASING (matters — recall is embedding-based): write ``query`` as a
+    SHORT, NATURAL question that NAMES the subject, the way a person asks it
+    ("what is the user's job?", "the user's cat's name"). Do NOT stuff abstract
+    keywords ("profession goal learning skills current user") — a keyword pile
+    embeds far from the concrete stored facts and returns nothing. For a BROAD
+    need, issue SEVERAL focused searches (one concept each: job, skills,
+    certifications) and merge — not one long catch-all query."""
     owner = _owner()
     if not owner:
         return {"error": "no bound agent identity; memory unavailable"}

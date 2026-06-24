@@ -332,6 +332,11 @@ else:
       call memory_remember to persist it (it self-gates / awaits approval).
     - Use memory_search whenever personalization would improve the answer
       (e.g. trip planning → search for the user's transport, family, budget).
+    - PHRASE the query as a SHORT, NATURAL question that names the subject
+      ("what is the user's job?"), NOT a pile of abstract keywords — recall is
+      embedding-based, so a keyword-stuffed query matches nothing. For a broad
+      need, run SEVERAL focused searches (job, skills, certifications) and merge,
+      rather than one long catch-all query.
 
     OUTPUT FORMAT RULES:
     - Use Markdown when appropriate (heading, bullet, table, code block).

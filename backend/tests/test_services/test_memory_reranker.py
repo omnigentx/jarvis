@@ -63,3 +63,61 @@ def test_apply_policy_orders_by_reranker_over_rrf():
     out = fusion.apply_policy([a, b], now=1000.0)
     assert [e.record_id for e in out] == ["b", "a"]   # reranker is authoritative
     assert out[0].scores.final == 0.9
+
+
+def test_get_reranker_dispatches_by_model(monkeypatch):
+    # qwen name → causal-LM Qwen3Reranker (transformers gate); anything else →
+    # CrossEncoder (sentence-transformers gate). Each gate is mocked True so the
+    # ROUTING is tested independent of which optional libs CI installed. (Lazy:
+    # constructing loads no weights.)
+    from services.retrieval import reranker as rr
+    monkeypatch.setattr(rr, "_have_transformers", lambda: True)
+    monkeypatch.setattr(rr, "_have_st", lambda: True)
+    assert isinstance(rr.get_reranker("Qwen/Qwen3-Reranker-0.6B"), rr.Qwen3Reranker)
+    assert isinstance(rr.get_reranker("BAAI/bge-reranker-v2-m3"), rr.CrossEncoderReranker)
+    assert rr.DEFAULT_RERANKER.startswith("Qwen/")
+
+
+def test_get_reranker_falls_back_when_lib_missing(monkeypatch):
+    # Each path degrades to NullReranker on ITS OWN missing lib — and the Qwen path
+    # is NOT disabled by a missing sentence-transformers (the original CI bug).
+    from services.retrieval import reranker as rr
+    monkeypatch.setattr(rr, "_have_transformers", lambda: True)
+    monkeypatch.setattr(rr, "_have_st", lambda: False)
+    assert isinstance(rr.get_reranker("Qwen/Qwen3-Reranker-0.6B"), rr.Qwen3Reranker)
+    assert isinstance(rr.get_reranker("BAAI/bge-reranker-v2-m3"), rr.NullReranker)
+    monkeypatch.setattr(rr, "_have_transformers", lambda: False)
+    assert isinstance(rr.get_reranker("Qwen/Qwen3-Reranker-0.6B"), rr.NullReranker)
+
+
+def test_qwen3_reranker_scoring_math():
+    # Covers the yes/no-logit scaffold WITHOUT weights: left-pad to max len, take
+    # the LAST-token logits, softmax over [no, yes], return P(yes) per doc IN ORDER.
+    import math
+    import types
+    import torch
+    from services.retrieval import reranker as rr
+    r = rr.Qwen3Reranker("Qwen/fake")
+    r._yes, r._no = 1, 0           # token ids for "yes"/"no"
+    r._pre, r._suf = [9], [9]
+    r._device = "cpu"
+
+    class _Tok:
+        pad_token_id = 0
+        def encode(self, text, **kw): return [7] * (len(text) % 4 + 1)   # varied lengths
+
+    class _Model:
+        def __call__(self, input_ids, attention_mask):
+            b, t = input_ids.shape
+            lg = torch.zeros(b, t, 10)
+            for i in range(b):
+                lg[i, -1, 1] = float(i)          # yes-logit = row index → P(yes)=sigmoid(i)
+            return types.SimpleNamespace(logits=lg)
+
+    r._tok, r._model = _Tok(), _Model()           # bypass _ensure_model (model is set)
+    scores = r.rerank("q", ["a", "bb", "ccc", "dddd"])
+    assert len(scores) == 4                        # one score per doc, same order
+    for i, s in enumerate(scores):                 # softmax([0, i])[1] == sigmoid(i)
+        assert abs(s - 1.0 / (1.0 + math.exp(-i))) < 1e-4
+    assert scores == sorted(scores)                # monotonic in row order (order preserved)
+    assert r.rerank("q", []) == []                 # empty → empty

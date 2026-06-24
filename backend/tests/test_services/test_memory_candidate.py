@@ -27,6 +27,60 @@ def _payload(content="answer in Vietnamese", **kw):
     return base
 
 
+@pytest.fixture()
+def saved_events(monkeypatch):
+    """Capture the live `memory_saved` SSE the chat chip consumes."""
+    import services.activity_stream as asm
+    evs = []
+    monkeypatch.setattr(asm.activity_stream_manager, "broadcast",
+                        lambda ev: evs.append(ev))
+    return evs                        # live list, grows as events fire
+
+
+def _saved(evs):
+    return [e for e in evs if e.get("event_type") == "memory_saved"]
+
+
+def test_memory_saved_event_auto(db, saved_events):
+    c = cnd.create_candidate(db, owner_agent_name="Jarvis", candidate_type="preference",
+                             payload=_payload(), now=100.0)
+    saved = _saved(saved_events)
+    assert len(saved) == 1
+    d = saved[0]["data"]
+    assert d["status"] == "saved" and d["candidate_id"] == c.id and d["record_id"]
+    assert d["content"] == "answer in Vietnamese" and d["sensitive"] is False
+
+
+def test_memory_saved_event_pending_then_approved(db, saved_events):
+    c = cnd.create_candidate(db, owner_agent_name="Jarvis", candidate_type="fact",
+                             payload=_payload(content="we picked Postgres", memory_type="semantic"),
+                             now=100.0, requires_approval=True)
+    saved = _saved(saved_events)
+    assert [e["data"]["status"] for e in saved] == ["pending"]
+    assert saved[0]["data"]["record_id"] is None      # not active yet
+    cnd.approve_candidate(db, c.id, now=200.0)
+    saved = _saved(saved_events)
+    assert saved[-1]["data"]["status"] == "saved" and saved[-1]["data"]["record_id"]
+    assert saved[-1]["data"]["candidate_id"] == c.id   # SAME id → chip updates in place
+
+
+def test_memory_saved_event_rejected(db, saved_events):
+    c = cnd.create_candidate(db, owner_agent_name="Jarvis", candidate_type="fact",
+                             payload=_payload(content="we picked Postgres", memory_type="semantic"),
+                             now=100.0, requires_approval=True)
+    cnd.reject_candidate(db, c.id, now=200.0)
+    assert _saved(saved_events)[-1]["data"]["status"] == "rejected"
+
+
+def test_memory_saved_event_masks_secret(db, saved_events):
+    # A secret forces approval (pending) AND must never ride the SSE in cleartext.
+    cnd.create_candidate(db, owner_agent_name="Jarvis", candidate_type="fact",
+                         payload=_payload(content="db password: hunter2secret"), now=100.0)
+    d = _saved(saved_events)[0]["data"]
+    assert d["status"] == "pending" and d["sensitive"] is True
+    assert "hunter2secret" not in d["content"] and "🔒" in d["content"]
+
+
 def test_deterministic_candidate_auto_persists(db):
     c = cnd.create_candidate(db, owner_agent_name="Jarvis", candidate_type="preference",
                              payload=_payload(), now=100.0)
