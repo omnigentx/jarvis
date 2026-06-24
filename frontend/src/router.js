@@ -162,7 +162,7 @@ const router = createRouter({
 
 // Update page title
 router.afterEach((to) => {
-  document.title = `${to.meta.title || 'Dashboard'} — Jarvis v2`
+  document.title = `${to.meta.title || 'Dashboard'} — Jarvis`
 })
 
 export default router
