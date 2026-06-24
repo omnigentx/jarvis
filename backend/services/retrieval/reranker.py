@@ -184,15 +184,17 @@ def _have_transformers() -> bool:
     return importlib.util.find_spec("transformers") is not None
 
 
-_WARNED = False
+_WARNED: set[str] = set()
 
 
 def _warn_once(reason: str) -> None:
-    global _WARNED
-    if not _WARNED:
-        _WARNED = True
-        logger.warning("[MEMORY] %s not installed — reranker disabled; recall keeps "
-                       "fusion order. Install the 'memory' extra.", reason)
+    # Key by reason so a missing-transformers warning never swallows a separate
+    # missing-sentence-transformers one (and vice versa).
+    if reason in _WARNED:
+        return
+    _WARNED.add(reason)
+    logger.warning("[MEMORY] %s not installed — reranker disabled; recall keeps "
+                   "fusion order. Install the 'memory' extra.", reason)
 
 
 def get_reranker(model_name: str = DEFAULT_RERANKER) -> Reranker:
