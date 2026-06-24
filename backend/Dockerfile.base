@@ -30,6 +30,16 @@
 #   docker push omnigentx/jarvis-backend-base:${VERSION}
 #
 # Version log:
+#   1.4.0 — ADD the new default memory models alongside bge-m3:
+#           Qwen3-Embedding-0.6B + Qwen3-Reranker-0.6B (~2.4GB more).
+#           WHY: the reranker is a 0.6B causal LM that loaded lazily on the FIRST
+#           chat (~65s cold download+load on CPU), blocking the turn before any
+#           tool call; and the HF cache lives in the container layer, so EVERY
+#           deploy re-downloaded it. Baking both here = no runtime download; the
+#           lifespan also eager-warms the reranker so the first chat never blocks.
+#           bge-m3 is kept (still selectable as a non-default embedding_model).
+#           Built as a thin overlay on 1.3.0 (FROM base:1.3.0 + the hf download
+#           below) since the host is arm64; this from-scratch recipe is equivalent.
 #   1.3.0 — pre-download the default embedding model (BAAI/bge-m3, ~2.3GB) into
 #           the HF cache so the memory dense lane + knowledge graph load INSTANTLY
 #           at runtime (no first-request download, survives container recreate).
@@ -96,17 +106,22 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uvx /bin/uvx
 RUN uvx --from "scrapling[ai]" scrapling install \
     && rm -rf /root/.cache/uv
 
-# Pre-download the DEFAULT embedding model (BAAI/bge-m3, ~2.3GB) into the HF cache
-# so the memory subsystem's dense lane + knowledge graph load INSTANTLY at runtime
-# — no first-request download, and it survives container recreation (baked into
-# this layer, exactly like the Playwright browsers above). It's a large, STABLE
-# runtime asset, so the base is the right home: built once, every app image
-# inherits it, app builds stay fast. FlagEmbedding (the loader) stays an app dep
-# (Dockerfile deps stage, `--extra memory`); a different `embedding_model` in
-# settings still works — it just downloads on first use (only the default is
+# Pre-download the memory models (bge-m3 + the new defaults Qwen3-Embedding-0.6B +
+# Qwen3-Reranker-0.6B) into the HF cache so the dense lane, knowledge graph, AND the
+# precision reranker load INSTANTLY at runtime — no first-request download, and it
+# survives container recreation (baked into this layer, exactly like the Playwright
+# browsers above). Critical for the reranker: it's a 0.6B causal LM whose lazy
+# first-load otherwise stalls the FIRST chat ~65s on CPU (and re-downloads every
+# deploy, since the cache is in the container layer, not a volume). These are
+# large, STABLE runtime assets, so the base is the right home: built once, every
+# app image inherits it, app builds stay fast. transformers + sentence-transformers
+# (the loaders) stay app deps (`--extra memory`); a non-default `embedding_model` /
+# `rerank_model` still works — it just downloads on first use (only defaults are
 # pre-baked). HF_HOME is pinned so the build and the root runtime agree on the
-# cache path. bge-m3 is public (no HF_TOKEN needed; pass one as a build secret if
-# rate-limited).
+# cache path. Both models are public (no HF_TOKEN needed; pass one as a build
+# secret if rate-limited).
 ENV HF_HOME=/root/.cache/huggingface
 RUN uvx --from huggingface_hub hf download BAAI/bge-m3 \
+    && uvx --from huggingface_hub hf download Qwen/Qwen3-Embedding-0.6B \
+    && uvx --from huggingface_hub hf download Qwen/Qwen3-Reranker-0.6B \
     && rm -rf /root/.cache/uv
