@@ -179,21 +179,35 @@ def _have_st() -> bool:
     return importlib.util.find_spec("sentence_transformers") is not None
 
 
+def _have_transformers() -> bool:
+    import importlib.util
+    return importlib.util.find_spec("transformers") is not None
+
+
 _WARNED = False
 
 
+def _warn_once(reason: str) -> None:
+    global _WARNED
+    if not _WARNED:
+        _WARNED = True
+        logger.warning("[MEMORY] %s not installed — reranker disabled; recall keeps "
+                       "fusion order. Install the 'memory' extra.", reason)
+
+
 def get_reranker(model_name: str = DEFAULT_RERANKER) -> Reranker:
-    if not _have_st():
-        global _WARNED
-        if not _WARNED:
-            _WARNED = True
-            logger.warning("[MEMORY] sentence-transformers not installed — reranker "
-                           "disabled; recall keeps fusion order. Install the 'memory' extra.")
-        return NullReranker("sentence-transformers not installed")
-    # Dispatch by model: Qwen3-Reranker is a causal LM (yes/no logit); bge & other
-    # cross-encoders use the sentence-transformers CrossEncoder path.
+    # Dispatch by model, each behind ITS OWN availability gate: Qwen3-Reranker is a
+    # causal LM that needs `transformers` (NOT sentence-transformers); bge & other
+    # cross-encoders use the sentence-transformers CrossEncoder path. Gating the
+    # whole function on `_have_st()` wrongly disabled Qwen whenever ST was missing.
     if _is_qwen(model_name):
+        if not _have_transformers():
+            _warn_once("transformers")
+            return NullReranker("transformers not installed")
         return Qwen3Reranker(model_name)
+    if not _have_st():
+        _warn_once("sentence-transformers")
+        return NullReranker("sentence-transformers not installed")
     return CrossEncoderReranker(model_name)
 
 

@@ -65,13 +65,29 @@ def test_apply_policy_orders_by_reranker_over_rrf():
     assert out[0].scores.final == 0.9
 
 
-def test_get_reranker_dispatches_by_model():
-    # qwen name → causal-LM Qwen3Reranker; anything else → CrossEncoder. (Lazy:
-    # constructing does NOT load the model, so this needs no weights.)
+def test_get_reranker_dispatches_by_model(monkeypatch):
+    # qwen name → causal-LM Qwen3Reranker (transformers gate); anything else →
+    # CrossEncoder (sentence-transformers gate). Each gate is mocked True so the
+    # ROUTING is tested independent of which optional libs CI installed. (Lazy:
+    # constructing loads no weights.)
     from services.retrieval import reranker as rr
+    monkeypatch.setattr(rr, "_have_transformers", lambda: True)
+    monkeypatch.setattr(rr, "_have_st", lambda: True)
     assert isinstance(rr.get_reranker("Qwen/Qwen3-Reranker-0.6B"), rr.Qwen3Reranker)
     assert isinstance(rr.get_reranker("BAAI/bge-reranker-v2-m3"), rr.CrossEncoderReranker)
     assert rr.DEFAULT_RERANKER.startswith("Qwen/")
+
+
+def test_get_reranker_falls_back_when_lib_missing(monkeypatch):
+    # Each path degrades to NullReranker on ITS OWN missing lib — and the Qwen path
+    # is NOT disabled by a missing sentence-transformers (the original CI bug).
+    from services.retrieval import reranker as rr
+    monkeypatch.setattr(rr, "_have_transformers", lambda: True)
+    monkeypatch.setattr(rr, "_have_st", lambda: False)
+    assert isinstance(rr.get_reranker("Qwen/Qwen3-Reranker-0.6B"), rr.Qwen3Reranker)
+    assert isinstance(rr.get_reranker("BAAI/bge-reranker-v2-m3"), rr.NullReranker)
+    monkeypatch.setattr(rr, "_have_transformers", lambda: False)
+    assert isinstance(rr.get_reranker("Qwen/Qwen3-Reranker-0.6B"), rr.NullReranker)
 
 
 def test_qwen3_reranker_scoring_math():
