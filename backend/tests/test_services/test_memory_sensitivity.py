@@ -41,6 +41,13 @@ class TestBareHighEntropyToken:
     def test_short_alphanumeric_is_not_a_token(self):
         assert not has_secret("ref abc123 def456")
 
+    def test_hyphenated_uuid_is_not_flagged(self):
+        # UUIDs are not secrets — the '-' splits them below the 32-run threshold.
+        assert not has_secret("session 550e8400-e29b-41d4-a716-446655440000 expired")
+
+    def test_underscored_record_id_is_not_flagged(self):
+        assert not has_secret("memory mem_01HXYZ7Qpqr8stuvwxyz0123456789ab saved")
+
 
 class TestNoFalsePositivesOnOrdinaryMemories:
     def test_plain_personal_facts_are_normal(self):
