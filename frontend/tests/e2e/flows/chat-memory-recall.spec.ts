@@ -84,7 +84,7 @@ test('memory_recalled paints the chip mid-turn (no reload)', async ({ page }) =>
   const messages = page.getByTestId('chat-messages')
   const chip = messages.locator('.memory-chip')
   await expect(chip).toBeVisible()
-  await expect(chip).toContainText('🧠')
+  await expect(chip.locator('.mc-icon')).toBeVisible()   // memory glyph (line icon)
 
   // Expand → the recalled line + its lane provenance came through the SSE
   // (proves recall_lanes/recall_scores were carried and rendered, not just a

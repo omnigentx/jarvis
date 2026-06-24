@@ -244,7 +244,10 @@ function parsedAgentContent(content) {
         <!-- ── MEMORY-USED CHIP (auto-injected recall block) ───────────── -->
         <div v-if="isMemoryBlock(msg)" class="row row-memory">
           <button class="memory-chip" @click="toggleMemory(msg.id)">
-            🧠 {{ memoryLines(msg).length }} {{ memLabel }}
+            <svg class="mc-icon" width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M4 2.75h8a.5.5 0 0 1 .5.5v10.04a.4.4 0 0 1-.62.34L8 11.3l-3.88 2.33a.4.4 0 0 1-.62-.34V3.25a.5.5 0 0 1 .5-.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+            </svg>
+            {{ memoryLines(msg).length }} {{ memLabel }}
             <span v-if="memoryGraphCount(msg)" class="lane lane-graph"
                   :title="t('memory.lane.graph')">graph {{ memoryGraphCount(msg) }}</span>
             <span class="mc-chevron" :class="{ expanded: !!expandedMemory[msg.id] }">▾</span>
@@ -266,7 +269,10 @@ function parsedAgentContent(content) {
         <div v-else-if="msg.isMemorySaved" class="row row-memory">
           <button class="memory-chip" :class="savedCount(msg, 'pending') ? 'chip-pending' : 'chip-saved'"
                   @click="toggleMemory(msg.id)">
-            <span v-if="savedCount(msg, 'saved')">🧠 {{ savedCount(msg, 'saved') }} {{ t('memory.saved.remembered') }}</span>
+            <svg class="mc-icon" width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M4 2.75h8a.5.5 0 0 1 .5.5v10.04a.4.4 0 0 1-.62.34L8 11.3l-3.88 2.33a.4.4 0 0 1-.62-.34V3.25a.5.5 0 0 1 .5-.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+            </svg>
+            <span v-if="savedCount(msg, 'saved')">{{ savedCount(msg, 'saved') }} {{ t('memory.saved.remembered') }}</span>
             <span v-if="savedCount(msg, 'pending')">{{ savedCount(msg, 'saved') ? ' · ' : '' }}{{ savedCount(msg, 'pending') }} {{ t('memory.saved.pending') }}</span>
             <span class="mc-chevron" :class="{ expanded: !!expandedMemory[msg.id] }">▾</span>
           </button>
@@ -800,6 +806,7 @@ function parsedAgentContent(content) {
   background: var(--primary-bg); color: var(--primary); border: 1px solid var(--primary-bg-strong);
   border-radius: var(--r-full); padding: 3px 12px; font-size: 12px; }
 .memory-chip:hover { background: var(--primary-bg-strong); }
+.mc-icon { flex: none; }   /* line icon inherits the chip's currentColor (tints per state) */
 .mc-chevron { transition: transform .15s; display: inline-block; }
 .mc-chevron.expanded { transform: rotate(180deg); }
 .memory-detail { max-width: 78%; background: var(--bg-2); border: 1px solid var(--border);

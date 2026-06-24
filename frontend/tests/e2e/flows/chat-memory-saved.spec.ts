@@ -80,11 +80,11 @@ test('memory_saved paints the chip mid-turn with inline actions', async ({ page 
   await textarea.press('Enter')
 
   // Chip paints live. A mixed batch (1 saved + 1 pending) takes the warning
-  // (pending) tint — `chip-pending` — and keeps the 🧠 memory motif.
+  // (pending) tint — `chip-pending` — and keeps the memory glyph (line icon).
   const messages = page.getByTestId('chat-messages')
   const chip = messages.locator('.memory-chip.chip-pending')
   await expect(chip).toBeVisible()
-  await expect(chip).toContainText('🧠')
+  await expect(chip.locator('.mc-icon')).toBeVisible()
 
   // Expand → both memories + their per-state actions (design-system .btn pattern:
   // approve = primary, undo/reject = ghost).
