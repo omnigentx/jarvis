@@ -5,6 +5,7 @@ import { parseYoutubeTags, youtubeEmbedUrl } from '../../utils/youtubeTags'
 import { normalizeTs } from '../../utils/timeFormat.js'
 import { useVoiceSession } from '../../composables/useVoiceSession.js'
 import { useLang } from '../../composables/useLang'
+import { useChatStore } from '../../stores/chat'
 import MarkdownRenderer from '../MarkdownRenderer.vue'
 
 /**
@@ -36,6 +37,14 @@ const expandedRows = reactive({})
 const { isMobile } = useBreakpoint()
 const voice = useVoiceSession()
 const { t } = useLang()
+const chat = useChatStore()
+
+// ── Memory-SAVED chip (live capture: auto-saved or pending approval) ──
+// Distinct from the recall chip: blocks carry `isMemorySaved` + a `memorySaved`
+// array of {candidateId, content, memoryType, status, recordId}. Rejected items
+// are hidden; counts drive the collapsed summary.
+function savedVisible(msg) { return (msg.memorySaved || []).filter(it => it.status !== 'rejected') }
+function savedCount(msg, status) { return (msg.memorySaved || []).filter(it => it.status === status).length }
 
 function toggleTools(msgId) { expandedTools[msgId] = !expandedTools[msgId] }
 function toggleRow(msgId, idx) { expandedRows[`${msgId}-${idx}`] = !expandedRows[`${msgId}-${idx}`] }
@@ -76,6 +85,18 @@ function memoryGraphCount(msg) {
 const VERIFIED_AUTHORITIES = ['user_confirmed', 'tool_verified']
 function scoreFor(msg, i) { return (msg.recallScores && msg.recallScores[i]) || null }
 function isVerified(s) { return !!s && VERIFIED_AUTHORITIES.includes(s.authority) }
+// Show rrf (lane fusion) and rerank (cross-encoder) SEPARATELY — they answer
+// different questions and diverge a lot (rerank ~1.0 on a near-verbatim restate).
+// `rel` fallback keeps any pre-split cached block rendering until its next reload.
+function scoreLabel(s) {
+  if (!s) return ''
+  const p = []
+  if (s.rrf != null) p.push(`rrf ${s.rrf}`)
+  if (s.rerank != null) p.push(`rerank ${s.rerank}`)
+  if (s.rrf == null && s.rerank == null && s.rel != null) p.push(`score ${s.rel}`)
+  if (s.conf != null) p.push(`conf ${s.conf}`)
+  return p.join(' · ')
+}
 
 // Auto-scroll to bottom on new messages
 watch(
@@ -234,8 +255,32 @@ function parsedAgentContent(content) {
                     :title="t('memory.lane.' + ln)">{{ ln }}</span>
               {{ line }}
               <span v-if="scoreFor(msg, i)" class="mscore" :title="t('memory.scoreHint')">
-                rrf {{ scoreFor(msg, i).rel }} · conf {{ scoreFor(msg, i).conf
+                {{ scoreLabel(scoreFor(msg, i))
                 }}<span v-if="isVerified(scoreFor(msg, i))" class="ok">✓</span>
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── MEMORY-SAVED CHIP (live capture: auto-saved or pending) ──── -->
+        <div v-else-if="msg.isMemorySaved" class="row row-memory">
+          <button class="memory-chip" :class="savedCount(msg, 'pending') ? 'chip-pending' : 'chip-saved'"
+                  @click="toggleMemory(msg.id)">
+            <span v-if="savedCount(msg, 'saved')">🧠 {{ savedCount(msg, 'saved') }} {{ t('memory.saved.remembered') }}</span>
+            <span v-if="savedCount(msg, 'pending')">{{ savedCount(msg, 'saved') ? ' · ' : '' }}{{ savedCount(msg, 'pending') }} {{ t('memory.saved.pending') }}</span>
+            <span class="mc-chevron" :class="{ expanded: !!expandedMemory[msg.id] }">▾</span>
+          </button>
+          <div v-if="expandedMemory[msg.id]" class="memory-detail">
+            <div v-for="it in savedVisible(msg)" :key="it.candidateId" class="memory-line saved-line"
+                 :class="{ archived: it.status === 'archived' }">
+              <span class="mtype">[{{ it.memoryType }}]</span> {{ it.content }}
+              <span class="saved-actions">
+                <button v-if="it.status === 'saved'" class="s-btn ghost" @click="chat.archiveSavedMemory(it)">{{ t('memory.saved.undo') }}</button>
+                <template v-else-if="it.status === 'pending'">
+                  <button class="s-btn primary" @click="chat.approveSavedMemory(it)">{{ t('memory.saved.approve') }}</button>
+                  <button class="s-btn ghost" @click="chat.rejectSavedMemory(it)">{{ t('memory.saved.reject') }}</button>
+                </template>
+                <span v-else-if="it.status === 'archived'" class="archived-tag">{{ t('memory.saved.archived') }}</span>
               </span>
             </div>
           </div>
@@ -773,4 +818,26 @@ function parsedAgentContent(content) {
 .mscore { font-size: 10px; color: var(--text-faint); font-family: var(--font-mono, monospace);
   white-space: nowrap; margin-left: 4px; cursor: help; }
 .mscore .ok { color: var(--success, #16a34a); margin-left: 2px; font-weight: 700; }
+
+/* ── Memory-saved chip (live capture). Reuses the recall chip base (.memory-chip)
+   and tints by STATE with the design-system semantic tokens — success (saved) /
+   warning (pending, needs review). Hover fills the colour, mirroring .btn.danger
+   in AgentMemoryPanel. Action buttons reuse that same .btn pattern. */
+.memory-chip.chip-saved { background: var(--success-bg); color: var(--success); border-color: var(--success); }
+.memory-chip.chip-saved:hover { background: var(--success); color: #fff; }
+.memory-chip.chip-pending { background: var(--warning-bg); color: var(--warning); border-color: var(--warning); }
+.memory-chip.chip-pending:hover { background: var(--warning); color: #fff; }
+.saved-line { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.saved-line.archived { opacity: .5; text-decoration: line-through; }
+.mtype { color: var(--text-faint); font-family: var(--font-mono, monospace); }
+.saved-actions { margin-left: auto; display: inline-flex; gap: 6px; white-space: nowrap; }
+/* Mirrors AgentMemoryPanel's .btn / .btn.primary / .btn.ghost (same tokens,
+   tightened for the inline chip context). */
+.s-btn { background: transparent; color: var(--text-dim); border: 1px solid var(--border-strong);
+  border-radius: var(--r-md); padding: 2px 10px; font-size: 11px; cursor: pointer; transition: all .15s; }
+.s-btn:hover { color: var(--text); background: rgba(255,255,255,0.04); }
+.s-btn.primary { background: var(--primary); color: #fff; border-color: var(--primary); }
+.s-btn.primary:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
+.s-btn.ghost { border-color: transparent; }
+.archived-tag { font-size: 11px; color: var(--text-faint); margin-left: auto; }
 </style>

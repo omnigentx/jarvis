@@ -107,23 +107,32 @@ def _render_block(evidence) -> str:
 
 
 def _score_dict(e) -> dict:
-    """RAW ``{rel, conf, authority}`` for one evidence — the per-line debug score
-    (RRF match score, fact-truth confidence, authority). No normalization (see
-    RECALL_SCORES_CHANNEL). SINGLE SOURCE OF TRUTH for both the persisted channel
-    string (``_block_scores``) and the live SSE chip (``_emit_recall_block``), so
-    the real-time chip and the reloaded one never diverge. Tolerant of partial
-    stubs so a debug annotation never breaks recall."""
+    """RAW per-line debug score for one evidence: the REAL RRF fusion score AND
+    the cross-encoder reranker score, kept SEPARATE (they answer different
+    questions — rrf = lane-fusion rank, rerank = joint (query,memory) relevance,
+    which is the authoritative post-rerank order and can be ~1.0 when the query
+    nearly restates the memory). Plus fact-truth confidence + authority. No
+    normalization (see RECALL_SCORES_CHANNEL). Either score is ``None`` when its
+    stage didn't run. SINGLE SOURCE OF TRUTH for both the persisted channel string
+    (``_block_scores``) and the live SSE chip (``_emit_recall_block``), so the
+    real-time chip and the reloaded one never diverge. Tolerant of partial stubs."""
     scores = getattr(e, "scores", None)
-    rel = getattr(scores, "final", None) or getattr(scores, "rrf", None) or 0.0
+    rrf = getattr(scores, "rrf", None)
+    rerank = getattr(scores, "reranker", None)
     conf = max(0.0, min(1.0, getattr(e, "confidence", 0.0) or 0.0))
-    return {"rel": round(rel, 4), "conf": round(conf, 2),
-            "authority": getattr(e, "authority", "") or ""}
+    return {"rrf": round(rrf, 4) if rrf is not None else None,
+            "rerank": round(rerank, 4) if rerank is not None else None,
+            "conf": round(conf, 2), "authority": getattr(e, "authority", "") or ""}
 
 
 def _block_scores(evidence) -> list[str]:
-    """One ``rel|conf|authority`` string per evidence for the persisted channel —
-    derived from ``_score_dict`` so it stays identical to the live SSE payload."""
-    return [f"{s['rel']}|{s['conf']}|{s['authority']}" for s in map(_score_dict, evidence)]
+    """One ``rrf|rerank|conf|authority`` string per evidence for the persisted
+    channel — derived from ``_score_dict`` so it stays identical to the live SSE
+    payload. An empty field means that score was absent (e.g. no reranker)."""
+    def _f(v):
+        return "" if v is None else v
+    return [f"{_f(s['rrf'])}|{_f(s['rerank'])}|{s['conf']}|{s['authority']}"
+            for s in map(_score_dict, evidence)]
 
 
 def _block_recall_ids(msg) -> list[str]:

@@ -364,6 +364,9 @@ export const useChatStore = defineStore('chat', () => {
       content,
       timestamp: Date.now(),
     })
+    // A new user turn starts a fresh "memory saved" group, so saves triggered by
+    // THIS turn batch into one chip (and don't append to the previous turn's).
+    conv._savedBlockId = null
     // Update title from first user message
     if (conv.messages.filter(m => m.role === 'user').length === 1) {
       conv.title = content.length > 40 ? content.slice(0, 40) + '...' : content
@@ -425,6 +428,91 @@ export const useChatStore = defineStore('chat', () => {
     while (i >= 0 && msgs[i].role !== 'assistant') i--
     if (i >= 0) msgs.splice(i, 0, block)
     else msgs.push(block)
+  }
+
+  /**
+   * Live "memory saved" chip from the `memory_saved` SSE event — so the user
+   * KNOWS the moment Jarvis stores something (auto-approved) or proposes one
+   * (pending), in context, with inline undo/approve/reject — instead of only
+   * discovering it later in the Memory tab. Items are keyed by `candidateId`, so
+   * a later transition (pending→saved/rejected) updates the SAME item in place.
+   * This block is a session-only NOTIFICATION (not LLM context, not persisted to
+   * chat history) — the durable record lives in the Memory tab; on reload the
+   * chip is simply gone. Auto-capture lands AFTER the reply (async), so no
+   * isStreaming guard — saves group into the current turn's chip at the tail.
+   */
+  function addMemorySavedBlock(data, agentName) {
+    if (!data || !data.candidate_id) return
+    const conv = activeConversation.value
+    if (!conv) return
+    if (agentName && conv.agentName && agentName !== conv.agentName) return
+    // Transition: update the existing item in place (status / arriving record_id).
+    for (const m of conv.messages) {
+      if (!m.memorySaved) continue
+      const it = m.memorySaved.find(x => x.candidateId === data.candidate_id)
+      if (it) {
+        it.status = data.status
+        if (data.record_id) it.recordId = data.record_id
+        return
+      }
+    }
+    if (data.status === 'rejected' || !data.content) return  // nothing to surface
+    const item = {
+      candidateId: data.candidate_id,
+      recordId: data.record_id || null,
+      content: data.content,
+      memoryType: data.memory_type || 'semantic',
+      status: data.status,            // 'saved' | 'pending'
+      sensitive: !!data.sensitive,
+    }
+    let block = conv._savedBlockId
+      ? conv.messages.find(m => m.id === conv._savedBlockId)
+      : null
+    if (!block) {
+      block = {
+        id: `mem-saved-${crypto.randomUUID()}`,
+        role: 'system',
+        isMemorySaved: true,
+        memorySaved: [],
+        timestamp: Date.now(),
+      }
+      conv.messages.push(block)
+      conv._savedBlockId = block.id
+    }
+    block.memorySaved.push(item)
+  }
+
+  // Inline chip actions. Optimistic (flip status now); the resulting SSE is
+  // idempotent (keyed by candidateId) so a confirming echo is a no-op.
+  async function archiveSavedMemory(item) {
+    const conv = activeConversation.value
+    if (!conv || !item || !item.recordId) return
+    const prev = item.status
+    item.status = 'archived'
+    try {
+      await apiFetch(`/api/agents/${encodeURIComponent(conv.agentName)}/memories/${item.recordId}/archive`,
+        { method: 'POST' })
+    } catch (e) { item.status = prev; console.warn('[chat] archive memory failed:', e) }
+  }
+  async function approveSavedMemory(item) {
+    const conv = activeConversation.value
+    if (!conv || !item || !item.candidateId) return
+    const prev = item.status
+    item.status = 'saved'
+    try {
+      await apiFetch(`/api/agents/${encodeURIComponent(conv.agentName)}/memory-candidates/${item.candidateId}/approve`,
+        { method: 'POST' })
+    } catch (e) { item.status = prev; console.warn('[chat] approve memory failed:', e) }
+  }
+  async function rejectSavedMemory(item) {
+    const conv = activeConversation.value
+    if (!conv || !item || !item.candidateId) return
+    const prev = item.status
+    item.status = 'rejected'
+    try {
+      await apiFetch(`/api/agents/${encodeURIComponent(conv.agentName)}/memory-candidates/${item.candidateId}/reject`,
+        { method: 'POST' })
+    } catch (e) { item.status = prev; console.warn('[chat] reject memory failed:', e) }
   }
 
   /**
@@ -560,6 +648,10 @@ export const useChatStore = defineStore('chat', () => {
     addUserMessage,
     addAgentMessagePlaceholder,
     addMemoryRecallBlock,
+    addMemorySavedBlock,
+    archiveSavedMemory,
+    approveSavedMemory,
+    rejectSavedMemory,
     pushToolCall,
     finalizeAgentMessage,
     removeMessage,
