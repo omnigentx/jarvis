@@ -726,7 +726,7 @@ class PasskeyCredential(Base):
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Agent memory + adaptive RAG (docs/agent-memory-adaptive-rag-spec.md)
+# Agent memory + adaptive RAG
 #
 # SQLite is the source of truth for all memory state; LadybugDB is a
 # rebuildable index. Every table keys on ``owner_agent_name`` (the

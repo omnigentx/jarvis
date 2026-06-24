@@ -1,8 +1,5 @@
 """Memory domain enums and validation — ONE definition shared by the write
-and read sides (no string literals scattered across services).
-
-See docs/agent-memory-adaptive-rag-spec.md §4, §12.1, §14.
-"""
+and read sides (no string literals scattered across services)."""
 from __future__ import annotations
 
 import re

@@ -4,8 +4,6 @@
 Single source for defaults + validation, shared by the HTTP route and any
 backend caller (router, indexer, curator). The feature flag ``enabled``
 gates the entire subsystem (default OFF).
-
-See docs/agent-memory-adaptive-rag-spec.md §18.3 and docs/memory-impl/02.
 """
 from __future__ import annotations
 

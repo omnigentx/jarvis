@@ -1,7 +1,7 @@
 """Context compaction with versioned visibility.
 
-Implements docs/context-compaction-versioned-visibility-spec.md (see the
-"Implementation addendum" section there for deviations and rationale).
+Backend-managed compaction; deviations and rationale are tracked in the
+internal design notes.
 
 Flow (all inside ``before_llm_call``, never touching the pending delta):
 

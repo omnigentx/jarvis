@@ -763,7 +763,7 @@ def _find_best_next_selector(soup: BeautifulSoup) -> list[dict]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# AI-DRIVEN CRAWL (redesign — see docs/crawl-redesign-spec.md)
+# AI-DRIVEN CRAWL (redesign)
 #
 # Principle: render the page (JS-aware), hand the LLM a compact, LANGUAGE-AGNOSTIC
 # structural summary, let the LLM produce a small "recipe". Code (the worker) then

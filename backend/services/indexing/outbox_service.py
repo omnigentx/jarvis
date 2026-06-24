@@ -1,4 +1,4 @@
-"""Transactional outbox for memory indexing (spec §5, §19; docs/memory-impl/03).
+"""Transactional outbox for memory indexing.
 
 The outbox is the DURABLE QUEUE. Index intents are written in the SAME SQLite
 transaction as the domain write, so "truth committed" and "index scheduled"
