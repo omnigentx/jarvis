@@ -125,3 +125,71 @@ test('memory_saved is ignored for a different agent', () => {
   s.addMemorySavedBlock(saved('c1', 'saved', { record_id: 'r' }), 'SomeOtherAgent')
   assert.equal(savedBlock(s), undefined)
 })
+
+// ── inline chip actions: optimistic flip + revert-on-error (real apiFetch → fetch) ──
+function stubFetch(impl) {
+  const calls = []
+  globalThis.fetch = async (url, opts = {}) => {
+    calls.push({ url: String(url), method: (opts.method || 'GET').toUpperCase() })
+    return impl()
+  }
+  return calls
+}
+const OK = () => ({ ok: true, status: 200, headers: { get: () => null }, text: async () => '' })
+const BOOM = () => { throw new Error('network down') }
+
+function pendingItem(s, id = 'c1') {
+  s.createConversation('Jarvis')
+  s.addUserMessage('số thẻ của tôi là ...')
+  s.addMemorySavedBlock(saved(id, 'pending'), 'Jarvis')
+  return savedBlock(s).memorySaved[0]
+}
+
+test('approveSavedMemory flips pending→saved and POSTs the approve route', async () => {
+  const s = useChatStore()
+  const item = pendingItem(s)
+  const calls = stubFetch(OK)
+  await s.approveSavedMemory(item)
+  assert.equal(item.status, 'saved')
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].method, 'POST')
+  assert.ok(calls[0].url.endsWith('/api/agents/Jarvis/memory-candidates/c1/approve'))
+})
+
+test('rejectSavedMemory flips pending→rejected and POSTs the reject route', async () => {
+  const s = useChatStore()
+  const item = pendingItem(s)
+  const calls = stubFetch(OK)
+  await s.rejectSavedMemory(item)
+  assert.equal(item.status, 'rejected')
+  assert.ok(calls[0].url.endsWith('/api/agents/Jarvis/memory-candidates/c1/reject'))
+})
+
+test('archiveSavedMemory flips saved→archived and POSTs the archive route', async () => {
+  const s = useChatStore()
+  s.createConversation('Jarvis')
+  s.addUserMessage('tôi tên Phúc')
+  s.addMemorySavedBlock(saved('c1', 'saved', { record_id: 'r1' }), 'Jarvis')
+  const item = savedBlock(s).memorySaved[0]
+  const calls = stubFetch(OK)
+  await s.archiveSavedMemory(item)
+  assert.equal(item.status, 'archived')
+  assert.ok(calls[0].url.endsWith('/api/agents/Jarvis/memories/r1/archive'))
+})
+
+test('a failed approve reverts the optimistic status (no silent loss)', async () => {
+  const s = useChatStore()
+  const item = pendingItem(s)
+  stubFetch(BOOM)
+  await s.approveSavedMemory(item)        // catches internally, never rejects
+  assert.equal(item.status, 'pending', 'reverted to the pre-click status')
+})
+
+test('archiveSavedMemory is a no-op without a recordId (nothing to archive yet)', async () => {
+  const s = useChatStore()
+  const item = pendingItem(s)             // pending → recordId is null
+  const calls = stubFetch(OK)
+  await s.archiveSavedMemory(item)
+  assert.equal(calls.length, 0, 'no request fired')
+  assert.equal(item.status, 'pending', 'status untouched')
+})
