@@ -122,11 +122,19 @@ class LadybugStore:
         try:
             db = ladybug.Database(path)
         except RuntimeError as exc:
-            # Match ONLY Ladybug's exact corrupt-WAL signature — a broad
-            # "wal"/"corrupt" substring could wipe a healthy graph on an
+            # Match Ladybug's WAL-replay corruption — BOTH known signatures:
+            #   * the old "Corrupted wal file" message, and
+            #   * the newer assertion that surfaces as
+            #     'Assertion failed in file ".../storage/wal/wal_record.cpp" ...
+            #      UNREACHABLE_CODE' when an ungraceful exit left a dirty WAL.
+            # (Matching only the old string left prod stuck "FTS-only" — the
+            # assertion never triggered the self-heal. See ladybugdb/kuzu WAL
+            # recovery: rm the wal / rebuild.) Stay SPECIFIC to WAL replay so a
+            # broad "wal"/"corrupt" substring can't wipe a healthy graph on an
             # unrelated transient/lock error. Quarantine (not delete) so a
             # misfire is recoverable; the startup migration rebuilds from SQLite.
-            if "corrupted wal file" not in str(exc).lower():
+            _msg = str(exc).lower()
+            if not ("corrupted wal" in _msg or "wal_record.cpp" in _msg):
                 raise
             logger.error("[MEMORY] LadybugDB corrupt WAL (%s) — quarantining the "
                          "disposable graph to <path>*.corrupt; the startup "
@@ -458,7 +466,25 @@ class LadybugStore:
                 n["kind"] = "subject" if nid in subjects else "object"
             return {"nodes": list(nodes.values()), "edges": edges}
 
+    def checkpoint(self) -> None:
+        """Flush the WAL into the main DB file so the NEXT open replays nothing.
+
+        The dirty-WAL corruption (wal_record.cpp UNREACHABLE_CODE) happens when a
+        process exits without checkpointing; running CHECKPOINT before a graceful
+        stop is the documented prevention. Best-effort — a checkpoint failure must
+        never block shutdown."""
+        con = getattr(self, "_con", None)
+        if con is None:
+            return
+        with self._lock:
+            try:
+                con.execute("CHECKPOINT")
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("[ladybug] CHECKPOINT failed: %s", exc)
+
     def close(self) -> None:
+        # CHECKPOINT first so an ungraceful next boot doesn't replay a dirty WAL.
+        self.checkpoint()
         with self._lock:
             for obj in (getattr(self, "_con", None), getattr(self, "_db", None)):
                 close = getattr(obj, "close", None)
@@ -478,6 +504,18 @@ def get_ladybug_store(path: str) -> LadybugStore:
     if _STORE_SINGLETON is None:
         _STORE_SINGLETON = LadybugStore(path)
     return _STORE_SINGLETON
+
+
+def checkpoint_shared_store() -> None:
+    """CHECKPOINT the open singleton (no-op if none) on graceful shutdown so the
+    WAL is flushed before the process exits — prevents the dirty-WAL corruption
+    that otherwise bricks dense recall on the next boot. Best-effort."""
+    if _STORE_SINGLETON is not None:
+        try:
+            _STORE_SINGLETON.checkpoint()
+            logger.info("[MEMORY] LadybugDB checkpoint on shutdown — WAL flushed")
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("[MEMORY] LadybugDB shutdown checkpoint failed: %s", exc)
 
 
 def reset_ladybug_store(path: str) -> None:

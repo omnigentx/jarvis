@@ -80,6 +80,47 @@ def test_open_self_heals_corrupt_wal(monkeypatch, tmp_path):
         store.close()
 
 
+def test_open_self_heals_wal_replay_assertion(monkeypatch, tmp_path):
+    # Regression (2026-06-25 prod incident): in ladybug 0.17.x the dirty-WAL
+    # failure surfaces as a wal_record.cpp UNREACHABLE_CODE ASSERTION, not the
+    # old "Corrupted wal file" message — so the self-heal silently never fired
+    # and prod sat "FTS-only / semantic search degraded" across restarts. The
+    # matcher must catch this signature too.
+    import ladybug
+
+    from services.indexing import ladybug_store as ls
+
+    path = str(tmp_path / "graph")
+    real_db = ladybug.Database
+    calls = {"n": 0}
+    wiped = {"n": 0}
+
+    def flaky_db(p=None, **kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError(
+                'Assertion failed in file "/__w/ladybug/ladybug/src/storage/wal/'
+                'wal_record.cpp" on line 76: UNREACHABLE_CODE')
+        return real_db(p, **kw)
+
+    monkeypatch.setattr(ladybug, "Database", flaky_db)
+    real_q = ls._quarantine_graph_files
+
+    def spy_quarantine(p):
+        wiped["n"] += 1
+        real_q(p)
+
+    monkeypatch.setattr(ls, "_quarantine_graph_files", spy_quarantine)
+
+    store = ls.LadybugStore(path)        # assertion → quarantine → retry → ok
+    try:
+        assert calls["n"] == 2
+        assert wiped["n"] == 1
+        assert store.count() == 0
+    finally:
+        store.close()
+
+
 def test_open_reraises_non_corruption_error(monkeypatch, tmp_path):
     # M2: the self-heal must match ONLY Ladybug's exact corrupt-WAL signature —
     # a transient/lock error (or any message merely containing "wal"/"corrupt")
