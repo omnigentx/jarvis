@@ -625,6 +625,20 @@
     },
     "confirmDelete": "Permanently delete this memory?",
     "graph": "Memory graph",
+    "graphView": {
+      "entities": "entities",
+      "relations": "relations",
+      "extracting": "Extracting…",
+      "extract": "Extract relations",
+      "loadingShort": "Loading…",
+      "refresh": "Refresh",
+      "unavailable": "Graph unavailable (memory off or backend is not LadybugDB).",
+      "emptyHint": "No relations yet. Click “Extract relations” to build the graph from memories.",
+      "subject": "Subject",
+      "entity": "Entity",
+      "userSubject": "User (subject)",
+      "legendHint": "Arrow label = relation · click a node · drag/zoom"
+    },
     "restore": "Restore",
     "saved": {
       "remembered": "remembered",

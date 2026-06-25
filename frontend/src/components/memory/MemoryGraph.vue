@@ -9,8 +9,8 @@
  * reads like a property-graph DB rather than a blob of memory text.
  *
  * Triples are extracted by the backend (LLM) and projected as RELATES edges;
- * the "Trích xuất quan hệ" button forces a rebuild from the current memories.
- * Copy is bilingual off useLang().lang (project English-first rule #7).
+ * the "Extract relations" button forces a rebuild from the current memories.
+ * Copy is bilingual via useLang().t() + locale files (project rule #7).
  */
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import cytoscape from 'cytoscape'
@@ -18,8 +18,7 @@ import { apiFetch } from '../../api'
 import { useLang } from '../../composables/useLang.js'
 
 const props = defineProps({ agentName: { type: String, required: true } })
-const { lang } = useLang()
-const L = (vi, en) => (lang.value === 'vi' ? vi : en)
+const { t } = useLang()
 
 const container = ref(null)
 const loading = ref(false)
@@ -138,42 +137,39 @@ defineExpose({ reload: load })
   <div class="graph-wrap">
     <div class="graph-head">
       <span class="muted">
-        {{ counts.nodes }} {{ L('thực thể', 'entities') }} ·
-        {{ counts.edges }} {{ L('quan hệ', 'relations') }}
+        {{ counts.nodes }} {{ t('memory.graphView.entities') }} ·
+        {{ counts.edges }} {{ t('memory.graphView.relations') }}
       </span>
       <div class="head-actions">
         <button class="btn" :disabled="rebuilding" @click="rebuild">
-          {{ rebuilding ? L('Đang trích xuất…', 'Extracting…') : L('Trích xuất quan hệ', 'Extract relations') }}
+          {{ rebuilding ? t('memory.graphView.extracting') : t('memory.graphView.extract') }}
         </button>
         <button class="btn" :disabled="loading" @click="load">
-          {{ loading ? L('Đang tải…', 'Loading…') : L('Làm mới', 'Refresh') }}
+          {{ loading ? t('memory.graphView.loadingShort') : t('memory.graphView.refresh') }}
         </button>
       </div>
     </div>
 
     <p v-if="error" class="muted err">{{ error }}</p>
     <p v-else-if="!available" class="muted">
-      {{ L('Đồ thị chưa sẵn sàng (memory tắt hoặc backend không phải LadybugDB).',
-            'Graph unavailable (memory off or backend is not LadybugDB).') }}
+      {{ t('memory.graphView.unavailable') }}
     </p>
     <p v-else-if="!loading && !counts.nodes" class="muted">
-      {{ L('Chưa có quan hệ nào. Bấm “Trích xuất quan hệ” để dựng đồ thị từ ký ức.',
-            'No relations yet. Click “Extract relations” to build the graph from memories.') }}
+      {{ t('memory.graphView.emptyHint') }}
     </p>
 
     <div class="graph-body" v-show="available && counts.nodes">
       <div ref="container" class="cy" />
       <div v-if="selected" class="node-detail">
         <div class="nd-kind">{{ selected.kind === 'subject'
-          ? L('Chủ thể', 'Subject') : L('Thực thể', 'Entity') }}</div>
+          ? t('memory.graphView.subject') : t('memory.graphView.entity') }}</div>
         <div class="nd-text">{{ selected.label }}</div>
       </div>
     </div>
     <div class="legend" v-show="available && counts.nodes">
-      <span><i class="dot hub" /> {{ L('Người dùng (chủ thể)', 'User (subject)') }}</span>
-      <span><i class="dot obj" /> {{ L('Thực thể', 'Entity') }}</span>
-      <span class="muted">{{ L('Nhãn trên mũi tên = quan hệ · bấm node để xem · kéo/zoom',
-                              'Arrow label = relation · click a node · drag/zoom') }}</span>
+      <span><i class="dot hub" /> {{ t('memory.graphView.userSubject') }}</span>
+      <span><i class="dot obj" /> {{ t('memory.graphView.entity') }}</span>
+      <span class="muted">{{ t('memory.graphView.legendHint') }}</span>
     </div>
   </div>
 </template>

@@ -602,6 +602,20 @@
     },
     "confirmDelete": "Xóa vĩnh viễn ký ức này?",
     "graph": "Đồ thị ký ức",
+    "graphView": {
+      "entities": "thực thể",
+      "relations": "quan hệ",
+      "extracting": "Đang trích xuất…",
+      "extract": "Trích xuất quan hệ",
+      "loadingShort": "Đang tải…",
+      "refresh": "Làm mới",
+      "unavailable": "Đồ thị chưa sẵn sàng (memory tắt hoặc backend không phải LadybugDB).",
+      "emptyHint": "Chưa có quan hệ nào. Bấm “Trích xuất quan hệ” để dựng đồ thị từ ký ức.",
+      "subject": "Chủ thể",
+      "entity": "Thực thể",
+      "userSubject": "Người dùng (chủ thể)",
+      "legendHint": "Nhãn trên mũi tên = quan hệ · bấm node để xem · kéo/zoom"
+    },
     "restore": "Khôi phục",
     "saved": {
       "remembered": "đã nhớ",
