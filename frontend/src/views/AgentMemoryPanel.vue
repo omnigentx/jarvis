@@ -170,6 +170,45 @@ function reasonNote(c) {
   return c.reason ? t('memory.approvalReason.' + c.reason) : ''
 }
 
+// ---- Recent searches (retrieval telemetry) ----------------------------------
+// Each row is one recall. The status pill reflects the PER-QUERY signal (fast vs
+// agentic level, degraded, cached) — not the static `mode` config, which is shown
+// once in the header. Rows expand to reveal the per-lane latency + recalled ids.
+const expandedRuns = ref(new Set())
+function toggleRun(id) {
+  const next = new Set(expandedRuns.value) // reassign so Vue tracks it
+  next.has(id) ? next.delete(id) : next.add(id)
+  expandedRuns.value = next
+}
+
+// Map a run to its status pill {label, cls}. Precedence: degraded > deep > fast —
+// a degraded turn is the one worth surfacing even if it escalated.
+function runStatus(r) {
+  if (r.degraded) return { label: t('memory.runs.degraded'), cls: 'st-degraded' }
+  if (r.level >= 2) return { label: t('memory.runs.levelDeep'), cls: 'st-deep' }
+  return { label: t('memory.runs.levelFast'), cls: 'st-fast' }
+}
+
+// "3 recalled" / "no match" (0 results is the legible form of the old "0 tok").
+const runRecall = (r) =>
+  r.result_count > 0 ? t('memory.runs.recalled', { n: r.result_count }) : t('memory.runs.noMatch')
+
+// Lane breakdown string; a lane that didn't run (None → null) renders as "—".
+const off = () => t('memory.runs.off')
+function runLanes(r) {
+  const ms = (v) => (v == null ? off() : `${v}ms`)
+  return t('memory.runs.lanes', { bm25: ms(r.bm25_ms), dense: ms(r.dense_ms), rerank: ms(r.rerank_ms) })
+}
+
+// Relative time from an epoch-seconds timestamp. Coarse buckets are enough here.
+function timeAgo(ts) {
+  const s = Math.max(0, Math.floor(Date.now() / 1000 - (ts || 0)))
+  if (s < 60) return t('memory.runs.now')
+  if (s < 3600) return t('memory.runs.minutesAgo', { n: Math.floor(s / 60) })
+  if (s < 86400) return t('memory.runs.hoursAgo', { n: Math.floor(s / 3600) })
+  return t('memory.runs.daysAgo', { n: Math.floor(s / 86400) })
+}
+
 watch([typeFilter, statusFilter], loadAll)
 watch(() => memStore.indexTick, loadAll)
 onMounted(loadAll)
@@ -290,19 +329,40 @@ onMounted(loadAll)
       </div>
     </section>
 
-    <!-- Recent retrievals -->
+    <!-- Recent searches — per-query retrieval telemetry -->
     <section v-if="runs.length" class="panel">
-      <div class="panel-header"><h3>{{ t('memory.recentRetrievals') }}</h3></div>
-      <div class="runs-scroll">
-        <table class="runs">
-          <tr v-for="r in runs" :key="r.id">
-            <td>{{ r.mode }}</td>
-            <td>{{ r.total_ms }}ms</td>
-            <td>{{ r.evidence_tokens }} tok</td>
-            <td>{{ r.cache_hit ? '⚡' : '' }}</td>
-          </tr>
-        </table>
+      <div class="panel-header">
+        <h3>{{ t('memory.recentRetrievals') }}</h3>
+        <!-- Static config mode, shown ONCE here — not per row (every row is the
+             same mode; the per-row pill carries the adaptive signal instead). -->
+        <span class="mode-chip">{{ t('memory.runs.modeLabel') }}: {{ runs[0].mode }}</span>
       </div>
+      <ul class="runs-list">
+        <li v-for="r in runs" :key="r.id" class="run">
+          <button class="run-head" :class="{ open: expandedRuns.has(r.id) }"
+                  @click="toggleRun(r.id)" :aria-expanded="expandedRuns.has(r.id)">
+            <span class="run-caret">▸</span>
+            <span class="hash">#{{ r.query_hash.slice(0, 8) }}</span>
+            <span class="st" :class="runStatus(r).cls">{{ runStatus(r).label }}</span>
+            <span v-if="r.cache_hit" class="st st-cached">⚡ {{ t('memory.runs.cached') }}</span>
+            <span class="recall" :class="{ none: r.result_count === 0 }">{{ runRecall(r) }}</span>
+            <span v-if="r.evidence_tokens" class="tok">· {{ t('memory.runs.tokens', { n: r.evidence_tokens }) }}</span>
+            <span class="spacer"></span>
+            <span class="ms">{{ r.total_ms }}ms</span>
+            <span class="ago">{{ timeAgo(r.created_at) }}</span>
+          </button>
+          <div v-if="expandedRuns.has(r.id)" class="run-detail">
+            <div class="lanes">{{ runLanes(r) }}</div>
+            <div v-if="r.result_ids.length" class="ids">
+              {{ t('memory.runs.idsLabel') }}: {{ r.result_ids.join(', ') }}
+            </div>
+          </div>
+        </li>
+      </ul>
+    </section>
+    <section v-else class="panel">
+      <div class="panel-header"><h3>{{ t('memory.recentRetrievals') }}</h3></div>
+      <p class="muted">{{ t('memory.runs.empty') }}</p>
     </section>
   </div>
 </template>
@@ -400,10 +460,44 @@ onMounted(loadAll)
 .btn.danger:hover { background: var(--danger); color: #fff; }
 .btn.ghost { background: transparent; }
 
-/* Retrievals table */
-.runs-scroll { overflow-x: auto; }
-.runs { width: 100%; font-size: 12px; color: var(--text-dim); border-collapse: collapse; }
-.runs td { padding: 4px 8px; white-space: nowrap; }
+/* Recent searches — telemetry list (mirrors .row-card divider rhythm) */
+.mode-chip { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim);
+  background: var(--bg-3); border-radius: 999px; padding: 2px 9px; }
+.runs-list { list-style: none; margin: 0; padding: 0; }
+.run { border-bottom: 1px solid var(--border); }
+.run:last-child { border-bottom: none; }
+
+.run-head { width: 100%; display: flex; align-items: center; gap: 8px;
+  background: transparent; border: none; padding: 9px 4px; cursor: pointer;
+  font-size: 12px; color: var(--text-dim); text-align: left; transition: background .12s; }
+.run-head:hover { background: rgba(255,255,255,0.03); }
+.run-caret { color: var(--text-dim); font-size: 10px; transition: transform .15s; flex-shrink: 0; }
+.run-head.open .run-caret { transform: rotate(90deg); }
+.spacer { flex: 1 1 auto; min-width: 8px; }
+
+.hash { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim);
+  opacity: .75; flex-shrink: 0; }
+
+/* Status pills — reuse the .lane pill geometry for design consistency. */
+.st { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
+  padding: 1px 7px; border-radius: 999px; border: 1px solid transparent; line-height: 1.6;
+  white-space: nowrap; flex-shrink: 0; }
+.st-fast { color: var(--text-dim); background: var(--bg-4); border-color: var(--border-strong); }
+.st-deep { color: #fff; background: var(--primary); border-color: var(--primary); }
+.st-degraded { color: var(--warning); background: color-mix(in srgb, var(--warning) 14%, transparent);
+  border-color: color-mix(in srgb, var(--warning) 40%, transparent); }
+.st-cached { color: var(--primary); background: var(--primary-bg); border-color: var(--primary-bg-strong); }
+
+.recall { color: var(--text); white-space: nowrap; }
+.recall.none { color: var(--text-dim); font-style: italic; }
+.tok { color: var(--text-dim); white-space: nowrap; }
+.ms { font-family: var(--font-mono); color: var(--text); white-space: nowrap; flex-shrink: 0; }
+.ago { color: var(--text-dim); white-space: nowrap; flex-shrink: 0; min-width: 56px; text-align: right; }
+
+.run-detail { padding: 2px 4px 10px 22px; font-size: 11.5px; color: var(--text-dim);
+  display: flex; flex-direction: column; gap: 4px; }
+.run-detail .lanes { font-family: var(--font-mono); }
+.run-detail .ids { font-family: var(--font-mono); word-break: break-all; opacity: .8; }
 
 @media (max-width: 768px) {
   .search-row { flex-direction: column; }

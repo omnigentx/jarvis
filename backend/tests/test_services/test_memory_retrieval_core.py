@@ -211,14 +211,14 @@ async def test_offtopic_gate_drops_fts_when_dense_returns_nothing(db):
         async def search(self, request, *, limit): return []   # nothing within threshold
 
     orch._fts, orch._dense = _FtsHit(), _DenseEmpty()
-    fused, dense_failed = await orch._fast_round(req, budget)
+    fused, dense_failed, _lane_ms = await orch._fast_round(req, budget)
     assert fused == [] and dense_failed is False           # off-topic → nothing injected
 
     class _DenseDown:
         def is_available(self): return False
         async def search(self, request, *, limit): return []
     orch._dense = _DenseDown()
-    fused2, _ = await orch._fast_round(req, budget)
+    fused2, _, _ = await orch._fast_round(req, budget)
     assert len(fused2) == 1                                 # FTS-only kept when dense is down
 
 
@@ -287,9 +287,9 @@ async def test_bm25_first_keeps_fts_hit_when_dense_empty():
     budget = SimpleNamespace(max_candidates_per_retriever=10, max_fused_candidates=10)
     req = RetrievalRequest(owner_agent_name="Jarvis", query="status of PROJ-42")
 
-    gated, _ = await orch._fast_round(req, budget, bm25_first=False)
+    gated, _, _ = await orch._fast_round(req, budget, bm25_first=False)
     assert gated == []                                     # default gate drops it
-    kept, _ = await orch._fast_round(req, budget, bm25_first=True)
+    kept, _, _ = await orch._fast_round(req, budget, bm25_first=True)
     assert [e.record_id for e in kept] == ["PROJ"]         # exact-identifier recall preserved
 
 

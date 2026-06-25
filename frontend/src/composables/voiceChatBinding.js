@@ -15,11 +15,11 @@ export function applyVoiceUserMessage(chatStore, pendingAgentMsgId, text) {
   // A user_message ALWAYS corresponds to a FINAL (complete) STT utterance — the
   // backend only emits it after final_transcript, never as a half-correction.
   // So a second one arriving while the previous turn is still pending is a
-  // genuine NEW sentence the user spoke ("nói chen" / barge-in before the reply
-  // landed), NOT a correction of the previous one. KEEP the previous user
-  // bubble; only the orphaned "thinking" placeholder of the turn the backend
-  // cancelled is dropped. (Deleting the previous user message here was the
-  // "câu trước biến mất" bug.)
+  // genuine NEW sentence the user spoke (barge-in before the reply landed),
+  // NOT a correction of the previous one. KEEP the previous user bubble; only
+  // the orphaned "thinking" placeholder of the turn the backend cancelled is
+  // dropped. (Deleting the previous user message here was the
+  // "previous sentence vanishes" bug.)
   if (pendingAgentMsgId) {
     try { chatStore.removeMessage?.(pendingAgentMsgId) } catch { /* best-effort */ }
     pendingAgentMsgId = null

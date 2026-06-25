@@ -582,8 +582,40 @@
     "archive": "Lưu trữ",
     "delete": "Xóa",
     "recentRetrievals": "Lần tìm gần đây",
+    "runs": {
+      "empty": "Chưa có lần tìm nào.",
+      "levelFast": "Nhanh",
+      "levelDeep": "Sâu",
+      "degraded": "Suy giảm",
+      "cached": "Cache",
+      "recalled": "{n} ký ức",
+      "noMatch": "không khớp",
+      "tokens": "{n} tok",
+      "modeLabel": "chế độ",
+      "lanes": "BM25 {bm25} · Dense {dense} · Rerank {rerank}",
+      "idsLabel": "ids",
+      "off": "—",
+      "now": "vừa xong",
+      "minutesAgo": "{n}p trước",
+      "hoursAgo": "{n}g trước",
+      "daysAgo": "{n}n trước"
+    },
     "confirmDelete": "Xóa vĩnh viễn ký ức này?",
     "graph": "Đồ thị ký ức",
+    "graphView": {
+      "entities": "thực thể",
+      "relations": "quan hệ",
+      "extracting": "Đang trích xuất…",
+      "extract": "Trích xuất quan hệ",
+      "loadingShort": "Đang tải…",
+      "refresh": "Làm mới",
+      "unavailable": "Đồ thị chưa sẵn sàng (memory tắt hoặc backend không phải LadybugDB).",
+      "emptyHint": "Chưa có quan hệ nào. Bấm “Trích xuất quan hệ” để dựng đồ thị từ ký ức.",
+      "subject": "Chủ thể",
+      "entity": "Thực thể",
+      "userSubject": "Người dùng (chủ thể)",
+      "legendHint": "Nhãn trên mũi tên = quan hệ · bấm node để xem · kéo/zoom"
+    },
     "restore": "Khôi phục",
     "saved": {
       "remembered": "đã nhớ",
@@ -1044,6 +1076,12 @@
     "completed": "đã hoàn tất",
     "spawned": "đã tạo",
     "removed": "đã gỡ"
+  },
+  "compactionToast": {
+    "title": "Đã nén ngữ cảnh: {agent}",
+    "desc": "Tiết kiệm ~{saved} tokens ({pct}%)",
+    "failedTitle": "Nén ngữ cảnh thất bại: {agent}",
+    "failedDesc": "Agent tiếp tục với ngữ cảnh gốc. Xem tab Context Versions để biết chi tiết."
   },
   "flowLegend": {
     "legend": "CHÚ THÍCH",

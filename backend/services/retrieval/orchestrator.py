@@ -13,6 +13,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import time
 import uuid
 
 from sqlalchemy.orm import Session
@@ -79,6 +80,9 @@ class RetrievalOrchestrator:
                        ledger: EvidenceLedger | None = None, turn: int = 0,
                        agent_requested: bool = False,
                        continuing_tool_loop: bool = False) -> RetrievalResult:
+        # Wall-clock start for telemetry latency. perf_counter (monotonic) — NOT
+        # ``now`` (epoch, used for recency boost): the two measure different things.
+        t0 = time.perf_counter()
         budget = build_budget(request.mode,
                               evidence_token_budget=self.settings.evidence_token_budget)
 
@@ -106,10 +110,12 @@ class RetrievalOrchestrator:
             # policy at the CURRENT ``now`` (so a hot read-only query doesn't
             # freeze recency buckets at first-call time), and that reorder must
             # not mutate the shared cached list under another concurrent reader.
+            # Cache hit: lanes/rerank never ran, so their timings stay None — only
+            # total_ms (≈ the cache lookup) is meaningful here.
             return self._finalize(request, list(cached), level=LEVEL_FAST, cache_hit=True,
-                                  budget=budget, ledger=ledger, turn=turn, now=now)
+                                  budget=budget, ledger=ledger, turn=turn, now=now, t0=t0)
 
-        fused, dense_failed = await self._fast_round(
+        fused, dense_failed, lane_ms = await self._fast_round(
             request, budget, bm25_first=decision.bm25_first)
         # Recency/authority/freshness ranking on the HAPPY path too — this is the
         # read-side of ADD-only (a newer fact, e.g. "works at NovaCorp", outranks the
@@ -132,18 +138,31 @@ class RetrievalOrchestrator:
         # scores.reranker (apply_policy then orders by it) and drops off-topic /
         # low-relevance candidates below the floor — what the bi-encoder lanes
         # can't do (the 2026-06-22 "cat memory in a baby-age query" case).
-        fused = self._apply_rerank(request, fused)
+        _rr0 = time.perf_counter()
+        fused, reranked = self._apply_rerank(request, fused)
+        # Record latency ONLY when the cross-encoder actually scored candidates.
+        # A GATED skip (disabled / cold-warming / nothing to rerank) spent ~0ms but
+        # didn't run — leave rerank_ms None so the UI renders "—", not a misleading
+        # "0ms" that reads as "rerank ran instantly".
+        rerank_ms = int((time.perf_counter() - _rr0) * 1000) if reranked else None
 
         _CACHE.set(key, fused)
         return self._finalize(request, fused, level=level, cache_hit=False,
                               budget=budget, ledger=ledger, turn=turn, now=now,
-                              dense_failed=dense_failed)
+                              dense_failed=dense_failed, t0=t0,
+                              timings={**lane_ms, "rerank_ms": rerank_ms})
 
-    def _apply_rerank(self, request: RetrievalRequest, fused: list[Evidence]) -> list[Evidence]:
+    def _apply_rerank(self, request: RetrievalRequest, fused: list[Evidence]
+                      ) -> tuple[list[Evidence], bool]:
         """Cross-encoder rerank of the top fused candidates (precision stage).
         Re-scores into ``scores.reranker``, drops those below ``rerank_min_score``,
         returns them ordered by reranker. No-op when disabled/unavailable → fusion
         order kept. Best-effort: a rerank error must never break recall.
+
+        Returns ``(result, ran)``: ``ran`` is True only when the model actually
+        scored candidates (so the caller records real latency); a GATED skip
+        (nothing to rerank / disabled / cold-warming) returns ``(fused, False)`` so
+        telemetry shows "—" rather than a misleading 0ms.
 
         INTENTIONAL GATE (review #2): the floor can legitimately return [] when every
         candidate scores below it — i.e. the cross-encoder judged them all off-topic
@@ -153,7 +172,7 @@ class RetrievalOrchestrator:
         query (it didn't drop a high-precision lane on a sibling lane's emptiness).
         Keep ``rerank_min_score`` low (0.005) so a weak-but-relevant hit survives."""
         if not fused or self._reranker is None or not self._reranker.is_available():
-            return fused
+            return fused, False
         # NEVER block a recall turn on the reranker's cold load. The 0.6B causal
         # LM's first load is slow (~tens of s on CPU); if it isn't warm yet, kick
         # off a one-shot background load and keep fusion order for THIS turn. The
@@ -161,7 +180,7 @@ class RetrievalOrchestrator:
         # it only catches a turn that races the warm right after startup.
         if hasattr(self._reranker, "is_loaded") and not self._reranker.is_loaded():
             self._reranker.warm_async()
-            return fused
+            return fused, False
         top_k = int(getattr(self.settings, "rerank_top_k", 20) or 20)
         floor = float(getattr(self.settings, "rerank_min_score", 0.0) or 0.0)
         # Tail beyond top_k is intentionally DROPPED from recall (not just from
@@ -172,23 +191,43 @@ class RetrievalOrchestrator:
             scores = self._reranker.rerank(request.query, [c.excerpt for c in cand])
         except Exception as exc:  # noqa: BLE001 — keep fusion order on rerank failure
             logger.warning("[MEMORY] rerank failed, keeping fusion order: %s", exc)
-            return fused
+            # The model DID run (and consumed wall-clock) — ran=True so a slow
+            # failing rerank still surfaces its latency in telemetry.
+            return fused, True
         kept = []
         for c, s in zip(cand, scores):
             c.scores.reranker = s
             if s >= floor:
                 kept.append(c)
         kept.sort(key=lambda e: e.scores.reranker or 0.0, reverse=True)
-        return kept
+        return kept, True
 
     async def _fast_round(self, request: RetrievalRequest, budget, *,
-                          bm25_first: bool = False) -> tuple[list[Evidence], bool]:
+                          bm25_first: bool = False
+                          ) -> tuple[list[Evidence], bool, dict[str, int | None]]:
         cap = budget.max_candidates_per_retriever
         dense_on = self._dense.is_available()
-        tasks = [self._fts.search(request, limit=cap)]
+
+        async def _timed(coro):
+            # Per-lane wall-clock for telemetry. Catch HERE (not via gather's
+            # return_exceptions) so a lane's latency is recorded even when it
+            # raises — the result may be an Exception, the timing still counts.
+            _s = time.perf_counter()
+            try:
+                r = await coro
+            except Exception as exc:  # noqa: BLE001 — preserved in results, handled below
+                r = exc
+            return r, int((time.perf_counter() - _s) * 1000)
+
+        timed = [_timed(self._fts.search(request, limit=cap))]
         if dense_on:
-            tasks.append(self._dense.search(request, limit=cap))
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+            timed.append(_timed(self._dense.search(request, limit=cap)))
+        gathered = await asyncio.gather(*timed)
+        results = [g[0] for g in gathered]
+        lane_ms: dict[str, int | None] = {
+            "bm25_ms": gathered[0][1],
+            "dense_ms": gathered[1][1] if dense_on else None,
+        }
         lists = [r for r in results if isinstance(r, list)]
         # If the dense lane (tasks[1], only added when dense_on) THREW, the
         # search is degraded even though is_available() said yes — surface it
@@ -217,9 +256,9 @@ class RetrievalOrchestrator:
         #     function-word-only query still yields nothing even here.
         if (dense_on and not dense_failed and not bm25_first
                 and isinstance(results[1], list) and not results[1]):
-            return [], dense_failed
+            return [], dense_failed, lane_ms
         fused = fusion.rrf_fuse(lists)
-        return fused[: budget.max_fused_candidates], dense_failed
+        return fused[: budget.max_fused_candidates], dense_failed, lane_ms
 
     async def _corrective_round(self, request: RetrievalRequest, budget) -> list[Evidence]:
         """Bounded corrective pass: bring in authorized communications. (An LLM
@@ -231,7 +270,8 @@ class RetrievalOrchestrator:
             return []
 
     def _finalize(self, request, fused, *, level, cache_hit, budget, ledger, turn, now,
-                  dense_failed=False) -> RetrievalResult:
+                  t0: float, dense_failed=False,
+                  timings: dict[str, int | None] | None = None) -> RetrievalResult:
         # Recency/authority policy is applied HERE (not only pre-cache) so cache
         # hits get fresh recency at the current ``now``. apply_policy is
         # idempotent (re-derives order from rrf + boost(now), no cumulative
@@ -254,10 +294,18 @@ class RetrievalOrchestrator:
             degraded, reason = True, "ladybug_unpopulated"
         else:
             degraded, reason = False, None
+        # total_ms spans the WHOLE call (incl. this finalize stage). Lane timings
+        # (bm25/dense/rerank) stay None on the cache-hit path — those stages never
+        # ran — which the UI renders as "—" rather than a misleading 0.
+        timings = timings or {}
         result = RetrievalResult(
             evidence=selected, level=level, degraded=degraded,
             degraded_reason=reason,
-            cache_hit=cache_hit, total_ms=0,
+            cache_hit=cache_hit,
+            total_ms=int((time.perf_counter() - t0) * 1000),
+            bm25_ms=timings.get("bm25_ms"),
+            dense_ms=timings.get("dense_ms"),
+            rerank_ms=timings.get("rerank_ms"),
         )
         self._write_telemetry(request, result, tokens, now)
         self._emit_completed(request, result, now)
@@ -333,6 +381,9 @@ class RetrievalOrchestrator:
                 route_json=json.dumps({"level": result.level, "degraded": result.degraded}),
                 filters_json=json.dumps(sorted(request.types)),
                 result_ids_json=json.dumps([e.record_id for e in result.evidence]),
+                bm25_ms=result.bm25_ms,
+                dense_ms=result.dense_ms,
+                rerank_ms=result.rerank_ms,
                 total_ms=result.total_ms,
                 evidence_tokens=tokens,
                 cache_hit=1 if result.cache_hit else 0,

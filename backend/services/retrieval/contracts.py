@@ -165,6 +165,11 @@ class RetrievalResult:
     degraded_reason: Optional[str] = None
     cache_hit: bool = False
     total_ms: int = 0
+    # Per-lane latency (telemetry). None when the stage didn't run — e.g. a
+    # cache hit skips all lanes, an FTS-only/degraded turn skips dense.
+    bm25_ms: Optional[int] = None
+    dense_ms: Optional[int] = None
+    rerank_ms: Optional[int] = None
 
 
 @dataclass

@@ -34,17 +34,19 @@ def test_rerank_reorders_and_drops_below_floor():
     # AND drop the noise (score 0.0 < floor).
     fused = [_ev("noise", 0.05, "user bought a cat mochi"),
              _ev("rel", 0.01, "user has a baby 7 months old")]
-    out = RetrievalOrchestrator._apply_rerank(
+    out, ran = RetrievalOrchestrator._apply_rerank(
         _stub(_FakeRR()), RetrievalRequest(owner_agent_name="J", query="how old is my baby"), fused)
     assert [e.record_id for e in out] == ["rel"]      # noise dropped, relevant kept
     assert out[0].scores.reranker == 1.0
+    assert ran is True                                # scored → caller records latency
 
 
 def test_rerank_noop_when_unavailable():
     fused = [_ev("a", 0.05, "x")]
-    out = RetrievalOrchestrator._apply_rerank(
+    out, ran = RetrievalOrchestrator._apply_rerank(
         _stub(None), RetrievalRequest(owner_agent_name="J", query="q"), fused)
     assert out is fused                               # untouched → fusion order kept
+    assert ran is False                               # gated skip → telemetry "—", not 0ms
 
 
 def test_rerank_failure_keeps_fusion_order():
@@ -52,9 +54,10 @@ def test_rerank_failure_keeps_fusion_order():
         def is_available(self): return True
         def rerank(self, q, docs): raise RuntimeError("model died")
     fused = [_ev("a", 0.05, "x"), _ev("b", 0.01, "y")]
-    out = RetrievalOrchestrator._apply_rerank(
+    out, ran = RetrievalOrchestrator._apply_rerank(
         _stub(_Boom()), RetrievalRequest(owner_agent_name="J", query="q"), fused)
     assert out is fused                               # best-effort: never break recall
+    assert ran is True                                # model executed (then failed) → latency is real
 
 
 def test_rerank_skips_and_warms_when_model_not_loaded_yet():
@@ -70,11 +73,12 @@ def test_rerank_skips_and_warms_when_model_not_loaded_yet():
         def rerank(self, q, docs): calls["rerank"] += 1; return [0.0] * len(docs)
 
     fused = [_ev("a", 0.05, "x"), _ev("b", 0.01, "y")]
-    out = RetrievalOrchestrator._apply_rerank(
+    out, ran = RetrievalOrchestrator._apply_rerank(
         _stub(_Cold()), RetrievalRequest(owner_agent_name="J", query="q"), fused)
     assert out is fused              # fusion order kept — no reorder, no block
     assert calls["warm"] == 1        # background warm kicked off
     assert calls["rerank"] == 0      # rerank NOT called (would cold-load → block)
+    assert ran is False              # cold-warming skip → telemetry "—", not 0ms
 
 
 def test_qwen3_warm_async_is_nonblocking_and_idempotent():

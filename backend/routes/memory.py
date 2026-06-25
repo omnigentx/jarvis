@@ -9,6 +9,7 @@ agent's memory through this surface.
 """
 from __future__ import annotations
 
+import json
 import logging
 import time
 from typing import Any
@@ -101,6 +102,28 @@ async def get_memory_versions(name: str, memory_id: str) -> dict[str, Any]:
         db.close()
 
 
+def _run_to_dict(r: RetrievalRun) -> dict[str, Any]:
+    """Shape a telemetry row for the UI. Parses the stored JSON HERE so the
+    frontend renders clean fields (level/degraded/result_count) instead of
+    re-parsing opaque ``route_json``/``result_ids_json`` strings."""
+    try:
+        route = json.loads(r.route_json) if r.route_json else {}
+    except (ValueError, TypeError):
+        route = {}
+    try:
+        ids = json.loads(r.result_ids_json) if r.result_ids_json else []
+    except (ValueError, TypeError):
+        ids = []
+    return {
+        "id": r.id, "mode": r.mode, "query_hash": r.query_hash,
+        "level": route.get("level", 0), "degraded": bool(route.get("degraded")),
+        "result_ids": ids, "result_count": len(ids),
+        "bm25_ms": r.bm25_ms, "dense_ms": r.dense_ms, "rerank_ms": r.rerank_ms,
+        "total_ms": r.total_ms, "evidence_tokens": r.evidence_tokens,
+        "cache_hit": bool(r.cache_hit), "status": r.status, "created_at": r.created_at,
+    }
+
+
 @router.get("/agents/{name}/retrieval-runs")
 async def list_retrieval_runs(name: str, limit: int = Query(50, le=200)) -> dict[str, Any]:
     db = get_db_session()
@@ -109,12 +132,7 @@ async def list_retrieval_runs(name: str, limit: int = Query(50, le=200)) -> dict
             db.query(RetrievalRun).filter(RetrievalRun.owner_agent_name == name)
             .order_by(RetrievalRun.created_at.desc()).limit(limit).all()
         )
-        return {"items": [{
-            "id": r.id, "mode": r.mode, "query_hash": r.query_hash,
-            "route": r.route_json, "result_ids": r.result_ids_json,
-            "total_ms": r.total_ms, "evidence_tokens": r.evidence_tokens,
-            "cache_hit": bool(r.cache_hit), "status": r.status, "created_at": r.created_at,
-        } for r in rows]}
+        return {"items": [_run_to_dict(r) for r in rows]}
     finally:
         db.close()
 
