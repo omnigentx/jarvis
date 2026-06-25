@@ -1077,6 +1077,12 @@
     "spawned": "đã tạo",
     "removed": "đã gỡ"
   },
+  "compactionToast": {
+    "title": "Đã nén ngữ cảnh: {agent}",
+    "desc": "Tiết kiệm ~{saved} tokens ({pct}%)",
+    "failedTitle": "Nén ngữ cảnh thất bại: {agent}",
+    "failedDesc": "Agent tiếp tục với ngữ cảnh gốc. Xem tab Context Versions để biết chi tiết."
+  },
   "flowLegend": {
     "legend": "CHÚ THÍCH",
     "teamPm": "PM nhóm",

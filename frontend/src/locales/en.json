@@ -1164,6 +1164,12 @@
     "spawned": "spawned",
     "removed": "removed"
   },
+  "compactionToast": {
+    "title": "Context compacted: {agent}",
+    "desc": "Saved ~{saved} tokens ({pct}%)",
+    "failedTitle": "Context compaction failed: {agent}",
+    "failedDesc": "Agent continues on the raw context. See the Context Versions tab for details."
+  },
   "flowLegend": {
     "legend": "LEGEND",
     "builtin": "builtin",
