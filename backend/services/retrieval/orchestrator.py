@@ -139,8 +139,12 @@ class RetrievalOrchestrator:
         # low-relevance candidates below the floor — what the bi-encoder lanes
         # can't do (the 2026-06-22 "cat memory in a baby-age query" case).
         _rr0 = time.perf_counter()
-        fused = self._apply_rerank(request, fused)
-        rerank_ms = int((time.perf_counter() - _rr0) * 1000)
+        fused, reranked = self._apply_rerank(request, fused)
+        # Record latency ONLY when the cross-encoder actually scored candidates.
+        # A GATED skip (disabled / cold-warming / nothing to rerank) spent ~0ms but
+        # didn't run — leave rerank_ms None so the UI renders "—", not a misleading
+        # "0ms" that reads as "rerank ran instantly".
+        rerank_ms = int((time.perf_counter() - _rr0) * 1000) if reranked else None
 
         _CACHE.set(key, fused)
         return self._finalize(request, fused, level=level, cache_hit=False,
@@ -148,11 +152,17 @@ class RetrievalOrchestrator:
                               dense_failed=dense_failed, t0=t0,
                               timings={**lane_ms, "rerank_ms": rerank_ms})
 
-    def _apply_rerank(self, request: RetrievalRequest, fused: list[Evidence]) -> list[Evidence]:
+    def _apply_rerank(self, request: RetrievalRequest, fused: list[Evidence]
+                      ) -> tuple[list[Evidence], bool]:
         """Cross-encoder rerank of the top fused candidates (precision stage).
         Re-scores into ``scores.reranker``, drops those below ``rerank_min_score``,
         returns them ordered by reranker. No-op when disabled/unavailable → fusion
         order kept. Best-effort: a rerank error must never break recall.
+
+        Returns ``(result, ran)``: ``ran`` is True only when the model actually
+        scored candidates (so the caller records real latency); a GATED skip
+        (nothing to rerank / disabled / cold-warming) returns ``(fused, False)`` so
+        telemetry shows "—" rather than a misleading 0ms.
 
         INTENTIONAL GATE (review #2): the floor can legitimately return [] when every
         candidate scores below it — i.e. the cross-encoder judged them all off-topic
@@ -162,7 +172,7 @@ class RetrievalOrchestrator:
         query (it didn't drop a high-precision lane on a sibling lane's emptiness).
         Keep ``rerank_min_score`` low (0.005) so a weak-but-relevant hit survives."""
         if not fused or self._reranker is None or not self._reranker.is_available():
-            return fused
+            return fused, False
         # NEVER block a recall turn on the reranker's cold load. The 0.6B causal
         # LM's first load is slow (~tens of s on CPU); if it isn't warm yet, kick
         # off a one-shot background load and keep fusion order for THIS turn. The
@@ -170,7 +180,7 @@ class RetrievalOrchestrator:
         # it only catches a turn that races the warm right after startup.
         if hasattr(self._reranker, "is_loaded") and not self._reranker.is_loaded():
             self._reranker.warm_async()
-            return fused
+            return fused, False
         top_k = int(getattr(self.settings, "rerank_top_k", 20) or 20)
         floor = float(getattr(self.settings, "rerank_min_score", 0.0) or 0.0)
         # Tail beyond top_k is intentionally DROPPED from recall (not just from
@@ -181,14 +191,16 @@ class RetrievalOrchestrator:
             scores = self._reranker.rerank(request.query, [c.excerpt for c in cand])
         except Exception as exc:  # noqa: BLE001 — keep fusion order on rerank failure
             logger.warning("[MEMORY] rerank failed, keeping fusion order: %s", exc)
-            return fused
+            # The model DID run (and consumed wall-clock) — ran=True so a slow
+            # failing rerank still surfaces its latency in telemetry.
+            return fused, True
         kept = []
         for c, s in zip(cand, scores):
             c.scores.reranker = s
             if s >= floor:
                 kept.append(c)
         kept.sort(key=lambda e: e.scores.reranker or 0.0, reverse=True)
-        return kept
+        return kept, True
 
     async def _fast_round(self, request: RetrievalRequest, budget, *,
                           bm25_first: bool = False

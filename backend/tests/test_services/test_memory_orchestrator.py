@@ -97,7 +97,9 @@ async def test_level1_fts_retrieval_and_telemetry(db):
     # FTS lane ran → bm25_ms recorded; dense is down here → dense_ms stays None.
     assert run.bm25_ms is not None and run.bm25_ms >= 0
     assert run.dense_ms is None
-    assert run.rerank_ms is not None
+    # Reranker is disabled in this env → the stage never ran, so rerank_ms stays
+    # None (UI renders "—"), NOT a misleading 0ms that reads as "rerank ran".
+    assert run.rerank_ms is None
 
 
 async def test_ledger_prevents_duplicate_injection(db):
