@@ -92,6 +92,12 @@ async def test_level1_fts_retrieval_and_telemetry(db):
     # telemetry row written
     run = db.query(RetrievalRun).one()
     assert run.owner_agent_name == "Jarvis" and run.mode == "balanced"
+    # Latency is MEASURED, not hardcoded 0 (regression: total_ms was always 0).
+    assert run.total_ms is not None and run.total_ms >= 0
+    # FTS lane ran → bm25_ms recorded; dense is down here → dense_ms stays None.
+    assert run.bm25_ms is not None and run.bm25_ms >= 0
+    assert run.dense_ms is None
+    assert run.rerank_ms is not None
 
 
 async def test_ledger_prevents_duplicate_injection(db):
