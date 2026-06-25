@@ -832,7 +832,17 @@ async def lifespan(app: FastAPI):
             await memory_index_task
         except asyncio.CancelledError:
             pass
-    
+
+    # CHECKPOINT LadybugDB AFTER the index worker stops writing — flushes the WAL
+    # so a graceful stop never leaves a dirty WAL for the next boot to choke on
+    # (the wal_record.cpp UNREACHABLE_CODE corruption). Best-effort, no-op if the
+    # graph was never opened.
+    try:
+        from services.indexing.ladybug_store import checkpoint_shared_store
+        checkpoint_shared_store()
+    except Exception:  # noqa: BLE001 — never block shutdown on the disposable index
+        logger.debug("[MEMORY] LadybugDB shutdown checkpoint skipped", exc_info=True)
+
     # Shutdown spawn event socket server
     if event_socket_server:
         await event_socket_server.stop()
