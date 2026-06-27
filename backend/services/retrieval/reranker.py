@@ -270,3 +270,74 @@ def get_shared_reranker(model_name: str = DEFAULT_RERANKER) -> Reranker:
         _SHARED = get_reranker(model_name)
         _SHARED_KEY = model_name
     return _SHARED
+
+
+def prefetch_and_warm(model_name: str, on_progress) -> None:
+    """Download (with byte-level progress) then load a reranker model into the
+    shared singleton, so the FIRST recall after a model switch never pays the
+    download/load on the request path.
+
+    ``on_progress(state, pct)`` is called with state in
+    ``downloading|loading|ready|error`` and an integer 0..100. The download %
+    is real (aggregated bytes); ``loading`` is indeterminate (pct stays at the
+    last download value). Best-effort: any failure ends in a single ``error``.
+
+    MUST run OFF the event loop (it blocks on network + a model load). The
+    callback is the only side-channel — it is expected to be thread-safe
+    (the API hook marshals it back onto the loop).
+    """
+    state = {"done": 0, "total": 0, "last_pct": -1}
+
+    def _emit(st: str, pct: int) -> None:
+        # Throttle: only fire when the integer pct actually advances, so a
+        # chunked download doesn't flood the SSE channel.
+        if st == "downloading" and pct == state["last_pct"]:
+            return
+        state["last_pct"] = pct
+        try:
+            on_progress(st, pct)
+        except Exception:  # noqa: BLE001 — progress is best-effort, never break the warm
+            logger.debug("[MEMORY] reranker progress callback failed", exc_info=True)
+
+    try:
+        _emit("downloading", 0)
+        try:
+            from huggingface_hub import snapshot_download
+            from tqdm.auto import tqdm as _tqdm
+
+            # Aggregate byte progress across HF's per-file bars. Only count the
+            # byte bars (unit == 'B'); HF's outer "Fetching N files" bar uses
+            # unit 'it' and would otherwise pollute the denominator.
+            class _ProgressTqdm(_tqdm):
+                def __init__(self, *a, **k):
+                    super().__init__(*a, **k)
+                    if self.unit == "B":
+                        state["total"] += (self.total or 0)
+
+                def update(self, n=1):
+                    r = super().update(n)
+                    if self.unit == "B" and state["total"]:
+                        state["done"] += n
+                        _emit("downloading",
+                              min(99, int(state["done"] * 100 / state["total"])))
+                    return r
+
+            snapshot_download(repo_id=model_name, tqdm_class=_ProgressTqdm)
+        except Exception as exc:  # noqa: BLE001 — already cached / offline / hub error
+            # Not fatal: the files may already be cached, in which case the
+            # load below still succeeds. Log and move on to the load phase.
+            logger.info("[MEMORY] reranker prefetch skipped/failed (%s) — trying load", exc)
+
+        _emit("loading", max(state["last_pct"], 99))
+        reranker = get_shared_reranker(model_name)
+        reranker.warm()                       # blocks until weights are in RAM
+        if not reranker.is_available():
+            raise RuntimeError("reranker unavailable after load (missing dep?)")
+        _emit("ready", 100)
+        logger.info("[MEMORY] reranker '%s' downloaded + warmed", model_name)
+    except Exception as exc:  # noqa: BLE001 — surface one error event, never crash
+        logger.warning("[MEMORY] reranker prefetch_and_warm failed: %s", exc)
+        try:
+            on_progress("error", 0)
+        except Exception:  # noqa: BLE001
+            pass

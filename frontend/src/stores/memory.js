@@ -14,6 +14,9 @@ export const useMemoryStore = defineStore('memory', () => {
   const degradedByAgent = ref({})
   // bumped whenever something is indexed → views can re-fetch index-status
   const indexTick = ref(0)
+  // Live reranker download/load progress after a model switch (Settings → Memory).
+  // null when idle; { state: downloading|loading|ready|error, progress, model }.
+  const rerankerLoad = ref(null)
 
   function isDegraded(agent) {
     return Boolean(degradedByAgent.value[agent])
@@ -24,6 +27,14 @@ export const useMemoryStore = defineStore('memory', () => {
     // handle it BEFORE the per-agent guard so the drain hint reaches the panels.
     if (event.event_type === 'memory_indexed') {
       indexTick.value += 1
+      return
+    }
+    // Reranker model swap progress — also GLOBAL (no agent). Drives the progress
+    // bar on the Memory settings page so the model download isn't a silent hang.
+    if (event.event_type === 'reranker_model_loading') {
+      rerankerLoad.value = {
+        state: event.state, progress: event.progress ?? 0, model: event.model,
+      }
       return
     }
     const agent = event.agent_name
@@ -43,7 +54,7 @@ export const useMemoryStore = defineStore('memory', () => {
   }
 
   return {
-    degradedByAgent, indexTick,
+    degradedByAgent, indexTick, rerankerLoad,
     isDegraded, processMemoryEvent,
   }
 })

@@ -155,3 +155,49 @@ def test_qwen3_reranker_scoring_math():
         assert abs(s - 1.0 / (1.0 + math.exp(-i))) < 1e-4
     assert scores == sorted(scores)                # monotonic in row order (order preserved)
     assert r.rerank("q", []) == []                 # empty → empty
+
+
+# ── prefetch_and_warm: progress reporting for the Settings download UI ──
+
+def test_prefetch_and_warm_emits_phases_in_order(monkeypatch):
+    """Reports downloading → loading → ready so the UI can show a progress bar
+    instead of the first recall hanging on the model download."""
+    import huggingface_hub
+    from services.retrieval import reranker as rr
+
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", lambda **k: "/tmp/cache")
+
+    class _Fake:
+        def warm(self):  # already-cached → instant
+            pass
+        def is_available(self):
+            return True
+
+    monkeypatch.setattr(rr, "get_shared_reranker", lambda name: _Fake())
+
+    events = []
+    rr.prefetch_and_warm("some/model", lambda st, pct: events.append((st, pct)))
+    states = [s for s, _ in events]
+    assert states[0] == "downloading"
+    assert "loading" in states
+    assert states[-1] == "ready"
+    assert events[-1][1] == 100
+
+
+def test_prefetch_and_warm_emits_error_on_load_failure(monkeypatch):
+    import huggingface_hub
+    from services.retrieval import reranker as rr
+
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", lambda **k: "/tmp/cache")
+
+    class _Bad:
+        def warm(self):
+            raise RuntimeError("boom")
+        def is_available(self):
+            return False
+
+    monkeypatch.setattr(rr, "get_shared_reranker", lambda name: _Bad())
+
+    events = []
+    rr.prefetch_and_warm("some/model", lambda st, pct: events.append((st, pct)))
+    assert events[-1][0] == "error"
