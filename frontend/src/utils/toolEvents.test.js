@@ -89,6 +89,36 @@ test('expandToolDone yields one result entry per tool in the batch', () => {
   }
 })
 
+test('expandToolDone gives each tool its OWN result_preview (per-tool fix)', () => {
+  // Regression: time-service showed memory_remember's result because every tool
+  // in the batch inherited the single event.result_preview (the first result).
+  // Now each tools[*] carries its own result_preview.
+  const event = {
+    type: 'tool_done',
+    tools: [
+      { name: 'memory_server__memory_remember', result_preview: '{"candidate_id":"abc"}' },
+      { name: 'time-service__get_current_time', result_preview: '2026-06-27T17:00:00' },
+    ],
+    duration_ms: 1000,
+    result_preview: '{"candidate_id":"abc"}',
+  }
+  const out = expandToolDone(event)
+  assert.equal(out.length, 2)
+  assert.equal(out[0].resultPreview, '{"candidate_id":"abc"}')
+  assert.equal(out[1].resultPreview, '2026-06-27T17:00:00') // NOT the memory result
+})
+
+test('expandToolDone falls back to batch result_preview when a tool lacks its own', () => {
+  const event = {
+    type: 'tool_done',
+    tools: [{ name: 'a' }, { name: 'b', result_preview: 'B-own' }],
+    result_preview: 'batch',
+  }
+  const out = expandToolDone(event)
+  assert.equal(out[0].resultPreview, 'batch') // no own → batch (legacy rows)
+  assert.equal(out[1].resultPreview, 'B-own') // own preferred
+})
+
 test('expandToolDone omits duration when duration_ms missing', () => {
   const event = { type: 'tool_done', tools: [{ name: 'x' }] }
   const out = expandToolDone(event)
