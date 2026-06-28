@@ -55,10 +55,12 @@ class MemorySettings:
     # evenly. Qwen3 (better gate spread, slower) still selectable. NOTE: an earlier
     # 2026-06-23 note claimed bge "compressed scores near 0 (ungateable)" — that was
     # raw-logit; the CrossEncoder.predict path used here is sigmoid (0..1). VALIDATED
-    # 2026-06-28 on the real VI store: on-topic answers score 0.016–0.99 (all above
-    # the 0.001 floor → kept), off-topic/off-keyword < 0.001 (dropped), off-topic
-    # QUERIES score ~0 across the board (no injection). So rerank_min_score gates
-    # correctly — no silent recall loss from the bge switch.
+    # 2026-06-28 with a 27-query VI labelled sweep on the real store (and regressed
+    # by tests/test_eval/test_rerank_gate_eval.py on a synthetic profile): at the
+    # 0.001 floor recall(on-topic)=1.00 and clear-off-topic suppression=1.00; raising
+    # to 0.005 already drops recall to 0.94. Residual: off-topic KEYWORD-overlap
+    # (e.g. "Angular latest version") still leaks — a scalar floor can't catch
+    # topical overlap (needs intent/LLM, deferred), same as the old reranker.
     rerank_model: str = "BAAI/bge-reranker-v2-m3"
     # 5 keeps recall < ~1s on CPU: each candidate is a forward pass, so cost scales
     # with this. The fused pool is small for personal memory; 5 covers the relevant
