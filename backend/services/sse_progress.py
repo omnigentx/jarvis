@@ -336,25 +336,58 @@ def _extract_tool_info(message: PromptMessageExtended) -> list[dict]:
                             args = json.loads(raw_args)
                         except (json.JSONDecodeError, TypeError):
                             args = {"raw": raw_args[:200]}
-                tools.append({"name": name, "args": {k: str(v) for k, v in args.items()}})
+                tools.append({"id": tool_id, "name": name,
+                              "args": {k: str(v) for k, v in args.items()}})
             except Exception:
-                tools.append({"name": str(tool_id)[:20], "args": {}})
+                tools.append({"id": tool_id, "name": str(tool_id)[:20], "args": {}})
     return tools
 
 
-def _extract_result_preview(message: PromptMessageExtended) -> Optional[str]:
-    """Extract a brief preview of tool results."""
+def _extract_results_by_id(message: PromptMessageExtended) -> tuple[dict[str, str], list[str]]:
+    """Map each tool_result to its tool_id (and keep call order for a positional
+    fallback). A turn can run SEVERAL tools; the previous code returned only the
+    FIRST result and broadcast it for the whole batch, so every tool card showed
+    the first tool's output (e.g. ``get_current_time`` displayed ``memory_remember``'s
+    result). Per-id mapping fixes that."""
+    by_id: dict[str, str] = {}
+    order: list[str] = []
     try:
         if message.tool_results:
             for tool_id, result in message.tool_results.items():
+                text = ""
                 if result.content:
                     for block in result.content:
-                        text = getattr(block, 'text', None)
-                        if text:
-                            return text.strip()
+                        t = getattr(block, 'text', None)
+                        if t:
+                            text = t.strip()
+                            break
+                by_id[tool_id] = text
+                order.append(text)
     except Exception:
         pass
-    return None
+    return by_id, order
+
+
+def _attach_per_tool_results(tools_done: list[dict],
+                             message: PromptMessageExtended) -> Optional[str]:
+    """Attach each tool's OWN result to it (matched by id; positional fallback
+    when ids don't line up), MUTATING ``tools_done`` in place. Returns the
+    batch-level preview (first non-empty) for legacy single-tool consumers.
+
+    Fixes the bug where a multi-tool turn broadcast ONE preview (the first
+    tool's) for every tool, so e.g. ``get_current_time`` rendered
+    ``memory_remember``'s result."""
+    by_id, ordered = _extract_results_by_id(message)
+    # Per-tool: prefer the id match; fall back to call-order position for any tool
+    # whose id didn't line up (handles a partial-id-match turn, not just the
+    # all-or-nothing case).
+    for i, tinfo in enumerate(tools_done):
+        rp = by_id.get(tinfo.get("id"))
+        if rp is None and i < len(ordered):
+            rp = ordered[i]
+        tinfo["result_preview"] = rp
+    return next((t.get("result_preview") for t in tools_done
+                 if t.get("result_preview")), None)
 
 
 def _make_message(agent_display: str, event_type: str, details: str = "") -> str:
@@ -516,10 +549,11 @@ def create_progress_hooks(request_id: str, session_id: str | None = None) -> Too
         start = _tool_start_times.pop(agent_name, None)
         duration_ms = int((time.time() - start) * 1000) if start else None
         
-        # Get result preview
-        result_preview = _extract_result_preview(message)
-        
+        # Per-tool results — a turn can run SEVERAL tools, so each tool gets ITS
+        # OWN result (see _attach_per_tool_results); the returned value is the
+        # legacy batch-level preview for single-tool consumers.
         tools_done = _tool_names.pop(agent_name, [])
+        result_preview = _attach_per_tool_results(tools_done, message)
         tool_str = ", ".join(t["name"] for t in tools_done) if tools_done else "tools"
         
         # chat-stream progress event for the chat UI's per-tool progress widget.

@@ -53,6 +53,10 @@ export function expandToolDone(event) {
     command: event.message || 'result',
     isResult: true,
     duration,
-    resultPreview: event.result_preview || null,
+    // Each tool's OWN result — the backend now sends `tools[*].result_preview`.
+    // Previously every tool inherited the batch-level `event.result_preview`
+    // (the first tool's output), so e.g. get_current_time showed memory_remember's
+    // result. Fall back to the batch field for older single-tool events.
+    resultPreview: t.result_preview ?? event.result_preview ?? null,
   }))
 }

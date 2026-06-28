@@ -636,21 +636,30 @@ class SessionService:
                 if et == "tool_call":
                     pending = a
                 elif et == "tool_result" and pending is not None:
-                    tools_info = pending["data"].get("tools", []) or []
                     result_data = a["data"] or {}
+                    # Prefer the RESULT event's tool list — each entry carries its
+                    # OWN result_preview after the per-tool fix. Fall back to the
+                    # call event's tools + the batch-level preview for rows persisted
+                    # before the fix (where every tool shared the first result).
+                    tools_info = result_data.get("tools") or pending["data"].get("tools", []) or []
+                    batch_preview = result_data.get("result_preview")
                     for tool in tools_info:
                         if isinstance(tool, dict):
                             tool_name = tool.get("name", "unknown")
                             tool_args = tool.get("args", {}) or {}
+                            preview = tool.get("result_preview")
+                            if preview is None:
+                                preview = batch_preview
                         else:
                             tool_name = str(tool)
                             tool_args = {}
+                            preview = batch_preview
                         out.append({
                             "tool": tool_name,
                             "args": tool_args,
                             "status": "done",
                             "duration_ms": result_data.get("duration_ms"),
-                            "result_preview": result_data.get("result_preview"),
+                            "result_preview": preview,
                         })
                     pending = None
             return out

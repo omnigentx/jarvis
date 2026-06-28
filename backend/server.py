@@ -492,7 +492,7 @@ async def lifespan(app: FastAPI):
             if getattr(_mem_cfg, "reranker_enabled", False):
                 from services.retrieval.reranker import get_shared_reranker
                 get_shared_reranker(
-                    getattr(_mem_cfg, "rerank_model", None) or "Qwen/Qwen3-Reranker-0.6B"
+                    getattr(_mem_cfg, "rerank_model", None) or "BAAI/bge-reranker-v2-m3"
                 ).warm_async()
                 logger.info("[MEMORY] reranker eager-warm kicked off (background)")
     except Exception:

@@ -70,6 +70,10 @@
       "rerankMinScore": "Ngưỡng điểm reranker",
       "rerankMinScoreHint": "Candidate có điểm rerank dưới ngưỡng này bị bỏ (≥0, mặc định 0.005).",
       "rerankModel": "Model reranker",
+      "rerankDownloading": "Đang tải reranker {model}…",
+      "rerankLoading": "Đang nạp {model} vào bộ nhớ…",
+      "rerankReady": "Reranker {model} đã sẵn sàng",
+      "rerankLoadError": "Tải reranker {model} thất bại",
       "hubMaxDf": "Ngưỡng hub GraphRAG",
       "hubMaxDfHint": "Entity được nhắc bởi ≥ tỉ lệ này số memory (vd tên của bạn) là hub vô tín hiệu, bị loại khỏi graph expansion (0–1, mặc định 0.5).",
       "extractEveryN": "Tự bắt mỗi N lượt"

@@ -109,7 +109,9 @@ def test_get_reranker_dispatches_by_model(monkeypatch):
     monkeypatch.setattr(rr, "_have_st", lambda: True)
     assert isinstance(rr.get_reranker("Qwen/Qwen3-Reranker-0.6B"), rr.Qwen3Reranker)
     assert isinstance(rr.get_reranker("BAAI/bge-reranker-v2-m3"), rr.CrossEncoderReranker)
-    assert rr.DEFAULT_RERANKER.startswith("Qwen/")
+    # Default is now bge-reranker-v2-m3 (CrossEncoder path) — faster on CPU.
+    assert rr.DEFAULT_RERANKER == "BAAI/bge-reranker-v2-m3"
+    assert isinstance(rr.get_reranker(), rr.CrossEncoderReranker)
 
 
 def test_get_reranker_falls_back_when_lib_missing(monkeypatch):
@@ -155,3 +157,49 @@ def test_qwen3_reranker_scoring_math():
         assert abs(s - 1.0 / (1.0 + math.exp(-i))) < 1e-4
     assert scores == sorted(scores)                # monotonic in row order (order preserved)
     assert r.rerank("q", []) == []                 # empty → empty
+
+
+# ── prefetch_and_warm: progress reporting for the Settings download UI ──
+
+def test_prefetch_and_warm_emits_phases_in_order(monkeypatch):
+    """Reports downloading → loading → ready so the UI can show a progress bar
+    instead of the first recall hanging on the model download."""
+    import huggingface_hub
+    from services.retrieval import reranker as rr
+
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", lambda **k: "/tmp/cache")
+
+    class _Fake:
+        def warm(self):  # already-cached → instant
+            pass
+        def is_available(self):
+            return True
+
+    monkeypatch.setattr(rr, "get_reranker", lambda name: _Fake())  # prefetch builds via get_reranker, publishes _SHARED post-warm
+
+    events = []
+    rr.prefetch_and_warm("some/model", lambda st, pct: events.append((st, pct)))
+    states = [s for s, _ in events]
+    assert states[0] == "downloading"
+    assert "loading" in states
+    assert states[-1] == "ready"
+    assert events[-1][1] == 100
+
+
+def test_prefetch_and_warm_emits_error_on_load_failure(monkeypatch):
+    import huggingface_hub
+    from services.retrieval import reranker as rr
+
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", lambda **k: "/tmp/cache")
+
+    class _Bad:
+        def warm(self):
+            raise RuntimeError("boom")
+        def is_available(self):
+            return False
+
+    monkeypatch.setattr(rr, "get_reranker", lambda name: _Bad())
+
+    events = []
+    rr.prefetch_and_warm("some/model", lambda st, pct: events.append((st, pct)))
+    assert events[-1][0] == "error"

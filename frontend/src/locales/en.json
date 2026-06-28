@@ -70,6 +70,10 @@
       "rerankMinScore": "Reranker score floor",
       "rerankMinScoreHint": "Candidates scoring below this after reranking are dropped (≥0, default 0.005).",
       "rerankModel": "Reranker model",
+      "rerankDownloading": "Downloading reranker {model}…",
+      "rerankLoading": "Loading {model} into memory…",
+      "rerankReady": "Reranker {model} is ready",
+      "rerankLoadError": "Failed to load reranker {model}",
       "hubMaxDf": "GraphRAG hub cutoff",
       "hubMaxDfHint": "An entity mentioned by ≥ this fraction of memories (e.g. your own name) is a no-signal hub, excluded from graph expansion (0–1, default 0.5).",
       "extractEveryN": "Auto-capture every N turns"

@@ -6,7 +6,9 @@ masked on read. Audit history / export still flow through config_service.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import threading
 from dataclasses import asdict
 from typing import Any
 
@@ -14,10 +16,40 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from core.auth import verify_api_key
+from services.activity_stream import activity_stream_manager
 from services.memory.settings import get_memory_settings, update_memory_settings
 
 logger = logging.getLogger("memory_settings_api")
 router = APIRouter(prefix="/api/memory", tags=["memory"])
+
+
+def _kick_reranker_warm(model_name: str) -> None:
+    """After a rerank-model switch, download + warm the new model in a daemon
+    thread and stream progress to the activity SSE — so the UI shows a progress
+    bar instead of the FIRST recall silently hanging on the download/load.
+
+    The warm runs off the event loop (it blocks); progress is marshalled back
+    onto the loop with ``call_soon_threadsafe`` because ``broadcast`` touches
+    asyncio.Queues that are not thread-safe to write from another thread.
+    """
+    from services.retrieval.reranker import prefetch_and_warm
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    def on_progress(state: str, pct: int) -> None:
+        # ``memory_`` prefix so the frontend's activity-stream router forwards it
+        # to the memory store (agents.js gates forwarding on event_type.startsWith).
+        ev = {"event_type": "memory_reranker_loading", "state": state,
+              "progress": pct, "model": model_name}
+        if loop is not None:
+            loop.call_soon_threadsafe(activity_stream_manager.broadcast, ev)
+        else:
+            activity_stream_manager.broadcast(ev)
+
+    threading.Thread(target=prefetch_and_warm, args=(model_name, on_progress),
+                     name="reranker-prefetch", daemon=True).start()
 
 
 class MemorySettingsPatch(BaseModel):
@@ -65,4 +97,9 @@ async def patch_settings(patch: MemorySettingsPatch) -> dict[str, Any]:
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     logger.info("[MEMORY] Settings updated: %s", sorted(updates))
+    # A rerank-model switch would otherwise download + load on the first recall
+    # (a multi-second silent hang). Pre-warm in the background and stream
+    # progress to the UI. Only when the reranker is actually enabled.
+    if "rerank_model" in updates and settings.reranker_enabled:
+        _kick_reranker_warm(settings.rerank_model)
     return asdict(settings)

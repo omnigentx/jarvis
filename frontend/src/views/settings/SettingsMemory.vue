@@ -11,11 +11,32 @@
  * key eye-toggle + stored/not-set badge, `--primary` toggles and buttons.
  * Copy via i18n (useLang().t) — English base, Vietnamese overlay.
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { apiFetch, ApiError } from '../../api'
 import { useLang } from '../../composables/useLang.js'
+import { useMemoryStore } from '../../stores/memory'
 
 const { t } = useLang()
+const memStore = useMemoryStore()
+
+// Live reranker download/load progress (driven by the global activity SSE →
+// memory store). Shown as a progress bar after a rerank-model switch so the
+// model download isn't a silent multi-second hang on the first recall.
+const rerankerLoad = computed(() => memStore.rerankerLoad)
+const rerankLoadLabel = computed(() => {
+  const rl = rerankerLoad.value
+  if (!rl) return ''
+  const m = rl.model || ''
+  if (rl.state === 'downloading') return t('settings.memory.rerankDownloading', { model: m })
+  if (rl.state === 'loading') return t('settings.memory.rerankLoading', { model: m })
+  if (rl.state === 'ready') return t('settings.memory.rerankReady', { model: m })
+  return t('settings.memory.rerankLoadError', { model: m })
+})
+// Auto-dismiss the "ready" confirmation after a few seconds; keep "error" so the
+// user actually notices it (cleared on the next switch).
+watch(() => rerankerLoad.value?.state, (s) => {
+  if (s === 'ready') setTimeout(() => { memStore.rerankerLoad = null }, 4000)
+})
 
 const loading = ref(true)
 const saving = ref(false)
@@ -284,6 +305,24 @@ onMounted(load)
           <label>{{ t(f.labelKey) }}</label>
           <input v-model="draft[f.key]" class="text-input" type="text" />
         </div>
+
+        <!-- Reranker model download/load progress (live SSE) — appears after a
+             rerank-model switch so the download is visible, not a silent hang. -->
+        <div v-if="rerankerLoad" class="rerank-load" :class="rerankerLoad.state" aria-live="polite">
+          <div class="rl-head">
+            <span class="rl-label">
+              <span v-if="rerankerLoad.state === 'ready'" class="rl-icon">✓</span>
+              <span v-else-if="rerankerLoad.state === 'error'" class="rl-icon">⚠</span>
+              <span v-else class="rl-spin"></span>
+              {{ rerankLoadLabel }}
+            </span>
+            <span v-if="rerankerLoad.state === 'downloading'" class="rl-pct">{{ rerankerLoad.progress }}%</span>
+          </div>
+          <div v-if="rerankerLoad.state === 'downloading' || rerankerLoad.state === 'loading'" class="rl-track">
+            <div class="rl-fill" :class="{ indet: rerankerLoad.state === 'loading' }"
+                 :style="rerankerLoad.state === 'downloading' ? { width: rerankerLoad.progress + '%' } : null"></div>
+          </div>
+        </div>
       </div>
 
       <div class="actions">
@@ -370,6 +409,27 @@ code { background: rgba(255,255,255,0.05); padding: 1px 5px; border-radius: 3px;
 .btn:disabled { opacity: .5; cursor: not-allowed; }
 .ok { color: var(--success); font-size: 13px; }
 .dirty { color: var(--text-dim); font-size: 12px; }
+
+/* Reranker model download/load progress */
+.rerank-load { margin-top: 14px; padding: 12px 14px; border-radius: var(--r-md, 8px);
+  background: var(--bg-3); border: 1px solid var(--border-strong); }
+.rerank-load.ready { border-color: var(--success); }
+.rerank-load.error { border-color: var(--danger); }
+.rl-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.rl-label { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); }
+.rl-pct { font-family: var(--font-mono); font-size: 12px; color: var(--text-dim); }
+.rl-icon { font-size: 14px; }
+.rerank-load.ready .rl-icon { color: var(--success); }
+.rerank-load.error .rl-icon { color: var(--danger); }
+.rl-spin { width: 13px; height: 13px; flex-shrink: 0; border: 2px solid var(--border-strong);
+  border-top-color: var(--primary); border-radius: 50%; animation: rl-spin .7s linear infinite; }
+@keyframes rl-spin { to { transform: rotate(360deg); } }
+.rl-track { margin-top: 10px; height: 6px; border-radius: 999px; background: var(--bg-4);
+  overflow: hidden; }
+.rl-fill { height: 100%; background: var(--primary); border-radius: 999px; transition: width .2s ease; }
+/* Indeterminate sweep while loading weights into RAM (no byte %). */
+.rl-fill.indet { width: 40%; animation: rl-indet 1.1s ease-in-out infinite; }
+@keyframes rl-indet { 0% { margin-left: -40%; } 100% { margin-left: 100%; } }
 
 @media (max-width: 768px) {
   .row { flex-direction: column; align-items: stretch; }

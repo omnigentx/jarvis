@@ -151,6 +151,14 @@ export const useAgentsStore = defineStore('agents', () => {
    */
   function processEvent(event) {
     const { agent_name, event_type } = event
+    // GLOBAL memory events (memory_indexed, memory_reranker_loading) carry no
+    // agent_name. Forward them to the memory store BEFORE the per-agent guard
+    // below, which would otherwise drop every agent-less event on the floor.
+    if (!agent_name && event_type && event_type.startsWith('memory_')) {
+      import('./memory').then(({ useMemoryStore }) => useMemoryStore().processMemoryEvent(event))
+        .catch((e) => console.warn('[Store] Failed to forward global memory event:', e))
+      return
+    }
     if (!agent_name || !event_type) return
 
     pushEvent(event)

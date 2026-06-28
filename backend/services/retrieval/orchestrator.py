@@ -74,7 +74,7 @@ class RetrievalOrchestrator:
         if getattr(settings, "reranker_enabled", False):
             from services.retrieval.reranker import get_shared_reranker
             self._reranker = get_shared_reranker(
-                getattr(settings, "rerank_model", None) or "Qwen/Qwen3-Reranker-0.6B")
+                getattr(settings, "rerank_model", None) or "BAAI/bge-reranker-v2-m3")
 
     async def retrieve(self, request: RetrievalRequest, *, now: float,
                        ledger: EvidenceLedger | None = None, turn: int = 0,
