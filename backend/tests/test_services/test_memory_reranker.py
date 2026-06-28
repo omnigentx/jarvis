@@ -175,7 +175,7 @@ def test_prefetch_and_warm_emits_phases_in_order(monkeypatch):
         def is_available(self):
             return True
 
-    monkeypatch.setattr(rr, "get_shared_reranker", lambda name: _Fake())
+    monkeypatch.setattr(rr, "get_reranker", lambda name: _Fake())  # prefetch builds via get_reranker, publishes _SHARED post-warm
 
     events = []
     rr.prefetch_and_warm("some/model", lambda st, pct: events.append((st, pct)))
@@ -198,7 +198,7 @@ def test_prefetch_and_warm_emits_error_on_load_failure(monkeypatch):
         def is_available(self):
             return False
 
-    monkeypatch.setattr(rr, "get_shared_reranker", lambda name: _Bad())
+    monkeypatch.setattr(rr, "get_reranker", lambda name: _Bad())
 
     events = []
     rr.prefetch_and_warm("some/model", lambda st, pct: events.append((st, pct)))

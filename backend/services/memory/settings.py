@@ -54,9 +54,11 @@ class MemorySettings:
     # docs/rerank-latency-issue.md). bge-v2-m3 is ~0.8s @ 8 docs and handles VI+EN
     # evenly. Qwen3 (better gate spread, slower) still selectable. NOTE: an earlier
     # 2026-06-23 note claimed bge "compressed scores near 0 (ungateable)" — that was
-    # raw-logit; the CrossEncoder.predict path used here is sigmoid (0..1), measured
-    # 0.99 on-topic / 0.00 off in a sanity test, so rerank_min_score still gates.
-    # Re-validate the gate on real VI queries if recall looks off.
+    # raw-logit; the CrossEncoder.predict path used here is sigmoid (0..1). VALIDATED
+    # 2026-06-28 on the real VI store: on-topic answers score 0.016–0.99 (all above
+    # the 0.001 floor → kept), off-topic/off-keyword < 0.001 (dropped), off-topic
+    # QUERIES score ~0 across the board (no injection). So rerank_min_score gates
+    # correctly — no silent recall loss from the bge switch.
     rerank_model: str = "BAAI/bge-reranker-v2-m3"
     # 5 keeps recall < ~1s on CPU: each candidate is a forward pass, so cost scales
     # with this. The fused pool is small for personal memory; 5 covers the relevant

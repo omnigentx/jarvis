@@ -378,15 +378,14 @@ def _attach_per_tool_results(tools_done: list[dict],
     tool's) for every tool, so e.g. ``get_current_time`` rendered
     ``memory_remember``'s result."""
     by_id, ordered = _extract_results_by_id(message)
-    matched = False
-    for tinfo in tools_done:
+    # Per-tool: prefer the id match; fall back to call-order position for any tool
+    # whose id didn't line up (handles a partial-id-match turn, not just the
+    # all-or-nothing case).
+    for i, tinfo in enumerate(tools_done):
         rp = by_id.get(tinfo.get("id"))
-        if rp is not None:
-            matched = True
+        if rp is None and i < len(ordered):
+            rp = ordered[i]
         tinfo["result_preview"] = rp
-    if not matched and ordered:           # ids didn't align → positional
-        for i, tinfo in enumerate(tools_done):
-            tinfo["result_preview"] = ordered[i] if i < len(ordered) else None
     return next((t.get("result_preview") for t in tools_done
                  if t.get("result_preview")), None)
 

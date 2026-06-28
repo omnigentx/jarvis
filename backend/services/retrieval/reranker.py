@@ -329,10 +329,18 @@ def prefetch_and_warm(model_name: str, on_progress) -> None:
             logger.info("[MEMORY] reranker prefetch skipped/failed (%s) — trying load", exc)
 
         _emit("loading", max(state["last_pct"], 99))
-        reranker = get_shared_reranker(model_name)
+        # Build + warm a FRESH instance, then publish it to the shared singleton
+        # ONLY after warm() succeeds. If we swapped _SHARED first (via
+        # get_shared_reranker) an orchestrator constructed during the warm window
+        # would grab the unwarmed model and pay the load on the request path — the
+        # exact hang this function exists to remove. Until we publish, recalls keep
+        # using the current _SHARED (the old, already-warm model).
+        global _SHARED, _SHARED_KEY
+        reranker = get_reranker(model_name)
         reranker.warm()                       # blocks until weights are in RAM
         if not reranker.is_available():
             raise RuntimeError("reranker unavailable after load (missing dep?)")
+        _SHARED, _SHARED_KEY = reranker, model_name   # atomic publish, post-warm
         _emit("ready", 100)
         logger.info("[MEMORY] reranker '%s' downloaded + warmed", model_name)
     except Exception as exc:  # noqa: BLE001 — surface one error event, never crash
