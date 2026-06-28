@@ -115,6 +115,12 @@ function parseAllowFrom(text) {
     .filter((s) => s.length > 0)
 }
 
+// "*" = allow everyone — dangerous (the bot exposes the agent's shell/Gmail/IoT
+// tools to anyone who messages it). Drives the inline warning.
+function allowsEveryone(r) {
+  return parseAllowFrom(r.allowFrom).includes('*')
+}
+
 async function testConnection(id) {
   const r = rows[id]
   const token = r.tokenInput.trim()
@@ -266,9 +272,15 @@ onMounted(reload)
           <label class="field-label">{{ t('settings.gateways.allowLabel') }}</label>
           <input
             class="text-input mono"
+            :class="{ danger: allowsEveryone(r) }"
             placeholder="123456789, 987654321"
             v-model="r.allowFrom"
           />
+          <!-- Loud warning when the list is "*": anyone on the platform can then
+               drive the agent (which has shell/Gmail/IoT tools). -->
+          <p v-if="allowsEveryone(r)" class="allow-danger">
+            ⚠️ {{ t('settings.gateways.allowAllWarning') }}
+          </p>
           <p class="hint">{{ t('settings.gateways.allowHint') }}</p>
         </div>
 
@@ -401,6 +413,19 @@ select.text-input { cursor: pointer; }
 
 .hint { margin: 0; font-size: 11.5px; color: var(--text-muted); line-height: 1.5; }
 .hint a { color: var(--accent); }
+
+.text-input.danger { border-color: var(--danger); }
+.text-input.danger:focus { box-shadow: 0 0 0 3px var(--danger-bg); }
+.allow-danger {
+  margin: 0;
+  padding: 7px 10px;
+  background: var(--danger-bg);
+  border: 1px solid var(--danger);
+  border-radius: var(--r-sm);
+  color: var(--danger);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
 
 /* ── Toggle switch ────────────────────────────────────────────────── */
 .switch-row { display: flex; align-items: center; gap: 10px; cursor: pointer; user-select: none; }

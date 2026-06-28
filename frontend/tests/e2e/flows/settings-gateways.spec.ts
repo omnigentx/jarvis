@@ -56,7 +56,13 @@ test('test a token then enable + save Telegram, asserting the bulk POST contract
   // custom switch — click the track the user actually sees.
   await card.locator('.switch-track').click()
   await expect(card.locator('input[type="checkbox"]')).toBeChecked()
-  await card.getByPlaceholder('123456789, 987654321').fill('111, 222')
+
+  // Security: "*" (allow everyone) must surface a loud warning; specific ids must not.
+  const allow = card.getByPlaceholder('123456789, 987654321')
+  await allow.fill('*')
+  await expect(card.locator('.allow-danger')).toBeVisible()
+  await allow.fill('111, 222')
+  await expect(card.locator('.allow-danger')).toHaveCount(0)
 
   const [bulkResp] = await Promise.all([
     page.waitForResponse(
