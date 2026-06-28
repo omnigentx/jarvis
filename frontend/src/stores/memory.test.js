@@ -42,19 +42,19 @@ test('events without agent_name are ignored', () => {
   assert.deepEqual(s.degradedByAgent, {})
 })
 
-test('reranker_model_loading drives the global rerankerLoad progress', () => {
+test('memory_reranker_loading drives the global rerankerLoad progress', () => {
   // GLOBAL event (no agent_name) — must be handled before the per-agent guard,
   // like memory_indexed, so the Settings progress bar updates.
   const s = useMemoryStore()
   assert.equal(s.rerankerLoad, null)
-  s.processMemoryEvent({ event_type: 'reranker_model_loading', state: 'downloading', progress: 42, model: 'itdainb/PhoRanker' })
+  s.processMemoryEvent({ event_type: 'memory_reranker_loading', state: 'downloading', progress: 42, model: 'itdainb/PhoRanker' })
   assert.deepEqual(s.rerankerLoad, { state: 'downloading', progress: 42, model: 'itdainb/PhoRanker' })
-  s.processMemoryEvent({ event_type: 'reranker_model_loading', state: 'ready', progress: 100, model: 'itdainb/PhoRanker' })
+  s.processMemoryEvent({ event_type: 'memory_reranker_loading', state: 'ready', progress: 100, model: 'itdainb/PhoRanker' })
   assert.equal(s.rerankerLoad.state, 'ready')
 })
 
-test('reranker_model_loading defaults progress to 0 when omitted', () => {
+test('memory_reranker_loading defaults progress to 0 when omitted', () => {
   const s = useMemoryStore()
-  s.processMemoryEvent({ event_type: 'reranker_model_loading', state: 'loading', model: 'x' })
+  s.processMemoryEvent({ event_type: 'memory_reranker_loading', state: 'loading', model: 'x' })
   assert.equal(s.rerankerLoad.progress, 0)
 })

@@ -31,7 +31,8 @@ export const useMemoryStore = defineStore('memory', () => {
     }
     // Reranker model swap progress — also GLOBAL (no agent). Drives the progress
     // bar on the Memory settings page so the model download isn't a silent hang.
-    if (event.event_type === 'reranker_model_loading') {
+    // (memory_ prefix so agents.js forwards it here — see processEvent gate.)
+    if (event.event_type === 'memory_reranker_loading') {
       rerankerLoad.value = {
         state: event.state, progress: event.progress ?? 0, model: event.model,
       }

@@ -39,7 +39,9 @@ def _kick_reranker_warm(model_name: str) -> None:
         loop = None
 
     def on_progress(state: str, pct: int) -> None:
-        ev = {"event_type": "reranker_model_loading", "state": state,
+        # ``memory_`` prefix so the frontend's activity-stream router forwards it
+        # to the memory store (agents.js gates forwarding on event_type.startsWith).
+        ev = {"event_type": "memory_reranker_loading", "state": state,
               "progress": pct, "model": model_name}
         if loop is not None:
             loop.call_soon_threadsafe(activity_stream_manager.broadcast, ev)
