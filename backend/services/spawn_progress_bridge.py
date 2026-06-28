@@ -247,9 +247,12 @@ class SpawnProgressBridge:
             self._handle_removal(data)
             return  # Don't push removal events to chat SSE
 
-        # 4d. Handle lifecycle cleanup — broadcast agent_removed for UI sync
+        # 4d. Handle lifecycle cleanup — broadcast agent_removed for UI sync +
+        # purge the agent's memory (the spawner emits this ONLY for a oneshot that
+        # has been removed from the registry → it's gone for good).
         if event_type_str == "lifecycle_after_cleanup":
             self._broadcast_agent_removed(agent_name, data, event_data)
+            self._maybe_purge_oneshot_memory(agent_name, data)
             return  # Don't push to chat SSE
 
         # 5. Handle token_usage events — persist + broadcast (monitoring only, not chat SSE)
@@ -555,6 +558,48 @@ class SpawnProgressBridge:
             )
         except Exception as e:
             logger.warning("Failed to handle removal: %s", e)
+
+    def _maybe_purge_oneshot_memory(self, agent_name: str, data: dict) -> None:
+        """Purge a cleaned-up ONESHOT agent's memory silo (it's gone for good — its
+        unique name will never run again). Driven by ``lifecycle_after_cleanup``,
+        which the spawner (agent_spawner_server on_after_cleanup) emits ONLY for a
+        oneshot, after registry removal. Reuses ``purge_agent_memory`` (the same
+        cleanup the DELETE endpoint runs). Best-effort: never block event flow.
+        """
+        if data.get("lifecycle") != "oneshot":        # defensive: oneshot-only
+            return
+        if not agent_name or agent_name == "agent":   # defensive: no real identity
+            return
+        # Fail-safe for an IRREVERSIBLE delete: never wipe a PERSISTENT agent's silo.
+        # Spawn-time uniqueness (fast-agent ensure_unique_agent_name) should stop a
+        # oneshot from ever sharing a persistent name, but a destructive op must not
+        # trust an invariant enforced in another module — probe the authoritative
+        # sources here. If a future creation path bypasses the uniqueness gate, or we
+        # simply can't verify, we skip rather than risk deleting Jarvis's memory.
+        try:
+            import services.shared_state as _state
+            from services.agent_definitions import get_definition
+            live = getattr(_state.agent_app, "_agents", None) or {}
+            is_persistent = agent_name in live or get_definition(agent_name) is not None
+        except Exception:
+            is_persistent = True   # cannot verify → fail SAFE (do not delete)
+        if is_persistent:
+            logger.warning("[SPAWN] skipping oneshot memory purge for %r — it matches a "
+                           "persistent agent (static/dynamic), not a throwaway oneshot", agent_name)
+            return
+        try:
+            from core.database import get_db_session
+            from services.memory.memory_service import purge_agent_memory
+            db = get_db_session()
+            try:
+                counts = purge_agent_memory(db, agent_name)
+                if any(counts.values()):
+                    logger.info("[SPAWN] purged completed oneshot %s memory: %s",
+                                agent_name, counts)
+            finally:
+                db.close()
+        except Exception as exc:  # noqa: BLE001 — cleanup must not break the bridge
+            logger.warning("[SPAWN] oneshot memory purge failed for %s: %s", agent_name, exc)
 
     def _upsert_spawn_record(self, role: str, event_type_str: str, data: dict, raw: dict) -> None:
         """Upsert spawn_records on lifecycle events (started, result, error)."""

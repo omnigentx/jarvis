@@ -508,3 +508,57 @@ class TestLateJoinerHook:
         finally:
             import services.shared_state as st
             st.registry_db = original_st
+
+
+    def _patch_purge(self, monkeypatch, calls, *, persistent=()):
+        """Common harness: capture purge calls; treat ``persistent`` names as live
+        persistent agents (so the fail-safe should refuse to purge them)."""
+        import core.database as cdb
+        import services.agent_definitions as adefs
+        import services.memory.memory_service as msvc
+        import services.shared_state as ss
+        monkeypatch.setattr(msvc, "purge_agent_memory",
+                            lambda db, name: calls.append(name) or {"records": 1})
+        monkeypatch.setattr(cdb, "get_db_session", lambda: MagicMock())
+        monkeypatch.setattr(adefs, "get_definition", lambda name: None)   # no dynamic defs
+        monkeypatch.setattr(ss, "agent_app",
+                            MagicMock(_agents={n: object() for n in persistent}))
+
+    def test_oneshot_cleanup_purges_memory_only_for_oneshot(self, monkeypatch):
+        """lifecycle_after_cleanup purges a oneshot's memory silo; a resumable
+        agent (or a blank identity) is left untouched."""
+        calls: list[str] = []
+        self._patch_purge(monkeypatch, calls)
+
+        bridge = SpawnProgressBridge(MagicMock())
+        bridge._maybe_purge_oneshot_memory("MemTestCarol", {"lifecycle": "oneshot"})
+        bridge._maybe_purge_oneshot_memory("DevAgent", {"lifecycle": "resumable"})  # kept
+        bridge._maybe_purge_oneshot_memory("", {"lifecycle": "oneshot"})            # no identity
+
+        assert calls == ["MemTestCarol"]
+
+    def test_oneshot_purge_fail_safe_refuses_persistent_agent(self, monkeypatch):
+        """IRREVERSIBLE-delete fail-safe: even if a oneshot cleanup event arrives for
+        a name that matches a PERSISTENT agent (e.g. Jarvis — uniqueness bypassed),
+        the silo is NOT purged."""
+        calls: list[str] = []
+        self._patch_purge(monkeypatch, calls, persistent=("Jarvis",))
+
+        bridge = SpawnProgressBridge(MagicMock())
+        bridge._maybe_purge_oneshot_memory("Jarvis", {"lifecycle": "oneshot"})        # persistent → skip
+        bridge._maybe_purge_oneshot_memory("ThrowawayBot", {"lifecycle": "oneshot"})  # real oneshot → purge
+
+        assert calls == ["ThrowawayBot"]   # Jarvis never purged
+
+    def test_oneshot_purge_fail_safe_skips_when_unverifiable(self, monkeypatch):
+        """If persistence can't be verified (lookup raises), fail SAFE: do not delete."""
+        calls: list[str] = []
+        import services.agent_definitions as adefs
+        import services.shared_state as ss
+        monkeypatch.setattr(adefs, "get_definition",
+                            lambda name: (_ for _ in ()).throw(RuntimeError("db down")))
+        monkeypatch.setattr(ss, "agent_app", None)
+
+        bridge = SpawnProgressBridge(MagicMock())
+        bridge._maybe_purge_oneshot_memory("AnyBot", {"lifecycle": "oneshot"})
+        assert calls == []   # unverifiable → skipped

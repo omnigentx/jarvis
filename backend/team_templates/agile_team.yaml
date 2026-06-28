@@ -117,6 +117,7 @@ roles:
       ]
     servers:
       [
+        memory_server,
         filesystem,
         meeting_room,
         email,
@@ -167,6 +168,7 @@ roles:
     skills: [ba-workflow, team-roster, team-communication, jarvis-knowledge, self-audit-tools]
     servers:
       [
+        memory_server,
         filesystem,
         meeting_room,
         email,
@@ -218,6 +220,7 @@ roles:
       [software-architecture, team-roster, team-communication, jarvis-knowledge, self-audit-tools]
     servers:
       [
+        memory_server,
         filesystem,
         meeting_room,
         email,
@@ -292,6 +295,7 @@ roles:
       ]
     servers:
       [
+        memory_server,
         filesystem,
         meeting_room,
         email,
@@ -339,7 +343,7 @@ roles:
 
     skills: [figma-designer, team-roster, team-communication, self-audit-tools]
     servers:
-      [filesystem, meeting_room, email, github, mcp-atlassian, figma-ui-mcp]
+      [memory_server, filesystem, meeting_room, email, github, mcp-atlassian, figma-ui-mcp]
     server_overrides:
       filesystem:
         args:
@@ -399,6 +403,7 @@ roles:
       ]
     servers:
       [
+        memory_server,
         filesystem,
         meeting_room,
         email,
@@ -451,6 +456,7 @@ roles:
       ]
     servers:
       [
+        memory_server,
         filesystem,
         meeting_room,
         email,
