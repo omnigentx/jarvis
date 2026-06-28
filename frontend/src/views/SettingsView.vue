@@ -17,6 +17,7 @@ import SettingsAuth from './settings/SettingsAuth.vue'
 import SettingsYaml from './settings/SettingsYaml.vue'
 import SettingsRunningTemplates from './settings/SettingsRunningTemplates.vue'
 import SettingsServices from './settings/SettingsServices.vue'
+import SettingsGateways from './settings/SettingsGateways.vue'
 import SettingsLLM from './settings/SettingsLLM.vue'
 import SettingsVoice from './settings/SettingsVoice.vue'
 import SettingsCompaction from './settings/SettingsCompaction.vue'
@@ -33,6 +34,7 @@ const TABS = [
   { id: 'llm',          labelKey: 'settings.shell.tab.llm',          eyebrow: 'MODELS' },
   { id: 'voice',        labelKey: 'settings.shell.tab.voice',        eyebrow: 'MODELS' },
   { id: 'services',     labelKey: 'settings.shell.tab.services',     eyebrow: 'INTEGRATIONS' },
+  { id: 'gateways',     labelKey: 'settings.shell.tab.gateways',     eyebrow: 'INTEGRATIONS' },
   { id: 'yaml',         labelKey: 'settings.shell.tab.yaml',         eyebrow: 'INTEGRATIONS' },
   { id: 'running-tmpl', labelKey: 'settings.shell.tab.runningTmpl',  eyebrow: 'INTEGRATIONS' },
   { id: 'compaction',   labelKey: 'settings.shell.tab.compaction',   eyebrow: 'ADVANCED' },
@@ -106,6 +108,7 @@ function labelFor(id) {
         <SettingsYaml v-else-if="active === 'yaml'" />
         <SettingsRunningTemplates v-else-if="active === 'running-tmpl'" />
         <SettingsServices v-else-if="active === 'services'" />
+        <SettingsGateways v-else-if="active === 'gateways'" />
         <SettingsCompaction v-else-if="active === 'compaction'" />
         <SettingsMemory v-else-if="active === 'memory'" />
         <SettingsExperimental v-else-if="active === 'experimental'" />

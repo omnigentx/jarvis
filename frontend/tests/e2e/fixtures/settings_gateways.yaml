@@ -1,0 +1,75 @@
+# Settings → Messaging Gateways panel.
+#
+# On mount the panel calls:
+#   GET /api/gateways            → enumerates registered platforms + live status
+#   GET /api/settings/gateways   → editable config values (token masked)
+#   GET /api/agents              → "Answering Agent" dropdown
+# Actions:
+#   POST /api/gateways/telegram/test  → validate token via getMe
+#   POST /api/settings/bulk           → save config (token is_secret)
+
+backend_source:
+  - "backend/routes/gateways.py::gateway_status, test_connection"
+  - "backend/routes/settings.py::list_category, bulk_update"
+  - "backend/routes/agents.py::list_agents"
+  - "frontend/src/views/settings/SettingsGateways.vue::reload, testConnection, save"
+
+notes: |
+  Both platforms start disabled with no token. The spec tests the happy path:
+  test a token (getMe ok) then enable + save Telegram, asserting the bulk POST
+  carries telegram_enabled=true and the secret token item.
+
+responses:
+  # SettingsGeneral mounts first (default tab) and calls store.fetchAll().
+  "GET /api/settings":
+    status: 200
+    json:
+      categories: {}
+
+  "GET /api/gateways":
+    status: 200
+    json:
+      gateways:
+        - platform: "telegram"
+          enabled: false
+          running: false
+          connected: false
+          bot_username: null
+          last_error: null
+          agent: "Jarvis"
+          allow_count: 0
+          has_token: false
+        - platform: "zalo"
+          enabled: false
+          running: false
+          connected: false
+          bot_username: null
+          last_error: null
+          agent: "Jarvis"
+          allow_count: 0
+          has_token: false
+
+  "GET /api/settings/gateways":
+    status: 200
+    json:
+      category: "gateways"
+      items: []
+
+  "GET /api/agents":
+    status: 200
+    json:
+      - { name: "Jarvis", status: "idle", is_default: true, type: "builtin" }
+      - { name: "Personal", status: "idle", is_default: false, type: "builtin" }
+
+  "POST /api/gateways/telegram/test":
+    status: 200
+    json:
+      ok: true
+      name: "jarvis_bot"
+
+  "POST /api/settings/bulk":
+    status: 200
+    json:
+      events:
+        - { action: "updated", category: "gateways", key: "telegram_enabled", is_secret: false }
+        - { action: "updated", category: "gateways", key: "telegram_token", is_secret: true }

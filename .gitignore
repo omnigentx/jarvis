@@ -104,3 +104,6 @@ docs/memory-v2-plan.md
 docs/oss-i18n-backlog.md
 docs/memory-impl/
 scripts/scan_vietnamese.py
+
+# Local model overlays (per-user model capability declarations)
+backend/.fast-agent/model-overlays/
