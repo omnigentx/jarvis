@@ -48,12 +48,20 @@ class MemorySettings:
     # memory) relevance — the bi-encoder can't. ON by default. It is a RANKER, not
     # a precision GATE: see rerank_min_score.
     reranker_enabled: bool = True
-    # Qwen3-Reranker-0.6B (causal LM, yes/no logit) measured 2026-06-23 to rank the
-    # direct answer FIRST on the live Vietnamese store and give a usable score
-    # spread, where bge-reranker-v2-m3 compressed everything near 0 (ungateable,
-    # mis-ranked). bge still selectable. Slower (autoregressive) but worth it.
-    rerank_model: str = "Qwen/Qwen3-Reranker-0.6B"
-    rerank_top_k: int = 20            # how many fused candidates to rerank
+    # Default bge-reranker-v2-m3: a multilingual cross-encoder (one forward + head)
+    # ~10x cheaper on CPU than Qwen3-Reranker-0.6B (a 600M causal LM measured at
+    # ~0.87s/candidate → ~17s recall on the CPU-only prod; see
+    # docs/rerank-latency-issue.md). bge-v2-m3 is ~0.8s @ 8 docs and handles VI+EN
+    # evenly. Qwen3 (better gate spread, slower) still selectable. NOTE: an earlier
+    # 2026-06-23 note claimed bge "compressed scores near 0 (ungateable)" — that was
+    # raw-logit; the CrossEncoder.predict path used here is sigmoid (0..1), measured
+    # 0.99 on-topic / 0.00 off in a sanity test, so rerank_min_score still gates.
+    # Re-validate the gate on real VI queries if recall looks off.
+    rerank_model: str = "BAAI/bge-reranker-v2-m3"
+    # 5 keeps recall < ~1s on CPU: each candidate is a forward pass, so cost scales
+    # with this. The fused pool is small for personal memory; 5 covers the relevant
+    # head. (Was 20 — ~17s with the old Qwen3 reranker.)
+    rerank_top_k: int = 5             # how many fused candidates to rerank
     # Drop candidates scoring below this. With bge-reranker this had to be 0.0 (it
     # compressed every Vietnamese score near 0 — a floor couldn't separate on-topic
     # from off-keyword without killing recall). Qwen3-Reranker fixes that: measured
@@ -116,8 +124,8 @@ _SCHEMA: dict[str, tuple[str, Any]] = {
     "embedding_model": ("str", "Qwen/Qwen3-Embedding-0.6B"),
     "embedding_revision": ("str", ""),
     "reranker_enabled": ("bool", True),
-    "rerank_model": ("str", "Qwen/Qwen3-Reranker-0.6B"),
-    "rerank_top_k": ("int", 20),
+    "rerank_model": ("str", "BAAI/bge-reranker-v2-m3"),
+    "rerank_top_k": ("int", 5),
     "rerank_min_score": ("float", 0.001),
     "ladybug_path": ("str", "data/memory_graph"),
     "retention_episodic_days": ("int", 90),

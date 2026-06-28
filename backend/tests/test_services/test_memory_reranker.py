@@ -109,7 +109,9 @@ def test_get_reranker_dispatches_by_model(monkeypatch):
     monkeypatch.setattr(rr, "_have_st", lambda: True)
     assert isinstance(rr.get_reranker("Qwen/Qwen3-Reranker-0.6B"), rr.Qwen3Reranker)
     assert isinstance(rr.get_reranker("BAAI/bge-reranker-v2-m3"), rr.CrossEncoderReranker)
-    assert rr.DEFAULT_RERANKER.startswith("Qwen/")
+    # Default is now bge-reranker-v2-m3 (CrossEncoder path) — faster on CPU.
+    assert rr.DEFAULT_RERANKER == "BAAI/bge-reranker-v2-m3"
+    assert isinstance(rr.get_reranker(), rr.CrossEncoderReranker)
 
 
 def test_get_reranker_falls_back_when_lib_missing(monkeypatch):

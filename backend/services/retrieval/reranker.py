@@ -20,7 +20,7 @@ from abc import ABC, abstractmethod
 
 logger = logging.getLogger("memory.reranker")
 
-DEFAULT_RERANKER = "Qwen/Qwen3-Reranker-0.6B"
+DEFAULT_RERANKER = "BAAI/bge-reranker-v2-m3"
 # Set by the FastAPI lifespan in the main process (same flag the embedder uses).
 MAIN_PROCESS_ENV = "JARVIS_MAIN_PROCESS"
 
