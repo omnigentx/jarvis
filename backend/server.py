@@ -565,284 +565,322 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("MCP catalog boot sync failed: %s", e, exc_info=True)
 
-    async with fast.run() as agent:
-        state.agent_app = agent
-        logger.info("FastAgent initialized.")
+    # Bring the FastAgent runtime up in the BACKGROUND so the lifespan yields
+    # immediately: the liveness probe (/api/setup/auth/probe — no agent_app dep)
+    # answers in seconds while agents + MCP servers + the model cache warm up. A
+    # cold first deploy (multi-GB model download + MCP connect) otherwise blocked
+    # startup past the CD health window, false-failing a healthy boot. agent_app-
+    # dependent routes gate on state.agent_app (None → 503 until ready).
+    state.reload_task = None
+    state.gateway_manager = None
+    _agent_shutdown = asyncio.Event()
 
-        # ── Always-on token-persistence hook ──────────────────
-        # Attached BEFORE the cron scheduler is wired so any
-        # scheduled agent_turn fired in the milliseconds between
-        # ``set_agent_refs`` and the loop's first tick still gets
-        # its tokens persisted. Callers (chat / voice / inject /
-        # cron) only need to set the ``current_run_id`` ContextVar
-        # around their send call — the hook reads it at LLM-call
-        # time. This is the single source of truth for token
-        # tracking on in-process agents; team-spawn subprocesses
-        # have their own emit_event path (see isolated_runner +
-        # spawn_progress_bridge._handle_token_usage).
-        try:
-            from services.sse_progress import attach_token_persistence_hooks_to_all
-            _n_hooked = attach_token_persistence_hooks_to_all(agent)
-            logger.info("[TOKEN] Default token-persistence hook attached to %d agent(s)", _n_hooked)
-        except Exception as _e:
-            logger.warning("[TOKEN] Failed to attach default token hook: %s", _e, exc_info=True)
+    async def _agent_runtime():
+        async with fast.run() as agent:
+            state.agent_app = agent
+            logger.info("FastAgent initialized.")
 
-        # ── Always-on context-compaction hook ─────────────────
-        # Same wiring pattern as the token hook above: fires on
-        # before_llm_call for every in-process agent, threshold-checks
-        # the context size, and compacts message_history when the
-        # configured ratio is exceeded (services/context_compaction.py).
-        # Subprocess team agents are NOT hooked here — they benefit via
-        # the resume path (newest raw/working snapshot wins).
-        try:
-            from services.context_compaction import attach_compaction_hooks_to_all
-            _n_compact = attach_compaction_hooks_to_all(agent)
-            logger.info("[COMPACT] Compaction hook attached to %d agent(s)", _n_compact)
-        except Exception as _e:
-            logger.warning("[COMPACT] Failed to attach compaction hook: %s", _e, exc_info=True)
-
-        # Memory auto-inject retrieval hook — merged ON TOP of compaction (runs
-        # after it). Self-gates on the `memory` flag, so attaching is harmless
-        # when memory is off.
-        try:
-            from services.memory.retrieval_hook import attach_memory_hooks_to_all
-            _n_mem = attach_memory_hooks_to_all(agent)
-            logger.info("[MEMORY] Retrieval hook attached to %d agent(s)", _n_mem)
-        except Exception as _e:
-            logger.warning("[MEMORY] Failed to attach retrieval hook: %s", _e, exc_info=True)
-
-        # Knowledge-graph migration/repair: (re)extract triples for memories that
-        # lack them and re-project them as RELATES edges. MUST run here — AFTER
-        # `state.agent_app = agent` — because the extractor LLM is resolved from
-        # the live agent app; scheduling it before fast.run() (as it was) made
-        # build_extractor_generate_fn return None → the backfill silently no-op'd
-        # and old memories never entered the graph on restart. Background +
-        # best-effort: never blocks startup, harmless if no LLM is configured.
-        try:
-            if _mem_cfg and _mem_cfg.enabled:
-                async def _kg_backfill_bg():
-                    try:
-                        from services.memory.knowledge_graph import backfill_relations
-                        n = await backfill_relations()
-                        if n:
-                            logger.info("[MEMORY] KG backfill: extracted triples for %d memories", n)
-                    except Exception:
-                        logger.exception("[MEMORY] KG backfill failed")
-                asyncio.create_task(_kg_backfill_bg())
-        except Exception:
-            logger.exception("[MEMORY] KG backfill scheduling failed")
-
-        # Wire CronScheduler agent references (for agent_turn execution)
-        if state.cron_scheduler:
-            state.cron_scheduler.set_agent_refs(agent, state.session_service)
-
-        # Pre-load dynamic agent definitions from DB and attach to Jarvis
-        from services.dynamic_agents import preload_dynamic_agents, db_rev_poll_loop
-        loaded = await preload_dynamic_agents(agent)
-        if loaded:
-            logger.info("Dynamic agents ready: %s", loaded)
-            # Newly preloaded dynamic agents also need the token hook.
-            # ``attach_token_persistence_hooks_to_all`` is idempotent
-            # (per-agent sentinel) so re-running is safe.
+            # ── Always-on token-persistence hook ──────────────────
+            # Attached BEFORE the cron scheduler is wired so any
+            # scheduled agent_turn fired in the milliseconds between
+            # ``set_agent_refs`` and the loop's first tick still gets
+            # its tokens persisted. Callers (chat / voice / inject /
+            # cron) only need to set the ``current_run_id`` ContextVar
+            # around their send call — the hook reads it at LLM-call
+            # time. This is the single source of truth for token
+            # tracking on in-process agents; team-spawn subprocesses
+            # have their own emit_event path (see isolated_runner +
+            # spawn_progress_bridge._handle_token_usage).
             try:
                 from services.sse_progress import attach_token_persistence_hooks_to_all
-                attach_token_persistence_hooks_to_all(agent)
+                _n_hooked = attach_token_persistence_hooks_to_all(agent)
+                logger.info("[TOKEN] Default token-persistence hook attached to %d agent(s)", _n_hooked)
             except Exception as _e:
-                logger.warning("[TOKEN] Failed to re-attach hook after preload: %s", _e)
-            # Compaction hook is idempotent the same way (per-agent sentinel).
+                logger.warning("[TOKEN] Failed to attach default token hook: %s", _e, exc_info=True)
+
+            # ── Always-on context-compaction hook ─────────────────
+            # Same wiring pattern as the token hook above: fires on
+            # before_llm_call for every in-process agent, threshold-checks
+            # the context size, and compacts message_history when the
+            # configured ratio is exceeded (services/context_compaction.py).
+            # Subprocess team agents are NOT hooked here — they benefit via
+            # the resume path (newest raw/working snapshot wins).
             try:
                 from services.context_compaction import attach_compaction_hooks_to_all
-                attach_compaction_hooks_to_all(agent)
-                from services.memory.retrieval_hook import attach_memory_hooks_to_all
-                attach_memory_hooks_to_all(agent)
+                _n_compact = attach_compaction_hooks_to_all(agent)
+                logger.info("[COMPACT] Compaction hook attached to %d agent(s)", _n_compact)
             except Exception as _e:
-                logger.warning("[COMPACT] Failed to re-attach hook after preload: %s", _e)
+                logger.warning("[COMPACT] Failed to attach compaction hook: %s", _e, exc_info=True)
 
-        # Background task: poll agent_definitions_meta.rev and reload on change.
-        # Writers (REST CRUD + agent_spawner MCP) bump rev; this loop converges.
-        reload_task = asyncio.create_task(db_rev_poll_loop(agent))
-        
-        # Populate MCP server tools DB from static agents' aggregators
-        cached_servers = set()
-        try:
-            if state.registry_db:
-                tools_by_server = {}
-                for ag_name in fast.agents:
-                    ag = agent.get_agent(ag_name)
-                    if ag is None:
-                        continue
-                    agg = getattr(ag, "_aggregator", None)
-                    if not agg:
-                        continue
-                    server_tool_map = getattr(agg, "_server_to_tool_map", {})
-                    for svr, nts in server_tool_map.items():
-                        if svr not in tools_by_server:
-                            tools_by_server[svr] = [
-                                {"name": nt.tool.name, "description": getattr(nt.tool, "description", "") or ""}
-                                for nt in nts
-                            ]
-                if tools_by_server:
-                    cached = state.registry_db.bulk_upsert_server_tools(tools_by_server)
-                    cached_servers = set(tools_by_server.keys())
-                    logger.info("MCP server tools: cached %d servers from aggregators", cached)
-        except Exception as e:
-            logger.warning("MCP server tools cache failed: %s", e)
-        
-        # Background: discover tools for uncached servers using MCP SDK
-        async def _discover_uncached_servers():
-            """Briefly connect to uncached MCP servers to list their tools."""
-            import yaml as _yaml
+            # Memory auto-inject retrieval hook — merged ON TOP of compaction (runs
+            # after it). Self-gates on the `memory` flag, so attaching is harmless
+            # when memory is off.
             try:
-                config_path = Path(__file__).parent / "fastagent.config.yaml"
-                if not config_path.exists():
-                    return
-                
-                with open(config_path) as f:
-                    raw_cfg = _yaml.safe_load(f) or {}
-                
-                server_configs = raw_cfg.get("mcp", {}).get("servers", {})
-                
-                # Merge overrides from secrets file (e.g. local paths for figma-ui-mcp)
-                secrets_path = Path(__file__).parent / "fastagent.secrets.yaml"
-                if secrets_path.exists():
-                    try:
-                        with open(secrets_path) as f:
-                            secrets_cfg = _yaml.safe_load(f) or {}
-                        secrets_servers = secrets_cfg.get("mcp", {}).get("servers", {})
-                        for svr_name, svr_override in secrets_servers.items():
-                            if svr_name in server_configs:
-                                # Deep merge: merge env dicts instead of overwriting
-                                for key, val in svr_override.items():
-                                    if key == "env" and isinstance(val, dict) and isinstance(server_configs[svr_name].get("env"), dict):
-                                        server_configs[svr_name]["env"].update(val)
-                                    else:
-                                        server_configs[svr_name][key] = val
-                            else:
-                                server_configs[svr_name] = svr_override
-                    except Exception:
-                        pass
-                
-                if not server_configs:
-                    return
-                
-                # Also skip servers already in DB from previous runs
-                existing_in_db = set()
-                if state.registry_db:
-                    for svr_name in server_configs:
-                        if svr_name not in cached_servers:
-                            tools = state.registry_db.get_server_tools([svr_name])
-                            if tools:
-                                existing_in_db.add(svr_name)
-                
-                skip = cached_servers | existing_in_db
-                uncached = [s for s in server_configs if s not in skip]
-                if not uncached:
-                    logger.info("MCP server tools: all %d servers cached (aggregator=%d, db=%d)",
-                               len(server_configs), len(cached_servers), len(existing_in_db))
-                    return
-                
-                logger.info("MCP server tools: discovering %d uncached servers: %s", len(uncached), uncached)
-                
-                from mcp.client.stdio import stdio_client, StdioServerParameters
-                from mcp import ClientSession
-                import os
-                
-                discovered = {}
-                for server_name in uncached:
-                    svr_cfg = server_configs[server_name]
-                    command = svr_cfg.get("command")
-                    if not command:
-                        # SSE/non-stdio servers — skip
-                        continue
-                    
-                    args = svr_cfg.get("args", [])
-                    # Skip OAuth-based servers (mcp-remote requires browser auth)
-                    if any("mcp-remote" in str(a) for a in [command] + args):
-                        logger.debug("MCP server tools: skipping %s (uses mcp-remote/OAuth)", server_name)
-                        continue
-                    
-                    env_cfg = svr_cfg.get("env") or {}
-                    # Resolve env vars in args (e.g. ${SERPAPI_API_KEY})
-                    import re
-                    resolved_args = []
-                    for a in args:
-                        if isinstance(a, str) and "${" in a:
-                            a = re.sub(r'\$\{(\w+)\}', lambda m: os.environ.get(m.group(1), m.group(0)), a)
-                        resolved_args.append(str(a))
-                    
-                    # Resolve env vars in env config values too
-                    # Look up from both os.environ and env_cfg itself (for cross-refs)
-                    lookup = {**os.environ, **{k: str(v) for k, v in env_cfg.items()}}
-                    resolved_env = {}
-                    for k, v in env_cfg.items():
-                        if isinstance(v, str) and "${" in v:
-                            v = re.sub(r'\$\{(\w+)\}', lambda m: lookup.get(m.group(1), m.group(0)), v)
-                        resolved_env[k] = str(v)
-                    
-                    # Merge env
-                    server_env = {**os.environ, **resolved_env} if resolved_env else None
-                    
-                    try:
-                        params = StdioServerParameters(
-                            command=command,
-                            args=resolved_args,
-                            env=server_env,
-                        )
-                        async with stdio_client(params) as (read_stream, write_stream):
-                            async with ClientSession(read_stream, write_stream) as session:
-                                await session.initialize()
-                                result = await session.list_tools()
-                                tools = [
-                                    {"name": t.name, "description": t.description or ""}
-                                    for t in result.tools
-                                ]
-                                if tools:
-                                    discovered[server_name] = tools
-                                    logger.debug("MCP server tools: %s → %d tools", server_name, len(tools))
-                    except Exception as e:
-                        logger.debug("MCP server tools: failed to discover %s: %s", server_name, e)
-                
-                if discovered and state.registry_db:
-                    count = state.registry_db.bulk_upsert_server_tools(discovered)
-                    logger.info("MCP server tools: discovered %d servers in background: %s",
-                               count, list(discovered.keys()))
-            except Exception as e:
-                logger.warning("MCP server tools: background discovery failed: %s", e)
+                from services.memory.retrieval_hook import attach_memory_hooks_to_all
+                _n_mem = attach_memory_hooks_to_all(agent)
+                logger.info("[MEMORY] Retrieval hook attached to %d agent(s)", _n_mem)
+            except Exception as _e:
+                logger.warning("[MEMORY] Failed to attach retrieval hook: %s", _e, exc_info=True)
+
+            # Knowledge-graph migration/repair: (re)extract triples for memories that
+            # lack them and re-project them as RELATES edges. MUST run here — AFTER
+            # `state.agent_app = agent` — because the extractor LLM is resolved from
+            # the live agent app; scheduling it before fast.run() (as it was) made
+            # build_extractor_generate_fn return None → the backfill silently no-op'd
+            # and old memories never entered the graph on restart. Background +
+            # best-effort: never blocks startup, harmless if no LLM is configured.
+            try:
+                if _mem_cfg and _mem_cfg.enabled:
+                    async def _kg_backfill_bg():
+                        try:
+                            from services.memory.knowledge_graph import backfill_relations
+                            n = await backfill_relations()
+                            if n:
+                                logger.info("[MEMORY] KG backfill: extracted triples for %d memories", n)
+                        except Exception:
+                            logger.exception("[MEMORY] KG backfill failed")
+                    asyncio.create_task(_kg_backfill_bg())
+            except Exception:
+                logger.exception("[MEMORY] KG backfill scheduling failed")
+
+            # Wire CronScheduler agent references (for agent_turn execution)
+            if state.cron_scheduler:
+                state.cron_scheduler.set_agent_refs(agent, state.session_service)
+
+            # Pre-load dynamic agent definitions from DB and attach to Jarvis
+            from services.dynamic_agents import preload_dynamic_agents, db_rev_poll_loop
+            loaded = await preload_dynamic_agents(agent)
+            if loaded:
+                logger.info("Dynamic agents ready: %s", loaded)
+                # Newly preloaded dynamic agents also need the token hook.
+                # ``attach_token_persistence_hooks_to_all`` is idempotent
+                # (per-agent sentinel) so re-running is safe.
+                try:
+                    from services.sse_progress import attach_token_persistence_hooks_to_all
+                    attach_token_persistence_hooks_to_all(agent)
+                except Exception as _e:
+                    logger.warning("[TOKEN] Failed to re-attach hook after preload: %s", _e)
+                # Compaction hook is idempotent the same way (per-agent sentinel).
+                try:
+                    from services.context_compaction import attach_compaction_hooks_to_all
+                    attach_compaction_hooks_to_all(agent)
+                    from services.memory.retrieval_hook import attach_memory_hooks_to_all
+                    attach_memory_hooks_to_all(agent)
+                except Exception as _e:
+                    logger.warning("[COMPACT] Failed to re-attach hook after preload: %s", _e)
+
+            # Background task: poll agent_definitions_meta.rev and reload on change.
+            # Writers (REST CRUD + agent_spawner MCP) bump rev; this loop converges.
+            state.reload_task = asyncio.create_task(db_rev_poll_loop(agent))
         
-        asyncio.create_task(_discover_uncached_servers())
+            # Populate MCP server tools DB from static agents' aggregators
+            cached_servers = set()
+            try:
+                if state.registry_db:
+                    tools_by_server = {}
+                    for ag_name in fast.agents:
+                        ag = agent.get_agent(ag_name)
+                        if ag is None:
+                            continue
+                        agg = getattr(ag, "_aggregator", None)
+                        if not agg:
+                            continue
+                        server_tool_map = getattr(agg, "_server_to_tool_map", {})
+                        for svr, nts in server_tool_map.items():
+                            if svr not in tools_by_server:
+                                tools_by_server[svr] = [
+                                    {"name": nt.tool.name, "description": getattr(nt.tool, "description", "") or ""}
+                                    for nt in nts
+                                ]
+                    if tools_by_server:
+                        cached = state.registry_db.bulk_upsert_server_tools(tools_by_server)
+                        cached_servers = set(tools_by_server.keys())
+                        logger.info("MCP server tools: cached %d servers from aggregators", cached)
+            except Exception as e:
+                logger.warning("MCP server tools cache failed: %s", e)
+        
+            # Background: discover tools for uncached servers using MCP SDK
+            async def _discover_uncached_servers():
+                """Briefly connect to uncached MCP servers to list their tools."""
+                import yaml as _yaml
+                try:
+                    config_path = Path(__file__).parent / "fastagent.config.yaml"
+                    if not config_path.exists():
+                        return
+                
+                    with open(config_path) as f:
+                        raw_cfg = _yaml.safe_load(f) or {}
+                
+                    server_configs = raw_cfg.get("mcp", {}).get("servers", {})
+                
+                    # Merge overrides from secrets file (e.g. local paths for figma-ui-mcp)
+                    secrets_path = Path(__file__).parent / "fastagent.secrets.yaml"
+                    if secrets_path.exists():
+                        try:
+                            with open(secrets_path) as f:
+                                secrets_cfg = _yaml.safe_load(f) or {}
+                            secrets_servers = secrets_cfg.get("mcp", {}).get("servers", {})
+                            for svr_name, svr_override in secrets_servers.items():
+                                if svr_name in server_configs:
+                                    # Deep merge: merge env dicts instead of overwriting
+                                    for key, val in svr_override.items():
+                                        if key == "env" and isinstance(val, dict) and isinstance(server_configs[svr_name].get("env"), dict):
+                                            server_configs[svr_name]["env"].update(val)
+                                        else:
+                                            server_configs[svr_name][key] = val
+                                else:
+                                    server_configs[svr_name] = svr_override
+                        except Exception:
+                            pass
+                
+                    if not server_configs:
+                        return
+                
+                    # Also skip servers already in DB from previous runs
+                    existing_in_db = set()
+                    if state.registry_db:
+                        for svr_name in server_configs:
+                            if svr_name not in cached_servers:
+                                tools = state.registry_db.get_server_tools([svr_name])
+                                if tools:
+                                    existing_in_db.add(svr_name)
+                
+                    skip = cached_servers | existing_in_db
+                    uncached = [s for s in server_configs if s not in skip]
+                    if not uncached:
+                        logger.info("MCP server tools: all %d servers cached (aggregator=%d, db=%d)",
+                                   len(server_configs), len(cached_servers), len(existing_in_db))
+                        return
+                
+                    logger.info("MCP server tools: discovering %d uncached servers: %s", len(uncached), uncached)
+                
+                    from mcp.client.stdio import stdio_client, StdioServerParameters
+                    from mcp import ClientSession
+                    import os
+                
+                    discovered = {}
+                    for server_name in uncached:
+                        svr_cfg = server_configs[server_name]
+                        command = svr_cfg.get("command")
+                        if not command:
+                            # SSE/non-stdio servers — skip
+                            continue
+                    
+                        args = svr_cfg.get("args", [])
+                        # Skip OAuth-based servers (mcp-remote requires browser auth)
+                        if any("mcp-remote" in str(a) for a in [command] + args):
+                            logger.debug("MCP server tools: skipping %s (uses mcp-remote/OAuth)", server_name)
+                            continue
+                    
+                        env_cfg = svr_cfg.get("env") or {}
+                        # Resolve env vars in args (e.g. ${SERPAPI_API_KEY})
+                        import re
+                        resolved_args = []
+                        for a in args:
+                            if isinstance(a, str) and "${" in a:
+                                a = re.sub(r'\$\{(\w+)\}', lambda m: os.environ.get(m.group(1), m.group(0)), a)
+                            resolved_args.append(str(a))
+                    
+                        # Resolve env vars in env config values too
+                        # Look up from both os.environ and env_cfg itself (for cross-refs)
+                        lookup = {**os.environ, **{k: str(v) for k, v in env_cfg.items()}}
+                        resolved_env = {}
+                        for k, v in env_cfg.items():
+                            if isinstance(v, str) and "${" in v:
+                                v = re.sub(r'\$\{(\w+)\}', lambda m: lookup.get(m.group(1), m.group(0)), v)
+                            resolved_env[k] = str(v)
+                    
+                        # Merge env
+                        server_env = {**os.environ, **resolved_env} if resolved_env else None
+                    
+                        try:
+                            params = StdioServerParameters(
+                                command=command,
+                                args=resolved_args,
+                                env=server_env,
+                            )
+                            async with stdio_client(params) as (read_stream, write_stream):
+                                async with ClientSession(read_stream, write_stream) as session:
+                                    await session.initialize()
+                                    result = await session.list_tools()
+                                    tools = [
+                                        {"name": t.name, "description": t.description or ""}
+                                        for t in result.tools
+                                    ]
+                                    if tools:
+                                        discovered[server_name] = tools
+                                        logger.debug("MCP server tools: %s → %d tools", server_name, len(tools))
+                        except Exception as e:
+                            logger.debug("MCP server tools: failed to discover %s: %s", server_name, e)
+                
+                    if discovered and state.registry_db:
+                        count = state.registry_db.bulk_upsert_server_tools(discovered)
+                        logger.info("MCP server tools: discovered %d servers in background: %s",
+                                   count, list(discovered.keys()))
+                except Exception as e:
+                    logger.warning("MCP server tools: background discovery failed: %s", e)
+        
+            asyncio.create_task(_discover_uncached_servers())
 
-        # Start external messaging gateways (Telegram / Zalo). Opt-in: reads
-        # the `gateways:` section of fastagent.secrets.yaml; does nothing unless
-        # a gateway is enabled with a token. Started last so agent_app + all
-        # background services it dispatches into are already live.
-        gateway_manager = None
+            # Start external messaging gateways (Telegram / Zalo). Opt-in: reads
+            # the `gateways:` section of fastagent.secrets.yaml; does nothing unless
+            # a gateway is enabled with a token. Started last so agent_app + all
+            # background services it dispatches into are already live.
+            gateway_manager = None
+            try:
+                from services.gateways import GatewayManager
+                gateway_manager = GatewayManager(state.agent_app)
+                # Publish to state BEFORE start() so a manager that constructs but
+                # fails mid-start is still reachable for shutdown .stop().
+                state.gateway_manager = gateway_manager
+                gateway_manager.start()
+            except Exception:
+                logger.exception("Failed to start messaging gateways")
+
+            print(f"\n{'═' * 50}")
+            print(f"🚀 Jarvis backend ready | agents={len(fast.agents)} | mcp_cached={len(cached_servers)}")
+            print(f"{'═' * 50}\n")
+
+            await _agent_shutdown.wait()
+
+    def _log_agent_runtime_error(_t):
+        if _t.cancelled():
+            return
+        _exc = _t.exception()
+        if _exc is not None:
+            logger.error("[STARTUP] FastAgent runtime failed to initialize", exc_info=_exc)
+
+    _agent_task = asyncio.create_task(_agent_runtime())
+    _agent_task.add_done_callback(_log_agent_runtime_error)
+
+    yield
+
+    # Close the FastAgent runtime (its async-with __aexit__) before the rest of
+    # shutdown, bounded so a stuck teardown cannot hang process exit.
+    _agent_shutdown.set()
+    try:
+        await asyncio.wait_for(_agent_task, timeout=30)
+    except (asyncio.TimeoutError, asyncio.CancelledError):
+        _agent_task.cancel()
+    except Exception:
+        logger.exception("[SHUTDOWN] FastAgent runtime exit error")
+
+    # Shutdown messaging gateways (stop polling loops + close HTTP clients).
+    # Created inside the backgrounded _agent_runtime → read back via state.
+    if state.gateway_manager:
         try:
-            from services.gateways import GatewayManager
-            gateway_manager = GatewayManager(state.agent_app)
-            gateway_manager.start()
-            state.gateway_manager = gateway_manager
-        except Exception:
-            logger.exception("Failed to start messaging gateways")
-
-        print(f"\n{'═' * 50}")
-        print(f"🚀 Jarvis backend ready | agents={len(fast.agents)} | mcp_cached={len(cached_servers)}")
-        print(f"{'═' * 50}\n")
-
-        yield
-
-    # Shutdown messaging gateways (stop polling loops + close HTTP clients)
-    if gateway_manager:
-        try:
-            await gateway_manager.stop()
+            await state.gateway_manager.stop()
         except Exception:
             logger.exception("Error stopping messaging gateways")
 
-    # Shutdown reload loop
-    reload_task.cancel()
-    try:
-        await reload_task
-    except asyncio.CancelledError:
-        pass
+    # Shutdown reload loop (also created inside _agent_runtime; may be None if the
+    # runtime never got that far — e.g. fast.run() failed during startup).
+    if state.reload_task:
+        state.reload_task.cancel()
+        try:
+            await state.reload_task
+        except asyncio.CancelledError:
+            pass
 
     # Shutdown memory index worker
     if memory_index_task:

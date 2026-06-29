@@ -8,7 +8,7 @@ import asyncio
 import logging
 import time as _time
 
-from fastapi import APIRouter, Request, Depends
+from fastapi import APIRouter, Request, Depends, HTTPException
 from pydantic import BaseModel
 
 from core.auth import verify_api_key
@@ -292,6 +292,9 @@ def _prepare_audio_url(book_id, tts_text, base_url=""):
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest, raw_request: Request = None, _=Depends(verify_api_key)):
     from services.shared_state import agent_app
+    if agent_app is None:
+        raise HTTPException(status_code=503,
+                            detail="Backend is still starting up (agents not ready). Retry shortly.")
     from services.sse_progress import current_run_id
     _t0 = _time.time()
     _msg_preview = request.message[:80] + "..." if len(request.message) > 80 else request.message
@@ -347,7 +350,10 @@ async def chat_stream(raw_request: Request, _=Depends(verify_api_key)):
     """
     from sse_starlette.sse import EventSourceResponse
     from services.shared_state import agent_app
-    
+    if agent_app is None:
+        raise HTTPException(status_code=503,
+                            detail="Backend is still starting up (agents not ready). Retry shortly.")
+
     _t0 = _time.time()
     
     # Parse request: multipart/form-data or JSON
