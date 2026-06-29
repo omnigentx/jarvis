@@ -98,12 +98,21 @@ async def patch_settings(patch: MemorySettingsPatch) -> dict[str, Any]:
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     logger.info("[MEMORY] Settings updated: %s", sorted(updates))
-    # A model switch would otherwise download + load on the first recall (a
-    # multi-second silent hang). Pre-warm in the background and stream progress
-    # to the UI — for the reranker (when enabled) AND the embedder.
-    if "rerank_model" in updates and settings.reranker_enabled:
+    # A change to WHICH model loads would otherwise download + load on the first
+    # recall (a multi-second silent hang). Pre-warm in the background and stream
+    # progress to the UI. Kick on ANY change that alters the loaded model:
+    #   reranker — model changed OR the reranker was just enabled (now on). The
+    #     enable case sends only {reranker_enabled}, so guarding on "rerank_model"
+    #     alone would miss it and leave the exact cold-load this feature targets.
+    #   embedder — model OR revision changed; the shared provider key is
+    #     (model, revision), so a revision-only pin also loads a new provider.
+    if settings.reranker_enabled and (
+        "rerank_model" in updates or "reranker_enabled" in updates
+    ):
         _kick_reranker_warm(settings.rerank_model)
-    if "embedding_model" in updates and settings.embedding_model:
+    if settings.embedding_model and (
+        "embedding_model" in updates or "embedding_revision" in updates
+    ):
         _kick_embedding_warm(settings.embedding_model,
                              getattr(settings, "embedding_revision", "") or "")
     return asdict(settings)

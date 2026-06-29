@@ -167,3 +167,27 @@ def test_candidate_approve_route(client):
     r = client.post(f"/api/agents/Jarvis/memory-candidates/{cid}/approve")
     assert r.status_code == 200, r.text
     assert client.get("/api/agents/Jarvis/memories").json()["total"] >= 1
+
+
+def test_patch_warms_on_reranker_enable_and_revision_change(client, monkeypatch):
+    """Pre-warm must fire on enabling the reranker (payload carries only
+    reranker_enabled) and on an embedding_revision-only change — both alter which
+    model loads, the cold-load this feature targets (PR #114 review)."""
+    import routes.memory_settings as rms
+    rr, emb = [], []
+    monkeypatch.setattr(rms, "_kick_reranker_warm", lambda m: rr.append(m))
+    monkeypatch.setattr(rms, "_kick_embedding_warm", lambda m, rev: emb.append((m, rev)))
+
+    # Enabling the reranker → warm it (even though only reranker_enabled is sent).
+    assert client.patch("/api/memory/settings", json={"reranker_enabled": True}).status_code == 200
+    assert len(rr) == 1 and emb == []
+
+    # A revision-only pin → warm the embedder (provider key is (model, revision)).
+    rr.clear(); emb.clear()
+    assert client.patch("/api/memory/settings", json={"embedding_revision": "rev-xyz"}).status_code == 200
+    assert len(emb) == 1 and emb[0][1] == "rev-xyz" and rr == []
+
+    # A non-model change → warm nothing.
+    rr.clear(); emb.clear()
+    assert client.patch("/api/memory/settings", json={"mode": "deep"}).status_code == 200
+    assert rr == [] and emb == []
