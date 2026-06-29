@@ -485,16 +485,16 @@ async def lifespan(app: FastAPI):
             if _gw:
                 logger.warning("[MEMORY] recall gate may be mistuned for the embedding "
                                "model: %s", _gw)
-            # Eager-warm the reranker OFF the request path. It's a 0.6B causal LM
-            # whose first cold-load is slow (~tens of s on CPU). Warming it in a
-            # daemon thread at boot means the FIRST chat never blocks on it — the
-            # recall path keeps fusion order until it's ready (see _apply_rerank).
-            if getattr(_mem_cfg, "reranker_enabled", False):
-                from services.retrieval.reranker import get_shared_reranker
-                get_shared_reranker(
-                    getattr(_mem_cfg, "rerank_model", None) or "BAAI/bge-reranker-v2-m3"
-                ).warm_async()
-                logger.info("[MEMORY] reranker eager-warm kicked off (background)")
+            # Ensure the CONFIGURED memory models (embedding + reranker) are
+            # present + warm, OFF the request path. Each downloads (into the
+            # persistent HF-cache volume) + warms in a daemon thread, streaming
+            # progress to the Settings UI; the server is ready immediately and
+            # recall degrades gracefully until they load. This replaces baking a
+            # fixed model list into the Docker image — the set now derives ONLY
+            # from settings, so changing a default can never ship without the
+            # model. See services/memory/model_prefetch.
+            from services.memory.model_prefetch import ensure_models_warm
+            ensure_models_warm(_mem_cfg)
     except Exception:
         logger.exception("Failed to start memory index worker")
 

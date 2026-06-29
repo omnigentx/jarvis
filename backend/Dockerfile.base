@@ -30,6 +30,16 @@
 #   docker push omnigentx/jarvis-backend-base:${VERSION}
 #
 # Version log:
+#   1.5.0 — STOP baking memory models. Models (embedding + reranker) now download
+#           at runtime into a persistent HF-cache VOLUME (jarvis-models →
+#           /root/.cache/huggingface in docker-compose.yaml) and are verified +
+#           warmed at server startup from the live settings
+#           (services/memory/model_prefetch). WHY: the baked list was a second
+#           source of truth that silently drifted from the config default (a new
+#           default reranker shipped without being on the server); and it bloated
+#           the base by ~5GB. With a persistent volume the download happens once
+#           (first deploy) and survives recreation, so this base is system-only
+#           again — smaller, and model changes need no base rebuild.
 #   1.4.0 — ADD the new default memory models alongside bge-m3:
 #           Qwen3-Embedding-0.6B + Qwen3-Reranker-0.6B (~2.4GB more).
 #           WHY: the reranker is a 0.6B causal LM that loaded lazily on the FIRST
@@ -106,22 +116,10 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uvx /bin/uvx
 RUN uvx --from "scrapling[ai]" scrapling install \
     && rm -rf /root/.cache/uv
 
-# Pre-download the memory models (bge-m3 + the new defaults Qwen3-Embedding-0.6B +
-# Qwen3-Reranker-0.6B) into the HF cache so the dense lane, knowledge graph, AND the
-# precision reranker load INSTANTLY at runtime — no first-request download, and it
-# survives container recreation (baked into this layer, exactly like the Playwright
-# browsers above). Critical for the reranker: it's a 0.6B causal LM whose lazy
-# first-load otherwise stalls the FIRST chat ~65s on CPU (and re-downloads every
-# deploy, since the cache is in the container layer, not a volume). These are
-# large, STABLE runtime assets, so the base is the right home: built once, every
-# app image inherits it, app builds stay fast. transformers + sentence-transformers
-# (the loaders) stay app deps (`--extra memory`); a non-default `embedding_model` /
-# `rerank_model` still works — it just downloads on first use (only defaults are
-# pre-baked). HF_HOME is pinned so the build and the root runtime agree on the
-# cache path. Both models are public (no HF_TOKEN needed; pass one as a build
-# secret if rate-limited).
+# Memory models are NOT baked here anymore (see the 1.5.0 version-log entry).
+# They download at runtime into the persistent jarvis-models volume mounted at
+# this path, and the backend verifies + warms the CONFIGURED embedding/reranker
+# at startup (services/memory/model_prefetch), streaming progress to the UI.
+# Pin HF_HOME so the build, the root runtime, and the volume mount all agree on
+# the cache path.
 ENV HF_HOME=/root/.cache/huggingface
-RUN uvx --from huggingface_hub hf download BAAI/bge-m3 \
-    && uvx --from huggingface_hub hf download Qwen/Qwen3-Embedding-0.6B \
-    && uvx --from huggingface_hub hf download Qwen/Qwen3-Reranker-0.6B \
-    && rm -rf /root/.cache/uv

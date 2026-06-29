@@ -2,9 +2,10 @@
 # System deps (apt + npm + uv + gitnexus) live in the public base image so CI
 # doesn't re-run apt-get / npm install on every build. Rebuild + bump the tag
 # only when Dockerfile.base changes — see Dockerfile.base header for steps.
-# 1.4.0 pre-bakes the Qwen3 embedder + reranker (see Dockerfile.base 1.4.0), so
-# the memory models load from the image — no runtime download on first chat/deploy.
-ARG BASE_IMAGE=omnigentx/jarvis-backend-base:1.4.0
+# 1.5.0 stops baking memory models — they download at runtime into the
+# persistent jarvis-models volume and are warmed at startup from settings
+# (see Dockerfile.base 1.5.0 + services/memory/model_prefetch).
+ARG BASE_IMAGE=omnigentx/jarvis-backend-base:1.5.0
 FROM ${BASE_IMAGE} AS base
 
 # ─── Stage 2: Python dependencies (cached unless pyproject/lock/fast-agent change) ───

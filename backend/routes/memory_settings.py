@@ -16,40 +16,41 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from core.auth import verify_api_key
-from services.activity_stream import activity_stream_manager
 from services.memory.settings import get_memory_settings, update_memory_settings
 
 logger = logging.getLogger("memory_settings_api")
 router = APIRouter(prefix="/api/memory", tags=["memory"])
 
 
+def _running_loop():
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        return None
+
+
 def _kick_reranker_warm(model_name: str) -> None:
     """After a rerank-model switch, download + warm the new model in a daemon
     thread and stream progress to the activity SSE — so the UI shows a progress
     bar instead of the FIRST recall silently hanging on the download/load.
-
-    The warm runs off the event loop (it blocks); progress is marshalled back
-    onto the loop with ``call_soon_threadsafe`` because ``broadcast`` touches
-    asyncio.Queues that are not thread-safe to write from another thread.
+    Shares the SSE-progress builder + prefetch with the startup path
+    (services.memory.model_prefetch) so both stay in sync.
     """
+    from services.memory.model_prefetch import make_sse_progress
     from services.retrieval.reranker import prefetch_and_warm
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
-
-    def on_progress(state: str, pct: int) -> None:
-        # ``memory_`` prefix so the frontend's activity-stream router forwards it
-        # to the memory store (agents.js gates forwarding on event_type.startsWith).
-        ev = {"event_type": "memory_reranker_loading", "state": state,
-              "progress": pct, "model": model_name}
-        if loop is not None:
-            loop.call_soon_threadsafe(activity_stream_manager.broadcast, ev)
-        else:
-            activity_stream_manager.broadcast(ev)
-
+    on_progress = make_sse_progress("memory_reranker_loading", model_name, _running_loop())
     threading.Thread(target=prefetch_and_warm, args=(model_name, on_progress),
                      name="reranker-prefetch", daemon=True).start()
+
+
+def _kick_embedding_warm(model_name: str, revision: str) -> None:
+    """Same as :func:`_kick_reranker_warm`, for a newly-selected embedding model
+    — so switching the embedder also downloads/warms with progress instead of
+    hanging the first index write/recall."""
+    from services.memory.model_prefetch import make_sse_progress, prefetch_embedding
+    on_progress = make_sse_progress("memory_embedding_loading", model_name, _running_loop())
+    threading.Thread(target=prefetch_embedding, args=(model_name, revision, on_progress),
+                     name="embedding-prefetch", daemon=True).start()
 
 
 class MemorySettingsPatch(BaseModel):
@@ -97,9 +98,21 @@ async def patch_settings(patch: MemorySettingsPatch) -> dict[str, Any]:
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     logger.info("[MEMORY] Settings updated: %s", sorted(updates))
-    # A rerank-model switch would otherwise download + load on the first recall
-    # (a multi-second silent hang). Pre-warm in the background and stream
-    # progress to the UI. Only when the reranker is actually enabled.
-    if "rerank_model" in updates and settings.reranker_enabled:
+    # A change to WHICH model loads would otherwise download + load on the first
+    # recall (a multi-second silent hang). Pre-warm in the background and stream
+    # progress to the UI. Kick on ANY change that alters the loaded model:
+    #   reranker — model changed OR the reranker was just enabled (now on). The
+    #     enable case sends only {reranker_enabled}, so guarding on "rerank_model"
+    #     alone would miss it and leave the exact cold-load this feature targets.
+    #   embedder — model OR revision changed; the shared provider key is
+    #     (model, revision), so a revision-only pin also loads a new provider.
+    if settings.reranker_enabled and (
+        "rerank_model" in updates or "reranker_enabled" in updates
+    ):
         _kick_reranker_warm(settings.rerank_model)
+    if settings.embedding_model and (
+        "embedding_model" in updates or "embedding_revision" in updates
+    ):
+        _kick_embedding_warm(settings.embedding_model,
+                             getattr(settings, "embedding_revision", "") or "")
     return asdict(settings)
