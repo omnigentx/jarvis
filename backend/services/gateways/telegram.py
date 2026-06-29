@@ -114,7 +114,12 @@ class TelegramGateway(BotApiGateway):
                     "content_type": ref["content_type"],
                     "data_b64": base64.b64encode(resp.content).decode("ascii"),
                 })
-            except Exception:
-                logger.exception("[telegram] failed to download media file_id=%s",
-                                 ref.get("file_id"))
+            except Exception as e:
+                # The download URL embeds the bot token; raise_for_status() (and
+                # many httpx transport errors) put that full URL in the exception
+                # message. Redact it and do NOT log the raw traceback (exc_info),
+                # which would carry the token too — this is the one media path
+                # that bypasses _call's protection.
+                logger.error("[telegram] failed to download media file_id=%s: %s",
+                             ref.get("file_id"), self._redact(str(e)))
         return out

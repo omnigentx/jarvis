@@ -238,6 +238,30 @@ async def test_telegram_fetch_media_downloads_base64():
     await gw.stop()
 
 
+async def test_telegram_media_download_error_does_not_leak_token(caplog):
+    """A failed file download raises an HTTPStatusError whose message embeds the
+    token-bearing URL. It must be redacted before it reaches the log."""
+    import logging
+    TOKEN = "8407785561:SECRET_xyz"
+
+    def handler(req):
+        if req.url.path.endswith("/getFile"):
+            return httpx.Response(200, json={"ok": True, "result": {"file_path": "photos/x.jpg"}})
+        return httpx.Response(404, text="Not Found")  # the file download fails
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    gw = TelegramGateway(token=TOKEN, dispatcher=None, allow_from=[], client=client)
+    with caplog.at_level(logging.ERROR):
+        files = await gw.fetch_media([{
+            "file_id": "f1", "content_type": "image/jpeg",
+            "filename": "photo.jpg", "file_size": 0,
+        }])
+    assert files == []
+    assert TOKEN not in caplog.text          # token must never reach the log
+    assert "f1" in caplog.text               # but the file_id is logged for debugging
+    await gw.stop()
+
+
 async def test_handle_inbound_resolves_media_before_dispatch():
     """handle_inbound must download media (post allow-gate) and hand it to the
     dispatcher as files_data — the root fix for 'image not handled'."""
@@ -343,6 +367,22 @@ async def test_zalo_fetch_media_downloads_url():
     assert files[0]["content_type"] == "image/jpeg"  # normalized from image/jpg
     import base64 as _b64
     assert _b64.b64decode(files[0]["data_b64"]) == b"ZALOIMG"
+    await gw.stop()
+
+
+async def test_zalo_fetch_media_rejects_oversized_before_buffering():
+    """The size cap must bound the work: a too-large Content-Length is rejected
+    up front (on the declared header), not after the body is buffered."""
+    def handler(req):
+        return httpx.Response(
+            200, content=b"x",
+            headers={"content-type": "image/jpeg", "content-length": str(21 * 1024 * 1024)},
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    gw = ZaloGateway(token="t", dispatcher=None, allow_from=[], client=client)
+    files = await gw.fetch_media([{"url": "https://photo.zdn.vn/big.jpg", "filename": "photo.jpg"}])
+    assert files == []  # skipped on the declared Content-Length
     await gw.stop()
 
 

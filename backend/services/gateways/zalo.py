@@ -97,18 +97,34 @@ class ZaloGateway(BotApiGateway):
             if not url:
                 continue
             try:
-                resp = await self._client.get(url)
-                resp.raise_for_status()
-                if len(resp.content) > _MAX_MEDIA_BYTES:
-                    logger.warning("[zalo] skipping media > 20MB")
-                    continue
-                ct = (resp.headers.get("content-type") or "image/jpeg").split(";")[0].strip()
-                ct = _IMAGE_MIME_NORMALIZE.get(ct, ct) or "image/jpeg"
-                out.append({
-                    "filename": ref.get("filename", "photo.jpg"),
-                    "content_type": ct,
-                    "data_b64": base64.b64encode(resp.content).decode("ascii"),
-                })
+                # Stream so the size cap actually BOUNDS the work: reject on the
+                # Content-Length up front, and abort mid-read if the body crosses
+                # the cap anyway (header missing or under-reported) — never buffer
+                # an unbounded CDN response just to drop it afterwards.
+                async with self._client.stream("GET", url) as resp:
+                    resp.raise_for_status()
+                    declared = int(resp.headers.get("content-length") or 0)
+                    if declared > _MAX_MEDIA_BYTES:
+                        logger.warning("[zalo] skipping media > 20MB (content-length=%d)",
+                                       declared)
+                        continue
+                    chunks: List[bytes] = []
+                    total = 0
+                    async for chunk in resp.aiter_bytes():
+                        total += len(chunk)
+                        if total > _MAX_MEDIA_BYTES:
+                            break
+                        chunks.append(chunk)
+                    if total > _MAX_MEDIA_BYTES:
+                        logger.warning("[zalo] skipping media > 20MB")
+                        continue
+                    ct = (resp.headers.get("content-type") or "image/jpeg").split(";")[0].strip()
+                    ct = _IMAGE_MIME_NORMALIZE.get(ct, ct) or "image/jpeg"
+                    out.append({
+                        "filename": ref.get("filename", "photo.jpg"),
+                        "content_type": ct,
+                        "data_b64": base64.b64encode(b"".join(chunks)).decode("ascii"),
+                    })
             except Exception:
                 logger.exception("[zalo] failed to download media url")
         return out
