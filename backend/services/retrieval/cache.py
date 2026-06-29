@@ -1,10 +1,12 @@
 """Per-agent retrieval cache (spec §10). Keyed by owner + normalized query +
-filters + memory index revision + policy version. Invalidated by revision
-change, NOT TTL alone; never shared across agents.
+filters + memory index revision + recall-settings fingerprint + policy version.
+Invalidated by an index-revision OR a recall-settings change, NOT TTL alone;
+never shared across agents.
 """
 from __future__ import annotations
 
 import hashlib
+import json
 import threading
 from collections import OrderedDict
 
@@ -13,10 +15,42 @@ from services.retrieval.contracts import Evidence
 POLICY_VERSION = "1"
 _MAX_ENTRIES = 512
 
+# Memory settings whose value changes WHAT recall returns for the same query +
+# index revision: the reranker on/off + its knobs, the relevance gate, the dense
+# embedding model, and the graph/budget/gate parameters. A change to any of these
+# must invalidate cached results — the cache key embeds settings_fingerprint(),
+# so a stale entry is simply never hit again (the SAME mechanism as
+# index_revision: no explicit clear, works regardless of process boundaries).
+# Capture/curator/retention/approval settings are deliberately NOT here — they
+# don't touch the recall read path, so folding them in would bust the cache for
+# no reason. Add a new recall-affecting setting → add its name here (one line).
+_RECALL_AFFECTING_KEYS = (
+    "reranker_enabled", "rerank_model", "rerank_top_k", "rerank_min_score",
+    "recall_min_similarity", "graph_max_hops", "hub_max_df",
+    "embedding_model", "embedding_revision",
+    "evidence_token_budget", "quality_gate_thresholds", "trigger_lexicon_overrides",
+)
+
+
+def settings_fingerprint(settings) -> str:
+    """Short, stable hash of the recall-affecting settings (``_RECALL_AFFECTING_KEYS``).
+    Folded into :func:`cache_key` so a settings edit (e.g. enabling the reranker)
+    invalidates cached recalls for the same query — the next call is a guaranteed
+    miss and reflects the new config immediately, no explicit cache clear."""
+    payload = {k: getattr(settings, k, None) for k in _RECALL_AFFECTING_KEYS}
+    raw = json.dumps(payload, sort_keys=True, default=str)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
 
 def cache_key(*, owner_agent_name: str, normalized_query: str, filters: str,
-              index_revision: int, policy_version: str = POLICY_VERSION) -> str:
-    raw = f"{owner_agent_name}\x1f{normalized_query}\x1f{filters}\x1f{index_revision}\x1f{policy_version}"
+              index_revision: int, mode: str = "", settings_fp: str = "",
+              policy_version: str = POLICY_VERSION) -> str:
+    # ``mode`` is part of the key because it changes the result for the same
+    # query: a "deep" run escalates (corrective round) and gets a larger evidence
+    # budget than "balanced". Without it, a query cached under one mode would be
+    # served to another — the same staleness class as settings_fp / index_revision.
+    raw = (f"{owner_agent_name}\x1f{normalized_query}\x1f{filters}\x1f"
+           f"{index_revision}\x1f{mode}\x1f{settings_fp}\x1f{policy_version}")
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -25,9 +59,9 @@ def normalize_query(query: str) -> str:
 
 
 class RetrievalCache:
-    """Small in-process LRU. The key embeds the index revision, so a stale
-    entry is simply never hit again after an index update (no explicit
-    invalidation needed)."""
+    """Small in-process LRU. The key embeds the index revision AND a
+    recall-settings fingerprint, so a stale entry is simply never hit again after
+    an index update or a settings change (no explicit invalidation needed)."""
 
     def __init__(self, max_entries: int = _MAX_ENTRIES):
         self._data: "OrderedDict[str, list[Evidence]]" = OrderedDict()
