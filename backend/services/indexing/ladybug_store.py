@@ -252,6 +252,16 @@ class LadybugStore:
             if self.count() == 0:
                 self._rebuild_vector_index()
 
+    def purge_owner(self, owner: str) -> None:
+        """Delete ALL graph state for one agent's silo — Memory nodes + RELATES
+        triples scoped to ``owner``. Used when an agent is deleted so the
+        rebuildable graph doesn't accumulate orphaned per-agent data."""
+        with self._lock:
+            self._exec("MATCH (m:Memory {owner: $owner}) DETACH DELETE m", {"owner": owner})
+            self._exec("MATCH ()-[r:RELATES {owner: $owner}]->() DELETE r", {"owner": owner})
+            if self.count() == 0:                 # see delete_memory: empty table kills HNSW
+                self._rebuild_vector_index()
+
     def link_entity(self, *, record_id: str, entity_id: str, name: str,
                     etype: str, normalized: str) -> None:
         """MENTIONS edge from a memory to an entity (entity linking). Creates the

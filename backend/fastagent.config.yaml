@@ -243,18 +243,17 @@ mcp:
         JARVIS_RUNTIME_RPC_SOCKET: "${JARVIS_RUNTIME_RPC_SOCKET}"
     # Per-agent durable memory (search/remember/forget). Same RPC bridge as
     # skill_server: tools delegate to services.memory.rpc_handlers in the main
-    # backend (DB + retrieval + model live there; this subprocess loads no
-    # model). Tools self-gate on the `memory` settings flag (hot-reload, no
-    # restart). MEMORY_AGENT_NAME binds the in-process master's identity;
-    # spawned agents override it with their own TEAM_MY_NAME (set by
-    # config_reader.get_server_env) — see tools/memory_server.py:_owner().
+    # backend (DB + retrieval + model live there; this subprocess loads no model).
+    # Pooled across in-process agents — the OWNER of each call is resolved per-call
+    # from the trusted _meta.caller_agent fast-agent stamps (TEAM_MY_NAME for
+    # spawned). NO static MEMORY_AGENT_NAME: a missing identity FAILS rather than
+    # mis-scoping into the master's silo. See tools/memory_server.py:_owner().
     memory_server:
       command: "python"
       args: ["tools/memory_server.py"]
       env:
         PYTHONUNBUFFERED: "1"
         JARVIS_RUNTIME_RPC_SOCKET: "${JARVIS_RUNTIME_RPC_SOCKET}"
-        MEMORY_AGENT_NAME: "Jarvis"
     mcp-atlassian:
       command: "uv"
       args: ["run", "--directory", "mcp-atlassian", "mcp-atlassian"]

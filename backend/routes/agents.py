@@ -1251,13 +1251,17 @@ async def delete_agent(name: str):
         logger.warning("[AGENTS API] Failed to remove from registry: %s", e)
     
     if deleted_count > 0:
-        # Also delete related activities
+        # Also delete related activities + the agent's OWN memory silo (records,
+        # candidates, episodic, retrieval runs, FTS, graph) so a deleted agent
+        # leaves no orphaned rows.
         try:
             from core.database import AgentActivity, get_db_session
+            from services.memory.memory_service import purge_agent_memory
             db = get_db_session()
             try:
                 db.query(AgentActivity).filter(AgentActivity.agent_name == name).delete()
                 db.commit()
+                purge_agent_memory(db, name)
             except Exception:
                 db.rollback()
             finally:
@@ -1485,16 +1489,20 @@ async def delete_team(team_name: str):
     except Exception as e:
         logger.warning("[AGENTS API] team_sessions cleanup error: %s", e)
     
-    # ── 7. Clean up DB activities ──
+    # ── 7. Clean up DB activities + each member's OWN memory silo ──
     try:
         from core.database import AgentActivity, get_db_session
+        from services.memory.memory_service import purge_agent_memory
         db = get_db_session()
         try:
             for agent_name in team_agent_names:
                 if agent_name:
                     db.query(AgentActivity).filter(AgentActivity.agent_name == agent_name).delete()
             db.commit()
-            cleanup_log.append("activities")
+            for agent_name in team_agent_names:
+                if agent_name:
+                    purge_agent_memory(db, agent_name)
+            cleanup_log.append("activities+memory")
         except Exception:
             db.rollback()
         finally:

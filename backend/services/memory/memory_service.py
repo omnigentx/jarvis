@@ -269,3 +269,42 @@ class MemoryService:
             raise MemoryWriteError(
                 f"pinned token budget exceeded ({used + incoming_tokens} > "
                 f"{self.pinned_token_budget}); unpin something first")
+
+
+def purge_agent_memory(db: Session, owner_agent_name: str) -> dict[str, int]:
+    """Delete EVERY durable memory artifact for one agent's silo — called when the
+    agent is deleted so the DB doesn't accumulate orphaned rows. Covers the SQLite
+    tables, the FTS mirror, and the rebuildable LadybugDB graph. The SQLite delete
+    is authoritative; the graph purge is best-effort (it's rebuildable)."""
+    from sqlalchemy import text as _sql_text
+
+    from core.database import (EpisodicDocument, MemoryCandidate, MemoryRecord,
+                               MemoryVersion, RetrievalRun)
+
+    counts: dict[str, int] = {}
+    # MemoryVersion keys on memory_id (not owner) → resolve the owner's ids first.
+    rec_ids = [r[0] for r in db.query(MemoryRecord.id)
+               .filter(MemoryRecord.owner_agent_name == owner_agent_name).all()]
+    if rec_ids:
+        counts["versions"] = (db.query(MemoryVersion)
+                              .filter(MemoryVersion.memory_id.in_(rec_ids))
+                              .delete(synchronize_session=False))
+    for model, key in ((MemoryRecord, "records"), (MemoryCandidate, "candidates"),
+                       (EpisodicDocument, "episodic"), (RetrievalRun, "retrieval_runs")):
+        counts[key] = (db.query(model)
+                       .filter(model.owner_agent_name == owner_agent_name)
+                       .delete(synchronize_session=False))
+    try:                                  # FTS mirror (virtual table)
+        db.execute(_sql_text("DELETE FROM memory_fts WHERE owner_agent_name = :o"),
+                   {"o": owner_agent_name})
+    except Exception:  # noqa: BLE001 — rebuildable mirror, never block the delete
+        logger.debug("[MEMORY] fts purge skipped for %s", owner_agent_name, exc_info=True)
+    db.commit()
+    try:                                  # rebuildable graph — best-effort
+        from services.indexing.ladybug_store import get_ladybug_store
+        from services.memory.settings import get_memory_settings
+        get_ladybug_store(get_memory_settings().ladybug_path).purge_owner(owner_agent_name)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[MEMORY] ladybug purge skipped for %s: %s", owner_agent_name, exc)
+    logger.info("[MEMORY] purged memory of deleted agent %s: %s", owner_agent_name, counts)
+    return counts

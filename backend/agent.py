@@ -86,11 +86,24 @@ CORE_SKILLS = get_skills("user-context")
 
 # --- Static Agents (require TagRelayAgent or specific hooks) ---
 
+# Every agent gets its OWN durable memory (per-agent silo, isolated by the
+# caller-identity fast-agent stamps on each tool call — see tools/memory_server.py).
+# Spread into each agent's `servers` so a new agent opts in with one token.
+_MEMORY_SERVERS = ["memory_server"]
+# One shared memory instruction for every memory-capable agent (single source).
+_MEMORY_PROMPT = (
+    "\n\nYou have your OWN private long-term memory (separate from other agents). "
+    "Call memory_search BEFORE asking the user something they may have already told you; "
+    "call memory_remember to store durable facts/preferences when the user says to remember "
+    "or states a lasting fact. Never write memory to files."
+)
+
+
 @fast.agent(
     name="PersonalAgent",
-    instruction="You are a personal assistant.\n\n{{agentSkills}}",
+    instruction="You are a personal assistant." + _MEMORY_PROMPT + "\n\n{{agentSkills}}",
     skills=CORE_SKILLS + get_skills("personal-assistant", "cron-management", "scrape-web"),
-    servers=["serpapi", "time-service", "gmail", "calendar", "cron-server", "scrapling-server"],
+    servers=["serpapi", "time-service", "gmail", "calendar", "cron-server", "scrapling-server", *_MEMORY_SERVERS],
     request_params=RequestParams(parallel_tool_calls=True),
 )
 async def personal_agent(prompt: str):
@@ -98,9 +111,9 @@ async def personal_agent(prompt: str):
 
 @fast.agent(
     name="IoTAgent",
-    instruction="You are an IoT specialist.\n\n{{agentSkills}}",
+    instruction="You are an IoT specialist." + _MEMORY_PROMPT + "\n\n{{agentSkills}}",
     skills=CORE_SKILLS + get_skills("iot-control"),
-    servers=["iot-control", "time-service", "gmail"],
+    servers=["iot-control", "time-service", "gmail", *_MEMORY_SERVERS],
     tools={"time-service": ["get_current_time", "wait_for_seconds"]},
     request_params=RequestParams(parallel_tool_calls=True),
 )
@@ -110,9 +123,9 @@ async def iot_agent(prompt: str):
 @fast.custom(
     TagRelayAgent,
     name="MusicAgent",
-    instruction="You are a music specialist.\n\n{{agentSkills}}",
+    instruction="You are a music specialist." + _MEMORY_PROMPT + "\n\n{{agentSkills}}",
     skills=CORE_SKILLS + get_skills("music-playback"),
-    servers=["media-server"],
+    servers=["media-server", *_MEMORY_SERVERS],
     tools={"media-server": ["search_youtube"]}
 )
 async def music_agent(prompt: str):
@@ -121,9 +134,9 @@ async def music_agent(prompt: str):
 @fast.custom(
     TagRelayAgent,
     name="AudioReaderAgent",
-    instruction="You are a specialist in finding stories and playing audio.\n\n{{agentSkills}}",
+    instruction="You are a specialist in finding stories and playing audio." + _MEMORY_PROMPT + "\n\n{{agentSkills}}",
     skills=CORE_SKILLS + get_skills("audio-reading"),
-    servers=["story-server", "library-server"],
+    servers=["story-server", "library-server", *_MEMORY_SERVERS],
     tools={
         "story-server": ["find_story_chapter"],
         "library-server": ["local_list_stories", "local_list_chapters", "local_search"]
@@ -151,7 +164,7 @@ Rule: Always try serpapi first → if serpapi does not return the desired result
 
 {{agentSkills}}""",
     skills=CORE_SKILLS + get_skills("proactive-mode", "research", "scrape-web"),
-    servers=["serpapi", "scrapling-server", "chrome-devtools", "time-service"],
+    servers=["serpapi", "scrapling-server", "chrome-devtools", "time-service", *_MEMORY_SERVERS],
 )
 async def research_agent(prompt: str):
     pass
@@ -169,7 +182,7 @@ FINANCE DUTIES:
 
 {{agentSkills}}""",
     skills=CORE_SKILLS + get_skills("proactive-mode", "finance", "research", "scrape-web"),
-    servers=["serpapi", "scrapling-server", "time-service"],
+    servers=["serpapi", "scrapling-server", "time-service", *_MEMORY_SERVERS],
 )
 async def finance_agent(prompt: str):
     pass
@@ -231,7 +244,7 @@ CRAWL WORKFLOW:
 
 {{agentSkills}}""",
     skills=CORE_SKILLS + get_skills("proactive-mode", "crawling", "scrape-web"),
-    servers=["story-server", "scrapling-server", "serpapi"],
+    servers=["story-server", "scrapling-server", "serpapi", *_MEMORY_SERVERS],
 )
 async def crawl_stories_agent(prompt: str):
     pass
