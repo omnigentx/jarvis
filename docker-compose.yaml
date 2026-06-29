@@ -21,6 +21,12 @@ services:
       - jarvis-sessions:/app/.fast-agent/sessions
       - jarvis-runtime:/app/.runtime
       - jarvis-logs:/app/logs
+      # --- HF model cache (embedding + reranker) ---
+      # Persist the multi-GB model cache across deploys. Models are downloaded at
+      # runtime (services/memory/model_prefetch) instead of baked into the image,
+      # so without this volume --force-recreate would re-download them EVERY
+      # deploy. HF_HOME=/root/.cache/huggingface (set in Dockerfile.base).
+      - jarvis-models:/root/.cache/huggingface
     environment:
       - PYTHONUNBUFFERED=1
       - LOG_CONSOLE_LEVEL=${LOG_CONSOLE_LEVEL:-INFO}
@@ -59,3 +65,4 @@ volumes:
   jarvis-sessions:
   jarvis-runtime:
   jarvis-logs:
+  jarvis-models:
