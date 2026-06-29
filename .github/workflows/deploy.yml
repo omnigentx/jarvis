@@ -111,38 +111,57 @@ jobs:
           # can verify the process is up without needing a bearer token.
           # /api/setup/status would work pre-master-key (dev mode) but starts
           # returning 401 once core_auth.JARVIS_API_KEY is populated.
-          # 360s window: a FIRST deploy with a new embedding/reranker model
-          # downloads ~1.2GB from HF Hub AND re-embeds the store at boot, which
-          # blocks startup well past the old 120s (the v2.7.0 Qwen swap false-
-          # failed here while the backend was in fact coming up). A crashed
-          # container fails fast below, so the long window only ever waits on a
-          # genuinely-slow-but-healthy boot.
-          echo "Waiting for backend to start (up to 360s; first deploy downloads models)..."
-          for i in $(seq 1 72); do
+          # The window must cover a FIRST deploy into a COLD model-cache volume
+          # (jarvis-models). Since the runtime-prefetch change, boot downloads BOTH
+          # the embedding (~1.2GB) and the reranker (~2.2GB) ≈ 3.4GB from HF Hub —
+          # unauthenticated, so rate-limited — then re-embeds the store. That blows
+          # past the old 360s window (sized for 1.2GB), which false-failed a
+          # healthy-but-still-downloading boot. The models persist in the volume, so
+          # ONLY the first cold deploy pays this; later deploys hit the cache and
+          # come up in seconds. Two guards keep the long ceiling honest so a real
+          # failure still fails fast: (1) a crashed container, and (2) a backend that
+          # stops logging for STALL_SECS — a genuine hang produces no output, whereas
+          # a slow download streams continuous progress lines.
+          # TODO: set an HF_TOKEN secret to lift the unauthenticated rate limit, and/
+          # or pre-seed the jarvis-models volume, to shrink first-deploy time.
+          MAX_SECS=900; STEP=5; STALL_SECS=180
+          echo "Waiting for backend (up to ${MAX_SECS}s; a cold first deploy downloads ~3.4GB of models)..."
+          prev_lines=0; stall=0; code=000
+          for i in $(seq 1 $((MAX_SECS/STEP))); do
             code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/api/setup/auth/probe || echo 000)
             if [ "$code" = "200" ]; then
-              echo "✅ Backend up after $((i*5))s (auth/probe=200)"
+              echo "✅ Backend up after $((i*STEP))s (auth/probe=200)"
               break
             fi
-            # Fast-fail on a real crash instead of waiting out the whole window.
+            # (1) crashed container → fail fast.
             if docker compose ps jarvis-backend 2>/dev/null | grep -qiE "exit|dead"; then
               echo "❌ jarvis-backend exited (crash) — failing fast."
               docker compose ps
               docker compose logs --tail=150 jarvis-backend
               exit 1
             fi
-            echo "  Attempt $i/72 — auth/probe=$code, waiting 5s..."
-            sleep 5
-            if [ "$i" -eq 72 ]; then
-              echo "⚠️ Backend not ready after 360s — collecting logs..."
-              echo "--- Docker containers status ---"
+            # (2) no new log output for STALL_SECS → hung (not a slow, streaming download).
+            lines=$(docker compose logs jarvis-backend 2>/dev/null | wc -l)
+            if [ "$lines" -gt "$prev_lines" ]; then stall=0; else stall=$((stall + STEP)); fi
+            prev_lines=$lines
+            if [ "$stall" -ge "$STALL_SECS" ]; then
+              echo "❌ No backend log progress for ${STALL_SECS}s — appears hung, not slow. Failing fast."
               docker compose ps
-              echo ""
-              echo "--- Backend container logs (last 150 lines) ---"
               docker compose logs --tail=150 jarvis-backend
               exit 1
             fi
+            echo "  ${i}: auth/probe=$code, log_lines=$lines, stall=${stall}s — waiting ${STEP}s..."
+            sleep $STEP
           done
+          if [ "$code" != "200" ]; then
+            echo "⚠️ Backend not ready after ${MAX_SECS}s — collecting logs..."
+            echo "--- Docker containers status ---"
+            docker compose ps
+            echo ""
+            echo "--- Backend container logs (last 150 lines) ---"
+            docker compose logs --tail=150 jarvis-backend
+            exit 1
+          fi
 
       - name: Verify git credential chain
         run: |
