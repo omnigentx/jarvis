@@ -177,6 +177,13 @@ def test_cache_key_changes_with_settings_fingerprint():
     assert c.get(k2) is None          # different settings → miss (no stale rerank)
 
 
+def test_cache_key_changes_with_mode():
+    # A "deep" run escalates + gets a bigger budget than "balanced"; the same
+    # query under a different mode must not be served the other mode's entry.
+    base = dict(owner_agent_name="J", normalized_query="q", filters="f", index_revision=1)
+    assert cache_mod.cache_key(**base, mode="balanced") != cache_mod.cache_key(**base, mode="deep")
+
+
 def test_settings_fingerprint_reacts_to_recall_fields_only():
     import types
 

@@ -105,7 +105,7 @@ class RetrievalOrchestrator:
         key = cache_key(owner_agent_name=request.owner_agent_name,
                         normalized_query=normalize_query(request.query),
                         filters=json.dumps(sorted(request.types)), index_revision=index_rev,
-                        settings_fp=settings_fingerprint(self.settings))
+                        mode=request.mode, settings_fp=settings_fingerprint(self.settings))
         cached = _CACHE.get(key)
         if cached is not None:
             # Copy the cached list: _finalize re-applies the recency/authority

@@ -43,10 +43,14 @@ def settings_fingerprint(settings) -> str:
 
 
 def cache_key(*, owner_agent_name: str, normalized_query: str, filters: str,
-              index_revision: int, settings_fp: str = "",
+              index_revision: int, mode: str = "", settings_fp: str = "",
               policy_version: str = POLICY_VERSION) -> str:
+    # ``mode`` is part of the key because it changes the result for the same
+    # query: a "deep" run escalates (corrective round) and gets a larger evidence
+    # budget than "balanced". Without it, a query cached under one mode would be
+    # served to another — the same staleness class as settings_fp / index_revision.
     raw = (f"{owner_agent_name}\x1f{normalized_query}\x1f{filters}\x1f"
-           f"{index_revision}\x1f{settings_fp}\x1f{policy_version}")
+           f"{index_revision}\x1f{mode}\x1f{settings_fp}\x1f{policy_version}")
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
