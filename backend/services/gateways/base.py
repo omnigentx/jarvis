@@ -136,13 +136,26 @@ class BaseGateway(abc.ABC):
         gateway), but the failure is never swallowed silently.
         """
         if not self.is_allowed(msg.user_id):
-            # Not an error — an unauthorized sender. Log at info so an operator
-            # can see who to add to allow_from, but do not reply (avoid leaking
-            # the bot's existence / inviting probing).
+            # Unauthorized sender → reply with ONLY their id, never the agent.
+            # This is the secure-onboarding pattern (cf. openclaw/hermes pairing):
+            # the owner can keep allow_from empty (deny-all, safe), message the
+            # bot, read their own id from this reply, and add it — without ever
+            # opening "*". A stranger who finds the bot gets just their id; they
+            # cannot reach the agent or any data.
             logger.info(
-                "[%s] ignored message from unauthorized user_id=%s chat_id=%s",
+                "[%s] unauthorized user_id=%s chat_id=%s — replying id only",
                 self.name, msg.user_id, msg.chat_id,
             )
+            try:
+                await self.send_text(
+                    msg.chat_id,
+                    "🔒 You're not authorized to use this bot.\n"
+                    f"Your user id: {msg.user_id}\n"
+                    "Ask the owner to add it to the allow-list "
+                    "(Settings → Messaging Gateways).",
+                )
+            except Exception:
+                logger.exception("[%s] failed to send unauthorized notice", self.name)
             return
 
         try:

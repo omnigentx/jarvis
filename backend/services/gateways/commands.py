@@ -21,9 +21,10 @@ from typing import Callable, List, Optional, Tuple
 _COMMANDS = {
     "new": "start a new conversation (clears context)",
     "agent": "switch the answering agent — /agent <name>",
+    "whoami": "show your user id",
     "help": "show this list",
 }
-_ALIASES = {"reset": "new", "clear": "new"}
+_ALIASES = {"reset": "new", "clear": "new", "id": "whoami"}
 
 
 @dataclass(slots=True)
@@ -31,6 +32,7 @@ class CommandContext:
     """Everything a command needs to run, supplied by the GatewayManager."""
     current_agent: str
     agent_names: List[str]
+    user_id: str
     reset_conversation: Callable[[], None]   # /new
     set_agent: Callable[[str], None]         # /agent
 
@@ -79,6 +81,9 @@ def handle(text: str, ctx: CommandContext) -> Optional[str]:
                     f"Available: {', '.join(ctx.agent_names)}")
         ctx.set_agent(match)
         return f"✅ Now answering with agent: {match}"
+
+    if name == "whoami":
+        return f"Your user id: {ctx.user_id}"
 
     if name == "help":
         return help_text()

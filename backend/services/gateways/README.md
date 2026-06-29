@@ -89,10 +89,19 @@ unknown `/...` falls through to the agent):
 - `/new` (`/reset`, `/clear`) — start a fresh conversation.
 - `/agent <name>` — switch the answering agent for *this* chat (stored in the
   binding); no arg shows the current agent + the list.
+- `/whoami` (`/id`) — show your user id.
 - `/help` — list commands.
 
 `/stop` is intentionally absent: the poll loop is sequential and blocks on the
 agent reply, so it cannot receive a message to interrupt mid-run.
+
+## Secure onboarding (no `*` needed)
+
+An **unauthorized** sender never reaches the agent — the bot replies with ONLY
+their user id and a "not authorized" notice. So the owner keeps `allow_from`
+empty (deny-all, the safe default), messages the bot, reads their id from the
+reply, and adds it. You never have to open `["*"]` just to discover an id.
+(Same idea as openclaw/hermes pairing.)
 
 ## Scope / roadmap
 

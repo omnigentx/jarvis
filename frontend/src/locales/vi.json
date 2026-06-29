@@ -307,7 +307,7 @@
       "tokenSavedPlaceholder": "•••••••• đã lưu — dán token mới để thay",
       "tokenHint": "Tạo bot và lấy token tại",
       "allowLabel": "ID người dùng được phép",
-      "allowHint": "Danh sách id (số) cách nhau bởi dấu phẩy được phép chat. Để trống = không ai (mặc định an toàn). Dùng * để cho phép tất cả.",
+      "allowHint": "Danh sách id được phép chat, cách nhau bởi dấu phẩy. Để trống = không ai (mặc định an toàn). Cách lấy id: gõ /whoami trong chat với bot (Telegram: hoặc hỏi @userinfobot). Tránh dùng * (cho phép tất cả).",
       "allowAllWarning": "Đang cho phép TẤT CẢ. Bất kỳ ai nhắn bot đều điều khiển được agent — gồm cả shell, Gmail, IoT. Chỉ dùng để test; đặt id người dùng cụ thể khi dùng thật.",
       "agentLabel": "Agent trả lời",
       "testConnection": "Kiểm tra kết nối",

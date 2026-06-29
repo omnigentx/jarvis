@@ -123,7 +123,10 @@ async def test_handle_inbound_happy_path():
     assert gw.sent == [("100", "echo:ping")]
 
 
-async def test_handle_inbound_unauthorized_is_silent_and_skips_agent():
+async def test_handle_inbound_unauthorized_replies_id_and_skips_agent():
+    """Secure onboarding: an unauthorized sender never reaches the agent, but
+    gets ONLY their own id back so the owner can allow-list it without ever
+    opening '*'."""
     called = False
 
     async def dispatcher(m):
@@ -132,9 +135,12 @@ async def test_handle_inbound_unauthorized_is_silent_and_skips_agent():
         return "should not happen"
 
     gw = RecordingGateway(dispatcher=dispatcher, allow_from=[])  # deny all
-    await gw.handle_inbound(_msg())
-    assert called is False
-    assert gw.sent == []  # no reply leaked to an unauthorized user
+    await gw.handle_inbound(_msg(user_id="42", chat_id="100"))
+    assert called is False                       # agent NOT run
+    assert len(gw.sent) == 1
+    chat_id, text = gw.sent[0]
+    assert chat_id == "100"
+    assert "42" in text and "not authorized" in text.lower()
 
 
 async def test_handle_inbound_agent_error_notifies_user_not_silent():
@@ -496,6 +502,8 @@ def test_commands_parse_recognizes_and_aliases():
     assert commands.parse("/clear") == ("new", [])       # alias
     assert commands.parse("/agent Personal") == ("agent", ["Personal"])
     assert commands.parse("/help") == ("help", [])
+    assert commands.parse("/whoami") == ("whoami", [])
+    assert commands.parse("/id") == ("whoami", [])        # alias
     assert commands.parse("/unknown") is None            # not a command → falls through
     assert commands.parse("hello") is None               # plain text
 
@@ -506,6 +514,7 @@ def test_commands_handle_new_agent_help():
     ctx = commands.CommandContext(
         current_agent="Jarvis",
         agent_names=["Jarvis", "Personal"],
+        user_id="u123",
         reset_conversation=lambda: calls.__setitem__("reset", calls["reset"] + 1),
         set_agent=lambda n: calls.__setitem__("agent", n),
     )
@@ -516,6 +525,8 @@ def test_commands_handle_new_agent_help():
     assert calls["agent"] == "Personal"
 
     assert "Unknown agent" in commands.handle("/agent Nope", ctx)
+
+    assert "u123" in commands.handle("/whoami", ctx)       # /whoami returns the id
 
     assert "/new" in commands.handle("/help", ctx) and "/agent" in commands.handle("/help", ctx)
 

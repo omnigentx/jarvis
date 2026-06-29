@@ -318,7 +318,7 @@
       "tokenSavedPlaceholder": "•••••••• saved — paste a new token to replace",
       "tokenHint": "Create a bot and get a token at",
       "allowLabel": "Allowed User IDs",
-      "allowHint": "Comma-separated numeric user ids allowed to chat. Empty = nobody (safe default). Use * to allow everyone.",
+      "allowHint": "Comma-separated user ids allowed to chat. Empty = nobody (safe default). To get your id: send /whoami to the bot (Telegram: also via @userinfobot). Avoid * (allows everyone).",
       "allowAllWarning": "Allowing EVERYONE. Anyone who messages this bot can drive the agent — including its shell, Gmail and IoT tools. Use only for testing; set specific user ids for real use.",
       "agentLabel": "Answering Agent",
       "testConnection": "Test Connection",

@@ -99,6 +99,7 @@ class GatewayManager:
         ctx = commands.CommandContext(
             current_agent=effective_agent,
             agent_names=agent_names,
+            user_id=msg.user_id,
             reset_conversation=lambda: session_map.delete(msg.platform, msg.chat_id),
             set_agent=lambda name: session_map.set_agent(msg.platform, msg.chat_id, name),
         )
