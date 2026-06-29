@@ -199,6 +199,30 @@ async def auth_probe():
     return AuthProbe(configured=bool(core_auth.JARVIS_API_KEY))
 
 
+class ReadinessProbe(BaseModel):
+    """Readiness (vs liveness). 200 only once the background FastAgent runtime has
+    set ``state.agent_app`` (agents/MCP up); 503 until then."""
+
+    ready: bool
+    agents: int = 0
+
+
+@router.get("/ready", response_model=ReadinessProbe)
+async def readiness_probe(response: Response):
+    """READINESS probe — distinct from the liveness ``/auth/probe``. Liveness answers
+    as soon as the process is up (so a slow first-deploy model download can't false-
+    fail CD); readiness answers 200 only once agents are actually initialized.
+    Unauthenticated so CD / monitoring can alert on a backend that stays live but
+    never becomes ready — i.e. a genuine init failure surfaces as a persistent 503
+    here instead of a silently-green deploy."""
+    import services.shared_state as _state
+    app = _state.agent_app
+    if app is None:
+        response.status_code = 503
+        return ReadinessProbe(ready=False, agents=0)
+    return ReadinessProbe(ready=True, agents=len(getattr(app, "_agents", {}) or {}))
+
+
 @router.post("/auth", response_model=SetupStatus)
 async def setup_auth(payload: AuthStep, request: Request, response: Response):
     """Step 1 — choose, adopt, or generate the master key.
