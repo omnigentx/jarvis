@@ -22,7 +22,8 @@ from core.database import RetrievalRun
 from services.indexing.embedding_provider import get_shared_embedding_provider
 from services.retrieval import fusion
 from services.retrieval.budget import build_budget
-from services.retrieval.cache import RetrievalCache, cache_key, normalize_query
+from services.retrieval.cache import (
+    RetrievalCache, cache_key, normalize_query, settings_fingerprint)
 from services.retrieval.contracts import Evidence, RetrievalRequest, RetrievalResult
 from services.retrieval.evidence_builder import build_evidence
 from services.retrieval.intent_router import (
@@ -103,7 +104,8 @@ class RetrievalOrchestrator:
         index_rev = self._index_revision()
         key = cache_key(owner_agent_name=request.owner_agent_name,
                         normalized_query=normalize_query(request.query),
-                        filters=json.dumps(sorted(request.types)), index_revision=index_rev)
+                        filters=json.dumps(sorted(request.types)), index_revision=index_rev,
+                        settings_fp=settings_fingerprint(self.settings))
         cached = _CACHE.get(key)
         if cached is not None:
             # Copy the cached list: _finalize re-applies the recency/authority

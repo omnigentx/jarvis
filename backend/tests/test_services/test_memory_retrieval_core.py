@@ -164,6 +164,45 @@ def test_cache_key_changes_with_revision():
     assert c.get(k2) is None          # different revision → miss
 
 
+def test_cache_key_changes_with_settings_fingerprint():
+    # A recall-settings change (e.g. enabling the reranker) must invalidate the
+    # cached result for the same query — else the UI shows stale, pre-rerank hits.
+    base = dict(owner_agent_name="J", normalized_query="q", filters="f", index_revision=1)
+    k1 = cache_mod.cache_key(**base, settings_fp="aaa")
+    k2 = cache_mod.cache_key(**base, settings_fp="bbb")
+    assert k1 != k2
+    c = cache_mod.RetrievalCache()
+    c.set(k1, [_ev("A")])
+    assert c.get(k1) is not None
+    assert c.get(k2) is None          # different settings → miss (no stale rerank)
+
+
+def test_settings_fingerprint_reacts_to_recall_fields_only():
+    import types
+
+    def s(**kw):
+        base = dict(
+            reranker_enabled=False, rerank_model="m", rerank_top_k=5,
+            rerank_min_score=0.001, recall_min_similarity=0.3, graph_max_hops=1,
+            hub_max_df=0.5, embedding_model="e", embedding_revision="",
+            evidence_token_budget=2500, quality_gate_thresholds={},
+            trigger_lexicon_overrides={},
+            # Non-recall settings that must NOT bust the cache:
+            approval_policy="auto", extract_every_n=4, retention_episodic_days=30)
+        base.update(kw)
+        return types.SimpleNamespace(**base)
+
+    base_fp = cache_mod.settings_fingerprint(s())
+    # Recall-affecting edits flip the fingerprint → cache invalidates.
+    assert cache_mod.settings_fingerprint(s(reranker_enabled=True)) != base_fp
+    assert cache_mod.settings_fingerprint(s(recall_min_similarity=0.5)) != base_fp
+    assert cache_mod.settings_fingerprint(s(rerank_min_score=0.5)) != base_fp
+    # Capture/approval/retention edits do NOT (they don't touch the recall path).
+    assert cache_mod.settings_fingerprint(s(approval_policy="manual")) == base_fp
+    assert cache_mod.settings_fingerprint(s(extract_every_n=8)) == base_fp
+    assert cache_mod.settings_fingerprint(s(retention_episodic_days=90)) == base_fp
+
+
 def _orch_settings():
     import types
     return types.SimpleNamespace(
