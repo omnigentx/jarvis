@@ -810,13 +810,33 @@ async def lifespan(app: FastAPI):
                 logger.warning("MCP server tools: background discovery failed: %s", e)
         
         asyncio.create_task(_discover_uncached_servers())
-        
+
+        # Start external messaging gateways (Telegram / Zalo). Opt-in: reads
+        # the `gateways:` section of fastagent.secrets.yaml; does nothing unless
+        # a gateway is enabled with a token. Started last so agent_app + all
+        # background services it dispatches into are already live.
+        gateway_manager = None
+        try:
+            from services.gateways import GatewayManager
+            gateway_manager = GatewayManager(state.agent_app)
+            gateway_manager.start()
+            state.gateway_manager = gateway_manager
+        except Exception:
+            logger.exception("Failed to start messaging gateways")
+
         print(f"\n{'═' * 50}")
         print(f"🚀 Jarvis backend ready | agents={len(fast.agents)} | mcp_cached={len(cached_servers)}")
         print(f"{'═' * 50}\n")
-        
+
         yield
-    
+
+    # Shutdown messaging gateways (stop polling loops + close HTTP clients)
+    if gateway_manager:
+        try:
+            await gateway_manager.stop()
+        except Exception:
+            logger.exception("Error stopping messaging gateways")
+
     # Shutdown reload loop
     reload_task.cancel()
     try:

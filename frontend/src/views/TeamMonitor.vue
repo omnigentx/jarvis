@@ -737,7 +737,10 @@ onMounted(() => {
 }
 
 .bulk-delete-btn:disabled {
-  opacity: 0.4;
+  /* Muted via a theme token, not a heavy opacity. opacity:0.4 over the already
+     dimmed --text-dim washed the label out to near-invisible in light theme. */
+  color: var(--text-muted);
+  background: var(--bg-button);
   cursor: not-allowed;
 }
 
@@ -882,7 +885,7 @@ onMounted(() => {
   background: var(--bg-1);
   border: 1px solid var(--border);
   border-radius: 10px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-lg);  /* theme-aware; was a hardcoded heavy black shadow */
   z-index: 100;
   overflow: hidden;
 }
@@ -983,7 +986,8 @@ onMounted(() => {
 }
 
 .dropdown-item:hover {
-  background: rgba(30, 34, 51, 0.6);
+  /* token surface, not a hardcoded dark navy (showed as a dark blob in light theme) */
+  background: var(--bg-3);
 }
 
 .dropdown-item.checked {

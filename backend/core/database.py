@@ -926,6 +926,31 @@ class CommunicationRecord(Base):
     created_at = Column(Float, nullable=False, default=lambda: datetime.now().timestamp(), index=True)
 
 
+class GatewayChat(Base):
+    """Maps an external messaging chat (Telegram/Zalo/…) to a backend chat
+    session so every inbound message from the same chat continues the SAME
+    conversation across restarts.
+
+    This is the single source of truth for the chat→session binding. The
+    backend ``SessionManager`` owns session *existence*; this table is only an
+    index into it, and ``services.gateways.session_map`` reconciles against
+    ``resume_and_send``'s returned id so the two never silently diverge (a
+    deleted backend session re-binds to a fresh one on the next message).
+    """
+    __tablename__ = "gateway_chats"
+    __table_args__ = (
+        UniqueConstraint("platform", "chat_id", name="uq_gateway_chat"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    platform = Column(String(30), nullable=False, index=True)   # telegram | zalo | …
+    chat_id = Column(String(100), nullable=False, index=True)   # platform chat id (string-normalized)
+    session_id = Column(String(100), nullable=False)            # backend SessionManager id
+    agent_name = Column(String(100), nullable=False)            # agent that answers this chat
+    created_at = Column(Float, nullable=False, default=lambda: datetime.now().timestamp())
+    updated_at = Column(Float, nullable=False, default=lambda: datetime.now().timestamp())
+
+
 def get_db():
     """Dependency for getting database session."""
     db = SessionLocal()

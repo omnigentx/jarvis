@@ -45,4 +45,5 @@ meeting_bridge = None  # MeetingEventBridge, wired in lifespan
 cron_scheduler = None  # CronScheduler instance, wired in lifespan
 current_conversation_id = None  # Active chat conversation_id (set during chat processing)
 stt_recorder = None  # services.stt_realtime.RealtimeSTTService, wired in lifespan
+gateway_manager = None  # services.gateways.GatewayManager, wired in lifespan
 
