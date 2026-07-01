@@ -340,6 +340,33 @@ async def reindex() -> dict[str, Any]:
         db.close()
 
 
+@router.post("/memory/repair")
+async def repair() -> dict[str, Any]:
+    """Recover a broken/dead dense index — the fail-loud banner's 'Restore' button.
+    Order matters: DROP+CREATE the HNSW index FIRST (re-upsert alone does NOT revive
+    a dead index — measured 2026-07), then re-project every memory from SQLite (the
+    source of truth). Returns whether the index is searchable again so the UI can
+    clear the banner or keep failing loud."""
+    cfg = get_memory_settings()
+    rebuilt = False
+    err = None
+    try:
+        from services.indexing.ladybug_store import get_ladybug_store
+        store = get_ladybug_store(cfg.ladybug_path)
+        store.rebuild_vector_index()
+        rebuilt = store.probe_index_healthy()
+    except Exception as exc:  # noqa: BLE001 — report failure, don't 500 the button
+        err = str(exc)
+        logger.warning("[MEMORY] repair rebuild_vector_index failed: %s", exc)
+    db = get_db_session()
+    try:
+        reprojected = cs.rebuild(db, now=time.time())
+    finally:
+        db.close()
+    return {"status": "ok" if rebuilt else "degraded",
+            "index_rebuilt": rebuilt, "reprojected": reprojected, "error": err}
+
+
 @router.get("/memory/index-status")
 async def index_status() -> dict[str, Any]:
     db = get_db_session()
@@ -359,6 +386,7 @@ async def index_status() -> dict[str, Any]:
         "embeddings": get_shared_embedding_provider(
             cfg.embedding_model, cfg.embedding_revision).is_available(),
         "points": None,
+        "searchable": None,      # HNSW index actually returns hits (not just count>0)
     }
     try:
         from services.indexing.ladybug_store import get_ladybug_store
@@ -369,8 +397,17 @@ async def index_status() -> dict[str, Any]:
         store = get_ladybug_store(cfg.ladybug_path)
         dense["reachable"] = True
         dense["points"] = store.count()
+        # REAL liveness: a present-but-dead index (points>0 yet QUERY_VECTOR_INDEX
+        # empty) is exactly the silent failure that read "healthy" before. Probe it.
+        dense["searchable"] = store.probe_index_healthy()
     except Exception:
         pass
+    # FAIL LOUD: memory on + data present + embeddings up, but the index can't be
+    # searched → dense recall is DOWN. The UI raises a red banner (with a Restore
+    # action) on this flag instead of showing a lying green "connected".
+    dense["broken"] = bool(
+        cfg.enabled and dense["embeddings"] and (dense["points"] or 0) > 0
+        and dense["searchable"] is False)
     status["dense"] = dense
     status["enabled"] = cfg.enabled
     return status

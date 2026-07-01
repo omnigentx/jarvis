@@ -97,12 +97,42 @@ def _latest_user_text(delta_messages) -> str:
     return ""
 
 
+def _created_dates(evidence) -> dict:
+    """``record_id → 'YYYY-MM-DD'`` created date for the recalled memories. The
+    agent reads these to recency-tiebreak two conflicting memories itself — the
+    READ-side safety net behind ``conflict.resolve_conflicts`` (if the write-time
+    resolver missed, "the newer date wins"). One bounded query; any failure → no
+    stamps (the block still renders, just without dates)."""
+    ids = [e.record_id for e in evidence if getattr(e, "record_id", None)]
+    if not ids:
+        return {}
+    try:
+        from datetime import datetime, timezone
+
+        from core.database import MemoryRecord, get_db_session
+        db = get_db_session()
+        try:
+            rows = (db.query(MemoryRecord.id, MemoryRecord.created_at)
+                    .filter(MemoryRecord.id.in_(ids)).all())
+        finally:
+            db.close()
+        return {rid: datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
+                for rid, ts in rows if ts}
+    except Exception as exc:  # noqa: BLE001 — date stamp is best-effort
+        logger.warning("[MEMORY] recall date lookup failed: %s", exc)
+        return {}
+
+
 def _render_block(evidence) -> str:
     lines = [f"{MEMORY_MARKER} [System memory recall — not user input] Stored "
-             f"memories that may be relevant to the user's message "
-             f"(reference only; do not repeat verbatim):"]
+             f"memories that may be relevant to the user's message (reference "
+             f"only; do not repeat verbatim). If two memories conflict, the one "
+             f"with the newer saved date wins:"]
+    dates = _created_dates(evidence)
     for e in evidence:
-        lines.append(f"- [{e.memory_type}] {e.excerpt}")
+        d = dates.get(getattr(e, "record_id", None))
+        stamp = f" (saved {d})" if d else ""
+        lines.append(f"- [{e.memory_type}]{stamp} {e.excerpt}")
     return "\n".join(lines)
 
 

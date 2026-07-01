@@ -9,7 +9,7 @@ import pytest
 
 pytest.importorskip("ladybug")
 from services.indexing.ladybug_store import (  # noqa: E402
-    EMBED_DIM, LadybugIndexer, LadybugStore)
+    EMBED_DIM, _VECTOR_INDEX, LadybugIndexer, LadybugStore)
 
 
 def _vec(axis: int, lead: float = 1.0) -> list[float]:
@@ -376,6 +376,45 @@ def test_upsert_drops_edges_contract(store):
                         content="re-indexed", embedding=_vec(0), authority="user_confirmed",
                         confidence=0.9, created_at=9.0, valid_from=9.0)
     assert store.linked_memories(owner="Jarvis", record_ids=["m1"]) == []   # edge dropped → caller re-links
+
+
+def test_reupsert_sole_memory_keeps_index_alive(store):
+    # Regression (2026-07): re-upserting the ONLY memory does DETACH DELETE (table
+    # → empty) then CREATE. Emptying the table kills the HNSW index (same bug
+    # delete_memory guards), so the recreated row — and every memory added after —
+    # became silently unsearchable (reproduced 12/12). This is exactly what a
+    # single-memory re-projection (/memory/repair → consistency_service.rebuild)
+    # triggered. upsert_memory must rebuild when the table is back to one row.
+    def put(rid, ax, c="c"):
+        store.upsert_memory(record_id=rid, owner="J", memory_type="semantic",
+                            subject_scope="user", content=c, embedding=_vec(ax),
+                            authority="user_confirmed", confidence=0.9,
+                            created_at=1.0, valid_from=1.0)
+    put("m1", 0)
+    assert [h.record_id for h in store.vector_search(owner="J", query_embedding=_vec(0), limit=3)] == ["m1"]
+    put("m1", 0, "updated")                                  # re-upsert the SOLE memory
+    assert [h.record_id for h in store.vector_search(owner="J", query_embedding=_vec(0), limit=3)] == ["m1"], \
+        "index died after re-upserting the sole memory"
+    put("m2", 5)                                             # and it stays alive as more are added
+    assert {h.record_id for h in store.vector_search(owner="J", query_embedding=_vec(0), limit=5)} == {"m1", "m2"}
+
+
+def test_probe_index_healthy_detects_dead_index(store):
+    # The silent-failure guard (2026-07 incident): count()>0 + store-open read
+    # "healthy" while dense recall was actually DEAD. The real probe self-queries
+    # the index with a stored embedding and must report unhealthy when the index
+    # can't return its own rows.
+    assert store.probe_index_healthy() is True          # empty store → healthy
+    store.upsert_memory(record_id="m1", owner="J", memory_type="semantic",
+                        subject_scope="user", content="user works at Beta Corp",
+                        embedding=_vec(0), authority="user_confirmed", confidence=0.9,
+                        created_at=1.0, valid_from=1.0)
+    assert store.probe_index_healthy() is True          # live index finds its own node
+    # Simulate the dead-index state (WAL loss / drop-without-recreate): rows remain,
+    # index gone → QUERY_VECTOR_INDEX can't return them.
+    store._exec(f"CALL DROP_VECTOR_INDEX('Memory', '{_VECTOR_INDEX}')")
+    assert store.count() == 1                            # data still there…
+    assert store.probe_index_healthy() is False          # …but NOT searchable → loud
 
 
 def test_delete_to_empty_rebuilds_vector_index(store):

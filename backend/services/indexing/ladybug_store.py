@@ -201,6 +201,28 @@ class LadybugStore:
                 raise
         self._create_vector_index()
 
+    def rebuild_vector_index(self) -> None:
+        """Public recovery hook: DROP+CREATE the HNSW index so an already-dead
+        index becomes searchable again over the rows currently present. Re-upsert
+        alone does NOT revive a dead index (measured), so this is what the UI
+        'Restore' button / ``/memory/repair`` calls. Idempotent."""
+        with self._lock:
+            self._rebuild_vector_index()
+            self._checkpoint()
+
+    def _checkpoint(self) -> None:
+        """Flush the WAL into the main DB after a write. The vector-index WAL bug
+        (LadybugDB/Kùzu, unfixed through 0.18.0 — measured) SIGSEGVs on reopen if
+        the process is killed with an unflushed index write; agents/OOM/container
+        stops kill ungracefully all the time. An explicit checkpoint after each
+        write means a kill can only ever land on a CONSISTENT on-disk state
+        (measured: checkpoint-then-kill reopens clean). Best-effort + inside the
+        lock — a checkpoint failure must not fail the write. Caller holds ``self._lock``."""
+        try:
+            self._exec("CHECKPOINT")
+        except Exception as exc:  # noqa: BLE001 — durability hygiene, not correctness
+            logger.debug("[ladybug] checkpoint skipped: %s", exc)
+
     # ---- writes (ADD-only; SQLite is the SoT) ---------------------------
     def upsert_memory(self, *, record_id: str, owner: str, memory_type: str,
                       subject_scope: str, content: str, embedding: list[float],
@@ -237,6 +259,18 @@ class LadybugStore:
                 except Exception:  # noqa: BLE001
                     pass
                 raise
+            # A re-upsert of the SOLE memory does DETACH DELETE (table → empty) then
+            # CREATE. Emptying the Memory table kills the HNSW index (the SAME
+            # LadybugDB bug delete_memory guards against), so the recreated row lands
+            # in a dead index and is silently unsearchable — and it STAYS dead for
+            # every memory added afterward (measured 12/12; this is what a re-project
+            # of a single memory hit). count()==1 after the write means the table is
+            # back to one row (fresh-insert-to-1 OR re-upsert-sole-to-1); rebuild so
+            # the index is live. Cheap (1 row) and only fires when the whole store
+            # holds exactly one memory.
+            if self.count() == 1:
+                self._rebuild_vector_index()
+            self._checkpoint()   # persist the index write so an ungraceful kill can't corrupt it
 
     def delete_memory(self, record_id: str) -> None:
         with self._lock:
@@ -251,6 +285,7 @@ class LadybugStore:
             # count() is reentrant under self._lock (RLock).
             if self.count() == 0:
                 self._rebuild_vector_index()
+            self._checkpoint()
 
     def purge_owner(self, owner: str) -> None:
         """Delete ALL graph state for one agent's silo — Memory nodes + RELATES
@@ -448,6 +483,30 @@ class LadybugStore:
             else:
                 res = self._exec("MATCH (m:Memory) RETURN count(m)")
             return res.get_next()[0] if res.has_next() else 0
+
+    def probe_index_healthy(self) -> bool:
+        """Real liveness probe for the HNSW index. ``count() > 0`` is NOT enough:
+        after an ungraceful kill (LadybugDB/Kùzu vector-index WAL bug — measured
+        SIGSEGV/loss on reopen) or a delete-to-empty, the rows survive but
+        QUERY_VECTOR_INDEX returns NOTHING — dense recall is silently dead while
+        the store still opens and counts fine (the 2026-07 incident). Self-query
+        with a stored node's OWN embedding (no embedding model needed): a LIVE
+        index must return at least that node; a DEAD index returns []. An empty
+        store is trivially healthy. Best-effort — any error → treat as unhealthy
+        so the UI fails loud rather than lying green."""
+        with self._lock:
+            try:
+                r = self._exec("MATCH (m:Memory) RETURN m.emb LIMIT 1")
+                if not r.has_next():
+                    return True                       # nothing indexed → nothing broken
+                emb = r.get_next()[0]
+                res = self._exec(
+                    f"CALL QUERY_VECTOR_INDEX('Memory', '{_VECTOR_INDEX}', $q, 1) "
+                    "RETURN node.id", {"q": emb})
+                return res.has_next()                 # dead index → no rows → unhealthy
+            except Exception as exc:  # noqa: BLE001 — probe failure IS an unhealthy signal
+                logger.warning("[MEMORY] index health probe failed: %s", exc)
+                return False
 
     def graph_dump(self, *, owner: str, limit: int = 400) -> dict:
         """Owner-scoped KNOWLEDGE GRAPH for the UI: entity nodes connected by
