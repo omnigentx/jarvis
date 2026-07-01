@@ -269,6 +269,16 @@ def _persist_from_candidate(db, cand, status, *, now, changed_by="system",
         from services.memory.knowledge_graph import schedule_extract_and_store
         schedule_extract_and_store(rec.id)
 
+    # SAME single-source hook, same off-the-hot-path discipline: a NEW fact that
+    # DIRECTLY contradicts an existing one on the same single-valued slot (e.g.
+    # employer) supersedes the stale one, so recall returns ONE answer instead of
+    # two the agent must ask about. ADD-only keeps both by default; this is the
+    # narrow correction. Rare (embedding-gated) + LLM-judged + best-effort — a
+    # failure leaves the ADD-only fact untouched. See services.memory.conflict.
+    if rec is not None:
+        from services.memory.conflict import schedule_resolve_conflicts
+        schedule_resolve_conflicts(rec.id)
+
 
 def _create_approval_row(cand: MemoryCandidate) -> None:
     """Mirror onto the unified approvals inbox so the user discovers pending

@@ -118,6 +118,52 @@ function remove(id) {
   return rowAction(id, () => apiFetch(`${base.value}/memories/${id}`, { method: 'DELETE' }))
 }
 
+// Fail-loud recovery: when the dense index is DEAD (index-status.dense.broken —
+// rows present but not searchable, e.g. after an ungraceful kill), one click
+// rebuilds the HNSW index + re-projects from SQLite. Reloads so the red banner
+// clears the moment recall is live again.
+const repairing = ref(false)
+async function repairIndex() {
+  if (repairing.value) return
+  repairing.value = true
+  try {
+    const res = await apiFetch('/api/memory/repair', { method: 'POST' })
+    if (res.index_rebuilt) toast.success(t('memory.repairOk'))
+    else toast.error(t('memory.repairFailed'), { description: res.error || '' })
+    await loadAll()
+  } catch (err) {
+    error.value = err?.message || String(err)
+    toast.error(t('memory.repairFailed'), { description: err?.message || String(err) })
+  } finally {
+    repairing.value = false
+  }
+}
+
+// Per-memory version history — lets you audit a conflict-replaced (superseded)
+// memory and roll it back to any prior version. Lazy-loaded + cached, so opening
+// a row is a single fetch; rolling back drops the cache so the reopened list is
+// fresh.
+const openVersions = ref(new Set())
+const versionsById = ref({})
+async function toggleVersions(id) {
+  const next = new Set(openVersions.value)
+  if (next.has(id)) { next.delete(id); openVersions.value = next; return }
+  next.add(id); openVersions.value = next
+  if (!versionsById.value[id]) {
+    try {
+      const res = await apiFetch(`${base.value}/memories/${id}/versions`)
+      versionsById.value = { ...versionsById.value, [id]: res.items || [] }
+    } catch (err) { error.value = err?.message || String(err) }
+  }
+}
+const rollback = (id, version) =>
+  rowAction(id, async () => {
+    await apiFetch(`${base.value}/memories/${id}/rollback`, {
+      method: 'POST', body: JSON.stringify({ to_version: version }),
+    })
+    const next = { ...versionsById.value }; delete next[id]; versionsById.value = next
+  })
+
 // Bulk approval — with 20+ pending candidates, one-by-one is painful. Select a
 // subset (or all) and resolve in a single round-trip via the bulk endpoint.
 const selected = ref(new Set())
@@ -218,6 +264,18 @@ onMounted(loadAll)
   <div class="mem-panel">
     <p v-if="error" class="error">{{ error }}</p>
 
+    <!-- FAIL LOUD: dense index is dead (rows present but not searchable, e.g. after
+         an ungraceful kill). Never hide behind a green status — shout + offer a
+         one-click rebuild instead of silently degrading to keyword-only recall. -->
+    <div v-if="indexStatus?.dense?.broken" class="index-broken" role="alert">
+      <span class="ib-icon" aria-hidden="true">⚠</span>
+      <span class="ib-text">{{ t('memory.denseBroken') }}</span>
+      <button class="btn restore" :disabled="repairing" @click="repairIndex">
+        <span v-if="repairing" class="spin" aria-hidden="true"></span>
+        {{ repairing ? t('memory.repairing') : t('memory.restoreIndex') }}
+      </button>
+    </div>
+
     <!-- Index status strip -->
     <div class="status-bar">
       <span v-if="memStore.isDegraded(agentName)" class="degraded">⚠ {{ t('memory.degraded') }}</span>
@@ -307,24 +365,42 @@ onMounted(loadAll)
           <select v-model="statusFilter" class="select">
             <option value="active">{{ t('memory.active') }}</option>
             <option value="archived">{{ t('memory.archived') }}</option>
+            <option value="superseded">{{ t('memory.superseded') }}</option>
           </select>
         </div>
       </div>
       <p v-if="loading" class="muted">{{ t('common.loading') }}</p>
       <p v-else-if="!memories.length" class="muted">{{ t('memory.noMemories') }}</p>
-      <div v-for="m in memories" :key="m.id" class="row-card">
-        <div class="card-body">
-          <span class="badge">{{ m.memory_type }}</span>
-          <span v-if="m.pinned" class="pin">📌</span>
-          <span class="content">{{ m.content }}</span>
-          <span class="meta">{{ m.authority }} · {{ Math.round(m.confidence * 100) }}%</span>
+      <div v-for="m in memories" :key="m.id" class="mem-item">
+        <div class="row-card">
+          <div class="card-body">
+            <span class="badge">{{ m.memory_type }}</span>
+            <span v-if="m.pinned" class="pin">📌</span>
+            <span class="content">{{ m.content }}</span>
+            <span class="meta">{{ m.authority }} · {{ Math.round(m.confidence * 100) }}%</span>
+          </div>
+          <div class="card-actions">
+            <button class="btn ghost" :class="{ on: openVersions.has(m.id) }"
+                    @click="toggleVersions(m.id)">{{ t('memory.versions') }}</button>
+            <button v-if="statusFilter === 'active'" class="btn ghost" :disabled="isRowBusy(m.id)"
+                    @click="archive(m.id)">{{ t('memory.archive') }}</button>
+            <button v-else class="btn ghost" :disabled="isRowBusy(m.id)"
+                    @click="restore(m.id)">{{ t('memory.restore') }}</button>
+            <button class="btn danger" :disabled="isRowBusy(m.id)" @click="remove(m.id)">{{ t('memory.delete') }}</button>
+          </div>
         </div>
-        <div class="card-actions">
-          <button v-if="statusFilter === 'active'" class="btn ghost" :disabled="isRowBusy(m.id)"
-                  @click="archive(m.id)">{{ t('memory.archive') }}</button>
-          <button v-else class="btn ghost" :disabled="isRowBusy(m.id)"
-                  @click="restore(m.id)">{{ t('memory.restore') }}</button>
-          <button class="btn danger" :disabled="isRowBusy(m.id)" @click="remove(m.id)">{{ t('memory.delete') }}</button>
+        <!-- Version history: audit + roll a conflict-replaced memory back to any
+             prior version (the "manage superseded by version" surface). -->
+        <div v-if="openVersions.has(m.id)" class="versions">
+          <p v-if="!(versionsById[m.id] || []).length" class="muted">{{ t('memory.versionsEmpty') }}</p>
+          <div v-for="v in (versionsById[m.id] || [])" :key="v.version" class="ver-row">
+            <span class="badge">v{{ v.version }}</span>
+            <span class="ver-type">{{ v.change_type }}</span>
+            <span class="ver-content">{{ v.content }}</span>
+            <span class="ver-ago">{{ timeAgo(v.created_at) }}</span>
+            <button v-if="v.version !== m.current_version" class="btn ghost" :disabled="isRowBusy(m.id)"
+                    @click="rollback(m.id, v.version)">{{ t('memory.rollbackTo') }}</button>
+          </div>
         </div>
       </div>
     </section>
@@ -370,6 +446,22 @@ onMounted(loadAll)
 <style scoped>
 .mem-panel { max-width: 880px; }
 .error { color: var(--danger); margin: 0 0 12px; }
+
+/* Fail-loud banner — dense recall is DOWN. Loud red, action to the right. */
+.index-broken {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
+  border-radius: var(--r-md); padding: 10px 14px; margin: 0 0 14px;
+}
+.index-broken .ib-icon { color: var(--danger); font-size: 15px; flex-shrink: 0; }
+.index-broken .ib-text { color: var(--text); font-size: 13px; line-height: 1.45; flex: 1; min-width: 0; }
+.index-broken .btn.restore {
+  background: var(--danger); color: #fff; border-color: var(--danger);
+  display: flex; align-items: center; gap: 7px; flex-shrink: 0; font-weight: 600;
+}
+.index-broken .btn.restore:hover:not(:disabled) { filter: brightness(1.08); background: var(--danger); }
+.index-broken .btn.restore .spin { border-top-color: #fff; }
 .muted { color: var(--text-dim); font-size: 13px; }
 
 /* Section card — mirrors AgentDetail.vue's `.panel` so every tab matches */
@@ -437,6 +529,22 @@ onMounted(loadAll)
   border-bottom: 1px solid var(--border); }
 .row-card.sel { box-shadow: inset 2px 0 0 var(--primary); }
 .row-card:last-child { border-bottom: none; padding-bottom: 0; }
+
+/* A memory + its (collapsible) version history share one divider so the panel
+   reads as one unit. */
+.mem-item { border-bottom: 1px solid var(--border); }
+.mem-item:last-child { border-bottom: none; }
+.mem-item .row-card { border-bottom: none; }
+.btn.ghost.on { color: var(--text); background: rgba(255,255,255,0.06); }
+
+/* Version history rows — same divider rhythm, indented under the memory. */
+.versions { padding: 2px 0 12px 8px; display: flex; flex-direction: column; gap: 6px; }
+.ver-row { display: flex; gap: 8px; align-items: baseline; font-size: 12px;
+  color: var(--text-dim); flex-wrap: wrap; }
+.ver-type { font-family: var(--font-mono); font-size: 10px; text-transform: uppercase;
+  letter-spacing: .04em; color: var(--text-dim); }
+.ver-content { flex: 1; min-width: 0; color: var(--text); line-height: 1.5; }
+.ver-ago { white-space: nowrap; }
 .card-body { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; flex: 1; min-width: 0; }
 .content { flex: 1; min-width: 0; line-height: 1.5; }
 /* Why review is still needed under auto-save — a calm warning, not an error. */
