@@ -77,8 +77,17 @@ Empty list if none.
 
 
 def _shared_embed(texts: list[str]) -> list[list[float]]:
+    # Pass the CONFIGURED embedding model (not the bge-m3 default): the gate's
+    # vectors must share the SAME space as the indexed memories. With no args the
+    # shared provider defaults to BAAI/bge-m3 while the memories were embedded with
+    # Qwen3-Embedding-0.6B — the cosine gate would then be meaningless and silently
+    # disable conflict resolution on the default config (PR #120 review). Mirrors
+    # orchestrator.py / memory_index_worker.py, and reuses the same warm singleton.
     from services.indexing.embedding_provider import get_shared_embedding_provider
-    return get_shared_embedding_provider().embed_documents(texts)
+    from services.memory.settings import get_memory_settings
+    cfg = get_memory_settings()
+    return get_shared_embedding_provider(
+        cfg.embedding_model, cfg.embedding_revision).embed_documents(texts)
 
 
 def _cosine(a: list[float], b: list[float]) -> float:

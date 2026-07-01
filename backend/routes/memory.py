@@ -348,13 +348,10 @@ async def repair() -> dict[str, Any]:
     source of truth). Returns whether the index is searchable again so the UI can
     clear the banner or keep failing loud."""
     cfg = get_memory_settings()
-    rebuilt = False
     err = None
+    from services.indexing.ladybug_store import get_ladybug_store
     try:
-        from services.indexing.ladybug_store import get_ladybug_store
-        store = get_ladybug_store(cfg.ladybug_path)
-        store.rebuild_vector_index()
-        rebuilt = store.probe_index_healthy()
+        get_ladybug_store(cfg.ladybug_path).rebuild_vector_index()
     except Exception as exc:  # noqa: BLE001 — report failure, don't 500 the button
         err = str(exc)
         logger.warning("[MEMORY] repair rebuild_vector_index failed: %s", exc)
@@ -363,6 +360,13 @@ async def repair() -> dict[str, Any]:
         reprojected = cs.rebuild(db, now=time.time())
     finally:
         db.close()
+    # Probe AFTER the rebuild AND the re-projection enqueue so index_rebuilt
+    # reflects the final state, not a snapshot taken mid-repair (PR #120 review).
+    rebuilt = False
+    try:
+        rebuilt = get_ladybug_store(cfg.ladybug_path).probe_index_healthy()
+    except Exception:  # noqa: BLE001
+        pass
     return {"status": "ok" if rebuilt else "degraded",
             "index_rebuilt": rebuilt, "reprojected": reprojected, "error": err}
 

@@ -166,6 +166,27 @@ def test_parse_superseded_variants():
     assert conflict._parse_superseded('{"superseded": [1, 1, 2]}', 3) == [1, 2]  # de-duped
 
 
+def test_shared_embed_uses_configured_model(monkeypatch):
+    # Regression (PR #120 review): the gate's embedder MUST be the CONFIGURED model,
+    # not the shared provider's bge-m3 default — else its vectors live in a different
+    # space than the indexed memories and every cosine is noise, silently disabling
+    # conflict resolution on the default Qwen3 config.
+    import types
+    seen = {}
+
+    class _Prov:
+        def embed_documents(self, texts):
+            return [[1.0] for _ in texts]
+
+    monkeypatch.setattr("services.indexing.embedding_provider.get_shared_embedding_provider",
+                        lambda model, revision: (seen.update(model=model, revision=revision) or _Prov()))
+    monkeypatch.setattr("services.memory.settings.get_memory_settings",
+                        lambda: types.SimpleNamespace(embedding_model="Qwen/Qwen3-Embedding-0.6B",
+                                                      embedding_revision="rev-1"))
+    conflict._shared_embed(["hi"])
+    assert seen == {"model": "Qwen/Qwen3-Embedding-0.6B", "revision": "rev-1"}
+
+
 def test_cosine_basics():
     assert conflict._cosine([1.0, 0.0], [1.0, 0.0]) == pytest.approx(1.0)
     assert conflict._cosine([1.0, 0.0], [0.0, 1.0]) == pytest.approx(0.0)
