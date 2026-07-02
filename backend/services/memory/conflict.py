@@ -38,8 +38,14 @@ import asyncio
 import json
 import logging
 import re
+from collections import namedtuple
 
 logger = logging.getLogger("memory.conflict")
+
+# Plain, thread-safe carrier for the gate. resolve_conflicts converts the loaded
+# ORM rows to these BEFORE handing them to the to_thread worker so the worker never
+# touches a main-thread-owned Session (PR #121 review #2).
+_GateCand = namedtuple("_GateCand", ("id", "content", "owner_agent_name"))
 
 # Loose gate: only PURPOSE is to make the LLM call rare by skipping saves with no
 # semantically-close sibling. The LLM is the real judge, so erring low here is
@@ -83,6 +89,10 @@ def _shared_embed(texts: list[str]) -> list[list[float]]:
     # Qwen3-Embedding-0.6B — the cosine gate would then be meaningless and silently
     # disable conflict resolution on the default config (PR #120 review). Mirrors
     # orchestrator.py / memory_index_worker.py, and reuses the same warm singleton.
+    # MUST stay identical to the INDEXER's embedder (model + normalization): the
+    # stored-vector gate (_stored_scores) compares a fresh qv against index vectors,
+    # so a silent model/normalization divergence would mis-gate WITHOUT erroring
+    # (vector_search only catches a dimension mismatch) (PR #121 review #3).
     from services.indexing.embedding_provider import get_shared_embedding_provider
     from services.memory.settings import get_memory_settings
     cfg = get_memory_settings()
@@ -178,6 +188,20 @@ def _gate(new_content: str, cands: list, embed_fn) -> list:
     scores = _stored_scores(cands, qv)
     if scores is None:                    # dense index unavailable → re-embed fallback
         return _gate_by_embed(new_content, cands, _shared_embed)
+    # vector_search ranks across the owner's WHOLE store (owner+status only, not the
+    # slot), so once an owner grows past the fetch window a genuinely-similar same-slot
+    # candidate can fall outside `hits` — scoring it 0.0 would silently drop it and miss
+    # the conflict (PR #121 review #1). Embed ONLY those few directly. The common case
+    # (all cands are near neighbours, or a small store) embeds nothing here.
+    missing = [c for c in cands if c.id not in scores]
+    if missing:
+        logger.info("[MEMORY] conflict gate: %d/%d candidate(s) outside the dense "
+                    "window — scoring by embedding", len(missing), len(cands))
+        try:
+            for c, v in zip(missing, _shared_embed([c.content for c in missing])):
+                scores[c.id] = _cosine(qv, v)
+        except Exception as exc:  # noqa: BLE001 — best-effort; keep the dense scores
+            logger.warning("[MEMORY] conflict gate tail-embed failed: %s", exc)
     return _top([(c, scores.get(c.id, 0.0)) for c in cands])
 
 
@@ -243,8 +267,10 @@ async def resolve_conflicts(record_id: str, *, generate_fn=None, embed_fn=None,
         # schedule_resolve_conflicts runs this as a loop task, so a synchronous
         # embed here would freeze the WHOLE loop (every embed releases the GIL for
         # C++ compute but the coroutine never yields), stalling the live chat turn's
-        # SSE until it finished. to_thread keeps the loop responsive.
-        gated = await asyncio.to_thread(_gate, rec.content, cands, embed_fn)
+        # SSE until it finished. to_thread keeps the loop responsive. Cross the
+        # thread boundary with plain tuples, not the live ORM rows (review #2).
+        gate_cands = [_GateCand(c.id, c.content, c.owner_agent_name) for c in cands]
+        gated = await asyncio.to_thread(_gate, rec.content, gate_cands, embed_fn)
         if not gated:
             return []
         idxs = await _judge(rec.content, gated, generate_fn)

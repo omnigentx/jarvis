@@ -239,6 +239,29 @@ def test_gate_production_falls_back_when_index_unavailable(monkeypatch):
     assert [c.id for c in gated] == ["a"]
 
 
+# ── review #1: a same-slot candidate outside the dense window is embedded, not dropped ──
+def test_gate_embeds_candidates_missing_from_dense_window(monkeypatch):
+    import types
+    from services.indexing.ladybug_store import VectorHit
+    cands = [_Cand("a", "works at AcmeCorp"), _Cand("b", "employed at AcmeCorp")]
+    embed_calls = []
+    monkeypatch.setattr(conflict, "_shared_embed",
+                        lambda texts: embed_calls.append(list(texts)) or [[1.0, 0.0] for _ in texts])
+    monkeypatch.setattr("services.memory.settings.get_memory_settings",
+                        lambda: types.SimpleNamespace(ladybug_path="unused"))
+
+    class FakeStore:  # only 'a' is in the fetched window; 'b' ranked out
+        def vector_search(self, *, owner, query_embedding, limit):
+            return [VectorHit("a", owner, "semantic", "works at AcmeCorp", 0.10)]
+    monkeypatch.setattr("services.indexing.ladybug_store.get_ladybug_store",
+                        lambda path: FakeStore())
+
+    gated = conflict._gate("works at NovaCorp", cands, None)
+    assert {c.id for c in gated} == {"a", "b"}          # 'b' NOT silently dropped
+    assert ["works at NovaCorp"] in embed_calls         # the new fact
+    assert ["employed at AcmeCorp"] in embed_calls      # only the missing candidate (tail)
+
+
 # ── the capture chokepoint actually schedules conflict resolution ──
 def test_persist_wires_conflict_resolution(monkeypatch):
     from services.memory import candidate_service as cnd
