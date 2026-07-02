@@ -40,7 +40,7 @@
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^25.9.1",
     "@vitejs/plugin-vue": "^6.0.7",
-    "js-yaml": "^4.2.0",
+    "js-yaml": "^5.2.1",
     "tailwindcss": "^4.2.2",
     "typescript": "^6.0.3",
     "vite": "^8.1.0"
