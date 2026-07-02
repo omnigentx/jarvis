@@ -101,11 +101,51 @@ def _cosine(a: list[float], b: list[float]) -> float:
     return dot / (na * nb)
 
 
-def _gate(new_content: str, cands: list, embed_fn) -> list:
-    """Embed the new fact + candidates once; keep candidates whose cosine to the
-    new fact clears the gate, top-N by similarity. Any embedding failure → no
-    candidates (skip the LLM), never raise."""
-    embed_fn = embed_fn or _shared_embed
+def _top(scored: list) -> list:
+    """Apply the similarity floor + top-N cap. Shared by both gate paths."""
+    scored = [(c, s) for c, s in scored if s >= _GATE_SIM]
+    scored.sort(key=lambda t: t[1], reverse=True)
+    return [c for c, _ in scored[:_MAX_CANDIDATES_LLM]]
+
+
+def _stored_scores(cands: list, qv: list[float]) -> dict | None:
+    """Similarity of each candidate to ``qv``, read from the ALREADY-STORED dense
+    vectors (LadybugDB HNSW) — NO re-embed. Returns ``{record_id: cosine_sim}`` for
+    the candidates the index knows, or ``None`` if the dense index is unavailable
+    (indexing lag / dense outage) so the caller can fall back to embedding.
+
+    This is the "switch the gate to the dense index" the module header anticipated.
+    The old path re-embedded the WHOLE (owner, scope, type) slot on every save —
+    one batch padded to the longest fact, so cost was O(N x max_len). On a small
+    real store that measured ~150s of pure CPU, and (running on the event loop via
+    ``schedule_resolve_conflicts``) it stalled the whole turn → the chat SSE hung
+    and the UI showed "Unknown error". Here the caller embeds only the NEW fact and
+    we reuse the candidates' stored vectors instead."""
+    if not cands:
+        return {}
+    try:
+        from services.indexing.ladybug_store import get_ladybug_store
+        from services.memory.settings import get_memory_settings
+        store = get_ladybug_store(get_memory_settings().ladybug_path)
+        # Over-fetch: the near neighbours we care about are the same-slot cands, so
+        # ask for at least as many hits as there are candidates.
+        hits = store.vector_search(owner=cands[0].owner_agent_name,
+                                   query_embedding=qv,
+                                   limit=max(len(cands), _MAX_CANDIDATES_SCAN))
+    except Exception as exc:  # noqa: BLE001 — dense outage → embedding fallback
+        logger.warning("[MEMORY] conflict gate dense lookup failed (%s) — "
+                       "embedding fallback", exc)
+        return None
+    if not hits:
+        return None
+    # VectorHit.distance is cosine DISTANCE; similarity = 1 - distance.
+    return {h.record_id: 1.0 - h.distance for h in hits}
+
+
+def _gate_by_embed(new_content: str, cands: list, embed_fn) -> list:
+    """Score candidates by RE-EMBEDDING them. Used for the injected-``embed_fn``
+    tests and as the fallback when the dense index is unavailable. Kept as the
+    original single batch call so scripted-``embed_fn`` tests are unchanged."""
     try:
         vecs = embed_fn([new_content] + [c.content for c in cands])
     except Exception as exc:  # noqa: BLE001 — gate is best-effort
@@ -114,10 +154,31 @@ def _gate(new_content: str, cands: list, embed_fn) -> list:
     if not vecs or len(vecs) != len(cands) + 1:
         return []
     qv = vecs[0]
-    scored = [(c, _cosine(qv, v)) for c, v in zip(cands, vecs[1:])]
-    scored = [(c, s) for c, s in scored if s >= _GATE_SIM]
-    scored.sort(key=lambda t: t[1], reverse=True)
-    return [c for c, _ in scored[:_MAX_CANDIDATES_LLM]]
+    return _top([(c, _cosine(qv, v)) for c, v in zip(cands, vecs[1:])])
+
+
+def _gate(new_content: str, cands: list, embed_fn) -> list:
+    """Keep same-slot candidates whose similarity to the new fact clears the gate,
+    top-N. Any failure → no candidates (skip the LLM), never raise.
+
+    Production (``embed_fn is None``): embed ONLY the new fact, then score the
+    candidates against their stored vectors via the dense index (:func:`_stored_scores`)
+    — see that function for why the old whole-slot re-embed was removed. An injected
+    ``embed_fn`` (tests / explicit) keeps the direct embed path; the dense path also
+    falls back to it when the index is unavailable."""
+    if embed_fn is not None:
+        return _gate_by_embed(new_content, cands, embed_fn)
+    if not cands:
+        return []
+    try:
+        qv = _shared_embed([new_content])[0]
+    except Exception as exc:  # noqa: BLE001 — gate is best-effort
+        logger.warning("[MEMORY] conflict gate embed failed: %s", exc)
+        return []
+    scores = _stored_scores(cands, qv)
+    if scores is None:                    # dense index unavailable → re-embed fallback
+        return _gate_by_embed(new_content, cands, _shared_embed)
+    return _top([(c, scores.get(c.id, 0.0)) for c in cands])
 
 
 def _parse_superseded(raw: str, n: int) -> list[int]:
@@ -178,7 +239,12 @@ async def resolve_conflicts(record_id: str, *, generate_fn=None, embed_fn=None,
                  .limit(_MAX_CANDIDATES_SCAN).all())
         if not cands:
             return []
-        gated = _gate(rec.content, cands, embed_fn)
+        # Off the event loop: the gate does CPU-bound embedding / dense lookups.
+        # schedule_resolve_conflicts runs this as a loop task, so a synchronous
+        # embed here would freeze the WHOLE loop (every embed releases the GIL for
+        # C++ compute but the coroutine never yields), stalling the live chat turn's
+        # SSE until it finished. to_thread keeps the loop responsive.
+        gated = await asyncio.to_thread(_gate, rec.content, cands, embed_fn)
         if not gated:
             return []
         idxs = await _judge(rec.content, gated, generate_fn)

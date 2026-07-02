@@ -194,6 +194,51 @@ def test_cosine_basics():
     assert conflict._cosine([1.0], [1.0, 0.0]) == 0.0          # length mismatch guard
 
 
+class _Cand:
+    def __init__(self, id, content, owner="Jarvis"):
+        self.id, self.content, self.owner_agent_name = id, content, owner
+
+
+# ── production gate reuses STORED vectors (no whole-slot re-embed) ──
+def test_gate_production_reuses_stored_vectors(monkeypatch):
+    """embed_fn=None → embed ONLY the new fact, score candidates from the dense
+    index. Guards the fix for the 150s whole-slot re-embed that stalled the loop."""
+    import types
+    from services.indexing.ladybug_store import VectorHit
+    cands = [_Cand("a", "works at AcmeCorp"), _Cand("b", "likes green tea")]
+
+    embed_calls = []
+    monkeypatch.setattr(conflict, "_shared_embed",
+                        lambda texts: embed_calls.append(list(texts)) or [[1.0, 0.0]])
+    monkeypatch.setattr("services.memory.settings.get_memory_settings",
+                        lambda: types.SimpleNamespace(ladybug_path="unused"))
+
+    class FakeStore:
+        def vector_search(self, *, owner, query_embedding, limit):
+            # 'a' near (dist 0.10 → sim 0.90 ≥ gate), 'b' far (dist 0.80 → sim 0.20)
+            return [VectorHit("a", owner, "semantic", "works at AcmeCorp", 0.10),
+                    VectorHit("b", owner, "semantic", "likes green tea", 0.80)]
+    monkeypatch.setattr("services.indexing.ladybug_store.get_ladybug_store",
+                        lambda path: FakeStore())
+
+    gated = conflict._gate("works at NovaCorp", cands, None)
+    assert [c.id for c in gated] == ["a"]              # only the near neighbour passes
+    assert embed_calls == [["works at NovaCorp"]]      # candidates NOT re-embedded
+
+
+# ── production gate falls back to embedding when the dense index is down ──
+def test_gate_production_falls_back_when_index_unavailable(monkeypatch):
+    import types
+    cands = [_Cand("a", "works at AcmeCorp")]
+    monkeypatch.setattr(conflict, "_shared_embed", _embed_by_keyword)
+    monkeypatch.setattr("services.memory.settings.get_memory_settings",
+                        lambda: types.SimpleNamespace(ladybug_path="unused"))
+    monkeypatch.setattr("services.indexing.ladybug_store.get_ladybug_store",
+                        lambda path: (_ for _ in ()).throw(RuntimeError("dense down")))
+    gated = conflict._gate("works at NovaCorp", cands, None)   # 'work' keyword → gate passes
+    assert [c.id for c in gated] == ["a"]
+
+
 # ── the capture chokepoint actually schedules conflict resolution ──
 def test_persist_wires_conflict_resolution(monkeypatch):
     from services.memory import candidate_service as cnd
