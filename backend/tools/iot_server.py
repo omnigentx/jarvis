@@ -10,7 +10,6 @@ from roborock.command_cache import CacheableAttribute
 from roborock import RoborockCommand
 from roborock.exceptions import RoborockException
 from dotenv import load_dotenv
-import pathlib
 
 load_dotenv()
 
@@ -28,24 +27,35 @@ cached_devices = None
 last_device_fetch = 0
 DEVICE_CACHE_TTL = 300  # 5 minutes
 
-SESSION_FILE = "config/credentials/roborock_session.json"
+# The Roborock login session is a SECRET → store it in the DB via config_service
+# (encrypted at rest, is_secret=True), exactly like every other credential in the
+# app: Google OAuth (oauth.google), Gmail, GitHub PAT (service.github), gateway bot
+# tokens. It used to be a plaintext JSON file under config/credentials/, which is
+# bind-mounted from the CI git checkout — deploy's `actions/checkout clean:true`
+# runs `git clean -ffdx` and WIPED it on every deploy, forcing a fresh 2FA login
+# each time. The DB (system_config) lives in the `data/` volume → survives deploys.
+_ROBOROCK_CATEGORY = "service.roborock"
+_ROBOROCK_SESSION_KEY = "session"
+
 
 async def save_session(u_data: UserData):
-    """Persist the login session to disk."""
+    """Persist the login session to the DB (encrypted)."""
     try:
-        with open(SESSION_FILE, "w") as f:
-            json.dump(u_data.as_dict(), f)
+        from services.config_service import config_service
+        config_service.set(_ROBOROCK_CATEGORY, _ROBOROCK_SESSION_KEY,
+                           json.dumps(u_data.as_dict()), is_secret=True)
     except Exception as e:
         print(f"Error saving session: {e}")
 
+
 async def load_session() -> UserData | None:
-    """Load a previously persisted login session, or None if missing."""
+    """Load the persisted login session from the DB, or None if not stored."""
     try:
-        if not pathlib.Path(SESSION_FILE).exists():
+        from services.config_service import config_service
+        raw = config_service.get(_ROBOROCK_CATEGORY, _ROBOROCK_SESSION_KEY)
+        if not raw:
             return None
-        with open(SESSION_FILE, "r") as f:
-            data = json.load(f)
-            return UserData.from_dict(data)
+        return UserData.from_dict(json.loads(raw))
     except Exception as e:
         print(f"Error loading session: {e}")
         return None
