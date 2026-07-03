@@ -161,6 +161,28 @@ class AudioCacheEntry(Base):
     last_accessed_at = Column(Float, nullable=True)  # for LRU eviction
 
 
+class StoryChapter(Base):
+    """SSoT for per-chapter TTS pre-generation status.
+
+    Maps a chapter ``(story_id, chapter_file)`` to the content hash of its cleaned
+    text plus a file fingerprint, and tracks whether its audio is generated. The
+    reconcile pass (services.story_audio_index) keeps this in sync with
+    ``data/stories`` + the audio cache on disk — re-reading/re-hashing ONLY files
+    whose ``(mtime, size)`` changed. The pre-gen queue and status reads then hit
+    ONLY this table (indexed), replacing the old per-tick full disk scan that
+    re-read + re-hashed every chapter (~1s of blocking work every 10s)."""
+    __tablename__ = "story_chapters"
+
+    story_id = Column(String(255), primary_key=True)      # = folder under data/stories/
+    chapter_file = Column(String(255), primary_key=True)  # .txt filename
+    chapter_num = Column(Integer, default=0)              # sorted position within story
+    content_hash = Column(String(64), nullable=True, index=True)  # md5(clean_text) → cache key
+    text_mtime = Column(Float, default=0.0)               # fingerprint: source .txt mtime
+    text_size = Column(Integer, default=0)                # fingerprint: source .txt size
+    status = Column(String(20), default="pending", index=True)  # pending | ready | failed
+    updated_at = Column(Float, default=lambda: datetime.now().timestamp())
+
+
 class PendingAction(Base):
     """Cross-process action queue — replaces pending_read.json.
     MCP subprocess writes; FastAPI routes read and delete."""

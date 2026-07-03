@@ -22,9 +22,10 @@ from helpers.path_safety import safe_story_path
 import edge_tts
 
 from services.background_jobs import BackgroundJobRunner, BackgroundJobScheduler
-from core.database import get_db_session, StoryProgress, BackgroundJobState
-from helpers.audio_cache import get_audio_cache_path, get_content_hash, AUDIO_CACHE_DIR, mark_ready, mark_failed, register_audio
+from core.database import get_db_session
+from helpers.audio_cache import get_audio_cache_path, get_content_hash, AUDIO_CACHE_DIR
 from helpers.text_processing import clean_text_for_tts
+from services import story_audio_index  # SSoT for per-chapter status (data/story_chapters)
 
 logger = logging.getLogger("tts_pregen_job")
 
@@ -57,6 +58,7 @@ class TTSPreGenJob(BackgroundJobRunner):
             "errors": 0,
             "last_error": None,
         }
+        self._last_sig = None  # last reconciled story-tree fingerprint (change-detection)
         self.rescan()
     
     def set_pregen_stream(self, stream):
@@ -81,69 +83,71 @@ class TTSPreGenJob(BackgroundJobRunner):
         return None
     
     def rescan(self):
-        """Scan data/stories/ to count total chapters."""
-        total = 0
-        done = 0
-        if os.path.exists(STORIES_DIR):
-            for story in sorted(os.listdir(STORIES_DIR)):
-                story_path = os.path.join(STORIES_DIR, story)
-                if not os.path.isdir(story_path):
-                    continue
-                for chapter in os.listdir(story_path):
-                    if chapter.endswith(".txt"):
-                        total += 1
-                        # Check if audio already exists
-                        text = self._read_chapter_text(story, chapter)
-                        if text:
-                            cache_path = get_audio_cache_path(clean_text_for_tts(text))
-                            if os.path.exists(cache_path):
-                                done += 1
-        
-        self._stats["total_chapters"] = total
-        self._stats["done_chapters"] = done
+        """FORCE a reconcile of the story_chapters SSoT with disk, then refresh the
+        cached counts. Called at boot and by the stories API after a story is
+        added/removed (the event-driven trigger). Re-reads/re-hashes only changed
+        chapters — not the whole tree."""
+        try:
+            db = get_db_session()
+            try:
+                sig = story_audio_index.signature()
+                story_audio_index.reconcile(db, sig)
+                self._last_sig = sig
+                counts = story_audio_index.status_counts(db)
+            finally:
+                db.close()
+            self._stats["total_chapters"] = counts["total"]
+            self._stats["done_chapters"] = counts["done"]
+        except Exception as e:  # noqa: BLE001 — never break boot / the stories route
+            logger.error(f"[PRE-GEN] rescan/reconcile failed: {e}", exc_info=True)
         self._stats["disk_usage_mb"] = self._get_cache_size_mb()
-        logger.info(f"[PRE-GEN] Scanned: {done}/{total} chapters already generated, "
+        logger.info(f"[PRE-GEN] Reconciled: {self._stats['done_chapters']}/"
+                    f"{self._stats['total_chapters']} chapters generated, "
                     f"disk: {self._stats['disk_usage_mb']:.0f}MB")
+
+    def _maybe_reconcile(self):
+        """Cheap change-detection: fingerprint the story tree (one stat per chapter,
+        no read/hash) and reconcile ONLY when it changed since last time. Runs on a
+        worker thread (see get_next_task) so neither the stat sweep nor a real
+        reconcile ever blocks the event loop."""
+        sig = story_audio_index.signature()
+        if sig == self._last_sig:
+            return
+        db = get_db_session()
+        try:
+            counts = story_audio_index.reconcile(db, sig)
+            self._last_sig = sig
+            self._stats["total_chapters"] = counts["total"]
+        finally:
+            db.close()
     
     async def get_next_task(self) -> dict | None:
-        """Dynamic priority queue: P0 → P1 → P2 → P3."""
-        # Check disk quota
-        usage_bytes = self._get_cache_size_bytes()
-        if usage_bytes > self.DISK_QUOTA_BYTES * self.EVICTION_THRESHOLD:
-            evicted = self._evict_old_audio()
-            if evicted > 0:
-                logger.warning(f"[EVICTION] Evicted {evicted} files, "
-                              f"disk now: {self._get_cache_size_mb():.0f}MB")
-            # Re-check after eviction
-            if self._get_cache_size_bytes() > self.DISK_QUOTA_BYTES * self.EVICTION_THRESHOLD:
-                logger.debug("[PRE-GEN] Disk quota still exceeded after eviction, skipping")
-                return None
-        
-        # P0: Next chapter (n+1) for actively listened story
-        task = self._find_p0_next_chapter()
-        if task:
-            task["priority"] = 0
-            return task
-        
-        # P1: Upcoming chapters (n+2, n+3...) of the same actively listened story
-        task = self._find_p1_upcoming_chapters()
-        if task:
-            task["priority"] = 1
-            return task
-        
-        # P2: First chapter of stories with no audio at all
-        task = self._find_p2_new_stories()
-        if task:
-            task["priority"] = 2
-            return task
-        
-        # P3: Sequential chapters across all stories
-        task = self._find_p3_sequential()
-        if task:
-            task["priority"] = 3
-            return task
-        
-        return None  # All chapters generated!
+        """Next chapter to generate, by priority (P0→P3). The heavy work — the
+        story-tree fingerprint + any reconcile, and the disk-quota sweep — runs on
+        a worker thread so it NEVER blocks the event loop (the old inline per-tick
+        full scan stalled it ~1s every 10s). Picking the task itself is one indexed
+        query against the story_chapters SSoT — no disk, no hashing."""
+        # Keep the SSoT in sync with disk (only when the tree changed) + quota — off-loop.
+        await asyncio.to_thread(self._maybe_reconcile)
+        if not await asyncio.to_thread(self._ensure_disk_quota):
+            return None  # over quota even after eviction — skip this cycle
+
+        db = get_db_session()
+        try:
+            return story_audio_index.next_task(db)
+        finally:
+            db.close()
+
+    def _ensure_disk_quota(self) -> bool:
+        """Evict old audio if over quota. Returns False if still over quota after
+        eviction (caller should skip). Runs off-loop (disk I/O)."""
+        if self._get_cache_size_bytes() <= self.DISK_QUOTA_BYTES * self.EVICTION_THRESHOLD:
+            return True
+        evicted = self._evict_old_audio()
+        if evicted > 0:
+            logger.warning(f"[EVICTION] Evicted {evicted} files, "
+                          f"disk now: {self._get_cache_size_mb():.0f}MB")
+        return self._get_cache_size_bytes() <= self.DISK_QUOTA_BYTES * self.EVICTION_THRESHOLD
     
     async def execute_task(self, task: dict) -> bool:
         """Generate audio for 1 chapter using Edge TTS with pause/cancel checkpoints."""
@@ -176,6 +180,7 @@ class TTSPreGenJob(BackgroundJobRunner):
         if os.path.exists(cache_path) and not os.path.exists(cache_path + ".lock"):
             logger.debug(f"[PRE-GEN] Already exists: {story_title}/{chapter_file}")
             self._stats["done_chapters"] += 1
+            self._mark_ready_status(story_title, chapter_file, text)
             self._emit({
                 "type": "chapter_ready",
                 "story_id": story_title,
@@ -262,7 +267,10 @@ class TTSPreGenJob(BackgroundJobRunner):
             # Done — remove lock
             if os.path.exists(lock_path):
                 os.remove(lock_path)
-            
+
+            # Flip the SSoT to 'ready' (the source of truth the queue/status read).
+            self._mark_ready_status(story_title, chapter_file, text)
+
             duration = time.time() - start_time
             size_mb = bytes_written / (1024 * 1024)
             self._stats["done_chapters"] += 1
@@ -317,13 +325,25 @@ class TTSPreGenJob(BackgroundJobRunner):
             return False
     
     def get_status(self) -> dict:
-        """Return status for /api/background/status."""
+        """Return status for /api/background/status — counts come from the SSoT
+        (one indexed query), not a disk scan."""
         self._stats["disk_usage_mb"] = self._get_cache_size_mb()
+        total, done = self._stats["total_chapters"], self._stats["done_chapters"]
+        try:
+            db = get_db_session()
+            try:
+                counts = story_audio_index.status_counts(db)
+            finally:
+                db.close()
+            total, done = counts["total"], counts["done"]
+            self._stats["total_chapters"], self._stats["done_chapters"] = total, done
+        except Exception as e:  # noqa: BLE001 — status must never raise
+            logger.warning(f"[PRE-GEN] status_counts failed: {e}")
         return {
             "job_name": self.job_name,
             "status": "running" if self._stats["current_chapter"] else "idle",
-            "total": self._stats["total_chapters"],
-            "done": self._stats["done_chapters"],
+            "total": total,
+            "done": done,
             "current_chapter": (
                 f"{self._stats['current_story']}/{self._stats['current_chapter']}"
                 if self._stats["current_chapter"] else None
@@ -335,250 +355,33 @@ class TTSPreGenJob(BackgroundJobRunner):
         }
     
     # --- Preview queue (for SSE initial snapshot + queue_update) ---
-    
+
     def preview_queue(self, story_id: str | None = None, limit: int = 10) -> list[dict]:
-        """Preview the upcoming generation queue without executing.
-        
-        Returns list of {story_id, chapter_file, priority} in execution order.
-        Used by SSE endpoint for initial snapshot and queue_update events.
-        """
-        queue = []
-        seen = set()  # (story_id, chapter_file) to avoid duplicates
-        
-        # P0: next chapter of active story
-        p0_items = self._collect_p0_next_chapter()
-        for item in p0_items:
-            key = (item["story_title"], item["chapter_file"])
-            if key not in seen:
-                seen.add(key)
-                queue.append({
-                    "story_id": item["story_title"],
-                    "chapter_file": item["chapter_file"],
-                    "priority": 0,
-                })
-        
-        # P1: upcoming chapters (n+2, n+3...) of active story
-        p1_items = self._collect_p1_upcoming_chapters(limit=limit)
-        for item in p1_items:
-            key = (item["story_title"], item["chapter_file"])
-            if key not in seen:
-                seen.add(key)
-                queue.append({
-                    "story_id": item["story_title"],
-                    "chapter_file": item["chapter_file"],
-                    "priority": 1,
-                })
-        
-        # P2: first chapter of new stories
-        p2_items = self._collect_p2_new_stories(limit=limit)
-        for item in p2_items:
-            key = (item["story_title"], item["chapter_file"])
-            if key not in seen:
-                seen.add(key)
-                queue.append({
-                    "story_id": item["story_title"],
-                    "chapter_file": item["chapter_file"],
-                    "priority": 2,
-                })
-        
-        # P3: sequential round-robin
-        remaining = limit - len(queue)
-        if remaining > 0:
-            p3_items = self._collect_p3_sequential(limit=remaining, exclude=seen)
-            for item in p3_items:
-                queue.append({
-                    "story_id": item["story_title"],
-                    "chapter_file": item["chapter_file"],
-                    "priority": 3,
-                })
-        
-        # Apply story_id filter if requested
-        if story_id:
-            queue = [q for q in queue if q["story_id"] == story_id]
-        
-        return queue[:limit]
-    
-    # --- Priority queue methods ---
-    
-    def _find_p0_next_chapter(self) -> dict | None:
-        """P0: Next chapter (n+1) of the story user is currently listening to."""
-        items = self._collect_p0_next_chapter()
-        return items[0] if items else None
-    
-    def _find_p1_upcoming_chapters(self) -> dict | None:
-        """P1: Next un-generated chapter (n+2, n+3...) of active story."""
-        items = self._collect_p1_upcoming_chapters(limit=1)
-        return items[0] if items else None
-    
-    def _find_p2_new_stories(self) -> dict | None:
-        """P2: First chapter of stories that have NO audio generated yet."""
-        items = self._collect_p2_new_stories(limit=1)
-        return items[0] if items else None
-    
-    def _find_p3_sequential(self) -> dict | None:
-        """P3: Find next un-generated chapter across all stories (round-robin)."""
-        items = self._collect_p3_sequential(limit=1)
-        return items[0] if items else None
-    
-    # --- Collector methods (return list for preview_queue) ---
-    
-    def _collect_p0_next_chapter(self) -> list[dict]:
-        """Collect the immediate next chapter (n+1) for active stories."""
-        results = []
+        """Preview the upcoming generation queue (P0→P3), in execution order.
+        Reads the story_chapters SSoT — one indexed query set, no disk scan."""
         try:
             db = get_db_session()
-            progresses = db.query(StoryProgress).order_by(
-                StoryProgress.last_played_at.desc()
-            ).limit(3).all()
-            
-            for progress in progresses:
-                story_dir = os.path.join(STORIES_DIR, progress.story_title)
-                if not os.path.exists(story_dir):
-                    continue
-                
-                chapters = sorted([f for f in os.listdir(story_dir) if f.endswith(".txt")])
-                
-                # Find the chapter AFTER last_chapter_file
-                found_current = False
-                for chapter_file in chapters:
-                    if progress.last_chapter_file and chapter_file == progress.last_chapter_file:
-                        found_current = True
-                        continue
-                    
-                    if found_current:
-                        # Check if this chapter already has audio
-                        text = self._read_chapter_text(progress.story_title, chapter_file)
-                        if text:
-                            cache_path = get_audio_cache_path(clean_text_for_tts(text))
-                            if not os.path.exists(cache_path):
-                                results.append({
-                                    "story_title": progress.story_title,
-                                    "chapter_file": chapter_file,
-                                })
-                        break  # Only the immediate next (n+1)
-            
-            db.close()
-        except Exception as e:
-            logger.error(f"[PRE-GEN] P0 query error: {e}")
-        return results
-    
-    def _collect_p1_upcoming_chapters(self, limit: int = 10) -> list[dict]:
-        """Collect chapters n+2, n+3... of the actively listened story.
-        
-        Skips n+1 (that's P0) and returns subsequent un-generated chapters.
-        """
-        results = []
+            try:
+                return story_audio_index.preview_queue(db, story_id=story_id, limit=limit)
+            finally:
+                db.close()
+        except Exception as e:  # noqa: BLE001 — preview must never raise
+            logger.error(f"[PRE-GEN] preview_queue error: {e}")
+            return []
+
+    def _mark_ready_status(self, story_title: str, chapter_file: str, cleaned_text: str) -> None:
+        """Record a chapter as generated in the SSoT (best-effort). ``cleaned_text``
+        is the text that was fed to TTS, so its hash IS the audio cache key."""
         try:
             db = get_db_session()
-            progress = db.query(StoryProgress).order_by(
-                StoryProgress.last_played_at.desc()
-            ).first()
-            
-            if not progress:
+            try:
+                story_audio_index.mark_ready(
+                    db, story_title, chapter_file, get_content_hash(cleaned_text))
+            finally:
                 db.close()
-                return results
-            
-            story_dir = os.path.join(STORIES_DIR, progress.story_title)
-            if not os.path.exists(story_dir):
-                db.close()
-                return results
-            
-            chapters = sorted([f for f in os.listdir(story_dir) if f.endswith(".txt")])
-            
-            # Find current position and skip n+1 (P0 handles that)
-            found_current = False
-            skip_next = True  # Skip the first one after current (that's P0)
-            
-            for chapter_file in chapters:
-                if progress.last_chapter_file and chapter_file == progress.last_chapter_file:
-                    found_current = True
-                    continue
-                
-                if found_current:
-                    if skip_next:
-                        skip_next = False
-                        continue  # This is n+1, handled by P0
-                    
-                    # Check if un-generated
-                    text = self._read_chapter_text(progress.story_title, chapter_file)
-                    if text:
-                        cache_path = get_audio_cache_path(clean_text_for_tts(text))
-                        if not os.path.exists(cache_path):
-                            results.append({
-                                "story_title": progress.story_title,
-                                "chapter_file": chapter_file,
-                            })
-                            if len(results) >= limit:
-                                break
-            
-            db.close()
-        except Exception as e:
-            logger.error(f"[PRE-GEN] P1 query error: {e}")
-        return results
-    
-    def _collect_p2_new_stories(self, limit: int = 10) -> list[dict]:
-        """Collect first chapter of stories that have NO audio generated yet."""
-        results = []
-        if not os.path.exists(STORIES_DIR):
-            return results
-        
-        for story in sorted(os.listdir(STORIES_DIR)):
-            story_path = os.path.join(STORIES_DIR, story)
-            if not os.path.isdir(story_path):
-                continue
-            
-            chapters = sorted([f for f in os.listdir(story_path) if f.endswith(".txt")])
-            if not chapters:
-                continue
-            
-            # Check if ANY chapter has audio
-            has_audio = False
-            for chapter in chapters:
-                text = self._read_chapter_text(story, chapter)
-                if text:
-                    cache_path = get_audio_cache_path(clean_text_for_tts(text))
-                    if os.path.exists(cache_path):
-                        has_audio = True
-                        break
-            
-            if not has_audio:
-                first = chapters[0]
-                text = self._read_chapter_text(story, first)
-                if text:
-                    results.append({"story_title": story, "chapter_file": first})
-                    if len(results) >= limit:
-                        break
-        
-        return results
-    
-    def _collect_p3_sequential(self, limit: int = 10, exclude: set | None = None) -> list[dict]:
-        """Collect next un-generated chapters across all stories (round-robin)."""
-        results = []
-        exclude = exclude or set()
-        
-        if not os.path.exists(STORIES_DIR):
-            return results
-        
-        for story in sorted(os.listdir(STORIES_DIR)):
-            story_path = os.path.join(STORIES_DIR, story)
-            if not os.path.isdir(story_path):
-                continue
-            
-            chapters = sorted([f for f in os.listdir(story_path) if f.endswith(".txt")])
-            for chapter in chapters:
-                if (story, chapter) in exclude:
-                    continue
-                text = self._read_chapter_text(story, chapter)
-                if text:
-                    clean = clean_text_for_tts(text)
-                    cache_path = get_audio_cache_path(clean)
-                    if not os.path.exists(cache_path):
-                        results.append({"story_title": story, "chapter_file": chapter})
-                        if len(results) >= limit:
-                            return results
-        
-        return results
-    
+        except Exception as e:  # noqa: BLE001 — never fail generation over a status write
+            logger.warning(f"[PRE-GEN] mark_ready failed for {story_title}/{chapter_file}: {e}")
+
     # --- Disk management ---
     
     def _get_cache_size_bytes(self) -> int:
@@ -614,22 +417,37 @@ class TTSPreGenJob(BackgroundJobRunner):
             files_with_meta.sort(key=lambda x: x["mtime"])
             
             evicted = 0
+            evicted_hashes = []  # content_hash of each removed <hash>.mp3
             target = self.DISK_QUOTA_BYTES * 0.8  # Evict down to 80%
             current_size = self._get_cache_size_bytes()
-            
+
             for file_info in files_with_meta:
                 if current_size <= target:
                     break
                 # Don't evict files with .lock (currently generating)
                 if os.path.exists(file_info["path"] + ".lock"):
                     continue
-                
+
                 os.remove(file_info["path"])
                 current_size -= file_info["size"]
                 evicted += 1
+                evicted_hashes.append(file_info["file"][:-4])  # strip ".mp3"
                 logger.debug(f"[EVICTION] Deleted: {file_info['file']} "
                           f"(age: {(time.time() - file_info['mtime'])/3600:.0f}h)")
-            
+
+            # Flip the SSoT rows for evicted audio back to 'pending' so the queue
+            # regenerates them (readiness is authoritative in story_chapters).
+            if evicted_hashes:
+                try:
+                    db = get_db_session()
+                    try:
+                        for h in evicted_hashes:
+                            story_audio_index.mark_pending_by_hash(db, h)
+                    finally:
+                        db.close()
+                except Exception as e:  # noqa: BLE001 — eviction must not fail over this
+                    logger.warning(f"[EVICTION] SSoT status reset failed: {e}")
+
             return evicted
         except Exception as e:
             logger.error(f"[EVICTION] Error: {e}", exc_info=True)
