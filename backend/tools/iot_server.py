@@ -45,7 +45,12 @@ async def save_session(u_data: UserData):
         config_service.set(_ROBOROCK_CATEGORY, _ROBOROCK_SESSION_KEY,
                            json.dumps(u_data.as_dict()), is_secret=True)
     except Exception as e:
-        print(f"Error saving session: {e}")
+        # Log LOUD (not a silent print): a failed persist — e.g. a missing
+        # JARVIS_MASTER_KEY or a DB error — means login worked THIS run but the
+        # session won't survive, so the user re-does 2FA next process/deploy. We
+        # don't re-raise: the current session still works, degrade don't break.
+        logger.error("Roborock session NOT persisted (2FA will recur next "
+                     "deploy): %s", e, exc_info=True)
 
 
 async def load_session() -> UserData | None:
