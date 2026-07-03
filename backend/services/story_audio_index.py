@@ -20,8 +20,10 @@ This module makes SQLite the single source of truth for per-chapter status:
 
 Readiness is authoritative in this table (``status``): reconcile seeds it from the
 mp3's existence for new/changed chapters; generation flips it to ``ready``; eviction
-flips it back to ``pending``. The serve path still checks the file directly, so an
-out-of-band mp3 deletion is caught there; a ``force`` reconcile re-syncs drift.
+flips it back to ``pending`` (mark_pending_by_hash). An out-of-band mp3 deletion
+(the ``.txt`` unchanged, so the fingerprint can't see it) is re-synced by the force
+reconcile (``verify_ready``, run by ``rescan``); the serve path also regenerates
+on demand when it finds the file missing.
 """
 from __future__ import annotations
 
@@ -96,11 +98,16 @@ def _hash_and_status(story_id: str, chapter_file: str) -> tuple[str | None, str]
 
 
 # ── reconcile: disk → table (incremental) ───────────────────────────────────
-def reconcile(db, sig: list[tuple] | None = None) -> dict:
+def reconcile(db, sig: list[tuple] | None = None, *, verify_ready: bool = False) -> dict:
     """Sync ``story_chapters`` with the story tree. Re-reads/re-hashes ONLY files
     whose ``(mtime, size)`` changed; unchanged chapters keep their content hash and
     status (a position shift just updates ``chapter_num``, no read). Removes rows
-    for deleted files. Returns counts. Best-effort per row; commits once."""
+    for deleted files. Returns counts. Best-effort per row; commits once.
+
+    ``verify_ready`` (used by the rare force reconcile): also stat the mp3 of each
+    ``ready`` chapter whose ``.txt`` did NOT change, and flip it back to ``pending``
+    if the file is gone — catches an out-of-band mp3 deletion that the fingerprint
+    alone can't see (normal eviction already resets status via mark_pending_by_hash)."""
     if sig is None:
         sig = signature()
     # Assign chapter_num = sorted position within each story.
@@ -129,8 +136,15 @@ def reconcile(db, sig: list[tuple] | None = None) -> dict:
             row.text_mtime, row.text_size = mtime, size
             row.status, row.updated_at = status, now
             changed += 1
-        elif row.chapter_num != num:
-            row.chapter_num = num  # sibling added/removed shifted position — no re-hash
+        else:
+            # (mtime, size) unchanged → no read/hash.
+            if row.chapter_num != num:
+                row.chapter_num = num  # sibling added/removed shifted position
+            if (verify_ready and row.status == STATUS_READY and row.content_hash
+                    and not os.path.exists(
+                        os.path.join(AUDIO_CACHE_DIR, f"{row.content_hash}.mp3"))):
+                row.status, row.updated_at = STATUS_PENDING, now  # mp3 vanished out-of-band
+                changed += 1
 
     for key, row in existing.items():
         if key not in disk:
@@ -250,8 +264,11 @@ def preview_queue(db, story_id: str | None = None, limit: int = 10) -> list[dict
                               StoryChapter.status == STATUS_PENDING,
                               StoryChapter.chapter_num > last_num)
                       .order_by(StoryChapter.chapter_num).limit(limit).all())
-            _push(active[:1], 0)   # P0: immediate next
-            _push(active[1:], 1)   # P1: subsequent
+            if active:
+                # P0 only when it's literally the immediate next chapter (matches
+                # next_task); otherwise the whole active tail is P1.
+                _push(active[:1], 0 if active[0].chapter_num == last_num + 1 else 1)
+                _push(active[1:], 1)
 
     story = _first_story_without_ready(db)
     if story is not None:

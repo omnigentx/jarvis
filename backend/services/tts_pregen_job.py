@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 from pathlib import Path
 from typing import Optional
@@ -59,6 +60,10 @@ class TTSPreGenJob(BackgroundJobRunner):
             "last_error": None,
         }
         self._last_sig = None  # last reconciled story-tree fingerprint (change-detection)
+        # Serialise reconciles: rescan() (stories route) and _maybe_reconcile()
+        # (scheduler worker thread) can fire at once — one writer at a time avoids
+        # interleaved commits / "database is locked" on story_chapters.
+        self._reconcile_lock = threading.Lock()
         self.rescan()
     
     def set_pregen_stream(self, stream):
@@ -88,14 +93,17 @@ class TTSPreGenJob(BackgroundJobRunner):
         added/removed (the event-driven trigger). Re-reads/re-hashes only changed
         chapters — not the whole tree."""
         try:
-            db = get_db_session()
-            try:
-                sig = story_audio_index.signature()
-                story_audio_index.reconcile(db, sig)
-                self._last_sig = sig
-                counts = story_audio_index.status_counts(db)
-            finally:
-                db.close()
+            with self._reconcile_lock:
+                db = get_db_session()
+                try:
+                    sig = story_audio_index.signature()
+                    # verify_ready: a force pass also re-checks each ready chapter's
+                    # mp3 so an out-of-band deletion is re-queued.
+                    story_audio_index.reconcile(db, sig, verify_ready=True)
+                    self._last_sig = sig
+                    counts = story_audio_index.status_counts(db)
+                finally:
+                    db.close()
             self._stats["total_chapters"] = counts["total"]
             self._stats["done_chapters"] = counts["done"]
         except Exception as e:  # noqa: BLE001 — never break boot / the stories route
@@ -113,13 +121,19 @@ class TTSPreGenJob(BackgroundJobRunner):
         sig = story_audio_index.signature()
         if sig == self._last_sig:
             return
-        db = get_db_session()
         try:
-            counts = story_audio_index.reconcile(db, sig)
-            self._last_sig = sig
-            self._stats["total_chapters"] = counts["total"]
-        finally:
-            db.close()
+            with self._reconcile_lock:
+                if sig == self._last_sig:   # another reconcile just did this fingerprint
+                    return
+                db = get_db_session()
+                try:
+                    counts = story_audio_index.reconcile(db, sig)
+                    self._last_sig = sig
+                    self._stats["total_chapters"] = counts["total"]
+                finally:
+                    db.close()
+        except Exception as e:  # noqa: BLE001 — a transient DB error just skips this cycle,
+            logger.error(f"[PRE-GEN] reconcile failed: {e}", exc_info=True)  # never crash the scheduler
     
     async def get_next_task(self) -> dict | None:
         """Next chapter to generate, by priority (P0→P3). The heavy work — the

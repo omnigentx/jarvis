@@ -92,6 +92,28 @@ async def test_e2e_pregen_queue_flow(job_env):
     assert job.get_status()["done"] == 2
 
 
+async def test_e2e_concurrent_rescan_and_get_next_task(job_env):
+    """The reconcile lock + guards must keep a rescan (stories route) and the
+    scheduler's get_next_task from raising or corrupting the table when they race."""
+    import asyncio
+    env = job_env
+    for i in range(1, 6):
+        _chapter(env, "storyA", f"0{i}.txt", f"chapter {i}")
+    job = env.tpj.TTSPreGenJob(types.SimpleNamespace())
+
+    results = await asyncio.gather(
+        job.get_next_task(),
+        asyncio.to_thread(job.rescan),
+        job.get_next_task(),
+        asyncio.to_thread(job.rescan),
+        job.get_next_task(),
+        return_exceptions=True,
+    )
+    assert not any(isinstance(r, Exception) for r in results), results
+    assert job.get_status()["total"] == 5
+    assert env.Session().query(StoryChapter).count() == 5   # no duplicate/lost rows
+
+
 async def test_e2e_new_story_is_picked_up_after_reconcile(job_env):
     env = job_env
     _chapter(env, "storyA", "01.txt", "alpha one")

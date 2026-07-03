@@ -72,6 +72,22 @@ def test_reconcile_skips_unchanged_without_rehash(env, monkeypatch):
     assert calls["n"] == 0
 
 
+def test_reconcile_verify_ready_requeues_deleted_mp3(env):
+    _chapter(env, "storyA", "01.txt", "a1")
+    _generate(env, "a1")
+    db = env.Session()
+    sai.reconcile(db)
+    assert db.get(StoryChapter, ("storyA", "01.txt")).status == "ready"
+
+    # mp3 deleted out-of-band; the .txt is untouched so the fingerprint can't see it.
+    h = get_content_hash(clean_text_for_tts("a1"))
+    (env.audio / f"{h}.mp3").unlink()
+    sai.reconcile(db)                       # plain pass → stays ready (fingerprint unchanged)
+    assert db.get(StoryChapter, ("storyA", "01.txt")).status == "ready"
+    sai.reconcile(db, verify_ready=True)    # force pass re-checks the mp3 → requeue
+    assert db.get(StoryChapter, ("storyA", "01.txt")).status == "pending"
+
+
 def test_reconcile_detects_new_and_removed(env):
     _chapter(env, "storyA", "01.txt")
     db = env.Session()
