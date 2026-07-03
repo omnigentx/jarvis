@@ -245,11 +245,12 @@ async def delete_story_endpoint(story_id: str, _=Depends(verify_api_key)):
         logger.error(f"Delete failed: {e}", exc_info=True)
         return JSONResponse(status_code=500, content={"error": str(e)})
     finally:
-        # Trigger TTS pregen rescan
+        # Trigger TTS pregen rescan — OFF the event loop: rescan() stats the whole
+        # story tree + reconciles, which shouldn't block the loop on a user action.
         if _state.bg_scheduler:
             for job in _state.bg_scheduler._jobs:
                 if hasattr(job, 'rescan'):
-                    job.rescan()
+                    await asyncio.to_thread(job.rescan)
 
 
 @router.get("/crawl/status")
