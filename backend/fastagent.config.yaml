@@ -142,6 +142,12 @@ mcp:
          PYTHONUNBUFFERED: "1"
          ROBOROCK_USERNAME: "${ROBOROCK_USERNAME}"
          ROBOROCK_PASSWORD: "${ROBOROCK_PASSWORD}"
+         # The Roborock session persists to the DB via config_service (encrypted).
+         # Pin BOTH bindings this depends on so a later `cwd:`/chdir can't silently
+         # point config_service at a different jarvis.db, and the master key is
+         # available to decrypt (mirrors meeting_room + the google/other blocks).
+         JARVIS_DB_PATH: "data/jarvis.db"
+         JARVIS_MASTER_KEY: "${JARVIS_MASTER_KEY}"
     scrapling-server:
       command: "scrapling"
       args: ["mcp"]
