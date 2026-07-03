@@ -14,6 +14,7 @@ only ever sees its own memory (mirrors the SQLite rules).
 """
 from __future__ import annotations
 
+import glob
 import logging
 import os
 import shutil
@@ -29,30 +30,45 @@ def _norm(s: str) -> str:
     return " ".join((s or "").strip().lower().split())
 
 
-_GRAPH_SIDECARS = ("", ".wal", ".lock", ".shadow", ".tmp")
+def _graph_files(path: str) -> list[str]:
+    """The graph file/dir + EVERY LadybugDB sidecar (``.wal``, ``.wal.checkpoint``,
+    ``.shadow``, ``.lock``, ``.tmp``, …), EXCLUDING our own ``.corrupt`` quarantine
+    copies.
+
+    Enumerated by glob rather than a fixed suffix tuple: a fixed list silently
+    left ``.wal.checkpoint`` behind, so after quarantining the graph the "fresh"
+    reopen re-read that corrupt checkpoint and threw "Corrupted wal file" again —
+    the index stayed unavailable across restarts. Globbing covers any sidecar a
+    LadybugDB version adds."""
+    files = glob.glob(path + ".*")           # dot-suffixed sidecars
+    if os.path.exists(path):
+        files.append(path)                   # the graph file/dir itself (no suffix)
+    return [p for p in files if not p.endswith(".corrupt")]
+
+
+def _remove_path(p: str) -> None:
+    try:
+        if os.path.isdir(p):
+            shutil.rmtree(p, ignore_errors=True)
+        else:
+            os.remove(p)
+    except OSError:
+        pass
 
 
 def _wipe_graph_files(path: str) -> None:
-    """Remove a LadybugDB graph and its sidecars. The store is a disposable
+    """Remove a LadybugDB graph and all its sidecars. The store is a disposable
     projection — see ``_open``."""
-    if os.path.isdir(path):
-        shutil.rmtree(path, ignore_errors=True)
-    for s in _GRAPH_SIDECARS:
-        try:
-            os.remove(path + s)
-        except OSError:
-            pass
+    for p in _graph_files(path):
+        _remove_path(p)
 
 
 def _quarantine_graph_files(path: str) -> None:
-    """Move a corrupt graph + sidecars ASIDE to ``<path>*.corrupt`` instead of
-    deleting them, so a mis-triggered self-heal is forensically recoverable (the
+    """Move a corrupt graph + ALL its sidecars ASIDE to ``<path>*.corrupt`` instead
+    of deleting them, so a mis-triggered self-heal is forensically recoverable (the
     projection is rebuildable from SQLite either way). Overwrites a previous
     quarantine — only the latest corruption is kept. Best-effort."""
-    for s in _GRAPH_SIDECARS:
-        src = path + s
-        if not os.path.exists(src):
-            continue
+    for src in _graph_files(path):
         dst = src + ".corrupt"
         try:
             if os.path.isdir(dst):
@@ -61,8 +77,7 @@ def _quarantine_graph_files(path: str) -> None:
                 os.remove(dst)
             os.replace(src, dst)
         except OSError:
-            # last resort: don't let an unmovable file block recovery
-            _wipe_graph_files(src)
+            _remove_path(src)  # unmovable → delete so it can't block the fresh open
 
 EMBED_DIM = 1024  # BAAI/bge-m3
 _VECTOR_INDEX = "memory_emb_idx"
