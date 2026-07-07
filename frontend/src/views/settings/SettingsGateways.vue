@@ -165,7 +165,9 @@ function pollStatusAfterSave() {
 // never shows a state we didn't persist.
 async function toggleEnabled(id) {
   const r = rows[id]
-  r.error = ''
+  if (r.saving) return          // guard: a persist is already in flight (the switch
+  r.error = ''                  // is :disabled too, but belt-and-suspenders vs races)
+  r.saving = true
   try {
     await apiFetch('/api/settings/bulk', {
       method: 'POST',
@@ -177,6 +179,8 @@ async function toggleEnabled(id) {
   } catch (err) {
     r.enabled = !r.enabled  // failed to persist → don't lie about the state
     r.error = err?.body?.detail || err?.message || String(err)
+  } finally {
+    r.saving = false
   }
 }
 
@@ -267,7 +271,7 @@ onMounted(reload)
       <div class="card-body">
         <!-- Enable -->
         <label class="switch-row">
-          <input type="checkbox" v-model="r.enabled" @change="toggleEnabled(id)" />
+          <input type="checkbox" v-model="r.enabled" :disabled="r.saving" @change="toggleEnabled(id)" />
           <span class="switch-track"><span class="switch-thumb" /></span>
           <span class="switch-label">{{ t('settings.gateways.enable', { name: metaFor(id).label }) }}</span>
         </label>
