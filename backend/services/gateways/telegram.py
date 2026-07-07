@@ -30,6 +30,7 @@ _MAX_MEDIA_BYTES = 20 * 1024 * 1024
 class TelegramGateway(BotApiGateway):
     api_base = "https://api.telegram.org"
     typing_method = "sendChatAction"
+    registers_commands = True   # Telegram supports setMyCommands → "/" menu suggestions
 
     def __init__(self, **kwargs) -> None:
         super().__init__(name="telegram", **kwargs)

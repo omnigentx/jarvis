@@ -84,6 +84,13 @@ class BotApiGateway(BaseGateway):
     api_base: str = ""
     # Method name used for the typing indicator, or None if unsupported.
     typing_method: Optional[str] = None
+    # Whether this platform's Bot API implements ``setMyCommands`` (the native "/"
+    # command menu). Telegram does. The Zalo Bot API (bot.zaloplatforms.com) does
+    # NOT — its method list is getMe/getUpdates/setWebhook/sendMessage/… with no
+    # command registration (verified 2026-07 against bot.zaloplatforms.com/docs),
+    # so registering there would just error every startup. Flip to True only when
+    # a platform actually supports it.
+    registers_commands: bool = False
 
     def __init__(
         self,
@@ -191,6 +198,24 @@ class BotApiGateway(BaseGateway):
 
     # ── Transport API (BaseGateway) ───────────────────────────────────────
 
+    async def _register_command_menu(self) -> None:
+        """Publish the slash-command menu so a native client (Telegram) shows the
+        commands as "/" autocomplete suggestions — the same mechanism OpenClaw uses.
+        delete-then-set mirrors the Bot API contract and clears a stale menu.
+        Best-effort: a failure here is cosmetic and must never stop the gateway."""
+        from services.gateways import commands
+        cmds = commands.menu_commands()
+        if not cmds:
+            return
+        try:
+            await self._call("deleteMyCommands")
+            await self._call("setMyCommands", {"commands": cmds})
+            logger.info("[%s] published %d slash commands to the native menu",
+                        self.name, len(cmds))
+        except Exception as e:  # noqa: BLE001 — cosmetic; never break startup
+            logger.warning("[%s] slash-command menu registration failed: %s",
+                           self.name, self._redact(str(e)))
+
     async def run(self) -> None:
         """Long-poll loop with exponential backoff on transient errors."""
         logger.info("[%s] gateway started (long-polling)", self.name)
@@ -203,6 +228,10 @@ class BotApiGateway(BaseGateway):
             self.connected = True
             self.last_error = None
             logger.info("[%s] connected as %s", self.name, self.bot_username)
+            # Register the "/" command menu once, right after we know the token is
+            # good — this is what surfaces the commands as autocomplete suggestions.
+            if self.registers_commands:
+                await self._register_command_menu()
         except Exception as e:
             self.connected = False
             self.last_error = self._redact(str(e))
