@@ -15,7 +15,7 @@ import { expect, test } from '@playwright/test'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { mockBackend, NetworkRecorder, seedApiKey } from '../harness'
+import { mockBackend, seedApiKey } from '../harness'
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), '..', 'fixtures')
 const NOISE = join(FIXTURES, '_app_boot_noise.yaml')
@@ -29,8 +29,6 @@ function telegramCard(page: import('@playwright/test').Page) {
 test('test a token then enable + save Telegram, asserting the bulk POST contract', async ({ page }) => {
   await seedApiKey(page)
   const backend = await mockBackend(page, [NOISE, join(FIXTURES, 'settings_gateways.yaml')])
-  const recorder = new NetworkRecorder()
-  await recorder.attach(page)
 
   await page.goto('/settings')
   await page.getByRole('button', { name: 'Messaging Gateways', exact: true }).click()
@@ -52,10 +50,23 @@ test('test a token then enable + save Telegram, asserting the bulk POST contract
   expect(testResp.status()).toBe(200)
   await expect(card.getByText(/jarvis_bot/)).toBeVisible()
 
-  // 2) Enable + allow-list + Save. The checkbox is visually hidden behind a
-  // custom switch — click the track the user actually sees.
-  await card.locator('.switch-track').click()
+  // 2) Enable — the switch now PERSISTS IMMEDIATELY via its OWN bulk POST
+  // (carrying just telegram_enabled), rather than waiting for "Save changes".
+  // The checkbox is visually hidden behind a custom switch — click the track.
+  const [enableResp] = await Promise.all([
+    page.waitForResponse(
+      (r) => r.request().method() === 'POST' &&
+        new URL(r.url()).pathname === '/api/settings/bulk',
+    ),
+    card.locator('.switch-track').click(),
+  ])
+  expect(enableResp.status()).toBe(200)
   await expect(card.locator('input[type="checkbox"]')).toBeChecked()
+  // The toggle's own POST carries ONLY the enabled flag (not the whole form).
+  const enableItems = (enableResp.request().postDataJSON() as { items?: any[] })?.items || []
+  expect(enableItems).toContainEqual(expect.objectContaining({
+    category: 'gateways', key: 'telegram_enabled', value: 'true',
+  }))
 
   // Security: "*" (allow everyone) must surface a loud warning; specific ids must not.
   const allow = card.getByPlaceholder('123456789, 987654321')
@@ -64,6 +75,7 @@ test('test a token then enable + save Telegram, asserting the bulk POST contract
   await allow.fill('111, 222')
   await expect(card.locator('.allow-danger')).toHaveCount(0)
 
+  // 3) Save changes — batches token + allow-list + agent.
   const [bulkResp] = await Promise.all([
     page.waitForResponse(
       (r) => r.request().method() === 'POST' &&
@@ -73,12 +85,9 @@ test('test a token then enable + save Telegram, asserting the bulk POST contract
   ])
   expect(bulkResp.status()).toBe(200)
 
-  // Assert the bulk body carries the right items (no silent drop of fields).
-  const call = recorder.assertContains('POST', '/api/settings/bulk')
-  const items = (call.body as { items?: any[] })?.items || []
-  expect(items).toContainEqual(expect.objectContaining({
-    category: 'gateways', key: 'telegram_enabled', value: 'true',
-  }))
+  // Assert the SAVE body carries token + allow-list (read THIS request directly —
+  // the toggle above also POSTed, so we can't just grab the first bulk call).
+  const items = (bulkResp.request().postDataJSON() as { items?: any[] })?.items || []
   expect(items).toContainEqual(expect.objectContaining({
     category: 'gateways', key: 'telegram_token', value: '123456:ABCDEF_test-token', is_secret: true,
   }))
