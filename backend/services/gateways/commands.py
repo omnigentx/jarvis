@@ -57,6 +57,15 @@ def help_text() -> str:
     return "\n".join(lines)
 
 
+def menu_commands() -> List[dict]:
+    """The command list for a platform's NATIVE command menu, in the Telegram
+    ``setMyCommands`` shape: ``[{"command": "new", "description": "..."}]``. This
+    is what makes commands show up as "/" autocomplete suggestions. Canonical
+    names only (aliases resolve into these); ``_COMMANDS`` is the single source of
+    truth — add a command there and it appears in the menu for free."""
+    return [{"command": name, "description": desc} for name, desc in _COMMANDS.items()]
+
+
 def handle(text: str, ctx: CommandContext) -> Optional[str]:
     """Execute a slash command and return the reply, or None if ``text`` is not
     a recognized command (the caller then dispatches to the agent)."""

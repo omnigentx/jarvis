@@ -158,6 +158,32 @@ function pollStatusAfterSave() {
   setTimeout(tick, 800)
 }
 
+// The enable switch persists IMMEDIATELY on flip — a toggle is expected to APPLY,
+// not sit as a pending edit until "Save changes" (which is for token/allow-list/
+// agent). Without this, flipping off then reloading reverted to the saved value
+// and the gateway never actually stopped. Revert the toggle on failure so the UI
+// never shows a state we didn't persist.
+async function toggleEnabled(id) {
+  const r = rows[id]
+  if (r.saving) return          // guard: a persist is already in flight (the switch
+  r.error = ''                  // is :disabled too, but belt-and-suspenders vs races)
+  r.saving = true
+  try {
+    await apiFetch('/api/settings/bulk', {
+      method: 'POST',
+      body: JSON.stringify({ items: [
+        { category: 'gateways', key: `${id}_enabled`, value: r.enabled ? 'true' : 'false', is_secret: false },
+      ] }),
+    })
+    pollStatusAfterSave()   // reflect the gateway start/stop in the status chip
+  } catch (err) {
+    r.enabled = !r.enabled  // failed to persist → don't lie about the state
+    r.error = err?.body?.detail || err?.message || String(err)
+  } finally {
+    r.saving = false
+  }
+}
+
 async function save(id) {
   const r = rows[id]
   r.saving = true
@@ -245,7 +271,7 @@ onMounted(reload)
       <div class="card-body">
         <!-- Enable -->
         <label class="switch-row">
-          <input type="checkbox" v-model="r.enabled" />
+          <input type="checkbox" v-model="r.enabled" :disabled="r.saving" @change="toggleEnabled(id)" />
           <span class="switch-track"><span class="switch-thumb" /></span>
           <span class="switch-label">{{ t('settings.gateways.enable', { name: metaFor(id).label }) }}</span>
         </label>

@@ -165,6 +165,37 @@ async def test_handle_inbound_empty_reply_tells_user():
 # ── Unit: platform parsers ─────────────────────────────────────────────────
 
 
+async def test_telegram_registers_slash_command_menu(monkeypatch):
+    # Telegram supports setMyCommands → the commands must be published so a native
+    # client shows them as "/" autocomplete suggestions (the OpenClaw behaviour the
+    # web/gateway lacked). delete-then-set, payload = the canonical command list.
+    from services.gateways import commands as gw_commands
+    gw = TelegramGateway(token="t", dispatcher=None, allow_from=[])
+    assert gw.registers_commands is True
+    calls = []
+
+    async def fake_call(method, body=None):
+        calls.append((method, body))
+        return {}
+
+    monkeypatch.setattr(gw, "_call", fake_call)
+    await gw._register_command_menu()
+    assert [m for m, _ in calls] == ["deleteMyCommands", "setMyCommands"]
+    payload = calls[1][1]["commands"]
+    assert payload == gw_commands.menu_commands()
+    assert {"command": "help", "description": "show this list"} in payload
+    assert {"command": "whoami", "description": "show your user id"} in payload
+
+
+def test_zalo_does_not_register_commands():
+    # Verified against bot.zaloplatforms.com/docs: the Zalo Bot API has NO
+    # setMyCommands (only getMe/getUpdates/sendMessage/…), so the flag must stay
+    # off — otherwise it 400s on every startup.
+    from services.gateways.zalo import ZaloGateway
+    gw = ZaloGateway(token="t", dispatcher=None, allow_from=[])
+    assert gw.registers_commands is False
+
+
 async def test_telegram_poll_parses_and_advances_offset(monkeypatch):
     gw = TelegramGateway(token="t", dispatcher=None, allow_from=[])
     updates = [
