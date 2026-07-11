@@ -21,6 +21,10 @@ Self-hostable AI assistant built on [fast-agent](https://github.com/evalstate/fa
 
 ## See it in action
 
+**Not one chatbot — a whole team.** Jarvis orchestrates a roster of specialist agents (research, finance, IoT, music, and more) — each one inspectable and directly reachable.
+
+![Jarvis's orchestration tree — a team of specialist agents](docs/media/hero-team.gif)
+
 **It remembers you — across conversations.** Tell Jarvis a fact once; it saves to durable memory (not just chat history) and recalls it later in a brand-new conversation — no scrolling back, no re-explaining.
 
 1. Teach it a fact:
