@@ -31,9 +31,9 @@ Self-hostable AI assistant built on [fast-agent](https://github.com/evalstate/fa
 
 ![Jarvis recalling the fact in a new conversation](docs/media/memory-recall.gif)
 
-**It controls real-world devices.** Ask a specialist agent for your robot vacuum's live status — real IoT (Roborock), not a mockup.
+**Chat with any specialist directly — not just the orchestrator.** Switch straight to a subagent (here, the IoT agent) and ask your robot vacuum for its live status — real IoT (Roborock), not a mockup.
 
-![Jarvis reporting a robot vacuum's live status over IoT](docs/media/iot-vacuum.gif)
+![Chatting directly with the IoT subagent to read a robot vacuum's live status](docs/media/iot-vacuum.gif)
 
 ## Quick start
 
