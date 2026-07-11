@@ -21,6 +21,18 @@ def test_parse_triples_tolerant():
     assert kg.parse_triples('[{"s":"a","p":"","o":"c"}]') == []   # missing predicate dropped
 
 
+def test_triple_prompt_is_english_anchored():
+    # Regression (English-First): the extraction prompt must anchor English —
+    # subject "User", English predicate examples — NOT hardcode Vietnamese. When
+    # the subject was forced to "Người dùng" with Vietnamese predicate examples,
+    # the LLM translated EVERY triple to Vietnamese even for English input.
+    p = kg.TRIPLE_PROMPT
+    assert '"User"' in p                 # canonical English subject super-node
+    assert "Người dùng" not in p         # no hardcoded Vietnamese subject
+    assert "works at" in p               # English predicate examples
+    assert "user" in kg._GENERIC_SUBJECTS  # hub still recognised after the rename
+
+
 def _fixed_fn(payload):
     async def gen(_prompt):
         return payload

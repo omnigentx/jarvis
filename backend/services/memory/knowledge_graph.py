@@ -1,7 +1,7 @@
 """Knowledge-graph triple extraction (memory v2 relations layer).
 
 Turns a memory statement into (subject, predicate, object) triples — e.g.
-"người dùng thích ăn phở" → {"s":"Người dùng","p":"thích","o":"phở"} — stored on
+"the user likes pho" → {"s":"User","p":"likes","o":"pho"} — stored on
 ``MemoryRecord.relations_json`` (SQLite = SoT) and projected to LadybugDB as
 RELATES edges so the graph view is a real knowledge graph, not opaque blobs.
 
@@ -23,11 +23,11 @@ Return ONLY a JSON array (no prose, no code fence). Each item:
 {"s": "<subject>", "p": "<short predicate>", "o": "<object>"}
 
 Rules:
-- Subject ``s`` is almost always "Người dùng" (the user). Use a named entity only when the statement is really about that entity (e.g. an employer's address).
-- Predicate ``p`` is a SHORT relationship phrase: thích / không thích / làm việc tại / sống ở / có / học / chơi / dùng / quan tâm đến …
-- Object ``o`` is a CONCISE noun/entity (phở, a company, a city, a hobby, guitar). Strip explanatory clauses — keep just the entity.
+- Subject ``s`` is almost always "User" (the user) — keep this canonical English label so all the user's facts share ONE super-node. Use a named entity only when the statement is really about that entity (e.g. an employer's address).
+- Predicate ``p`` is a SHORT relationship phrase: likes / dislikes / works at / lives in / has / studies / plays / uses / interested in …
+- Object ``o`` is a CONCISE noun/entity (a company, a city, a hobby, guitar). Strip explanatory clauses — keep just the entity.
 - Split a statement with several facts into several triples.
-- Keep the statement's language.
+- Write the predicate and object in the SAME language as the statement (English statement → English triples; do NOT translate to another language).
 
 If nothing extractable, return exactly: []
 """
