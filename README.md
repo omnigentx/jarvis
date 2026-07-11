@@ -19,6 +19,12 @@ Self-hostable AI assistant built on [fast-agent](https://github.com/evalstate/fa
 - **Web dashboard**: Vue + Vite UI for chatting with Jarvis, configuring providers, voice engines, viewing agent timelines, managing secrets.
 - **Self-host friendly**: single `docker compose up -d` brings up the whole stack on a Linux box.
 
+## See it in action
+
+**It remembers you — across conversations.** Tell Jarvis a fact once; it saves to durable memory (not just chat history) and recalls it in a brand-new conversation.
+
+![Jarvis saving a user fact to durable memory](docs/media/memory-remembers.gif)
+
 ## Quick start
 
 ```bash
