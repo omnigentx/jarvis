@@ -21,9 +21,15 @@ Self-hostable AI assistant built on [fast-agent](https://github.com/evalstate/fa
 
 ## See it in action
 
-**It remembers you — across conversations.** Tell Jarvis a fact once; it saves to durable memory (not just chat history) and recalls it in a brand-new conversation.
+**It remembers you — across conversations.** Tell Jarvis a fact once; it saves to durable memory (not just chat history) and recalls it later in a brand-new conversation — no scrolling back, no re-explaining.
+
+1. Teach it a fact:
 
 ![Jarvis saving a user fact to durable memory](docs/media/memory-remembers.gif)
+
+2. Ask in a brand-new conversation — it recalls:
+
+![Jarvis recalling the fact in a new conversation](docs/media/memory-recall.gif)
 
 ## Quick start
 
