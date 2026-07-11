@@ -31,6 +31,10 @@ Self-hostable AI assistant built on [fast-agent](https://github.com/evalstate/fa
 
 ![Jarvis recalling the fact in a new conversation](docs/media/memory-recall.gif)
 
+**It controls real-world devices.** Ask a specialist agent for your robot vacuum's live status — real IoT (Roborock), not a mockup.
+
+![Jarvis reporting a robot vacuum's live status over IoT](docs/media/iot-vacuum.gif)
+
 ## Quick start
 
 ```bash
