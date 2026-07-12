@@ -39,6 +39,10 @@ Self-hostable AI assistant built on [fast-agent](https://github.com/evalstate/fa
 
 ![Chatting directly with the IoT subagent to read a robot vacuum's live status](docs/media/iot-vacuum.gif)
 
+**And it extends itself — live.** No tool for the job? Jarvis scaffolds, installs, and wires in a brand-new MCP tool, then uses it in the same conversation — no package to hunt down, no redeploy.
+
+![Jarvis building and installing a new MCP tool, then using it live](docs/media/agent-builds-tool.gif)
+
 ## Quick start
 
 ```bash
