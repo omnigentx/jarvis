@@ -47,6 +47,7 @@ import logging
 import os
 import struct
 import time
+import threading
 import uuid
 import wave
 from typing import Any, Optional
@@ -78,6 +79,19 @@ def _chunk_rms_peak(pcm_chunk: bytes) -> tuple[int, int]:
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["voice-ws"])
+
+_voice_session_lock = threading.Lock()
+_BUSY_DETAIL = "Voice session already active; close the existing session first"
+
+def _try_claim_voice_session() -> bool:
+    return _voice_session_lock.acquire(blocking=False)
+
+def _release_voice_session() -> None:
+    try:
+        _voice_session_lock.release()
+    except RuntimeError:
+        pass
+
 
 
 @router.get("/api/voice/ice")
@@ -291,25 +305,8 @@ async def _mp3_stream_to_pcm(mp3_iter):
             pass
 
 
-@router.websocket("/ws/voice")
-async def voice_ws(ws: WebSocket) -> None:
+async def _voice_ws_impl(ws: WebSocket) -> None:
     """Handle a single hands-free session."""
-    await ws.accept()
-
-    # Soft auth: skip in dev (no JARVIS_API_KEY), enforce when set.
-    # WebSockets cannot set custom headers from the browser, so we accept
-    # three credentials in order — same precedence as ``verify_api_key``:
-    #   1. ``jarvis_session`` cookie (preferred — browser auto-attaches it
-    #      during the upgrade handshake; works for cookie-only SPA login).
-    #   2. ``Authorization: Bearer ...`` header (programmatic clients).
-    #   3. ``?api_key=...`` query param (legacy — Xiaozhi device + scripts
-    #      that can't set headers).
-    import os
-    expected = os.environ.get("JARVIS_API_KEY")
-    if expected:
-        if not _ws_authenticated(ws, expected):
-            await ws.close(code=4401)
-            return
 
     loop = asyncio.get_running_loop()
     out_queue: asyncio.Queue = asyncio.Queue()
@@ -518,17 +515,53 @@ async def voice_ws(ws: WebSocket) -> None:
             stt_service = state.stt_recorder
         except Exception as exc:
             logger.exception("[ws_voice] STT init failed")
-            await out_queue.put({"type": "error", "detail": f"STT init failed: {exc}"})
+            # Send directly: the writer is cancelled during cold-start failure,
+            # so a queued error would be lost before reaching the client.
+            try:
+                await ws.send_json({"type": "error", "detail": "STT initialization failed; please try again"})
+            except Exception:
+                logger.debug("[ws_voice] failed to send STT init error", exc_info=True)
+            await ws.close(code=1011)
+            writer_task.cancel()
+            try:
+                await writer_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            return
         else:
             await out_queue.put({"type": "stt_ready"})
 
     if stt_service is not None:
+        # Initialization occurs before the receive-loop finally block. Guard
+        # every STT hook/resume operation so failures never escape the WS
+        # handler or strand the singleton lease.
+        try:
+            stt_service.set_hook(on_stt_event)
+            await asyncio.to_thread(stt_service.resume)
+        except Exception as exc:
+            logger.exception("[ws_voice] STT startup failed")
+            try:
+                stt_service.pause()
+            except Exception:
+                logger.exception("[ws_voice] STT pause after startup failure failed")
+            try:
+                stt_service.set_hook(None)
+            except Exception:
+                logger.exception("[ws_voice] STT hook cleanup after startup failure failed")
+            await ws.send_json({"type": "error", "detail": "STT initialization failed; please try again"})
+            await ws.close(code=1011)
+            writer_task.cancel()
+            try:
+                await writer_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            return
         # Order matters: install hook FIRST so the ``ws_status`` event the
         # backend emits inside ``resume()`` (e.g. CONNECTING → CONNECTED)
         # arrives at the frontend chip. set_hook itself replays the
         # current state, so even before resume() flips anything the UI
         # gets one event (IDLE) to render off.
-        stt_service.set_hook(on_stt_event)
+        # Hook and resume are performed in the guarded startup block above.
         # Mic-driven lifecycle: open the upstream WS (Soniox) or unblock
         # the local worker. Without this the singleton stays IDLE and
         # silently drops audio. The route's ``finally`` block calls
@@ -541,10 +574,6 @@ async def voice_ws(ws: WebSocket) -> None:
         # up to ~500 ms waiting for ``_loop``. Running it on the event
         # loop directly would stall every other socket frame for that
         # window. The thread is cheap (one shot per session).
-        try:
-            await asyncio.to_thread(stt_service.resume)
-        except Exception:
-            logger.exception("[ws_voice] STT resume() failed")
 
     async def speak(text: str) -> None:
         """Stream TTS audio chunks back over the socket. Cancellable.
@@ -1046,3 +1075,20 @@ async def voice_ws(ws: WebSocket) -> None:
             await writer_task
         except (asyncio.CancelledError, Exception):
             pass
+
+
+@router.websocket("/ws/voice")
+async def voice_ws(ws: WebSocket) -> None:
+    await ws.accept()
+    expected = os.environ.get("JARVIS_API_KEY")
+    if expected and not _ws_authenticated(ws, expected):
+        await ws.close(code=4401)
+        return
+    if not _try_claim_voice_session():
+        await ws.send_json({"type": "error", "detail": _BUSY_DETAIL})
+        await ws.close(code=1013, reason=_BUSY_DETAIL)
+        return
+    try:
+        await _voice_ws_impl(ws)
+    finally:
+        _release_voice_session()

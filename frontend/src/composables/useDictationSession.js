@@ -107,6 +107,7 @@ export function useDictationSession() {
     if (status.value !== 'idle') return
     error.value = ''
     status.value = 'connecting'
+    let socketClosed = false
     try {
       const sock = new WebSocket(_wsUrl())
       sock.binaryType = 'arraybuffer'
@@ -116,7 +117,7 @@ export function useDictationSession() {
         sock.onerror = () => reject(new Error('WebSocket failed to open'))
       })
       sock.onmessage = _onMessage
-      sock.onclose = () => {
+      sock.onclose = () => { socketClosed = true
         if (status.value !== 'error') status.value = 'idle'
       }
       sock.onerror = () => {
@@ -138,6 +139,12 @@ export function useDictationSession() {
           autoGainControl: false,
         },
       })
+      if (socketClosed || sock.readyState !== WebSocket.OPEN) {
+        ms.getTracks().forEach(t => t.stop())
+        await stop()
+        if (!error.value) error.value = 'Voice connection closed'
+        return
+      }
       stream.value = ms
 
       const ac = new (window.AudioContext || window.webkitAudioContext)()
@@ -158,10 +165,15 @@ export function useDictationSession() {
       // The mode flag is the whole reason this composable exists — the
       // backend ws_voice route reads it and bypasses LLM/TTS dispatch on
       // every final_transcript.
+      if (socketClosed || sock.readyState !== WebSocket.OPEN) {
+        await stop()
+        if (!error.value) error.value = 'Voice connection closed'
+        return
+      }
       sock.send(JSON.stringify({ type: 'start', mode: 'dictation' }))
       status.value = 'listening'
     } catch (e) {
-      error.value = e?.message || String(e)
+      if (status.value !== 'error' || !error.value) error.value = e?.message || String(e)
       status.value = 'error'
       await stop()
     }

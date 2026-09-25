@@ -636,6 +636,7 @@ function _createVoiceSession() {
     error.value = ''
     status.value = 'connecting'
     torn = false
+    let socketClosed = false
     try {
       const sock = new WebSocket(_wsUrl())
       sock.binaryType = 'arraybuffer'
@@ -646,6 +647,7 @@ function _createVoiceSession() {
       })
       sock.onmessage = _onMessage
       sock.onclose = (ev) => {
+        socketClosed = true
         // Diagnostic: code 1000 = clean close (user/server stop),
         // 1001 = going away (page nav / browser closing tab),
         // 1006 = abnormal closure (no close frame — network drop).
@@ -688,6 +690,12 @@ function _createVoiceSession() {
           autoGainControl: false,
         },
       })
+      if (socketClosed || sock.readyState !== WebSocket.OPEN) {
+        ms.getTracks().forEach(t => t.stop())
+        await stop()
+        if (!error.value) error.value = 'Voice connection closed'
+        return
+      }
       stream.value = ms
       // Log what the browser actually applied — getUserMedia constraints
       // are *requests*; the browser is allowed to downgrade or ignore them
@@ -699,6 +707,7 @@ function _createVoiceSession() {
         const caps = track?.getCapabilities?.() || {}
         console.log('[voice diag] track settings', settings)
         console.log('[voice diag] track capabilities', caps)
+        if (sock.readyState !== WebSocket.OPEN) return
         sock.send(JSON.stringify({
           type: 'diag',
           stage: 'mic_track',
@@ -742,6 +751,11 @@ function _createVoiceSession() {
         // Throws on setup failure → caught by start()'s handler → status 'error'.
         await _startWebRtc(sock, ms)
       }
+      if (socketClosed || sock.readyState !== WebSocket.OPEN) {
+        await stop()
+        if (!error.value) error.value = 'Voice connection closed'
+        return
+      }
       sock.send(JSON.stringify({ type: 'start' }))
       // Tell the server which agent + conversation the dashboard has
       // selected so voice turns route through the same agent the user is
@@ -754,7 +768,7 @@ function _createVoiceSession() {
       }
       status.value = 'listening'
     } catch (e) {
-      error.value = e?.message || String(e)
+      if (status.value !== 'error' || !error.value) error.value = e?.message || String(e)
       status.value = 'error'
       await stop()
     }
