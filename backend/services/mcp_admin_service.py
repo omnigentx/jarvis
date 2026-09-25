@@ -1038,12 +1038,15 @@ def verify(name: str) -> dict[str, Any]:
         blockers.append("smoke_test has not passed")
 
     planned = [t["name"] for t in manifest.get("planned_tools", [])]
-    tested_tools: set[str] = set()
+    # Track the most recent result independently for each tool. A historical
+    # success must not keep a tool passing after its latest test failed.
+    latest_tool_tests: dict[str, dict[str, Any]] = {}
     for h in history:
-        if h["stage"] == "tool_test" and h.get("ok"):
+        if h["stage"] == "tool_test":
             t = (h.get("detail") or {}).get("tool")
             if t:
-                tested_tools.add(t)
+                latest_tool_tests[t] = h
+    tested_tools = {t for t, h in latest_tool_tests.items() if h.get("ok")}
     missing_tested = [t for t in planned if t not in tested_tools]
     if missing_tested:
         blockers.append(f"these planned tools have no passing functional test: {missing_tested}")

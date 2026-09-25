@@ -231,6 +231,23 @@ def test_verify_passes_when_all_stages_ok():
     assert res["tested_tools"] == ["ping"]
 
 
+def test_verify_blocks_when_latest_tool_test_failed_after_success():
+    """A later failed test must supersede an earlier passing test."""
+    svc.scaffold("vlatest", "x", [
+        {"name": "ping", "description": "Health-check the service."},
+    ])
+    _set_history("vlatest", [
+        {"stage": "static_check", "ok": True, "ts": 0, "detail": {}},
+        {"stage": "install_deps", "ok": True, "ts": 1, "detail": {}},
+        {"stage": "smoke_test", "ok": True, "ts": 2, "detail": {}},
+        {"stage": "tool_test", "ok": True, "ts": 3, "detail": {"tool": "ping"}},
+        {"stage": "tool_test", "ok": False, "ts": 4, "detail": {"tool": "ping"}},
+    ])
+    res = svc.verify("vlatest")
+    assert res["ready"] is False
+    assert "ping" in res["blockers"][0]
+
+
 def test_verify_blocks_if_planned_tool_has_no_passing_test():
     svc.scaffold("vmix", "x", [
         {"name": "ping", "description": "Health-check the service."},
