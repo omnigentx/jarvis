@@ -23,36 +23,15 @@ from mcp.server.fastmcp import Context, FastMCP
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from tools.runtime_rpc_client import RuntimeRpcError, call as rpc_call  # noqa: E402
+from tools.caller_identity import caller_agent  # noqa: E402
 
 logger = logging.getLogger("memory_server")
 mcp = FastMCP("Memory")
 
 
 def _caller_from_ctx(ctx: Context | None) -> str:
-    """The calling agent's identity from the trusted ``_meta.caller_agent`` that
-    fast-agent stamps on each tool call. Empty when absent (older callers).
-    Tolerant of meta being a dict OR a pydantic model (transport-dependent)."""
-    if ctx is None:
-        return ""
-    try:
-        meta = ctx.request_context.meta
-    except Exception:  # noqa: BLE001 — no request context (e.g. direct call)
-        logger.debug("memory tool: no request_context.meta on ctx (%r) — "
-                     "transport may not expose it; owner will fall through to env",
-                     type(ctx).__name__, exc_info=True)
-        return ""
-    if meta is None:
-        return ""
-    val = None
-    if isinstance(meta, dict):
-        val = meta.get("caller_agent")
-    else:
-        val = getattr(meta, "caller_agent", None)
-        if val is None:
-            extra = getattr(meta, "model_extra", None) or getattr(meta, "__pydantic_extra__", None)
-            if isinstance(extra, dict):
-                val = extra.get("caller_agent")
-    return val.strip() if isinstance(val, str) else ""
+    """Backward-compatible alias for the shared fail-closed caller resolver."""
+    return caller_agent(ctx)
 
 
 def _owner(ctx: Context | None = None) -> str:

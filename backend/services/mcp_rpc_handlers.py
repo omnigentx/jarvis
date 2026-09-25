@@ -11,6 +11,8 @@ as an LLM-facing tool.
 from __future__ import annotations
 
 import logging
+import hashlib
+import json
 from typing import Any
 
 from services import mcp_admin_service as admin
@@ -49,6 +51,31 @@ def _self_lockout(name: str, op: str) -> dict | None:
         ),
         "status": 423,  # Locked
     }
+
+
+async def _approve_catalog_change(name: str, action: str, payload: dict) -> dict | None:
+    """User review for an agent-initiated global MCP configuration change."""
+    from services.approval_gate import request_approval
+
+    canonical = json.dumps(payload, sort_keys=True, ensure_ascii=False)
+    digest = hashlib.sha256(canonical.encode()).hexdigest()
+    preview = dict(payload)
+    if isinstance(preview.get("env"), dict):
+        preview["env"] = {key: "<redacted>" for key in preview["env"]}
+    approved, reason = request_approval(
+        approval_type=f"mcp_catalog_{action}",
+        scope_key=f"mcp:{name}",
+        title=f"Review MCP {action}: {name}",
+        content_md=(
+            f"Global MCP {action} for `{name}`. Exact configuration SHA-256: "
+            f"`{digest}`. Review command, URL and requested capabilities.\n\n"
+            f"```json\n{json.dumps(preview, indent=2, ensure_ascii=False)}\n```"
+        ),
+    )
+    if not approved:
+        return {"error": f"MCP {action} blocked by user review: {reason}",
+                "status": 202 if reason.startswith("pending approval ") else 403}
+    return None
 
 
 # ── Path A: catalog ────────────────────────────────────────────────────
@@ -101,11 +128,18 @@ async def mcp_create_server(
     if block:
         return block
     payload: dict[str, Any] = {"transport": transport}
-    if command is not None: payload["command"] = command
-    if args is not None: payload["args"] = args
-    if env is not None: payload["env"] = env
-    if url is not None: payload["url"] = url
-    if cwd is not None: payload["cwd"] = cwd
+    if command is not None:
+        payload["command"] = command
+    if args is not None:
+        payload["args"] = args
+    if env is not None:
+        payload["env"] = env
+    if url is not None:
+        payload["url"] = url
+    if cwd is not None:
+        payload["cwd"] = cwd
+    if blocked := await _approve_catalog_change(name, "create", payload):
+        return blocked
     try:
         return await mcp_catalog.create(name, payload, actor="jarvis")
     except (ValueError, RuntimeError) as exc:
@@ -116,6 +150,8 @@ async def mcp_update_server(*, name: str, patch: dict[str, Any]) -> dict:
     block = _self_lockout(name, "updating")
     if block:
         return block
+    if blocked := await _approve_catalog_change(name, "update", patch):
+        return blocked
     try:
         result = await mcp_catalog.update(name, patch, actor="jarvis")
     except LookupError as exc:
@@ -282,6 +318,8 @@ async def mcp_promote(
         return await admin.promote(name, attach_to=attach_to, actor="jarvis")
     except LookupError as exc:
         return {"error": str(exc), "status": 404}
+    except PermissionError as exc:
+        return {"error": str(exc), "status": 403}
     except (ValueError, RuntimeError) as exc:
         return {"error": str(exc), "status": 400}
 

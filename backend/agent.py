@@ -276,6 +276,10 @@ _JARVIS_SERVERS.append("mcp_admin")
 # `memory` settings flag and return a structured memory_disabled message when
 # off, so the Settings → Agent Memory toggle hot-reloads without a restart.
 _JARVIS_SERVERS.append("memory_server")
+_JARVIS_SERVERS.append("team_work")
+_JARVIS_TOOLS["team_work"] = [
+    "team_find", "team_revisions", "team_change_requirement", "team_retry_pending",
+]
 
 if _SPAWNER_ENABLED:
     _JARVIS_SERVERS.append("agent_spawner")
@@ -293,7 +297,6 @@ if _SPAWNER_ENABLED:
         "get_team_status",
         "get_team_result",
         "list_team_templates_tool",
-        "send_team_message",
         "resume_team_tool",
     ]
 else:
@@ -326,7 +329,7 @@ else:
     MANDATORY team interaction rules:
     - PM self-orchestrates. Jarvis MONITORS ONLY via get_team_status. Team status is auto-delivered to PM.
     - spawn_team_tool already delivers the task to PM via its parameters. Do NOT call send_team_message right after spawning — that is redundant!
-    - Use send_team_message(session_id, message) ONLY for follow-up directives, feedback, or course corrections AFTER the team is already working.
+    - For user requirement changes after spawn, call team_change_requirement with the selected session_id; this records a revision and delivers to PM.
     - NEVER bypass PM to contact team members directly.
     - To resume a completed team with follow-up work: use resume_team_tool(session_id, follow_up_task).
     - Report results to user ONLY when team completes or errors.
