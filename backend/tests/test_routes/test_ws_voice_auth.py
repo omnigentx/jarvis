@@ -90,14 +90,14 @@ class TestWsVoiceAuth:
             # Send a noop ping; the server may not reply, but the
             # accept-then-close-on-bad-auth path is already excluded
             # because we got this far without a 4401.
-            ws.send_json({"type": "noop"})
+            ws.send_json({"type": "stop"})
 
     def test_bearer_header_accepted(self, client):
         with client.websocket_connect(
             "/ws/voice",
             headers={"Authorization": "Bearer test-api-key-xxxxxxxxxxxxxxxxxxxx"},
         ) as ws:
-            ws.send_json({"type": "noop"})
+            ws.send_json({"type": "stop"})
 
     def test_session_cookie_accepted_with_matching_origin(self, client):
         """Cookie path requires Origin to match the deployment (CSWSH
@@ -161,7 +161,7 @@ class TestWsVoiceAuth:
                 "Authorization": "Bearer test-api-key-xxxxxxxxxxxxxxxxxxxx",
             },
         ) as ws:
-            ws.send_json({"type": "noop"})
+            ws.send_json({"type": "stop"})
 
     def test_trusted_ws_origins_env_extends_allow_list(self, client, monkeypatch):
         """Operators with multiple front-ends can extend the allow-list
@@ -173,7 +173,7 @@ class TestWsVoiceAuth:
             "/ws/voice",
             headers={"Origin": "https://other.example"},
         ) as ws:
-            ws.send_json({"type": "noop"})
+            ws.send_json({"type": "stop"})
 
     def test_wrong_api_key_via_query_rejected(self, client):
         with client.websocket_connect("/ws/voice?api_key=totally-wrong") as ws:
@@ -200,7 +200,7 @@ class TestWsVoiceAuth:
             "/ws/voice",
             headers={"Authorization": "Bearer test-api-key-xxxxxxxxxxxxxxxxxxxx"},
         ) as ws:
-            ws.send_json({"type": "noop"})
+            ws.send_json({"type": "stop"})
 
     def test_invalid_cookie_alone_rejected(self, client):
         client.cookies.set(SESSION_COOKIE_NAME, "garbage-token")
@@ -219,7 +219,7 @@ class TestWsVoiceAuth:
         monkeypatch.setenv("JARVIS_API_KEY", "")
         # No credentials supplied → still gets through.
         with client.websocket_connect("/ws/voice") as ws:
-            ws.send_json({"type": "noop"})
+            ws.send_json({"type": "stop"})
 
 
 # ---- _expected_ws_origin (host-based https inference) ----------------------

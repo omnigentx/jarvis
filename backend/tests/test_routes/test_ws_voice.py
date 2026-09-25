@@ -32,6 +32,12 @@ class _FakeSTT:
     def feed_audio(self, chunk: bytes):
         self.fed.append(chunk)
 
+    def resume(self):
+        pass
+
+    def pause(self):
+        pass
+
     def emit(self, name: str, payload=None):
         if self._hook is not None:
             self._hook(name, payload or {})
@@ -83,6 +89,19 @@ def ws_client(tmp_path, monkeypatch):
 
     from server import app
     return TestClient(app), fake_stt
+
+
+def test_second_voice_socket_gets_busy_without_touching_first(ws_client):
+    client, fake_stt = ws_client
+    with client.websocket_connect("/ws/voice") as first:
+        first.send_bytes(b"keep")
+        with client.websocket_connect("/ws/voice") as second:
+            evt = json.loads(second.receive_text())
+            assert evt["type"] == "error"
+            assert "already active" in evt["detail"]
+        # The rejected socket must not clear or pause the owner's hook/STT.
+        first.send_bytes(b"alive")
+    assert fake_stt.fed == [b"keep", b"alive"]
 
 
 def test_pcm_in_flows_to_feed_audio(ws_client):
