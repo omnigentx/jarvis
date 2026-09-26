@@ -30,6 +30,35 @@ import pytest
 
 
 @pytest.mark.asyncio
+async def test_path_a_uses_session_inbox_from_spawn_record(tmp_path):
+    """Dashboard inject must reach the same inbox as the team subprocess."""
+    from fast_agent.spawn.message_bus import MessageBus
+    from routes.inject import _inject_via_message_bus
+
+    inbox_dir = tmp_path / "messages" / "team-123"
+    record = {
+        "agent_name": "Bennett [PM]",
+        "session_id": "team-123",
+        "workspace": str(tmp_path / "data" / "workspaces" / "team-123"),
+        "original_config": {"env_vars": {"TEAM_MESSAGES_DIR": str(inbox_dir)}},
+    }
+
+    with patch("routes.inject.activity_stream_manager"), patch(
+        "fast_agent.spawn.servers._team_helpers.auto_wake_if_idle"
+    ):
+        result = await _inject_via_message_bus(
+            "Bennett [PM]", "Use revision checks", record,
+        )
+
+    assert result.status == "queued"
+    unread = MessageBus(inbox_dir).read_unread("Bennett [PM]")
+    assert len(unread) == 1
+    assert unread[0].content == "Use revision checks"
+    assert not (tmp_path / "data" / "workspaces" / "team-123" /
+                ".runtime" / "state" / "messages").exists()
+
+
+@pytest.mark.asyncio
 async def test_path_a_broadcasts_started_event_immediately():
     """The inject Path A handler must broadcast a ``started`` event right
     after queueing the message, so the dashboard's agent-status badge
