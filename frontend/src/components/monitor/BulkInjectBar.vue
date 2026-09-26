@@ -94,8 +94,8 @@ function onPaste(e) {
 }
 
 async function submit() {
-  const t = text.value.trim()
-  if (!t && !files.value.length) return
+  const message = text.value.trim()
+  if (!message && !files.value.length) return
   if (!props.selectedNames.length) {
     feedback.value = t('bulkInject.noAgents')
     setTimeout(() => (feedback.value = ''), 3000)
@@ -104,7 +104,7 @@ async function submit() {
   busy.value = true
   feedback.value = ''
   try {
-    const payload = { text: t, files: files.value }
+    const payload = { text: message, files: files.value }
     // Parent decides how to fan out — we just pass the payload.
     const results = await props.onSubmit?.(payload)
     text.value = ''

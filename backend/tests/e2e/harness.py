@@ -277,8 +277,15 @@ def run_scripted_subprocess(
     config_path = tmp_path / "handoff.json"
     config_path.write_text(json.dumps(config))
 
+    # A test launched by a live team member must not turn its scripted child
+    # into another team member. Those variables activate the runner's
+    # keep-alive inbox loop and make this one-shot fixture time out.
+    isolated_env = {
+        key: value for key, value in os.environ.items()
+        if not key.startswith("TEAM_") and key != "SPAWN_EVENT_SOCKET"
+    }
     env = {
-        **os.environ,
+        **isolated_env,
         "SPAWN_REGISTRY_DB": str(db_path),
         "SPAWN_PROJECT_DIR": str(workspace),
         "PLAYBACK_FIXTURE_PATH": str(fixture_path),

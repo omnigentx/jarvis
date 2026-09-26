@@ -53,7 +53,7 @@ def fake_registry(monkeypatch):
     state.registry_db = original
 
 
-def test_resume_updates_db_status_to_running(fresh_manager, fake_registry):
+def test_resume_updates_db_status_to_running(fresh_manager, fake_registry, monkeypatch):
     """Resume MUST upsert status='running' on the agent's spawn_registry row.
 
     Pre-fix this failed because ``list_running()`` skipped the paused row.
@@ -67,6 +67,8 @@ def test_resume_updates_db_status_to_running(fresh_manager, fake_registry):
         "status": "paused",
     }]
     fake_registry.list_running.return_value = []  # paused row excluded — that was the bug
+    monkeypatch.setattr(fresh_manager, "_find_pid", lambda _name: 1234)
+    monkeypatch.setattr("services.pause_controller.os.kill", lambda *_args: None)
 
     # Manager must be in "paused" state before resume can flip it.
     fresh_manager.pause("PM")
@@ -976,7 +978,7 @@ def test_restore_is_idempotent(
     assert new_ctrl.is_paused("PM")
 
 
-def test_restore_drops_dead_subprocess_rows(
+def test_restore_drops_dead_solo_subprocess_rows(
     isolated_pause_state_db, fake_registry, captured_sse,
 ):
     """jarvis#48 F3: restore_on_startup must GC ``agent_pause_state``
@@ -995,7 +997,7 @@ def test_restore_drops_dead_subprocess_rows(
         db.add(isolated_pause_state_db.AgentPauseStateModel(
             agent_name="DeadDev",
             paused_at=1000.0,
-            team_name="ZombieTeam",
+            team_name=None,
             reason="manual",
         ))
         db.commit()
@@ -1020,6 +1022,62 @@ def test_restore_drops_dead_subprocess_rows(
     try:
         rows = db.query(isolated_pause_state_db.AgentPauseStateModel).all()
         assert len(rows) == 0, "dead-PID row must be GC'd during restore"
+    finally:
+        db.close()
+
+
+def test_restore_keeps_dead_team_pause_until_explicit_resume(
+    isolated_pause_state_db, fake_registry, captured_sse,
+):
+    db = isolated_pause_state_db.SessionLocal()
+    try:
+        db.add(isolated_pause_state_db.AgentPauseStateModel(
+            agent_name="DeadDev", paused_at=1000.0,
+            team_name="TeamA", reason="manual",
+        ))
+        db.commit()
+    finally:
+        db.close()
+    fake_registry.find_by_name.return_value = [{
+        "run_id": "r-dead", "agent_name": "DeadDev",
+        "team_name": "TeamA", "pid": None, "status": "paused",
+    }]
+    from services.pause_controller import PauseController
+    ctrl = PauseController()
+    assert ctrl.restore_on_startup() == 1
+    assert ctrl.is_paused("DeadDev")
+    fake_registry.upsert_record.assert_called_with("r-dead", {"status": "paused"})
+
+    ctrl.resume("DeadDev")
+    assert not ctrl.is_paused("DeadDev")
+    fake_registry.upsert_record.assert_called_with("r-dead", {"status": "idle"})
+    db = isolated_pause_state_db.SessionLocal()
+    try:
+        assert db.query(isolated_pause_state_db.AgentPauseStateModel).count() == 0
+    finally:
+        db.close()
+
+
+def test_restore_discards_pause_for_deleted_team_member(
+    isolated_pause_state_db, fake_registry, captured_sse,
+):
+    db = isolated_pause_state_db.SessionLocal()
+    try:
+        db.add(isolated_pause_state_db.AgentPauseStateModel(
+            agent_name="RemovedDev", paused_at=1000.0,
+            team_name="DeletedTeam", reason="manual",
+        ))
+        db.commit()
+    finally:
+        db.close()
+    fake_registry.find_by_name.return_value = []
+    from services.pause_controller import PauseController
+    ctrl = PauseController()
+    assert ctrl.restore_on_startup() == 0
+    assert not ctrl.is_paused("RemovedDev")
+    db = isolated_pause_state_db.SessionLocal()
+    try:
+        assert db.query(isolated_pause_state_db.AgentPauseStateModel).count() == 0
     finally:
         db.close()
 

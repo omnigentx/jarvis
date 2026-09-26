@@ -42,6 +42,26 @@ def test_subprocess_boots_with_scripted_llm(tmp_path: Path):
 
 
 @pytest.mark.slow
+def test_subprocess_does_not_inherit_parent_team_lifetime(tmp_path: Path, monkeypatch):
+    """A QE agent running this test must not keep the scripted child alive."""
+    monkeypatch.setenv("TEAM_MY_NAME", "Parent [QE]")
+    monkeypatch.setenv("TEAM_WORKSPACE", str(tmp_path / "parent-team"))
+    monkeypatch.setenv("TEAM_SESSION_ID", "parent-session")
+    monkeypatch.setenv("SPAWN_EVENT_SOCKET", str(tmp_path / "parent.sock"))
+
+    result = run_scripted_subprocess(
+        fixture_path=FIXTURES / "subprocess_simple_reply.yaml",
+        task="say something",
+        tmp_path=tmp_path,
+        timeout=10,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.result["status"] == "completed"
+    assert "Parent [QE]" not in result.stdout
+
+
+@pytest.mark.slow
 def test_subprocess_fails_loud_on_missing_fixture_env(tmp_path: Path):
     """subprocess_entry registers ScriptedLLM from ``PLAYBACK_FIXTURE_PATH``;
     an empty or missing value must produce a non-zero exit with the specific

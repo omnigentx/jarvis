@@ -315,6 +315,77 @@ async def test_inject_idle_without_original_config_returns_409(monkeypatch):
     assert "no saved config" in detail.lower()
 
 
+async def test_inject_ignores_newer_nonresumable_record(monkeypatch):
+    """A transient test run with the same name must not hide the team agent."""
+    import routes.inject as inject_route
+    import services.shared_state as state
+
+    stale = {"agent_name": "Dev", "status": "error", "started_at": 3.0,
+             "original_config": None, "team_name": ""}
+    team_agent = {"agent_name": "Dev", "status": "idle", "started_at": 2.0,
+                  "original_config": {"role": "dev"}, "team_name": "team-a"}
+    registry = MagicMock()
+    registry.find_by_name.return_value = [stale, team_agent]
+    monkeypatch.setattr(state, "registry_db", registry)
+    resume = AsyncMock(return_value=inject_route.InjectResponse(
+        status="resumed", agent_name="Dev", path="resume_with_context"))
+    monkeypatch.setattr(inject_route, "_inject_via_resume", resume)
+
+    async with _make_client() as client:
+        response = await client.post("/api/agents/Dev/inject", json={"message": "continue"})
+
+    assert response.status_code == 200, response.text
+    assert resume.await_args.args[2] is team_agent
+
+
+async def test_inject_requires_team_scope_for_duplicate_agent_names(monkeypatch):
+    """Team-scoped injection cannot silently reach another team's Dev."""
+    import routes.inject as inject_route
+    import services.shared_state as state
+
+    first = {"agent_name": "Dev", "status": "idle", "started_at": 3.0,
+             "original_config": {"role": "dev"}, "team_name": "team-a"}
+    second = {"agent_name": "Dev", "status": "idle", "started_at": 2.0,
+              "original_config": {"role": "dev"}, "team_name": "team-b"}
+    registry = MagicMock()
+    registry.find_by_name.return_value = [first, second]
+    monkeypatch.setattr(state, "registry_db", registry)
+    resume = AsyncMock(return_value=inject_route.InjectResponse(
+        status="resumed", agent_name="Dev", path="resume_with_context"))
+    monkeypatch.setattr(inject_route, "_inject_via_resume", resume)
+
+    async with _make_client() as client:
+        ambiguous = await client.post("/api/agents/Dev/inject", json={"message": "continue"})
+        scoped = await client.post(
+            "/api/agents/Dev/inject?team_name=team-b", json={"message": "continue"})
+
+    assert ambiguous.status_code == 409
+    assert "ambiguous" in ambiguous.json()["detail"]
+    assert scoped.status_code == 200, scoped.text
+    assert resume.await_args.args[2] is second
+
+
+async def test_rejected_inject_does_not_announce_delivery(monkeypatch):
+    import routes.inject as inject_route
+    import services.shared_state as state
+
+    registry = MagicMock()
+    registry.find_by_name.return_value = [{
+        "agent_name": "Dev", "status": "idle", "original_config": None,
+        "team_name": "team-a",
+    }]
+    monkeypatch.setattr(state, "registry_db", registry)
+    broadcast = MagicMock()
+    monkeypatch.setattr(inject_route.activity_stream_manager, "broadcast", broadcast)
+
+    async with _make_client() as client:
+        response = await client.post(
+            "/api/agents/Dev/inject?team_name=team-a", json={"message": "continue"})
+
+    assert response.status_code == 409
+    assert all(call.args[0]["event_type"] != "inject" for call in broadcast.call_args_list)
+
+
 # ─────────────────────────────────────────────────────────────
 # Auth: wrong Bearer token is rejected
 # ─────────────────────────────────────────────────────────────
