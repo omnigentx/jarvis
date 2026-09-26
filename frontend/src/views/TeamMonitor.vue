@@ -360,15 +360,16 @@ async function confirmBulkDelete() {
  * inject footer. Returns the API response so the caller can display
  * feedback.
  */
-async function injectToAgent(agentName, { text = '', files = [] } = {}) {
+async function injectToAgent(agentName, { text = '', files = [], teamName = '' } = {}) {
   if (!text.trim() && !files.length) return null
+  const url = `/api/agents/${encodeURIComponent(agentName)}/inject${teamName ? `?team_name=${encodeURIComponent(teamName)}` : ''}`
   if (files.length > 0) {
     const formData = new FormData()
     formData.append('message', text.trim())
     for (const file of files) formData.append('files', file)
-    return apiFetch(`/api/agents/${agentName}/inject`, { method: 'POST', body: formData })
+    return apiFetch(url, { method: 'POST', body: formData })
   }
-  return apiFetch(`/api/agents/${agentName}/inject`, {
+  return apiFetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ message: text.trim() }),
@@ -427,7 +428,9 @@ async function bulkInject({ text, files }) {
   // POST to each agent in parallel; allSettled so a partial failure
   // doesn't silently drop the rest of the broadcast.
   return Promise.allSettled(
-    targets.map(name => injectToAgent(name, { text, files })),
+    targets.map(name => injectToAgent(name, {
+      text, files, teamName: store.agentsList.find(a => a.name === name)?.team_name || '',
+    })),
   )
 }
 
@@ -608,7 +611,7 @@ onMounted(() => {
           ? () => handlePauseToggle(agent.name, agent.status)
           : null"
         :on-delete="isDeletableAgent(agent) ? () => requestDelete(agent.name) : null"
-        :on-inject="(payload) => injectToAgent(agent.name, payload)"
+        :on-inject="(payload) => injectToAgent(agent.name, { ...payload, teamName: agent.team_name })"
       />
     </div>
 
@@ -1306,6 +1309,4 @@ onMounted(() => {
 }
 
 </style>
-
-
 

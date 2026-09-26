@@ -63,37 +63,54 @@ async def inject_prompt(
     if not message and not files_data:
         raise HTTPException(status_code=400, detail="Message or files required")
 
-    # ── Broadcast inject event to activity stream ─────────────────────────
+    # Describe the accepted inject after a route has actually delivered it.
     attachment_desc = ""
     if files_data:
         names = [f["filename"] for f in files_data]
         attachment_desc = f" [+{len(files_data)} file(s): {', '.join(names)}]"
 
-    activity_stream_manager.broadcast({
-        "event_type": "inject",
-        "agent_name": agent_name,
-        "message": f"Prompt injected: {message[:80]}{'…' if len(message) > 80 else ''}{attachment_desc}",
-        "timestamp": time.time(),
-        "data": {"source": "dashboard", "has_files": bool(files_data)},
-    })
+    def delivered(response: InjectResponse) -> InjectResponse:
+        activity_stream_manager.broadcast({
+            "event_type": "inject",
+            "agent_name": agent_name,
+            "message": f"Prompt injected: {message[:80]}{'…' if len(message) > 80 else ''}{attachment_desc}",
+            "timestamp": time.time(),
+            "data": {"source": "dashboard", "has_files": bool(files_data)},
+        })
+        return response
 
     # ── Determine agent state and route accordingly ───────────────────────
     if state.registry_db:
         try:
             records = state.registry_db.find_by_name(agent_name)
+            team_name = request.query_params.get("team_name")
+            if team_name:
+                records = [r for r in records if r.get("team_name") == team_name]
+                if not records:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Agent '{agent_name}' not found in team '{team_name}'.",
+                    )
 
             if records:
+                if not team_name:
+                    teams = {r.get("team_name") for r in records if r.get("original_config") and r.get("team_name")}
+                    if len(teams) > 1:
+                        raise HTTPException(
+                            status_code=409,
+                            detail=f"Agent name '{agent_name}' is ambiguous; specify team_name.",
+                        )
                 # Path A: Process alive → MessageBus (inline delivery, no flow disruption)
                 alive = next(
                     (r for r in records if r.get("status") in _PROCESS_ALIVE_STATUSES),
                     None,
                 )
                 if alive:
-                    return await _inject_via_message_bus(agent_name, message, alive)
+                    return delivered(await _inject_via_message_bus(agent_name, message, alive))
 
                 # Path B: Process dead → Resume with context from DB
-                latest = records[0]  # sorted by started_at DESC
-                if latest.get("original_config"):
+                latest = next((r for r in records if r.get("original_config")), None)
+                if latest:
                     # Broadcast "started" so Team Monitor reflects active state
                     activity_stream_manager.broadcast({
                         "event_type": "started",
@@ -101,7 +118,7 @@ async def inject_prompt(
                         "message": f"Resuming for inject: {message[:60]}{'…' if len(message) > 60 else ''}",
                         "timestamp": time.time(),
                     })
-                    return await _inject_via_resume(agent_name, message, latest)
+                    return delivered(await _inject_via_resume(agent_name, message, latest))
 
                 # No original_config → can't resume
                 _broadcast_error_and_idle(agent_name, "Agent has no saved config. Cannot resume.")
@@ -129,7 +146,7 @@ async def inject_prompt(
         "timestamp": time.time(),
     })
 
-    return await _inject_via_generate(agent_name, message, files_data)
+    return delivered(await _inject_via_generate(agent_name, message, files_data))
 
 
 # ── Request parsing ───────────────────────────────────────────────────────
