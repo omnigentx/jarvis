@@ -40,6 +40,9 @@ from typing import Any, Iterable
 
 logger = logging.getLogger(__name__)
 
+class RevisionConflict(ValueError):
+    """Raised when an optimistic revision no longer matches."""
+
 
 def _get_db_path() -> str | None:
     """Resolve absolute DB path; mirrors context_persistence._get_db_path."""
@@ -82,6 +85,11 @@ def _ensure_tables(conn: sqlite3.Connection) -> None:
     # opens cheap and avoids resetting the counter on restart.
     conn.execute(
         "INSERT OR IGNORE INTO agent_definitions_meta (key, value) VALUES ('rev', '0')"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS agent_definition_audit ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, agent_name TEXT NOT NULL, "
+        "actor TEXT NOT NULL, revision INTEGER NOT NULL, changes TEXT NOT NULL, created_at REAL NOT NULL)"
     )
     conn.commit()
 
@@ -270,7 +278,7 @@ _UPDATABLE = {
 }
 
 
-def update_definition(name: str, **updates: Any) -> dict[str, Any]:
+def update_definition(name: str, *, expected_revision: int | None = None, actor: str = "system", **updates: Any) -> dict[str, Any]:
     """Partially update a definition. Raises if `name` not found or no
     valid fields given. Unknown keys raise rather than silently drop —
     silent drops mask caller bugs."""
@@ -285,26 +293,41 @@ def update_definition(name: str, **updates: Any) -> dict[str, Any]:
     if not conn:
         raise RuntimeError("agent_definitions: DB not configured")
     try:
-        existing = conn.execute(
-            "SELECT 1 FROM agent_definitions WHERE name = ?", (name,)
-        ).fetchone()
+        conn.execute("BEGIN IMMEDIATE")
+        existing = conn.execute("SELECT 1 FROM agent_definitions WHERE name = ?", (name,)).fetchone()
         if not existing:
             raise ValueError(f"agent '{name}' not found")
-
+        if expected_revision is not None:
+            row = conn.execute("SELECT value FROM agent_definitions_meta WHERE key = 'rev'").fetchone()
+            current_revision = int(row["value"] if row else 0)
+            if current_revision != expected_revision:
+                raise RevisionConflict(f"expected revision {expected_revision}, current revision {current_revision}")
         encoded = _encode_json_fields(updates)
         if "use_history" in encoded:
             encoded["use_history"] = 1 if encoded["use_history"] else 0
-
         encoded["updated_at"] = time.time()
         set_clause = ", ".join(f"{col} = ?" for col in encoded.keys())
-        params = list(encoded.values()) + [name]
-        conn.execute(
-            f"UPDATE agent_definitions SET {set_clause} WHERE name = ?", params
-        )
-        _bump_rev(conn)
+        cur = conn.execute(f"UPDATE agent_definitions SET {set_clause} WHERE name = ?", list(encoded.values()) + [name])
+        if cur.rowcount != 1:
+            raise RevisionConflict("definition update conflict")
+        revision = _bump_rev(conn)
+        conn.execute("INSERT INTO agent_definition_audit(agent_name, actor, revision, changes, created_at) VALUES (?, ?, ?, ?, ?)", (name, actor, revision, json.dumps(sorted(updates.keys())), time.time()))
         conn.commit()
         logger.info("[AGENT_DEFS] updated '%s' (%s)", name, sorted(updates.keys()))
         return get_definition(name)
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def list_audit_events() -> list[dict[str, Any]]:
+    conn = _connect()
+    if not conn:
+        return []
+    try:
+        return [dict(row) for row in conn.execute("SELECT * FROM agent_definition_audit ORDER BY id").fetchall()]
     finally:
         conn.close()
 

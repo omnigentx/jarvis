@@ -23,3 +23,14 @@ def test_concurrent_updates_do_not_mutate_captured_snapshot():
         pool.submit(s.set_model, "root", "worker", "gpt-4o").result()
         later = pool.submit(s.snapshot, "worker").result()
     assert captured.model_id == "app" and later.model_id == "gpt-4o" and captured.config_revision < later.config_revision
+
+def test_sqlite_store_forwards_actor_and_expected_revision(tmp_path, monkeypatch):
+    from services import agent_definitions
+    from services.model_selection import AgentDefinitionConfigStore
+    monkeypatch.setenv("SPAWN_REGISTRY_DB", str(tmp_path / "agents.db"))
+    agent_definitions.create_definition(name="worker", instruction="x", model="old")
+    rev = agent_definitions.get_rev()
+    store = AgentDefinitionConfigStore("provider", "app")
+    new_rev = store.set("worker", "gpt-4o", expected_revision=rev, actor="root")
+    assert new_rev > rev
+    assert agent_definitions.list_audit_events()[-1]["actor"] == "root"

@@ -28,7 +28,9 @@ class AgentDefinitionConfigStore:
         current = agent_definitions.get_rev()
         if expected_revision is not None and expected_revision != current:
             raise RevisionConflict(f"expected revision {expected_revision}, current {current}")
-        agent_definitions.update_definition(agent_id, model=model_id)
+        revision = agent_definitions.update_definition(
+            agent_id, model=model_id, expected_revision=expected_revision, actor=actor
+        )
         revision = agent_definitions.get_rev()
         # Audit is intentionally delegated to the canonical DB service once its audit table is available.
         return revision
