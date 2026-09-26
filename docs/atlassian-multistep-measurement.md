@@ -206,8 +206,15 @@ search and `jira_get_issue` omitted the `description` key entirely. The full
 arm answered cautiously that description state was unavailable; the brief
 arm asserted that all were empty. The latter happened to match the upstream
 API but was **not supported by the MCP result it saw**. This exposes a real
-information-quality gap in the full projection, so the smaller token total
-must not be counted as a verified quality-preserving win for that question.
+information-quality gap in the full projection at the time of the A/B run,
+so the smaller token total must not be counted as a verified
+quality-preserving win for that question. The subsequent mcp-atlassian fix
+(`fda688d`) preserves `description: ""` for empty ADF, `description: null`
+when Jira explicitly returns null, and absence when the field was not
+returned or requested. A read-only recheck of all four Cloud issues found
+`description: ""` in both full search and `jira_get_issue`, while `brief`
+still omitted it. The A/B token and answer figures above are from before
+this fix and have not been remeasured afterward.
 
 These tasks use four sparse Jira issues and one Confluence onboarding page,
 not representative team documents. No answer was judged by a model; the
@@ -217,5 +224,6 @@ tokens separately. The probe is evidence for these paths only, not a
 production-wide token, latency, or teamwork claim. The resulting decision is
 to retain `full` as the default, use `brief` for triage when its fields are
 sufficient, and avoid forcing Confluence metadata before body questions.
-The missing Jira description state and Confluence metadata upstream fetch
-deserve separate tool-output fixes and new tests before a wider rollout.
+The Jira description state now has model and MCP tool tests. Confluence's
+metadata upstream fetch still needs a separate fix and measurement before a
+wider rollout.
