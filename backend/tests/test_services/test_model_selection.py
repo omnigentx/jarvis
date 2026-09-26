@@ -34,3 +34,9 @@ def test_sqlite_store_forwards_actor_and_expected_revision(tmp_path, monkeypatch
     new_rev = store.set("worker", "gpt-4o", expected_revision=rev, actor="root")
     assert new_rev > rev
     assert agent_definitions.list_audit_events()[-1]["actor"] == "root"
+
+def test_model_management_capability_required_even_for_self():
+    policy = ModelAuthorizationPolicy({"worker": 1, "intern": 2}, capabilities={"worker": set(), "intern": {"model-management"}})
+    s = ModelSelectionService(InMemoryModelConfigStore("provider"), policy, {"gpt-4o"})
+    with pytest.raises(UnauthorizedModelChange): s.set_model("worker", "worker", "gpt-4o")
+    assert s.set_model("intern", "intern", "gpt-4o") == 1

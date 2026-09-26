@@ -15,9 +15,13 @@ class CallSnapshot:
     provider_options: dict[str, Any]
 
 class ModelAuthorizationPolicy:
-    def __init__(self, privilege_levels: dict[str, int]): self._levels = dict(privilege_levels)
+    def __init__(self, privilege_levels: dict[str, int], capabilities: dict[str, set[str]] | None = None):
+        self._levels = dict(privilege_levels)
+        self._capabilities = None if capabilities is None else {name: set(values) for name, values in capabilities.items()}
     def can_change(self, requester: str, target: str) -> bool:
-        return requester in self._levels and target in self._levels and (requester == target or self._levels[requester] < self._levels[target])
+        return (requester in self._levels and target in self._levels
+                and (self._capabilities is None or "model-management" in self._capabilities.get(requester, set()))
+                and (requester == target or self._levels[requester] < self._levels[target]))
 
 class AgentDefinitionConfigStore:
     """SQLite-backed adapter using the canonical agent definition CRUD."""
