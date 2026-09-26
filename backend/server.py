@@ -191,6 +191,7 @@ async def lifespan(app: FastAPI):
             mcp_rpc_handlers,
             approval_rpc_handlers,
             team_template_rpc_handlers,
+            team_work_rpc_handlers,
         )
         from services.memory import rpc_handlers as memory_rpc_handlers
 
@@ -200,6 +201,7 @@ async def lifespan(app: FastAPI):
         mcp_rpc_handlers.register(runtime_rpc_server)
         approval_rpc_handlers.register(runtime_rpc_server)
         team_template_rpc_handlers.register(runtime_rpc_server)
+        team_work_rpc_handlers.register(runtime_rpc_server)
         memory_rpc_handlers.register(runtime_rpc_server)
         await runtime_rpc_server.start()
         state.runtime_rpc_server = runtime_rpc_server
@@ -573,12 +575,19 @@ async def lifespan(app: FastAPI):
     # dependent routes gate on state.agent_app (None → 503 until ready).
     state.reload_task = None
     state.gateway_manager = None
+    state.team_replay_task = None
     _agent_shutdown = asyncio.Event()
 
     async def _agent_runtime():
         async with fast.run() as agent:
             state.agent_app = agent
             logger.info("FastAgent initialized.")
+
+            # Retry persisted directives once after the runtime is available.
+            # Message IDs are deduplicated against the session inbox; this is
+            # an event-driven recovery step, not a status polling loop.
+            from services.team_work_service import replay_pending_on_startup
+            state.team_replay_task = asyncio.create_task(replay_pending_on_startup())
 
             # ── Always-on token-persistence hook ──────────────────
             # Attached BEFORE the cron scheduler is wired so any
@@ -906,6 +915,13 @@ async def lifespan(app: FastAPI):
         await event_socket_server.stop()
 
     # Shutdown runtime RPC bridge
+    if state.team_replay_task:
+        state.team_replay_task.cancel()
+        try:
+            await state.team_replay_task
+        except asyncio.CancelledError:
+            pass
+
     if runtime_rpc_server:
         try:
             await runtime_rpc_server.stop()

@@ -164,6 +164,17 @@ export const useAgentsStore = defineStore('agents', () => {
     pushEvent(event)
 
     switch (event_type) {
+      case 'team_requirement_change':
+        upsertAgent(agent_name, {
+          lastRequirementChange: {
+            sessionId: event.session_id,
+            revision: event.data?.revision,
+            timestamp: event.timestamp,
+          },
+          lastAction: { message: event.message, timestamp: event.timestamp },
+        })
+        break
+
       case 'started':
       case 'resumed':
         // Pause-aware: subprocess can emit `resumed` (its own MCP

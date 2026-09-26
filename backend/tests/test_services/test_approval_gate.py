@@ -22,6 +22,7 @@ from services.approval_gate import (
     _find_prior_decision,
     _find_pending_match,
     gate,
+    request_approval,
 )
 
 
@@ -145,6 +146,28 @@ def test_find_pending_match_ignores_resolved(isolated_db):
         content_hash="3333", status="approved",
     )
     assert _find_pending_match("mcp_install", "mcp:qux", "3333") is None
+
+
+def test_request_approval_returns_pending_and_reuses_exact_request(isolated_db):
+    kwargs = dict(approval_type="mcp_execute", scope_key="mcp:sample",
+                  content_md="review this exact code", title="Review code")
+    first = request_approval(**kwargs)
+    second = request_approval(**kwargs)
+    assert first == second
+    assert first[0] is False
+    assert first[1].startswith("pending approval ")
+
+
+def test_request_approval_uses_resolved_decision(isolated_db):
+    content = "reviewed source"
+    kwargs = dict(approval_type="mcp_execute", scope_key="mcp:sample",
+                  content_md=content, title="Review code")
+    _insert_approval(isolated_db, approval_type="mcp_execute", scope_key="mcp:sample",
+                     content_hash=_content_hash(content), status="approved")
+    with patch("services.approval_service.approval_service.create_approval") as create:
+        approved, _ = request_approval(**kwargs)
+    assert approved is True
+    create.assert_not_called()
 
 
 @pytest.mark.asyncio

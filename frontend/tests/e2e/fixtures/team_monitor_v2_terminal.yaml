@@ -83,6 +83,13 @@ sse_streams:
     - data: { type: "connected", agent_filter: null }
     - data:
         agent_name: "Jarvis"
+        event_type: "team_requirement_change"
+        session_id: "team-1"
+        message: "User requirement revision 2 queued"
+        timestamp: 1714000009.0
+        data: { change_id: "change-2", revision: 2 }
+    - data:
+        agent_name: "Jarvis"
         event_type: "message_turn"
         run_id: "run-poc-1"
         timestamp: 1714000010.0

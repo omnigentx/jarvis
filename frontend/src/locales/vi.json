@@ -1078,6 +1078,8 @@
     "toggleInject": "Bật/tắt chèn tin",
     "fullscreen": "Toàn màn hình",
     "removeAgent": "Gỡ agent",
+    "requirementQueued": "v{n} đã gửi",
+    "requirementQueuedTitle": "Team {session}: đã gửi yêu cầu mới",
     "loadingHistory": "Đang tải lịch sử…",
     "noConversation": "Chưa có cuộc trò chuyện nào.",
     "collapse": "Thu gọn",

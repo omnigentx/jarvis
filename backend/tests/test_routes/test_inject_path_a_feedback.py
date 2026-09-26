@@ -25,6 +25,7 @@ Two contracts pinned by this file:
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
+from pathlib import Path
 
 import pytest
 
@@ -93,6 +94,31 @@ async def test_path_a_broadcasts_started_event_immediately():
     )
     assert started[0]["agent_name"] == "Bailey [PM]"
     assert "Processing inject" in started[0]["message"]
+
+
+@pytest.mark.asyncio
+async def test_path_a_uses_the_agent_session_inbox(tmp_path: Path):
+    """A live team member must receive the message in TEAM_MESSAGES_DIR."""
+    from fast_agent.spawn.message_bus import MessageBus
+    from routes.inject import _inject_via_message_bus
+
+    session_dir = tmp_path / "messages" / "team-a"
+    record = {
+        "session_id": "team-a",
+        "workspace": str(tmp_path / "unrelated-workspace"),
+        "original_config": {"env_vars": {"TEAM_MESSAGES_DIR": str(session_dir)}},
+    }
+
+    with patch("routes.inject.activity_stream_manager"), patch(
+        "fast_agent.spawn.servers._team_helpers.auto_wake_if_idle"
+    ):
+        result = await _inject_via_message_bus("Alex", "updated requirement", record)
+
+    assert result.status == "queued"
+    assert [m.content for m in MessageBus(session_dir).read_unread("Alex")] == [
+        "updated requirement"
+    ]
+    assert not (tmp_path / "unrelated-workspace" / ".runtime").exists()
 
 
 @pytest.mark.asyncio

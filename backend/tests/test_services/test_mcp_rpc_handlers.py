@@ -8,6 +8,13 @@ import pytest
 from services import mcp_rpc_handlers as rpc
 
 
+@pytest.fixture(autouse=True)
+def _approve_existing_catalog_tests(monkeypatch):
+    async def approved(*args, **kwargs):
+        return None
+    monkeypatch.setattr(rpc, "_approve_catalog_change", approved)
+
+
 @pytest.mark.asyncio
 async def test_self_lockout_blocks_update_of_mcp_admin():
     res = await rpc.mcp_update_server(name="mcp_admin", patch={"command": "evil"})

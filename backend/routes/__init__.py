@@ -30,6 +30,7 @@ from routes.context_compaction import router as context_compaction_router
 from routes.memory_settings import router as memory_settings_router
 from routes.memory import router as memory_router
 from routes.gateways import router as gateways_router
+from routes.team_work import router as team_work_router
 
 all_routers: list[APIRouter] = [
     auth_router,
@@ -61,4 +62,5 @@ all_routers: list[APIRouter] = [
     memory_settings_router,
     memory_router,
     gateways_router,
+    team_work_router,
 ]

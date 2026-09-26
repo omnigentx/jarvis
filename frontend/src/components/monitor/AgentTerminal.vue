@@ -200,6 +200,11 @@ const canTogglePause = computed(() =>
         <span class="status-dot" :class="{ pulse: isRunning }" />
         <span class="agent-name">{{ agent.name }}</span>
         <span v-if="agent.team_name" class="team-tag">{{ agent.team_name }}</span>
+        <span
+          v-if="agent.lastRequirementChange?.revision"
+          class="revision-tag"
+          :title="t('terminal.requirementQueuedTitle', { session: agent.lastRequirementChange.sessionId })"
+        >{{ t('terminal.requirementQueued', { n: agent.lastRequirementChange.revision }) }}</span>
         <span class="agent-model">{{ agent.model || '—' }}</span>
       </div>
       <div class="term-controls">
@@ -426,6 +431,14 @@ const canTogglePause = computed(() =>
   background: rgba(99, 102, 241, 0.15);
   color: #a5b4fc;
   font-family: 'Inter', sans-serif;
+}
+.revision-tag {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgba(59, 130, 246, 0.15);
+  color: #93c5fd;
+  white-space: nowrap;
 }
 .agent-model {
   font-size: 10px;

@@ -69,6 +69,18 @@ test('team monitor v2 — terminal renders persisted history + SSE delta turn', 
 })
 
 
+test('team monitor shows a pushed requirement revision without polling', async ({ page }) => {
+  await seedApiKey(page)
+  const backend = await mockBackend(page, [
+    NOISE,
+    join(FIXTURES, 'team_monitor_v2_terminal.yaml'),
+  ])
+  await page.goto('/monitor')
+  await expect(page.locator('.agent-terminal .revision-tag')).toContainText('v2')
+  expect(backend.unexpected.length).toBe(0)
+})
+
+
 test('team monitor v2 — Show full expands truncated assistant turn', async ({
   page,
 }) => {

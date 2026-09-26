@@ -1162,6 +1162,8 @@
     "toggleInject": "Toggle inject",
     "fullscreen": "Fullscreen",
     "removeAgent": "Remove agent",
+    "requirementQueued": "v{n} queued",
+    "requirementQueuedTitle": "Team {session}: user requirement queued",
     "loadingHistory": "Loading history…",
     "noConversation": "No conversation yet.",
     "roleAssistant": "ASSISTANT",
