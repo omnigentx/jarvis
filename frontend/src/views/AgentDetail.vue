@@ -9,6 +9,7 @@ import StatusBadge from '../components/StatusBadge.vue'
 import MarkdownRenderer from '../components/MarkdownRenderer.vue'
 import SkillEditorModal from '../components/agent/SkillEditorModal.vue'
 import SkillDeleteModal from '../components/agent/SkillDeleteModal.vue'
+import AgentModelSelector from '../components/agent/AgentModelSelector.vue'
 import AgentMemoryPanel from './AgentMemoryPanel.vue'
 import {
   roleAvaClass,
@@ -81,7 +82,7 @@ const _stopRuntimeWatch = watch(
       if (events[i] === _lastSeenEvent) break
       const ev = events[i]
       if (
-        ev?.event_type === 'runtime_config_ready'
+        ['runtime_config_ready', 'model_changed', 'model_call_started', 'model_call_finished'].includes(ev?.event_type)
         && ev?.agent_name === agentName.value
       ) {
         hit = true
@@ -689,6 +690,9 @@ function historyBadgeLabel(type) {
           </router-link>
         </div>
       </div>
+
+      <AgentModelSelector v-if="agent.type === 'team' && agent.run_id"
+        :agent="agent" @updated="fetchAgentDetail" />
 
       <!-- Tabs -->
       <div class="tabs-bar">
