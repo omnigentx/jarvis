@@ -1,0 +1,28 @@
+backend_source:
+  - "backend/routes/agents.py::get_agent, update_team_agent_model"
+  - "frontend/src/components/agent/AgentModelSelector.vue"
+
+responses:
+  "GET /api/agents/Jarvis":
+    - status: 200
+      json: { name: Jarvis, status: idle, type: builtin, model: openai.coding-agent, configured_model: openai.coding-agent, base_model: openai.coding-agent, model_revision: 0, overridden: false, active_model: null, instruction: "You are Jarvis.", servers: [], tools: {}, skills: [] }
+    - status: 200
+      json: { name: Jarvis, status: idle, type: builtin, model: openai.cx/gpt-6-luna, configured_model: openai.cx/gpt-6-luna, base_model: openai.coding-agent, model_revision: 1, overridden: true, active_model: null, instruction: "You are Jarvis.", servers: [], tools: {}, skills: [] }
+    - status: 200
+      json: { name: Jarvis, status: idle, type: builtin, model: openai.coding-agent, configured_model: openai.coding-agent, base_model: openai.coding-agent, model_revision: 2, overridden: false, active_model: null, instruction: "You are Jarvis.", servers: [], tools: {}, skills: [] }
+
+  "GET /api/agents/model-catalog":
+    status: 200
+    json: { models: [openai.coding-agent, openai.cx/gpt-6-luna, openai.kr/gpt-5.6-luna] }
+
+  "GET /api/skills":
+    status: 200
+    json: { skills: [] }
+
+  "PUT /api/agents/Jarvis/model":
+    - status: 200
+      json: { changed: true, model: openai.cx/gpt-6-luna, model_revision: 1 }
+    - status: 200
+      json: { changed: true, model: openai.coding-agent, model_revision: 2 }
+    - status: 422
+      json: { detail: "model 'kr/gpt-5.6-luna' failed a bounded inference probe" }

@@ -260,6 +260,12 @@ mcp:
       env:
         PYTHONUNBUFFERED: "1"
         JARVIS_RUNTIME_RPC_SOCKET: "${JARVIS_RUNTIME_RPC_SOCKET}"
+    model_selection:
+      command: "python"
+      args: ["tools/model_selection_server.py"]
+      env:
+        PYTHONUNBUFFERED: "1"
+        JARVIS_RUNTIME_RPC_SOCKET: "${JARVIS_RUNTIME_RPC_SOCKET}"
     mcp-atlassian:
       command: "uv"
       args: ["run", "--directory", "mcp-atlassian", "mcp-atlassian"]

@@ -13,6 +13,7 @@ orchestrator: pm
 roles:
   pm:
     role_display: "PM"
+    capabilities: [model-management]
     instruction: |
       Your name is "{agent_name}". Always use my_name="{agent_name}" in all communication tools.
 
@@ -118,6 +119,7 @@ roles:
     servers:
       [
         memory_server,
+        model_selection,
         filesystem,
         meeting_room,
         email,
@@ -140,6 +142,7 @@ roles:
 
   ba:
     role_display: "BA"
+    capabilities: [model-management]
     instruction: |
       Your name is "{agent_name}". Always use my_name="{agent_name}" in all communication tools.
 
@@ -169,6 +172,7 @@ roles:
     servers:
       [
         memory_server,
+        model_selection,
         filesystem,
         meeting_room,
         email,
@@ -191,6 +195,7 @@ roles:
 
   sa:
     role_display: "SA"
+    capabilities: [model-management]
     instruction: |
       Your name is "{agent_name}". Always use my_name="{agent_name}" in all communication tools.
 
@@ -221,6 +226,7 @@ roles:
     servers:
       [
         memory_server,
+        model_selection,
         filesystem,
         meeting_room,
         email,
@@ -243,6 +249,7 @@ roles:
 
   dev:
     role_display: "Dev"
+    capabilities: [model-management]
     instruction: |
       Your name is "{agent_name}". Always use my_name="{agent_name}" in all communication tools.
 
@@ -296,6 +303,7 @@ roles:
     servers:
       [
         memory_server,
+        model_selection,
         filesystem,
         meeting_room,
         email,
@@ -320,6 +328,7 @@ roles:
 
   designer:
     role_display: "Designer"
+    capabilities: [model-management]
     instruction: |
       Your name is "{agent_name}". Always use my_name="{agent_name}" in all communication tools.
 
@@ -343,7 +352,7 @@ roles:
 
     skills: [figma-designer, team-roster, team-communication, self-audit-tools]
     servers:
-      [memory_server, filesystem, meeting_room, email, github, mcp-atlassian, figma-ui-mcp]
+      [memory_server, model_selection, filesystem, meeting_room, email, github, mcp-atlassian, figma-ui-mcp]
     server_overrides:
       filesystem:
         args:
@@ -358,6 +367,7 @@ roles:
 
   qe:
     role_display: "QE"
+    capabilities: [model-management]
     instruction: |
       Your name is "{agent_name}". Always use my_name="{agent_name}" in all communication tools.
 
@@ -404,6 +414,7 @@ roles:
     servers:
       [
         memory_server,
+        model_selection,
         filesystem,
         meeting_room,
         email,
@@ -427,6 +438,7 @@ roles:
 
   dso:
     role_display: "DSO"
+    capabilities: [model-management]
     instruction: |
       Your name is "{agent_name}". Always use my_name="{agent_name}" in all communication tools.
 
@@ -457,6 +469,7 @@ roles:
     servers:
       [
         memory_server,
+        model_selection,
         filesystem,
         meeting_room,
         email,

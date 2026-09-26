@@ -5,6 +5,7 @@ Skills are read from FastAgent runtime AgentConfig (single source of truth).
 Activities are persisted in SQLite and streamed via SSE.
 """
 import os
+import asyncio
 import re
 import logging
 import sqlite3
@@ -600,12 +601,17 @@ def _build_agent_dict(name: str, agent_data: dict) -> dict:
 
 def _build_agents_from_runtime() -> list[dict]:
     """Build complete agent list from fast-agent runtime registry (single source of truth)."""
+    from services.inprocess_model_runtime import inprocess_overrides
+    overrides = inprocess_overrides()
     agents = []
     for name, agent_data in fast.agents.items():
         config = agent_data.get("config")
         if not config:
             continue
-        agents.append(_build_agent_dict(name, agent_data))
+        detail = _build_agent_dict(name, agent_data)
+        if name in overrides:
+            detail["model"] = overrides[name]
+        agents.append(detail)
     
     # Sort: default agent first, then alphabetical
     agents.sort(key=lambda a: (not a.get("is_default"), a["name"]))
@@ -662,10 +668,17 @@ class AgentCreate(BaseModel):
 
 
 class AgentUpdate(BaseModel):
+    expected_revision: int | None = None
     instruction: str | None = None
     model: str | None = None
     servers: list[str] | None = None
     use_history: bool | None = None
+
+
+class TeamModelUpdate(BaseModel):
+    run_id: str = ""
+    model_id: str
+    expected_revision: int
 
 
 def _normalize_create_payload(payload: dict) -> dict:
@@ -904,6 +917,16 @@ async def activity_stream(agent_name: str | None = None):
     )
 
 
+@router.get("/model-catalog", dependencies=[Depends(verify_api_key)])
+async def get_model_catalog():
+    from services.model_catalog import CatalogUnavailable, available_models
+    try:
+        models = await asyncio.to_thread(available_models)
+    except CatalogUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"models": [f"openai.{name}" for name in sorted(models)]}
+
+
 @router.get("/{name}", dependencies=[Depends(verify_api_key)])
 async def get_agent(name: str):
     """Get a specific agent's details with skills (from runtime or spawn registry)."""
@@ -911,6 +934,8 @@ async def get_agent(name: str):
     agent_data = fast.agents.get(name)
     if agent_data:
         detail = _build_agent_dict(name, agent_data)
+        from services.inprocess_model_runtime import inprocess_snapshot
+        detail.update(inprocess_snapshot(name, detail["model"]))
         # Probe live ServerStatus only for the detail endpoint so failed MCP
         # servers expose their error_message in the UI tooltip. The list
         # endpoint deliberately skips this to keep the fanout cheap.
@@ -996,7 +1021,16 @@ def _build_spawn_agent_detail(name: str) -> dict | None:
     icon = _icon_for_role(record, default="smart_toy")
     
     # Extract model
-    model = orig_cfg.get("model", "")
+    from services.team_model_runtime import ModelChangeError, snapshot as model_snapshot
+    model_state = {"model": "", "model_revision": 0,
+                   "active_model": None, "active_revision": None,
+                   "overridden": False, "base_model": orig_cfg.get("model", "")}
+    if record.get("run_id"):
+        try:
+            model_state = model_snapshot(record["run_id"])
+        except ModelChangeError:
+            logger.warning("[AGENTS API] Model state unavailable for run %s", record["run_id"])
+    model = model_state["model"] or orig_cfg.get("model", "")
     if not model:
         model = _get_default_model()
     
@@ -1038,6 +1072,12 @@ def _build_spawn_agent_detail(name: str) -> dict | None:
         "description": f"Team agent ({role})" if role else "Spawned agent",
         "instruction": instruction,
         "model": model,
+        "model_revision": model_state["model_revision"],
+        "configured_model": model,
+        "base_model": model_state["base_model"],
+        "overridden": model_state["overridden"],
+        "active_model": model_state["active_model"],
+        "active_revision": model_state["active_revision"],
         "servers": servers,
         "type": "team" if team_name else "dynamic",
         "icon": icon,
@@ -1198,12 +1238,16 @@ async def update_agent(name: str, update: AgentUpdate):
 
     from services import agent_definitions as defs_svc
 
-    update_data = _normalize_create_payload(update.model_dump(exclude_none=True))
+    payload = update.model_dump(exclude_none=True)
+    expected_revision = payload.pop("expected_revision", None)
+    update_data = _normalize_create_payload(payload)
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")
 
     try:
-        defs_svc.update_definition(name, **update_data)
+        defs_svc.update_definition(name, expected_revision=expected_revision, actor="api", **update_data)
+    except defs_svc.RevisionConflict as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
     except ValueError as e:
         msg = str(e)
         status = 404 if "not found" in msg else 400
@@ -1213,6 +1257,59 @@ async def update_agent(name: str, update: AgentUpdate):
 
     logger.info("[AGENTS API] Updated agent: %s", name)
     return {"status": "updated", "name": name}
+
+
+@router.put("/{name}/model", dependencies=[Depends(verify_api_key)])
+async def update_team_agent_model(name: str, update: TeamModelUpdate):
+    """Change a team or in-process agent's model at the next LLM boundary."""
+    import services.shared_state as state
+    from services.team_model_runtime import (
+        ModelChangeConflict, ModelChangeError, ModelChangeForbidden, ModelUnavailable,
+        change_model,
+    )
+    from services.inprocess_model_runtime import change_inprocess_model
+    if update.run_id:
+        record = state.registry_db.get_record(update.run_id) if state.registry_db else None
+        if not record or record.get("agent_name") != name:
+            raise HTTPException(status_code=404, detail="agent run not found")
+        change = lambda: change_model(
+            update.run_id, update.model_id, update.expected_revision,
+            actor="user:dashboard",
+        )
+    else:
+        data = fast.agents.get(name)
+        if not data:
+            raise HTTPException(status_code=404, detail="agent not found")
+        base = getattr(data.get("config"), "model", None) or _get_default_model()
+        change = lambda: change_inprocess_model(
+            name, base, update.model_id, update.expected_revision,
+            actor="user:dashboard",
+        )
+    activity_stream_manager.broadcast({
+        "agent_name": name, "event_type": "model_change_requested",
+        "data": {"actor": "user:dashboard", "requested_model": update.model_id},
+        "timestamp": _time.time(),
+    })
+    try:
+        result = await asyncio.to_thread(change)
+    except ModelChangeError as exc:
+        activity_stream_manager.broadcast({
+            "agent_name": name, "event_type": "model_change_failed",
+            "data": {"actor": "user:dashboard", "requested_model": update.model_id,
+                     "error": str(exc)}, "timestamp": _time.time(),
+        })
+        status = (409 if isinstance(exc, ModelChangeConflict) else
+                  403 if isinstance(exc, ModelChangeForbidden) else
+                  422 if isinstance(exc, ModelUnavailable) else 400)
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+    if result["changed"]:
+        activity_stream_manager.broadcast({
+            "agent_name": name,
+            "event_type": "model_changed",
+            "data": result,
+            "timestamp": _time.time(),
+        })
+    return result
 
 
 @router.delete("/{name}", dependencies=[Depends(verify_api_key)])
@@ -1488,6 +1585,15 @@ async def delete_team(team_name: str):
             cleanup_log.append(f"{ts_deleted} team_session(s)")
     except Exception as e:
         logger.warning("[AGENTS API] team_sessions cleanup error: %s", e)
+
+    # Live model selections belong to the team session, not a particular
+    # run (resume creates another run ID). Keep audit rows for review.
+    from services.team_model_runtime import delete_session_overrides
+    for sid in session_ids:
+        try:
+            delete_session_overrides(sid)
+        except Exception:
+            logger.warning("[AGENTS API] model override cleanup failed for session %s", sid, exc_info=True)
     
     # ── 7. Clean up DB activities + each member's OWN memory silo ──
     try:

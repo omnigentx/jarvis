@@ -9,6 +9,7 @@ import StatusBadge from '../components/StatusBadge.vue'
 import MarkdownRenderer from '../components/MarkdownRenderer.vue'
 import SkillEditorModal from '../components/agent/SkillEditorModal.vue'
 import SkillDeleteModal from '../components/agent/SkillDeleteModal.vue'
+import AgentModelSelector from '../components/agent/AgentModelSelector.vue'
 import AgentMemoryPanel from './AgentMemoryPanel.vue'
 import {
   roleAvaClass,
@@ -23,6 +24,7 @@ const route = useRoute()
 const router = useRouter()
 const store = useAgentsStore()
 const agentDetail = ref(null)
+const modelStatusEvent = ref(null)
 const validTabs = ['overview', 'skills', 'servers', 'instruction', 'context', 'versions', 'memory', 'activity']
 const initialTab = validTabs.includes(route.query.tab) ? route.query.tab : 'overview'
 const activeTab = ref(initialTab)
@@ -77,11 +79,17 @@ const _stopRuntimeWatch = watch(
   (events) => {
     if (!events?.length) return
     let hit = false
+    let statusSeen = false
     for (let i = 0; i < events.length; i++) {
       if (events[i] === _lastSeenEvent) break
       const ev = events[i]
+      if (!statusSeen && ev?.agent_name === agentName.value &&
+        ['model_change_requested', 'model_change_failed', 'model_changed'].includes(ev?.event_type)) {
+        modelStatusEvent.value = ev
+        statusSeen = true
+      }
       if (
-        ev?.event_type === 'runtime_config_ready'
+        ['runtime_config_ready', 'model_changed', 'model_call_started', 'model_call_finished'].includes(ev?.event_type)
         && ev?.agent_name === agentName.value
       ) {
         hit = true
@@ -689,6 +697,9 @@ function historyBadgeLabel(type) {
           </router-link>
         </div>
       </div>
+
+      <AgentModelSelector v-if="['team', 'builtin', 'card'].includes(agent.type)"
+        :agent="agent" :status-event="modelStatusEvent" @updated="fetchAgentDetail" />
 
       <!-- Tabs -->
       <div class="tabs-bar">

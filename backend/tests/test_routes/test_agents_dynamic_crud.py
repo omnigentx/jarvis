@@ -273,3 +273,18 @@ def test_full_lifecycle_rev_advances_exactly_once_per_mutation(db_and_client):
     db_and_client.delete("/api/agents/Lifecycle", headers=AUTH)
     rev4 = defs_svc.get_rev()
     assert rev4 == rev3 + 1
+
+def test_update_requires_expected_revision_and_uses_actor(db_and_client):
+    from services import agent_definitions as defs_svc
+    defs_svc.create_definition(name="Guarded", instruction="x")
+    rev = defs_svc.get_rev()
+    r = db_and_client.put("/api/agents/Guarded", json={"instruction":"y", "expected_revision": rev}, headers=AUTH)
+    assert r.status_code == 200, r.text
+    assert defs_svc.list_audit_events()[-1]["actor"] == "api"
+    stale = db_and_client.put(
+        "/api/agents/Guarded",
+        json={"model": "openai.gpt-4o", "expected_revision": rev},
+        headers=AUTH,
+    )
+    assert stale.status_code == 409
+    assert defs_svc.get_definition("Guarded")["model"] is None
