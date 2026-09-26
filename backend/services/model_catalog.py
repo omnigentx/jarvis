@@ -17,6 +17,7 @@ class CatalogUnavailable(RuntimeError):
 
 _LOCK = threading.Lock()
 _CACHE: tuple[str, float, frozenset[str]] | None = None
+_PROBE_CACHE: dict[tuple[str, str], float] = {}
 _SECRETS = Path(__file__).resolve().parent.parent / "fastagent.secrets.yaml"
 
 
@@ -56,3 +57,28 @@ def available_models() -> frozenset[str]:
     with _LOCK:
         _CACHE = (cache_key, now, models)
     return models
+
+
+def probe_model(model_id: str) -> None:
+    """Bounded inference canary; listing a model alone does not prove it works."""
+    base_url, api_key = _gateway()
+    cache_key = (base_url + ":" + hashlib.sha256(api_key.encode()).hexdigest(), model_id)
+    now = time.monotonic()
+    with _LOCK:
+        if now - _PROBE_CACHE.get(cache_key, 0) < 60:
+            return
+    try:
+        response = httpx.post(
+            f"{base_url}/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={"model": model_id, "messages": [{"role": "user", "content": "Reply OK"}],
+                  "max_tokens": 1, "stream": False},
+            timeout=15.0,
+        )
+        response.raise_for_status()
+        if not response.json().get("choices"):
+            raise ValueError("no completion choices")
+    except (httpx.HTTPError, ValueError, KeyError) as exc:
+        raise CatalogUnavailable(f"model {model_id!r} failed a bounded inference probe") from exc
+    with _LOCK:
+        _PROBE_CACHE[cache_key] = time.monotonic()

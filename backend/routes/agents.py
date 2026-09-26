@@ -601,12 +601,17 @@ def _build_agent_dict(name: str, agent_data: dict) -> dict:
 
 def _build_agents_from_runtime() -> list[dict]:
     """Build complete agent list from fast-agent runtime registry (single source of truth)."""
+    from services.inprocess_model_runtime import inprocess_overrides
+    overrides = inprocess_overrides()
     agents = []
     for name, agent_data in fast.agents.items():
         config = agent_data.get("config")
         if not config:
             continue
-        agents.append(_build_agent_dict(name, agent_data))
+        detail = _build_agent_dict(name, agent_data)
+        if name in overrides:
+            detail["model"] = overrides[name]
+        agents.append(detail)
     
     # Sort: default agent first, then alphabetical
     agents.sort(key=lambda a: (not a.get("is_default"), a["name"]))
@@ -671,7 +676,7 @@ class AgentUpdate(BaseModel):
 
 
 class TeamModelUpdate(BaseModel):
-    run_id: str
+    run_id: str = ""
     model_id: str
     expected_revision: int
 
@@ -929,6 +934,8 @@ async def get_agent(name: str):
     agent_data = fast.agents.get(name)
     if agent_data:
         detail = _build_agent_dict(name, agent_data)
+        from services.inprocess_model_runtime import inprocess_snapshot
+        detail.update(inprocess_snapshot(name, detail["model"]))
         # Probe live ServerStatus only for the detail endpoint so failed MCP
         # servers expose their error_message in the UI tooltip. The list
         # endpoint deliberately skips this to keep the fanout cheap.
@@ -1016,7 +1023,8 @@ def _build_spawn_agent_detail(name: str) -> dict | None:
     # Extract model
     from services.team_model_runtime import ModelChangeError, snapshot as model_snapshot
     model_state = {"model": "", "model_revision": 0,
-                   "active_model": None, "active_revision": None}
+                   "active_model": None, "active_revision": None,
+                   "overridden": False, "base_model": orig_cfg.get("model", "")}
     if record.get("run_id"):
         try:
             model_state = model_snapshot(record["run_id"])
@@ -1066,6 +1074,8 @@ def _build_spawn_agent_detail(name: str) -> dict | None:
         "model": model,
         "model_revision": model_state["model_revision"],
         "configured_model": model,
+        "base_model": model_state["base_model"],
+        "overridden": model_state["overridden"],
         "active_model": model_state["active_model"],
         "active_revision": model_state["active_revision"],
         "servers": servers,
@@ -1251,29 +1261,47 @@ async def update_agent(name: str, update: AgentUpdate):
 
 @router.put("/{name}/model", dependencies=[Depends(verify_api_key)])
 async def update_team_agent_model(name: str, update: TeamModelUpdate):
-    """Change a team agent's model at the next LLM boundary."""
+    """Change a team or in-process agent's model at the next LLM boundary."""
     import services.shared_state as state
     from services.team_model_runtime import (
         ModelChangeConflict, ModelChangeError, ModelChangeForbidden, ModelUnavailable,
         change_model,
     )
-
-    record = state.registry_db.get_record(update.run_id) if state.registry_db else None
-    if not record or record.get("agent_name") != name:
-        raise HTTPException(status_code=404, detail="agent run not found")
-    try:
-        result = await asyncio.to_thread(change_model,
+    from services.inprocess_model_runtime import change_inprocess_model
+    if update.run_id:
+        record = state.registry_db.get_record(update.run_id) if state.registry_db else None
+        if not record or record.get("agent_name") != name:
+            raise HTTPException(status_code=404, detail="agent run not found")
+        change = lambda: change_model(
             update.run_id, update.model_id, update.expected_revision,
             actor="user:dashboard",
         )
-    except ModelChangeConflict as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except ModelChangeForbidden as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
-    except ModelUnavailable as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    else:
+        data = fast.agents.get(name)
+        if not data:
+            raise HTTPException(status_code=404, detail="agent not found")
+        base = getattr(data.get("config"), "model", None) or _get_default_model()
+        change = lambda: change_inprocess_model(
+            name, base, update.model_id, update.expected_revision,
+            actor="user:dashboard",
+        )
+    activity_stream_manager.broadcast({
+        "agent_name": name, "event_type": "model_change_requested",
+        "data": {"actor": "user:dashboard", "requested_model": update.model_id},
+        "timestamp": _time.time(),
+    })
+    try:
+        result = await asyncio.to_thread(change)
     except ModelChangeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        activity_stream_manager.broadcast({
+            "agent_name": name, "event_type": "model_change_failed",
+            "data": {"actor": "user:dashboard", "requested_model": update.model_id,
+                     "error": str(exc)}, "timestamp": _time.time(),
+        })
+        status = (409 if isinstance(exc, ModelChangeConflict) else
+                  403 if isinstance(exc, ModelChangeForbidden) else
+                  422 if isinstance(exc, ModelUnavailable) else 400)
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
     if result["changed"]:
         activity_stream_manager.broadcast({
             "agent_name": name,

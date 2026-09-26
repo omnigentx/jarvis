@@ -13,10 +13,16 @@ from services.team_model_runtime import (
     create_model_hook,
     snapshot,
 )
+from services.inprocess_model_runtime import (
+    attach_inprocess_hooks, change_inprocess_model, inprocess_snapshot,
+    inprocess_overrides,
+)
 from services.model_rpc_handlers import _get as rpc_get
 from fast_agent.config import OpenAISettings, Settings
 from fast_agent.context import Context
 from fast_agent.llm.provider.openai.llm_openai import OpenAILLM
+from fast_agent.llm.request_params import RequestParams
+from types import SimpleNamespace
 
 
 @pytest.fixture
@@ -27,6 +33,7 @@ def registry(tmp_path, monkeypatch):
         "services.model_catalog.available_models",
         lambda: frozenset({"coding-agent", "gpt-4o-mini"}),
     )
+    monkeypatch.setattr("services.model_catalog.probe_model", lambda _model: None)
     with sqlite3.connect(path) as conn:
         conn.execute("CREATE TABLE spawn_registry (run_id TEXT PRIMARY KEY, data_json TEXT NOT NULL)")
         conn.execute("CREATE TABLE team_sessions (session_id TEXT PRIMARY KEY, data_json TEXT NOT NULL)")
@@ -101,6 +108,33 @@ def test_unknown_model_rejected_without_mutation(registry):
     assert snapshot("dev-a")["model_revision"] == 0
 
 
+def test_catalog_listed_but_probe_fails_without_mutation(registry, monkeypatch):
+    from services.model_catalog import CatalogUnavailable
+
+    def fail(_model):
+        raise CatalogUnavailable("bounded inference failed")
+
+    monkeypatch.setattr("services.model_catalog.probe_model", fail)
+    with pytest.raises(ModelChangeError, match="bounded inference failed"):
+        change_model("dev-a", "openai.gpt-4o-mini", 0, actor="user")
+    assert snapshot("dev-a")["model_revision"] == 0
+    with pytest.raises(ModelChangeError, match="bounded inference failed"):
+        change_inprocess_model("ModelProbe", "openai.coding-agent", "openai.gpt-4o-mini", 0, actor="user")
+    assert inprocess_snapshot("ModelProbe", "openai.coding-agent")["model_revision"] == 0
+
+
+def test_reset_to_default_keeps_monotonic_revision(registry):
+    change_model("dev-a", "openai.gpt-4o-mini", 0, actor="user")
+    restored = change_model("dev-a", "", 1, actor="user")
+    assert restored["model"] == "openai.coding-agent"
+    state = snapshot("dev-a")
+    assert state["model"] == "openai.coding-agent"
+    assert state["model_revision"] == 2
+    assert not state["overridden"]
+    with pytest.raises(ModelChangeConflict):
+        change_model("dev-a", "openai.gpt-4o-mini", 1, actor="user")
+
+
 def test_capability_is_required_even_for_self(registry):
     with sqlite3.connect(registry) as conn:
         conn.execute("UPDATE team_sessions SET data_json = ? WHERE session_id = ?", (
@@ -134,7 +168,7 @@ def test_hook_reads_new_model_on_next_call(registry):
     runner = Runner()
     hook = create_model_hook("dev-a")
     asyncio.run(hook.before_llm_call(runner, []))
-    assert runner.request_params is None
+    assert runner.request_params.model == "coding-agent"
     change_model("dev-a", "openai.gpt-4o-mini", 0, actor="user")
     asyncio.run(hook.before_llm_call(runner, []))
     assert runner.request_params.model == "gpt-4o-mini"
@@ -164,6 +198,10 @@ def test_hook_changes_actual_openai_request_model(registry):
     request_after = provider._prepare_api_request([], None, runner.request_params)
     assert request_before["model"] == "coding-agent"
     assert request_after["model"] == "gpt-4o-mini"
+    change_model("dev-a", "", 1, actor="user")
+    asyncio.run(hook.before_llm_call(runner, []))
+    request_reset = provider._prepare_api_request([], None, runner.request_params)
+    assert request_reset["model"] == "coding-agent"
 
 
 def test_active_snapshot_stays_old_until_next_call(registry):
@@ -185,3 +223,75 @@ def test_active_snapshot_stays_old_until_next_call(registry):
     assert snapshot("dev-a")["active_model"] is None
     asyncio.run(hook.before_llm_call(runner, []))
     assert snapshot("dev-a")["active_model"] == "openai.gpt-4o-mini"
+
+
+def test_inprocess_hook_switches_on_next_call(registry, monkeypatch):
+    from agent import fast
+    monkeypatch.setitem(fast.agents, "ModelProbe", {
+        "config": SimpleNamespace(model="openai.coding-agent", servers=["model_selection"]),
+    })
+
+    class Runner:
+        def __init__(self):
+            self.request_params = RequestParams(model="coding-agent")
+            self.tool_runner_hooks = None
+
+        def set_request_params(self, params):
+            self.request_params = params
+
+    runner = Runner()
+    app = SimpleNamespace(_agents={"ModelProbe": runner})
+    assert attach_inprocess_hooks(app) == 1
+    assert attach_inprocess_hooks(app) == 0
+    hook = runner.tool_runner_hooks
+    asyncio.run(hook.before_llm_call(runner, []))
+    assert inprocess_snapshot("ModelProbe", "openai.coding-agent")["active_model"] == "openai.coding-agent"
+    change_inprocess_model("ModelProbe", "openai.coding-agent", "openai.gpt-4o-mini", 0, actor="user")
+    assert inprocess_overrides()["ModelProbe"] == "openai.gpt-4o-mini"
+    assert inprocess_snapshot("ModelProbe", "openai.coding-agent")["configured_model"] == "openai.gpt-4o-mini"
+    assert inprocess_snapshot("ModelProbe", "openai.coding-agent")["active_model"] == "openai.coding-agent"
+    asyncio.run(hook.after_llm_call(runner, None))
+    asyncio.run(hook.before_llm_call(runner, []))
+    assert runner.request_params.model == "gpt-4o-mini"
+    assert inprocess_snapshot("ModelProbe", "openai.coding-agent")["active_model"] == "openai.gpt-4o-mini"
+    restored = change_inprocess_model("ModelProbe", "openai.coding-agent", "", 1, actor="user")
+    assert restored["model"] == "openai.coding-agent"
+    assert inprocess_snapshot("ModelProbe", "openai.coding-agent")["model_revision"] == 2
+    assert not inprocess_snapshot("ModelProbe", "openai.coding-agent")["overridden"]
+    assert "ModelProbe" not in inprocess_overrides()
+    asyncio.run(hook.after_llm_call(runner, None))
+    asyncio.run(hook.before_llm_call(runner, []))
+    assert runner.request_params.model == "coding-agent"
+
+
+def test_inprocess_agent_rpc_capability_and_hierarchy(registry, monkeypatch):
+    from agent import fast
+    from services import model_rpc_handlers
+    from services.model_rpc_handlers import _get as rpc_get, _set as rpc_set
+    from unittest.mock import MagicMock
+    events = MagicMock()
+    monkeypatch.setattr(model_rpc_handlers, "activity_stream_manager", events)
+    monkeypatch.setitem(fast.agents, "Jarvis", {
+        "config": SimpleNamespace(model="openai.coding-agent", servers=["model_selection"]),
+    })
+    monkeypatch.setitem(fast.agents, "ModelProbe", {
+        "config": SimpleNamespace(model="openai.coding-agent", servers=["model_selection"]),
+    })
+    monkeypatch.setitem(fast.agents, "Peer", {
+        "config": SimpleNamespace(model="openai.coding-agent", servers=[]),
+    })
+    assert rpc_get("Jarvis", "", "ModelProbe")["model_revision"] == 0
+    assert rpc_set("openai.gpt-4o-mini", 0, "Jarvis", "", "ModelProbe")["model_revision"] == 1
+    assert [call.args[0]["event_type"] for call in events.broadcast.call_args_list] == [
+        "model_change_requested", "model_changed",
+    ]
+    with pytest.raises(PermissionError):
+        rpc_get("ModelProbe", "", "Jarvis")
+    with pytest.raises(PermissionError):
+        rpc_get("Peer", "")
+    events.reset_mock()
+    with pytest.raises(PermissionError):
+        rpc_set("openai.gpt-4o-mini", 0, "ModelProbe", "", "Jarvis")
+    assert [call.args[0]["event_type"] for call in events.broadcast.call_args_list] == [
+        "model_change_requested", "model_change_failed",
+    ]

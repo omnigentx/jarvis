@@ -1,4 +1,4 @@
-"""Team-agent MCP tools for reading and changing live model selection."""
+"""MCP tools for reading and changing live agent model selection."""
 from __future__ import annotations
 
 import sys
@@ -17,7 +17,7 @@ mcp = FastMCP("ModelSelection")
 
 @mcp.tool()
 def model_get(target_agent: str = "", ctx: Context = None) -> dict:
-    """Read your model/revision; PM may name another member in this team."""
+    """Read your model/revision; Jarvis or a team PM may name a managed agent."""
     caller = caller_from_ctx(ctx)
     if not caller:
         return {"error": "missing caller identity"}
@@ -32,11 +32,13 @@ def model_get(target_agent: str = "", ctx: Context = None) -> dict:
 
 @mcp.tool()
 def model_set(model_id: str, expected_revision: int, target_agent: str = "", ctx: Context = None) -> dict:
-    """Change a team agent's model from its NEXT LLM call.
+    """Change an agent's model from its NEXT LLM call.
 
     Pass the revision returned by model_get. Omit target_agent for self. Only the team
-    orchestrator may change another member; each member may change itself.
+    orchestrator or Jarvis may change a managed agent; an authorized member
+    may change itself.
     Currently supports the configured OpenAI-compatible provider only.
+    Pass an empty model_id to clear the override and use the agent's default.
     """
     caller = caller_from_ctx(ctx)
     if not caller:

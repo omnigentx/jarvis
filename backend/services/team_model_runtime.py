@@ -64,6 +64,11 @@ def _connect() -> sqlite3.Connection:
         "run_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, model TEXT NOT NULL, revision INTEGER NOT NULL, "
         "pid INTEGER NOT NULL, started_at REAL NOT NULL)"
     )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS inprocess_model_active_calls ("
+        "call_id TEXT PRIMARY KEY, agent_name TEXT NOT NULL, model TEXT NOT NULL, "
+        "revision INTEGER NOT NULL, pid INTEGER NOT NULL, started_at REAL NOT NULL)"
+    )
     return conn
 
 
@@ -177,6 +182,7 @@ def snapshot(run_id: str, *, caller_agent: str | None = None) -> dict[str, Any]:
     return {
         "run_id": run_id,
         "session_id": record.get("session_id") or "",
+        "base_model": base,
         "model": override or base,
         "model_revision": revision,
         "overridden": bool(override),
@@ -190,7 +196,8 @@ def _change_model_inner(
     run_id: str, model_id: str, expected_revision: int, *, actor: str,
     caller_agent: str | None, correlation_id: str,
 ) -> dict[str, Any]:
-    _validate_model(model_id)
+    if model_id:
+        _validate_model(model_id)
     if not isinstance(expected_revision, int) or isinstance(expected_revision, bool) or expected_revision < 0:
         raise ModelChangeError("expected_revision must be a non-negative integer")
     if not run_id or not actor:
@@ -206,12 +213,14 @@ def _change_model_inner(
             raise ModelChangeError("target is not a team agent")
         if caller_agent is not None:
             _authorize(read_conn, caller_agent, initial, run_id)
-    from services.model_catalog import CatalogUnavailable, available_models
-    try:
-        if model_id.removeprefix("openai.") not in available_models():
-            raise ModelUnavailable(f"model {model_id!r} is unavailable in the gateway catalog")
-    except CatalogUnavailable as exc:
-        raise ModelUnavailable(str(exc)) from exc
+    if model_id:
+        from services.model_catalog import CatalogUnavailable, available_models, probe_model
+        try:
+            if model_id.removeprefix("openai.") not in available_models():
+                raise ModelUnavailable(f"model {model_id!r} is unavailable in the gateway catalog")
+            probe_model(model_id.removeprefix("openai."))
+        except CatalogUnavailable as exc:
+            raise ModelUnavailable(str(exc)) from exc
     with _connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
         record = _record(conn, run_id)
@@ -225,12 +234,12 @@ def _change_model_inner(
         if current != expected_revision:
             raise ModelChangeConflict(f"expected revision {expected_revision}, current {current}")
         previous = override or (record.get("original_config") or {}).get("model") or _default_model()
-        if model_id == previous:
+        if model_id == (override or ""):
             _audit(conn, run_id, actor, model_id, "unchanged", correlation_id,
                    previous_model=previous, revision=current,
                    agent_name=record.get("agent_name", ""))
             return {"run_id": run_id, "target_agent": record.get("agent_name", ""),
-                    "actor": actor, "previous_model": previous, "model": model_id,
+                    "actor": actor, "previous_model": previous, "model": previous,
                     "model_revision": current, "changed": False,
                     "correlation_id": correlation_id, "timestamp": time.time()}
         conn.execute(
@@ -244,7 +253,8 @@ def _change_model_inner(
                agent_name=record.get("agent_name", ""))
     return {
         "run_id": run_id, "target_agent": record.get("agent_name", ""),
-        "actor": actor, "previous_model": previous, "model": model_id,
+        "actor": actor, "previous_model": previous,
+        "model": model_id or (record.get("original_config") or {}).get("model") or _default_model(),
         "model_revision": current + 1, "changed": True,
         "correlation_id": correlation_id, "timestamp": time.time(),
     }
@@ -314,7 +324,7 @@ def create_model_hook(
 
     async def before_llm_call(runner, _messages) -> None:
         state = snapshot(run_id)
-        if state["overridden"]:
+        if state["model"].startswith("openai."):
             provider_model = _validate_model(state["model"])
             current = runner.request_params
             params = current.model_copy(update={"model": provider_model}) if current else RequestParams(model=provider_model)

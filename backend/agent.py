@@ -276,6 +276,8 @@ _JARVIS_SERVERS.append("mcp_admin")
 # `memory` settings flag and return a structured memory_disabled message when
 # off, so the Settings → Agent Memory toggle hot-reloads without a restart.
 _JARVIS_SERVERS.append("memory_server")
+_JARVIS_SERVERS.append("model_selection")
+_JARVIS_TOOLS["model_selection"] = ["model_get", "model_set"]
 
 if _SPAWNER_ENABLED:
     _JARVIS_SERVERS.append("agent_spawner")

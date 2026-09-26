@@ -23,6 +23,7 @@ def client(tmp_path, monkeypatch):
         "services.model_catalog.available_models",
         lambda: frozenset({"coding-agent", "gpt-4o-mini"}),
     )
+    monkeypatch.setattr("services.model_catalog.probe_model", lambda _model: None)
     record = {
         "run_id": "dev-run", "agent_name": "Sydney [Dev]", "role": "dev",
         "session_id": "team-api", "original_config": {"model": "openai.coding-agent"},
@@ -70,7 +71,9 @@ def test_authenticated_change_updates_store_and_broadcasts_target(client):
     events.reset_mock()
     conflict = http.put(endpoint, json=payload, headers={"Authorization": "Bearer model-api-test-key"})
     assert conflict.status_code == 409
-    events.broadcast.assert_not_called()
+    assert [call.args[0]["event_type"] for call in events.broadcast.call_args_list] == [
+        "model_change_requested", "model_change_failed",
+    ]
     with sqlite3.connect(path) as conn:
         assert conn.execute("SELECT outcome FROM team_model_change_audit ORDER BY id").fetchall() == [
             ("success",), ("conflict",),
@@ -88,7 +91,30 @@ def test_unknown_model_and_wrong_agent_do_not_change_store(client):
         "run_id": "dev-run", "model_id": "openai.fake-model", "expected_revision": 0,
     }, headers=auth)
     assert unknown.status_code == 422
-    events.broadcast.assert_not_called()
+    assert [call.args[0]["event_type"] for call in events.broadcast.call_args_list] == [
+        "model_change_requested", "model_change_failed",
+    ]
     with sqlite3.connect(path) as conn:
         assert conn.execute("SELECT COUNT(*) FROM team_model_configs").fetchone()[0] == 0
         assert conn.execute("SELECT outcome FROM team_model_change_audit").fetchall() == [("unavailable",)]
+
+
+def test_builtin_agent_change_uses_same_revision_store(client, monkeypatch):
+    from routes import agents
+    http, path, events = client
+    monkeypatch.setitem(agents.fast.agents, "Jarvis", {
+        "config": SimpleNamespace(model="openai.coding-agent", servers=["model_selection"]),
+    })
+    endpoint = "/api/agents/Jarvis/model"
+    auth = {"Authorization": "Bearer model-api-test-key"}
+    payload = {"model_id": "openai.gpt-4o-mini", "expected_revision": 0}
+    changed = http.put(endpoint, json=payload, headers=auth)
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["model_revision"] == 1
+    assert events.broadcast.call_args.args[0]["agent_name"] == "Jarvis"
+    with sqlite3.connect(path) as conn:
+        assert conn.execute("SELECT model, revision FROM team_model_configs WHERE session_id = '@inprocess'").fetchone() == (
+            "openai.gpt-4o-mini", 1,
+        )
+    stale = http.put(endpoint, json=payload, headers=auth)
+    assert stale.status_code == 409
