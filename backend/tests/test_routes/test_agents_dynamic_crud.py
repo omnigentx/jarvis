@@ -281,3 +281,10 @@ def test_update_requires_expected_revision_and_uses_actor(db_and_client):
     r = db_and_client.put("/api/agents/Guarded", json={"instruction":"y", "expected_revision": rev}, headers=AUTH)
     assert r.status_code == 200, r.text
     assert defs_svc.list_audit_events()[-1]["actor"] == "api"
+    stale = db_and_client.put(
+        "/api/agents/Guarded",
+        json={"model": "openai.gpt-4o", "expected_revision": rev},
+        headers=AUTH,
+    )
+    assert stale.status_code == 409
+    assert defs_svc.get_definition("Guarded")["model"] is None

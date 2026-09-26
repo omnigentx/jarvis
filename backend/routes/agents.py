@@ -1207,6 +1207,8 @@ async def update_agent(name: str, update: AgentUpdate):
 
     try:
         defs_svc.update_definition(name, expected_revision=expected_revision, actor="api", **update_data)
+    except defs_svc.RevisionConflict as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
     except ValueError as e:
         msg = str(e)
         status = 404 if "not found" in msg else 400
