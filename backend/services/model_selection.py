@@ -18,6 +18,19 @@ class ModelAuthorizationPolicy:
     def can_change(self, requester: str, target: str) -> bool:
         return requester in self._levels and target in self._levels and (requester == target or self._levels[requester] < self._levels[target])
 
+class AgentDefinitionConfigStore:
+    """SQLite-backed adapter using the canonical agent definition CRUD."""
+    def __init__(self, provider_default: str, app_default: str | None = None):
+        self._provider_default, self._app_default = provider_default, app_default
+    def set(self, agent_id: str, model_id: str) -> int:
+        from services import agent_definitions
+        agent_definitions.update_definition(agent_id, model=model_id)
+        return agent_definitions.get_rev()
+    def snapshot(self, agent_id: str) -> tuple[str, int]:
+        from services import agent_definitions
+        row = agent_definitions.get_definition(agent_id) or {}
+        return row.get("model") or self._app_default or self._provider_default, agent_definitions.get_rev()
+
 class InMemoryModelConfigStore:
     def __init__(self, provider_default: str, app_default: str | None = None):
         self._provider_default, self._app_default = provider_default, app_default
@@ -38,3 +51,7 @@ class ModelSelectionService:
     def snapshot(self, agent_id: str, provider_options: dict[str, Any] | None = None) -> CallSnapshot:
         model, revision = self._store.snapshot(agent_id)
         return CallSnapshot(agent_id, model, revision, dict(provider_options or {}))
+
+    def capture_for_call(self, agent_id: str, provider_options: dict[str, Any] | None = None) -> CallSnapshot:
+        """Capture once immediately before an adapter call; adapters must reuse it."""
+        return self.snapshot(agent_id, provider_options)
