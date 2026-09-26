@@ -5,6 +5,7 @@ from typing import Any
 
 class UnauthorizedModelChange(PermissionError): pass
 class UnknownModel(ValueError): pass
+class RevisionConflict(ValueError): pass
 
 @dataclass(frozen=True)
 class CallSnapshot:
@@ -22,10 +23,15 @@ class AgentDefinitionConfigStore:
     """SQLite-backed adapter using the canonical agent definition CRUD."""
     def __init__(self, provider_default: str, app_default: str | None = None):
         self._provider_default, self._app_default = provider_default, app_default
-    def set(self, agent_id: str, model_id: str) -> int:
+    def set(self, agent_id: str, model_id: str, expected_revision: int | None = None, *, actor: str = "system") -> int:
         from services import agent_definitions
+        current = agent_definitions.get_rev()
+        if expected_revision is not None and expected_revision != current:
+            raise RevisionConflict(f"expected revision {expected_revision}, current {current}")
         agent_definitions.update_definition(agent_id, model=model_id)
-        return agent_definitions.get_rev()
+        revision = agent_definitions.get_rev()
+        # Audit is intentionally delegated to the canonical DB service once its audit table is available.
+        return revision
     def snapshot(self, agent_id: str) -> tuple[str, int]:
         from services import agent_definitions
         row = agent_definitions.get_definition(agent_id) or {}
@@ -43,10 +49,15 @@ class InMemoryModelConfigStore:
 class ModelSelectionService:
     def __init__(self, store: InMemoryModelConfigStore, policy: ModelAuthorizationPolicy | None = None, known_models: set[str] | None = None):
         self._store, self._policy, self._known = store, policy or ModelAuthorizationPolicy({}), known_models
-    def set_model(self, requester: str, target: str, model_id: str) -> int:
+    def set_model(self, requester: str, target: str, model_id: str, expected_revision: int | None = None) -> int:
         if not self._policy.can_change(requester, target): raise UnauthorizedModelChange(f"{requester} cannot change {target}")
         if self._known is not None and model_id not in self._known: raise UnknownModel(model_id)
         if not model_id or not model_id.strip(): raise ValueError("model_id must not be empty")
+        if expected_revision is not None and hasattr(self._store, "set_expected"):
+            return self._store.set_expected(target, model_id, expected_revision, actor=requester)
+        if expected_revision is not None and hasattr(self._store, "set"):
+            current = self._store.snapshot(target)[1]
+            if current != expected_revision: raise RevisionConflict(f"expected revision {expected_revision}, current {current}")
         return self._store.set(target, model_id)
     def snapshot(self, agent_id: str, provider_options: dict[str, Any] | None = None) -> CallSnapshot:
         model, revision = self._store.snapshot(agent_id)
