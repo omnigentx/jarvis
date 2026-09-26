@@ -26,7 +26,7 @@ def model_get(target_agent: str = "", ctx: Context = None) -> dict:
             "target_agent": target_agent, "caller_agent": caller,
             "session_id": os.environ.get("TEAM_SESSION_ID", ""),
         })
-    except RuntimeRpcError as exc:
+    except (RuntimeRpcError, OSError) as exc:
         return {"error": str(exc)}
 
 
@@ -49,7 +49,7 @@ def model_set(model_id: str, expected_revision: int, target_agent: str = "", ctx
             "expected_revision": expected_revision, "caller_agent": caller,
             "session_id": os.environ.get("TEAM_SESSION_ID", ""),
         })
-    except RuntimeRpcError as exc:
+    except (RuntimeRpcError, OSError) as exc:
         return {"error": str(exc)}
 
 
