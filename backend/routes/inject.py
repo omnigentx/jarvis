@@ -181,19 +181,22 @@ async def _inject_via_message_bus(
     try:
         from fast_agent.spawn.message_bus import MessageBus
 
-        # Determine messages directory from spawn record
-        workspace = spawn_record.get("workspace")
-        if workspace:
-            messages_dir = Path(workspace) / ".runtime" / "state" / "messages"
+        # Use the inbox path that the spawned process actually reads. Team
+        # workspaces live inside ``.runtime/data/workspaces``; appending a
+        # second ``.runtime`` under that workspace strands the message.
+        env_vars = (spawn_record.get("original_config") or {}).get("env_vars") or {}
+        configured_dir = env_vars.get("TEAM_MESSAGES_DIR")
+        if configured_dir:
+            messages_dir = Path(configured_dir)
         else:
             session_id = spawn_record.get("session_id", "")
             project_dir = os.environ.get("SPAWN_PROJECT_DIR", "")
-            if not project_dir or not session_id:
-                raise ValueError(
-                    f"Cannot find messages dir for '{agent_name}': "
-                    f"no workspace, SPAWN_PROJECT_DIR={project_dir!r}, session_id={session_id!r}"
-                )
-            messages_dir = Path(project_dir) / ".runtime" / "state" / "messages" / session_id
+            if project_dir and session_id:
+                messages_dir = Path(project_dir) / ".runtime" / "state" / "messages" / session_id
+            elif spawn_record.get("workspace"):
+                messages_dir = Path(spawn_record["workspace"]) / ".runtime" / "state" / "messages"
+            else:
+                raise ValueError(f"Cannot find messages dir for '{agent_name}'")
 
         if not messages_dir.exists():
             messages_dir.mkdir(parents=True, exist_ok=True)
