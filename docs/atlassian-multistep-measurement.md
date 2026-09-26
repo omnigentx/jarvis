@@ -40,8 +40,23 @@ The full and brief searches returned the same issue ordering. This is one
 small, sparse project and one sequential run; latency was not repeated or
 controlled for order. It establishes that follow-up reads can erase output
 savings even on a live tenant, but it cannot test whether omitted descriptions
-would hurt answer quality. Confluence read-only endpoints returned HTTP 401
-with both existing local credentials, so there is no live Confluence result.
+would hurt answer quality.
+
+The newly provisioned Confluence site initially returned HTTP 401 on read
+endpoints, then returned 200 with the same credentials. Its exact cause was
+not established. A later direct run through this PR's `ConfluenceFetcher`
+measured two pages:
+
+| Cloud page | Body characters | Full tokens | Metadata tokens | Full fetch | Metadata fetch |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Page 1 | 571 | 307 | 147 | 784 ms | 800 ms |
+| Page 2 | 7,280 | 2,474 | 242 | 842 ms | 750 ms |
+
+For page 2, `metadata` followed by `full` would introduce 2,716 tool-output
+tokens and two upstream page fetches, compared with 2,474 tokens and one
+fetch for `full` alone. The second fetch was performed to measure its latency;
+the same page version (`1`) was returned. This small, one-pass sample does not
+measure total LLM usage or answer quality.
 
 | Step using the same real content | Output tokens | Tool calls | Interpretation |
 | --- | ---: | ---: | --- |
@@ -138,8 +153,8 @@ and computer-use tests should cover file isolation, cleanup, reconnection,
 and full-content fallback before the cache is enabled by default.
 
 The replacement Cloud site is `omnigentx.atlassian.net` with Jira project
-`SCRUM`. The local ignored `backend/fastagent.secrets.yaml` still points at
-the retired URL, although its Jira credential works when directed to the new
-site. The Confluence credential or access needs updating. The runtime URLs
-must be changed locally before running MCP E2E tests. Never add API tokens to
+`SCRUM`. The developer's ignored `backend/fastagent.secrets.yaml` now points
+at the replacement site, and both Jira and Confluence read endpoints currently
+authenticate. Other environments must configure their own URLs and
+credentials before MCP E2E tests. Never add API tokens to
 this document or the benchmark output.

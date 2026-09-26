@@ -91,10 +91,11 @@ before they can be described as production-ready.
   tenant remain open. The earlier configured base URL returned HTTP 404 at
   Jira `/rest/api/3/myself`. The user has recreated the test site at
   `omnigentx.atlassian.net` with Jira project `SCRUM`. The existing Jira
-  credential works on the new site, but the local runtime URL still points
-  at the old site; Confluence returns HTTP 401 with current credentials.
-  A small read-only Jira run is recorded in the multi-step measurement doc.
-  Local URLs and Confluence access still need updating before full MCP E2E.
+  credential works on the new site, and the developer's ignored local URLs
+  have been updated. Confluence initially returned HTTP 401 during the new
+  site's setup, then read endpoints returned 200 with the same credentials.
+  Small read-only Jira and Confluence runs are recorded in the multi-step
+  measurement doc. Full task-level Cloud E2E remains open.
   Do not direct write tests at a production project or space.
 
 The MR remains draft until the Cloud tenant test, private-scope security
