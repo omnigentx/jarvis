@@ -22,13 +22,35 @@ background status poll.
 | Confluence page, `metadata` | Identity, URL, version, attachment manifest, body length | `confluence_get_page` in `full` mode returns the body |
 | Confluence body diff | Existing version-to-version text diff | Attachment version changes require a separate manifest comparison |
 
-`full` remains the default for compatibility. Agents choose `brief` or
-`metadata` when triaging. On a deterministic synthetic fixture, the compact
-Jira search used 1,332 rather than 4,252 `cl100k_base` tokens; Confluence
-metadata used 72 rather than 1,466. These are output-size measurements, not
-live tenant measurements or a claim about total agent cost. Run
+`full` remains the default for compatibility. Agents can request `brief` or
+`metadata` for navigation, then fetch the relevant full issue or page. On a
+deterministic synthetic fixture, the compact Jira search used 1,332 rather
+than 4,252 `cl100k_base` tokens; Confluence metadata used 72 rather than
+1,466. The fixture repeats the same acceptance-criteria text many times, so
+these numbers describe omitted output bytes, **not redundant information or
+end-to-end token savings**. Run
 `UV_FROZEN=1 uv run python scripts/measure_atlassian_output.py` from
 `backend/` to reproduce.
+
+### Content relevance audit of historical tool results
+
+Local agent context snapshots contain one complete Jira search result for ten
+real issues and five complete Confluence page results from earlier sessions.
+The Jira call explicitly requested `description`; its ten descriptions contain
+scope, deliverables, proposed solutions, and acceptance criteria. A `brief`
+projection would remove all ten descriptions. The five Confluence bodies
+(about 7,400–12,400 characters each) contain roadmap phases, risks, and
+architecture decisions. A `metadata` projection would remove every body.
+These fields are necessary for analysis, implementation, and QA tasks; a
+subsequent full read would be required. The historical calls used the default
+`full` mode, so the compact modes have **no observed production token saving**
+in these sessions. The compact response may be useful for finding which issue
+or page to open, but that use case still needs task-level measurement of
+follow-up reads, total tokens, tool calls, latency, and answer quality.
+
+The original page bodies were retrieved from complete context snapshots;
+later compacted snapshots truncate their visible tool results. This audit
+does not include a live Cloud tenant run of the new modes.
 
 ## Self-created MCP security boundary
 
