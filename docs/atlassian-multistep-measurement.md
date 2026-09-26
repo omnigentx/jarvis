@@ -158,3 +158,64 @@ at the replacement site, and both Jira and Confluence read endpoints currently
 authenticate. Other environments must configure their own URLs and
 credentials before MCP E2E tests. Never add API tokens to
 this document or the benchmark output.
+
+## Read-only task-level A/B probe on the replacement Cloud site
+
+This follow-up used the configured local OpenAI-compatible proxy and the
+actual `JiraFetcher`/`ConfluenceFetcher` with this PR's response projections.
+The `coding-agent` alias resolved to `gpt-5.6-luna` on every recorded call.
+Each arm received the same system prompt, user question, and available
+read-only tool schemas at a given workflow stage. We randomized arm order
+with a fixed seed and ran two repetitions per arm and question. The table uses
+the API's **total LLM token usage** summed across all model calls, including
+tool messages, rather than `cl100k_base` tool-output estimates. We also
+inspected every tool-call sequence and final answer against the live source.
+No Atlassian writes, team runs, file-cache hits, or credential changes were
+part of this probe.
+
+| Question and workflow | A: full total tokens, runs | B: compact total tokens, runs | B versus A, mean | Tool calls A → B | Answer check |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Jira triage: identify the two in-progress issues and the Story; full versus brief search | 1,808; 1,810 | 1,236; 1,234 | −574 (−31.7%) | 1 → 1 | 2/2 correct in both |
+| Confluence content: maximum simultaneous editors and five content types; full page versus metadata-first, then full on demand | 3,976; 3,990 | 5,101; 5,126 | +1,131 (+28.4%) | 2 → 3 | 2/2 correct in both |
+| Confluence metadata: version and attachment filename/type; full page versus metadata-first | 3,876; 3,879 | 1,656; 1,656 | −2,222 (−57.3%) | 2 → 2 | 2/2 correct in both |
+
+The Confluence metadata-first arm above was a **staged experimental wrapper**:
+the agent could search and read page metadata first; the full-body tool became
+available after that read. It is not the current production default. In a
+separate free-choice run with the full-body tool immediately available, the
+model selected the full page even for the metadata-only question. Both arms
+then made the same two calls and used approximately 4,000 total LLM tokens.
+Changing a response-mode default while leaving `full` selectable had the
+same behavior: the model explicitly requested `full` on every run. These
+observations limit any claim that opt-in compact modes reduce real agent
+spend without a workflow change.
+
+Confluence's `metadata` projection still fetches the full page from Atlassian
+before omitting its body from the agent response. The metadata-first body
+question therefore added a second upstream full-page fetch. The measured
+reduction on the metadata-only question is in **LLM context**, not upstream
+bytes. With only two runs per arm, wall times (about 7–11 seconds for these
+Confluence tasks) cannot support a latency claim.
+
+An additional Jira question asked for the description state of all four
+issues. The full-search arm used 4,746 and 4,785 total LLM tokens; the
+brief-search arm used 3,519 and 3,517. Both arms called `jira_get_issue` for
+all four issues, so each made five tool calls. The Jira REST API returned an
+empty ADF document (`content: []`) for each description, but both MCP full
+search and `jira_get_issue` omitted the `description` key entirely. The full
+arm answered cautiously that description state was unavailable; the brief
+arm asserted that all were empty. The latter happened to match the upstream
+API but was **not supported by the MCP result it saw**. This exposes a real
+information-quality gap in the full projection, so the smaller token total
+must not be counted as a verified quality-preserving win for that question.
+
+These tasks use four sparse Jira issues and one Confluence onboarding page,
+not representative team documents. No answer was judged by a model; the
+checks used required keys/facts, with the description case reviewed manually
+against the raw API and MCP outputs. The proxy did not report cached-input
+tokens separately. The probe is evidence for these paths only, not a
+production-wide token, latency, or teamwork claim. The resulting decision is
+to retain `full` as the default, use `brief` for triage when its fields are
+sufficient, and avoid forcing Confluence metadata before body questions.
+The missing Jira description state and Confluence metadata upstream fetch
+deserve separate tool-output fixes and new tests before a wider rollout.
