@@ -662,6 +662,7 @@ class AgentCreate(BaseModel):
 
 
 class AgentUpdate(BaseModel):
+    expected_revision: int | None = None
     instruction: str | None = None
     model: str | None = None
     servers: list[str] | None = None
@@ -1198,12 +1199,14 @@ async def update_agent(name: str, update: AgentUpdate):
 
     from services import agent_definitions as defs_svc
 
-    update_data = _normalize_create_payload(update.model_dump(exclude_none=True))
+    payload = update.model_dump(exclude_none=True)
+    expected_revision = payload.pop("expected_revision", None)
+    update_data = _normalize_create_payload(payload)
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")
 
     try:
-        defs_svc.update_definition(name, **update_data)
+        defs_svc.update_definition(name, expected_revision=expected_revision, actor="api", **update_data)
     except ValueError as e:
         msg = str(e)
         status = 404 if "not found" in msg else 400
