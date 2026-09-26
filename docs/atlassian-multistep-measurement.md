@@ -22,6 +22,27 @@ Confluence search 2,047; Jira search 4,810; then five page reads of 3,525,
 3,110, 2,015, 2,167, and 2,361. The script reports cumulative totals at
 each step so later repetitions can be compared without changing the metric.
 
+### Exploratory read-only Jira Cloud run on the replacement tenant
+
+The existing local Jira credential authenticated successfully to the new
+`omnigentx.atlassian.net` site and project `SCRUM`. A direct run through this
+PR's `JiraFetcher` and response projection found four issues, all without a
+description. The same `cl100k_base` serialization counted:
+
+| Cloud path | Tool-output tokens | Tool calls |
+| --- | ---: | ---: |
+| Full search, four issues | 1,174 | 1 |
+| Brief search only | 594 | 1 |
+| Brief search + actual `get_issue` for one issue | 899 | 2 |
+| Brief search + actual `get_issue` for all four | 1,820 | 5 |
+
+The full and brief searches returned the same issue ordering. This is one
+small, sparse project and one sequential run; latency was not repeated or
+controlled for order. It establishes that follow-up reads can erase output
+savings even on a live tenant, but it cannot test whether omitted descriptions
+would hurt answer quality. Confluence read-only endpoints returned HTTP 401
+with both existing local credentials, so there is no live Confluence result.
+
 | Step using the same real content | Output tokens | Tool calls | Interpretation |
 | --- | ---: | ---: | --- |
 | Jira search, full | 4,810 | 1 | All ten descriptions available |
@@ -118,5 +139,7 @@ and full-content fallback before the cache is enabled by default.
 
 The replacement Cloud site is `omnigentx.atlassian.net` with Jira project
 `SCRUM`. The local ignored `backend/fastagent.secrets.yaml` still points at
-the retired site; new local credentials and URLs are required before a live
-read-only run. Never add API tokens to this document or the benchmark output.
+the retired URL, although its Jira credential works when directed to the new
+site. The Confluence credential or access needs updating. The runtime URLs
+must be changed locally before running MCP E2E tests. Never add API tokens to
+this document or the benchmark output.
