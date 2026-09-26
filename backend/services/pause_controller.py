@@ -409,8 +409,10 @@ class PauseController:
             except PermissionError:
                 logger.warning("[RESUME] Permission denied sending signal to %s (pid=%d)", agent_name, pid)
 
-        # 4. Persist DB status back to running.
-        self._update_db_status(agent_name, "running")
+        # A subprocess may have died during a backend restart while its
+        # pause intent was retained. Clearing that intent makes it eligible
+        # for the next inbox wake, but there is no process running yet.
+        self._update_db_status(agent_name, "running" if pid else "idle")
 
         # 4b. Drop the agent_pause_state row — pause is no longer active.
         self._persist_resume(agent_name)
@@ -982,14 +984,10 @@ class PauseController:
         pause (or approval-driven pause that's still pending) survives
         a backend restart. Returns the count of agents restored.
 
-        Garbage collection: subprocess agents whose PID died with the
-        previous backend leave a dangling ``agent_pause_state`` row
-        that can never be resumed by SIGUSR2 (no process to signal).
-        Drop those rows here so they don't accumulate across restart
-        cycles and so a future spawn under the same agent_name doesn't
-        inherit a stale "paused" state. In-process agents (no
-        spawn_record) are always considered live — backend restart =
-        Jarvis restart, so restoring its pause is correct.
+        Keep team pause intent even when its subprocess died with the
+        previous backend: inbox delivery must not restart paid work until
+        the user explicitly resumes the team. Orphan solo/in-process
+        request pauses are discarded because their request no longer exists.
 
         Idempotent — safe to call multiple times. Skips agents already
         in ``_paused_agents`` (e.g. if approval_service.restore ran
@@ -1014,6 +1012,20 @@ class PauseController:
             if agent_name in self._paused_agents:
                 continue
 
+            team_record_exists = False
+            if row.team_name:
+                try:
+                    import services.shared_state as _state
+                    registry = _state.registry_db
+                    team_record_exists = registry is None or any(
+                        rec.get("team_name") == row.team_name
+                        for rec in registry.find_by_name(agent_name)
+                    )
+                except Exception:
+                    # A transient registry error must not disarm a manual
+                    # pause and allow unsolicited inbox wakeups.
+                    team_record_exists = True
+
             # GC: if the persisted pause is orphan (in-process agent
             # whose chat task died with the backend, OR subprocess
             # whose PID is dead), drop the row instead of restoring
@@ -1021,7 +1033,7 @@ class PauseController:
             # "resume = continue the work" — restoring an orphan
             # pause would resume to nothing, which they correctly
             # called out as defeating pause/resume's purpose.
-            if self._is_orphan_pause(agent_name):
+            if not team_record_exists and self._is_orphan_pause(agent_name):
                 self._persist_resume(agent_name)
                 dropped.append(agent_name)
                 continue

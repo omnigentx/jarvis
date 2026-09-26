@@ -15,7 +15,6 @@ import logging
 import os
 import sqlite3
 from datetime import datetime
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -243,7 +242,6 @@ class AgentRegistryDB:
         Returns count of records cleaned up.
         """
         cleaned = 0
-        my_pid = os.getpid()
         active_statuses = ("running", "pending", "idle", "paused")
         zombie_statuses = ("cancelled", "error")
         try:
@@ -280,8 +278,13 @@ class AgentRegistryDB:
                     if status not in active_statuses:
                         continue
                     lifecycle = rec.get("lifecycle", "")
-                    # Target status: resumable agents → idle; oneshot → completed
-                    target_status = "idle" if lifecycle == "resumable" else "completed"
+                    # A paused team member may be dormant after backend
+                    # restart. Preserve the pause intent when its process
+                    # dies; explicit resume will move it to idle.
+                    target_status = (
+                        "paused" if status == "paused"
+                        else "idle" if lifecycle == "resumable" else "completed"
+                    )
 
                     if not pid:
                         rec["status"] = target_status
@@ -315,7 +318,9 @@ class AgentRegistryDB:
                             except Exception:
                                 pass
                             rec["status"] = target_status
-                            rec["completed_at"] = datetime.now().timestamp()
+                            rec["pid"] = None
+                            if status != "paused":
+                                rec["completed_at"] = datetime.now().timestamp()
                             conn.execute(
                                 "INSERT OR REPLACE INTO spawn_registry (run_id, data_json) VALUES (?, ?)",
                                 (row["run_id"], json.dumps(rec, ensure_ascii=False)),
@@ -324,7 +329,9 @@ class AgentRegistryDB:
                         # else: process is alive with a real parent → leave it
                     except ProcessLookupError:
                         rec["status"] = target_status
-                        rec["completed_at"] = datetime.now().timestamp()
+                        rec["pid"] = None
+                        if status != "paused":
+                            rec["completed_at"] = datetime.now().timestamp()
                         conn.execute(
                             "INSERT OR REPLACE INTO spawn_registry (run_id, data_json) VALUES (?, ?)",
                             (row["run_id"], json.dumps(rec, ensure_ascii=False)),
