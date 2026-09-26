@@ -52,6 +52,10 @@ The original page bodies were retrieved from complete context snapshots;
 later compacted snapshots truncate their visible tool results. This audit
 does not include a live Cloud tenant run of the new modes.
 
+The multi-step replay, its limits, and the proposed content-file lifecycle
+are documented in `docs/atlassian-multistep-measurement.md`. The replay does
+not justify enabling compact responses or a file cache by default yet.
+
 ## Self-created MCP security boundary
 
 Generated MCP code is reviewed against a source SHA-256 before dependency
@@ -84,9 +88,11 @@ before they can be described as production-ready.
 - Dashboard Chromium fixture tests: 3 passed, including the revision SSE
   badge. These use synthetic SSE events, not a live agent run.
 - Cloud integration and browser acceptance against a real Atlassian test
-  tenant remain open. The available configured base URL returned HTTP 404 at
-  Jira `/rest/api/3/myself` and the designated test project and space were
-  unavailable. Do not direct write tests at a production project or space.
+  tenant remain open. The earlier configured base URL returned HTTP 404 at
+  Jira `/rest/api/3/myself`. The user has recreated the test site at
+  `omnigentx.atlassian.net` with Jira project `SCRUM`; local ignored
+  credentials and URLs still need updating before a read-only live run.
+  Do not direct write tests at a production project or space.
 
 The MR remains draft until the Cloud tenant test, private-scope security
 boundary, and an end-to-end PM acknowledgement contract are accepted or
