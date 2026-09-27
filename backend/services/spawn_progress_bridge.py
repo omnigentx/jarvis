@@ -1312,33 +1312,29 @@ class SpawnProgressBridge:
     async def _trigger_orchestrator_resume(
         self, orch_record: dict, team_name: str,
     ) -> None:
-        """Resume idle orchestrator to process team status notification.
+        """Wake the session's orchestrator to consume its queued status report.
 
-        Uses the same inject_resume pattern as prompt injection — loads
-        context from DB, spawns new subprocess with full conversation history.
-        The team status report is already in MessageBus inbox, so
-        _check_and_resume_on_inbox will pick it up during spawn.
+        Registry status may say idle while its process and channel are still
+        alive. The scoped wake probes the channel before scheduling a guarded
+        resume, preventing two live runs for one team member.
         """
         orch_name = orch_record.get("agent_name", "")
         try:
-            from services.inject_resume import resume_with_inject
+            from fast_agent.spawn.servers._team_helpers import wake_team_agent
 
-            result = await resume_with_inject(
-                agent_name=orch_name,
-                inject_message=(
-                    "Check your inbox for team status updates. "
-                    "Review member results and decide next actions."
-                ),
-                spawn_record=orch_record,
-                bridge=self,
+            session_id = (orch_record.get("session_id") or
+                          ((orch_record.get("original_config") or {}).get("env_vars") or {})
+                          .get("TEAM_SESSION_ID", ""))
+            result = wake_team_agent(
+                session_id, orch_name, orch_record.get("run_id", ""),
             )
             logger.info(
-                "[TEAM_NOTIFY] Resumed orchestrator %s → run_id=%s (team=%s)",
-                orch_name, result.get("run_id"), team_name,
+                "[TEAM_NOTIFY] Woke orchestrator %s via %s (team=%s, session=%s)",
+                orch_name, result, team_name, session_id,
             )
         except Exception as e:
             logger.warning(
-                "[TEAM_NOTIFY] Failed to resume orchestrator %s: %s",
+                "[TEAM_NOTIFY] Failed to wake orchestrator %s: %s",
                 orch_name, e, exc_info=True,
             )
 
