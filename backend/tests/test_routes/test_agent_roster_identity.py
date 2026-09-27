@@ -3,6 +3,7 @@
 from unittest.mock import patch
 
 import pytest
+from fastapi import HTTPException
 
 
 @pytest.mark.asyncio
@@ -38,3 +39,44 @@ async def test_list_agents_keeps_same_name_in_independent_teams():
         ("session-a", "run-a", "Alex [PM]"),
         ("session-b", "run-b", "Alex [PM]"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_message_history_requires_session_for_duplicate_names():
+    from routes.agents import get_agent_messages, get_agent_turn_full
+    import services.shared_state as state
+
+    class Registry:
+        def find_by_name(self, name):
+            assert name == "Alex [PM]"
+            return [{"session_id": "session-a"}, {"session_id": "session-b"}]
+
+    with patch.object(state, "registry_db", Registry()), \
+         patch("services.agent_message_stream.list_agent_messages", return_value={"turns": [], "total": 0}) as list_messages, \
+         patch("services.agent_message_stream.get_agent_turn_full", return_value={"turn_idx": 0}) as get_full:
+        with pytest.raises(HTTPException) as ambiguous:
+            await get_agent_messages("Alex [PM]")
+        assert ambiguous.value.status_code == 409
+        with pytest.raises(HTTPException) as missing:
+            await get_agent_turn_full("Alex [PM]", 0, session_id="other")
+        assert missing.value.status_code == 404
+
+        await get_agent_messages("Alex [PM]", session_id="session-b")
+        await get_agent_turn_full("Alex [PM]", 0, session_id="session-a")
+        assert list_messages.call_args.kwargs["session_id"] == "session-b"
+        assert get_full.call_args.kwargs["session_id"] == "session-a"
+
+
+@pytest.mark.asyncio
+async def test_unambiguous_name_only_history_uses_its_team_session():
+    from routes.agents import get_agent_messages
+    import services.shared_state as state
+
+    class Registry:
+        def find_by_name(self, _name):
+            return [{"session_id": "only-team"}]
+
+    with patch.object(state, "registry_db", Registry()), \
+         patch("services.agent_message_stream.list_agent_messages", return_value={"turns": [], "total": 0}) as list_messages:
+        await get_agent_messages("Alex [PM]")
+    assert list_messages.call_args.kwargs["session_id"] == "only-team"

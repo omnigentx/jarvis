@@ -1732,8 +1732,38 @@ async def list_all_skills():
 # ─── Agent Activity Endpoints ─────────────────────────────────────────────────────
 
 
+def _validate_message_session(name: str, session_id: str | None) -> str | None:
+    """Resolve a safe team scope or reject an ambiguous history read."""
+    import services.shared_state as state
+
+    registry = state.registry_db
+    if registry is None:
+        if session_id:
+            raise HTTPException(status_code=404, detail="Team session not found")
+        return None
+    records = registry.find_by_name(name)
+    sessions = {
+        record.get("session_id") or
+        ((record.get("original_config") or {}).get("env_vars") or {})
+        .get("TEAM_SESSION_ID") or ""
+        for record in records
+    }
+    if session_id and session_id not in sessions:
+        raise HTTPException(status_code=404, detail="Agent not found in team session")
+    if not session_id and len(sessions) > 1:
+        raise HTTPException(
+            status_code=409,
+            detail={"message": "Agent name is ambiguous; choose a team",
+                    "session_ids": sorted(sessions)},
+        )
+    return session_id or next(iter(sessions), None) or None
+
+
 @router.get("/{name}/messages", dependencies=[Depends(verify_api_key)])
-async def get_agent_messages(name: str, since: int = 0, limit: int = 200):
+async def get_agent_messages(
+    name: str, since: int = 0, limit: int = 200,
+    session_id: str | None = None,
+):
     """Return PromptMessageExtended turns from agent.message_history.
 
     Source of truth for the Team Monitor v2 UI. Each turn is one item:
@@ -1749,20 +1779,26 @@ async def get_agent_messages(name: str, since: int = 0, limit: int = 200):
     """
     from services.agent_message_stream import list_agent_messages
 
+    session_id = _validate_message_session(name, session_id)
     if limit <= 0 or limit > 500:
         limit = 200
-    return list_agent_messages(name, since=max(0, since), limit=limit)
+    return list_agent_messages(
+        name, since=max(0, since), limit=limit, session_id=session_id,
+    )
 
 
 @router.get("/{name}/turns/{turn_idx}/full", dependencies=[Depends(verify_api_key)])
-async def get_agent_turn_full(name: str, turn_idx: int):
+async def get_agent_turn_full(
+    name: str, turn_idx: int, session_id: str | None = None,
+):
     """Return the untruncated PromptMessageExtended for one turn.
 
     Called when a user clicks "Show full" on a truncated content block.
     """
     from services.agent_message_stream import get_agent_turn_full as _get_full
 
-    result = _get_full(name, turn_idx)
+    session_id = _validate_message_session(name, session_id)
+    result = _get_full(name, turn_idx, session_id=session_id)
     if result is None:
         raise HTTPException(
             status_code=404,

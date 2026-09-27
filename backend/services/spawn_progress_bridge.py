@@ -399,8 +399,15 @@ class SpawnProgressBridge:
 
             full = data.get("message") or {}
             turn_idx = data.get("turn_idx")
+            run_id = raw.get("run_id") or data.get("run_id")
+            session_id = data.get("session_id") or ""
+            if not session_id and run_id and self._registry_db:
+                record = self._registry_db.get_record(run_id) or {}
+                session_id = record.get("session_id") or ""
             if isinstance(turn_idx, int):
-                _record_recent_turn(agent_name, turn_idx, full)
+                _record_recent_turn(
+                    agent_name, turn_idx, full, session_id=session_id,
+                )
 
             try:
                 trimmed = trim_message_for_stream(_json.loads(_json.dumps(full)))
@@ -410,7 +417,8 @@ class SpawnProgressBridge:
             activity_stream_manager.broadcast({
                 "agent_name": agent_name,
                 "event_type": "message_turn",
-                "run_id": raw.get("run_id") or data.get("run_id"),
+                "run_id": run_id,
+                "session_id": session_id or None,
                 "timestamp": raw.get("timestamp") or time.time(),
                 "data": {
                     "turn_idx": turn_idx,

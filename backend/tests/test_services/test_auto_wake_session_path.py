@@ -93,8 +93,10 @@ async def test_check_and_resume_reads_session_scoped_messages_dir(tmp_path, capl
     # production (TEAM_MESSAGES_DIR present and session-scoped).
     fake_registry = MagicMock()
     fake_registry.has_running_resume.return_value = False
+    fake_registry._backend._db_path = str(tmp_path / "registry.db")
     fake_record = MagicMock()
     fake_record.run_id = "old-run-id"
+    fake_record.session_id = session_id
     fake_record.original_config = {
         "agent_name": "Adrian [BA]",
         "role": "ba",

@@ -434,3 +434,14 @@ def test_recent_turn_cache_replaces_existing_idx():
     cached = ams.get_recent_turns(name)
     assert len(cached) == 2
     assert cached[1]["message"]["content"][0]["text"] == "new"
+
+
+def test_recent_turns_are_isolated_by_team_session():
+    name = "Alex [Dev]"
+    ams._record_recent_turn(name, 0, {"role": "user", "content": [{"text": "team A"}]}, session_id="team-a")
+    ams._record_recent_turn(name, 0, {"role": "user", "content": [{"text": "team B"}]}, session_id="team-b")
+
+    assert ams.list_agent_messages(name, session_id="team-a")["turns"][0]["message"]["content"][0]["text"] == "team A"
+    assert ams.list_agent_messages(name, session_id="team-b")["turns"][0]["message"]["content"][0]["text"] == "team B"
+    assert ams.get_agent_turn_full(name, 0, session_id="team-a")["message"]["content"][0]["text"] == "team A"
+    assert ams.get_agent_turn_full(name, 0, session_id="team-b")["message"]["content"][0]["text"] == "team B"
