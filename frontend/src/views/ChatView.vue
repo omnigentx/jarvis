@@ -288,12 +288,6 @@ function handleSwitchAgent(name) {
         <button v-else class="crawl-btn" @click="crawl.dismiss()">{{ t('chat.dismiss') }}</button>
       </div>
 
-      <!-- Status footer (above input) -->
-      <div v-if="statusFooter" class="status-footer">
-        <span class="status-footer-dot" :class="{ pulse: statusFooterActive }" />
-        <span class="status-footer-text">{{ statusFooter }}</span>
-      </div>
-
       <ChatInput
         :isStreaming="isStreaming"
         @send="handleSend"
