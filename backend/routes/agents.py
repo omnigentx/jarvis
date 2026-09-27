@@ -714,20 +714,24 @@ async def list_agents(include_completed: bool = False):
             registry = {}
             
         # ── Two-pass dedup: correctly classify team agents ──
-        # Pass 1: Group ALL non-oneshot records by agent_name.
+        # Pass 1: Group runs by team session and display name. Independent
+        # teams may reuse the same display name and must remain separate.
         # Include error/failed records for team_name resolution, but
         # mark them so we can deprioritize them for display.
-        all_agent_records: dict[str, list[tuple[str, dict]]] = {}  # name → [(run_id, record)]
+        all_agent_records: dict[tuple[str, str], list[tuple[str, dict]]] = {}
         for run_id, record in registry.items():
             lifecycle = record.get("lifecycle", "")
             if lifecycle == "oneshot":
                 continue
             agent_name = record.get("agent_name", record.get("role", "agent"))
-            all_agent_records.setdefault(agent_name, []).append((run_id, record))
+            session_id = (record.get("session_id") or
+                          ((record.get("original_config") or {}).get("env_vars") or {})
+                          .get("TEAM_SESSION_ID") or "")
+            all_agent_records.setdefault((session_id, agent_name), []).append((run_id, record))
         
         # Pass 2: Pick best record per agent, with correct team classification
-        seen_names: dict[str, tuple[str, dict]] = {}  # name → (run_id, record)
-        for agent_name, records in all_agent_records.items():
+        seen_agents: dict[tuple[str, str], tuple[str, dict]] = {}
+        for identity, records in all_agent_records.items():
             # Determine if this agent is a team member (ANY record has team_name,
             # including error/failed ones — they still carry team metadata)
             any_team_name = ""
@@ -783,7 +787,7 @@ async def list_agents(include_completed: bool = False):
                 best_record = dict(best_record)  # Don't mutate original
                 best_record["team_name"] = any_team_name
             
-            seen_names[agent_name] = (best_run_id, best_record)
+            seen_agents[identity] = (best_run_id, best_record)
         
         # Resolve snapshot DB path once for the whole loop — avoids
         # re-running Path.resolve() per agent.
@@ -796,11 +800,11 @@ async def list_agents(include_completed: bool = False):
         # used to fan out 7 selects per ``/agents`` poll).
         _all_names = [
             r.get("agent_name") or r.get("role") or ""
-            for _, r in seen_names.values()
+            for _, r in seen_agents.values()
         ]
         _snapshot_cache = _fetch_latest_snapshots_batch(_all_names, _snap_db)
 
-        for run_id, record in seen_names.values():
+        for (session_id, _), (run_id, record) in seen_agents.items():
             agent_name = record.get("agent_name", record.get("role", "agent"))
             # Multi-signal status (channel sock + snapshot trigger) instead
             # of trusting the bridge-fed DB field alone. See
@@ -857,6 +861,7 @@ async def list_agents(include_completed: bool = False):
                 "status": status,
                 "role": role,
                 "run_id": run_id,
+                "session_id": session_id or None,
                 "lifecycle": record.get("lifecycle", ""),
                 "team_name": team_name,
                 "skills": spawn_skills,
