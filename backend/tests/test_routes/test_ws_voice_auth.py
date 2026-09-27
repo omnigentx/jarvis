@@ -19,6 +19,8 @@ around the ``websocket_connect`` block alone.
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
@@ -54,6 +56,24 @@ def _stable_secrets(monkeypatch):
     monkeypatch.setenv("JWT_SECRET", "test-jwt-secret-xxxxxxxxxxxxxxxxxxxx")
     monkeypatch.setenv("JARVIS_API_KEY", "test-api-key-xxxxxxxxxxxxxxxxxxxx")
     monkeypatch.setattr(core_auth, "JARVIS_API_KEY", "test-api-key-xxxxxxxxxxxxxxxxxxxx")
+    # These tests exercise auth precedence, not the speech model. A valid
+    # socket otherwise starts the real faster-whisper worker in a background
+    # thread; pytest can print a passing summary yet wait forever for that
+    # multiprocessing child during interpreter shutdown.
+    from services import shared_state
+
+    def set_hook(hook):
+        if hook is not None:
+            hook("ws_status", {"state": "ready"})
+
+    fake_stt = SimpleNamespace(
+        is_alive=True,
+        set_hook=set_hook,
+        resume=lambda: None,
+        pause=lambda: None,
+        feed_audio=lambda _chunk: None,
+    )
+    monkeypatch.setattr(shared_state, "stt_recorder", fake_stt)
     yield
 
 
