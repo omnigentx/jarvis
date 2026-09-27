@@ -138,3 +138,30 @@ test('spawned dynamic agent exposes model selection in Overview', async ({ page 
   await expect(selection.getByRole('combobox', { name: 'Model ID' })).toBeVisible()
   expect(backend.unexpected).toEqual([])
 })
+
+test('catalog failure keeps manual entry available and retry restores suggestions', async ({ page }) => {
+  await seedApiKey(page)
+  const backend = await mockBackend(page, [
+    join(FIXTURES, '_app_boot_noise.yaml'),
+    join(FIXTURES, 'agent_model_selection.yaml'),
+  ])
+  let catalogRequests = 0
+  await page.route('**/api/agents/model-catalog', route => {
+    catalogRequests += 1
+    return route.fulfill(catalogRequests === 1
+      ? { status: 503, contentType: 'application/json', body: JSON.stringify({ detail: 'catalog offline' }) }
+      : { status: 200, contentType: 'application/json', body: JSON.stringify({ models: ['openai.coding-agent', 'openai.cx/gpt-6-luna'] }) })
+  })
+  await page.goto('/agents/Jarvis')
+  const selection = page.getByRole('region', { name: 'Model selection' })
+  await selection.getByRole('button', { name: 'Change model' }).click()
+  const input = selection.getByRole('combobox', { name: 'Model ID' })
+  await expect(input).toBeEnabled()
+  await expect(selection).toContainText('Suggestions are unavailable')
+  await selection.getByRole('button', { name: 'Retry' }).click()
+  await expect(selection).toContainText('2 available model IDs')
+  await input.fill('gpt-6')
+  await expect(selection.getByRole('option', { name: 'openai.cx/gpt-6-luna' })).toBeVisible()
+  expect(catalogRequests).toBe(2)
+  expect(backend.unexpected).toEqual([])
+})
