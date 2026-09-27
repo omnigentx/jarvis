@@ -106,6 +106,7 @@ async def inject_prompt(
                     "event_type": "inject",
                     "agent_name": agent_name,
                     "session_id": session_id or next(iter(team_sessions)),
+                    "run_id": records[0].get("run_id"),
                     "message": f"Prompt injected: {message[:80]}{'…' if len(message) > 80 else ''}{attachment_desc}",
                     "timestamp": time.time(),
                     "data": {"source": "dashboard", "has_files": bool(files_data)},
@@ -231,7 +232,7 @@ async def _inject_via_message_bus(
         # not necessarily the MessageBus root.
         env_vars = (spawn_record.get("original_config") or {}).get("env_vars") or {}
         configured_dir = env_vars.get("TEAM_MESSAGES_DIR", "")
-        session_id = spawn_record.get("session_id", "")
+        session_id = _record_session_id(spawn_record)
         project_dir = os.environ.get("SPAWN_PROJECT_DIR", "")
         if configured_dir:
             messages_dir = Path(configured_dir)
@@ -309,6 +310,8 @@ async def _inject_via_message_bus(
         activity_stream_manager.broadcast({
             "event_type": "started",
             "agent_name": agent_name,
+            "session_id": session_id or None,
+            "run_id": spawn_record.get("run_id"),
             "message": f"Processing inject: {message[:60]}{'…' if len(message) > 60 else ''}",
             "timestamp": time.time(),
         })

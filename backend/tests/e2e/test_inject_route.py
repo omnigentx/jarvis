@@ -148,6 +148,7 @@ async def test_inject_idle_team_member_uses_scoped_inbox_not_direct_resume(
     import services.inject_resume as inject_resume_mod
     import fast_agent.spawn.message_bus as mb_mod
     import fast_agent.spawn.servers._team_helpers as team_helpers
+    from services.activity_stream import activity_stream_manager
 
     inbox = tmp_path / "team-b"
     record = {
@@ -162,6 +163,8 @@ async def test_inject_idle_team_member_uses_scoped_inbox_not_direct_resume(
     monkeypatch.setattr(mb_mod, "MessageBus", MagicMock(return_value=bus))
     wake = MagicMock(return_value="scheduled")
     monkeypatch.setattr(team_helpers, "wake_team_agent", wake)
+    events = []
+    monkeypatch.setattr(activity_stream_manager, "broadcast", events.append)
     direct_resume = AsyncMock()
     monkeypatch.setattr(inject_resume_mod, "resume_with_inject", direct_resume)
 
@@ -175,6 +178,9 @@ async def test_inject_idle_team_member_uses_scoped_inbox_not_direct_resume(
     assert response.json()["path"] == "message_bus"
     bus.send.assert_called_once()
     wake.assert_called_once_with("team-b", "Alex [PM]", "run-b")
+    started = [event for event in events if event.get("event_type") == "started"]
+    assert started[0]["session_id"] == "team-b"
+    assert started[0]["run_id"] == "run-b"
     direct_resume.assert_not_awaited()
 
 
