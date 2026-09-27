@@ -1,5 +1,41 @@
 # PR #159 acceptance evidence — 2026-09-27
 
+## Current review checkpoint — 2026-09-28
+
+PR #159 now includes the scoped restart/identity recovery first developed in
+stacked PR #163. Review the consolidated head as one Jarvis change, with
+fast-agent #14 and mcp-atlassian #5 as dependencies. Earlier observations
+below remain dated evidence of the defects before repair.
+
+- **Real localhost team E2E:** Jarvis Chat created independent sessions
+  `450bcd26` and `14688e5f`. The second team received two user requirement
+  changes through Chat. A role-only lifecycle event reproduced a wrong PM
+  wake (`pm`); after the fix, Monitor injected River [Dev] returned
+  `ACK-REPAIR-02`, the worker cycle woke Bailey [PM], Bailey connected 9/9
+  MCP servers and answered, and the full team cycle notified the user.
+  [Detailed log and UI screenshots](../pr163/session-routing-acceptance.md).
+- **Cloud MCP E2E:** on the test tenant, real MCP Jira search full/brief,
+  Confluence full/metadata and version diff, and selected Jira attachment
+  download succeeded. A 50-byte uploaded attachment was returned byte for
+  byte. Jarvis's team created and updated Jira SCRUM-35 and Confluence page
+  98855 through the MCP. [Exact Cloud call results](https://github.com/omnigentx/mcp-atlassian/pull/5#issuecomment-5858118577).
+- **Jira state:** SCRUM-35 Done; SCRUM-36 closed as duplicate; SCRUM-32 and
+  SCRUM-30 In Progress pending review. Confluence page 98855 version 9 records
+  the team rerun and MCP Cloud checks.
+- **Tests on the consolidated merge candidate:** backend non-Cloud full
+  suite 2,293 passed, 4 skipped, 1 xfailed; frontend unit 227 passed;
+  frontend build passed; focused desktop/mobile browser matrix 4 passed.
+  The full backend test process retained a multiprocessing child after the
+  summary, then exited 0 once that child was terminated. The pushed head
+  must pass its own CI before changing review state.
+- **Remaining scope:** real UI duplicate-name team creation is currently
+  blocked by the global name allocator; socket/HTTP fixture tests exercise
+  duplicate-name isolation. Crash-time exactly-once side effects, excess
+  context on resumed agents, and the local test-harness child leak are
+  tracked as backlog. Team B's measured 58 model calls cost an estimated
+  USD 0.877; one 10-token ACK reply loaded 41,115 input tokens. This is a
+  cost finding, not proof that any particular content can be dropped.
+
 This evidence was collected on `codex/atlassian-mcp-output` after merging
 `origin/main` (which includes Jarvis PRs #160 and #161). The only conflict
 resolution in Jarvis retains both the team-work and model-selection tools,

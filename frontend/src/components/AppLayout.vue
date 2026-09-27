@@ -25,12 +25,11 @@ import { useBreakpoint } from '../composables/useBreakpoint'
 import { useFabVisibility } from '../composables/useFabVisibility'
 import { useLang } from '../composables/useLang'
 import { useRealtimeStream } from '../composables/useRealtimeStream'
-import { useSSEConnection } from '../composables/useSSEConnection.js'
 import { useAgentsStore } from '../stores/agents'
 import { useApprovalsStore } from '../stores/approvals'
 import { useAudioPlayerStore } from '../stores/audioPlayer'
 import { useAudioPlayer } from '../composables/useAudioPlayer'
-import { apiFetch, buildSSEUrl } from '../api'
+import { apiFetch } from '../api'
 import { useToast } from '../composables/useToast'
 import ConnectionBanner from './ConnectionBanner.vue'
 import MiniAudioPlayer from './stories/MiniAudioPlayer.vue'
@@ -50,12 +49,28 @@ const isAudioPlaying = computed(() => audioPlayerStore.isMiniPlayerVisible)
 
 const store = useAgentsStore()
 const { status, reconnect } = useRealtimeStream({
+  onConnected: fetchUnreadCount,
   // Context-compaction lifecycle → non-blocking toasts. The store case
   // in agents.js owns the per-agent state; this only surfaces visible
   // feedback so the user knows compaction happened (and saved tokens)
   // without being interrupted mid-chat.
   onEvent(event) {
-    if (event.event_type === 'context_compaction_completed') {
+    if (event.event_type === 'scheduler_notification') {
+      unreadCount.value += 1
+      document.title = unreadCount.value > 0
+        ? `(${unreadCount.value}) ${route.meta.title || 'Dashboard'} — Jarvis`
+        : `${route.meta.title || 'Dashboard'} — Jarvis`
+    } else if (event.type === 'mcp' && event.action === 'warn') {
+      const detail = event.detail || {}
+      const summary = (detail.hits || [])
+        .map((hit) => hit.why)
+        .filter(Boolean)
+        .join('; ') || detail.category || 'warn'
+      toast.warning(`MCP warning — ${event.server || 'unknown'}`, {
+        description: summary,
+        duration: 8000,
+      })
+    } else if (event.event_type === 'context_compaction_completed') {
       const saved = event.data?.saved_tokens || 0
       const pct = Math.round((event.data?.reduction_ratio || 0) * 100)
       toast.success(
@@ -103,43 +118,14 @@ async function fetchUnreadCount() {
   try {
     const data = await apiFetch('/api/notifications/unread-count')
     unreadCount.value = data.unread_count || 0
+    document.title = unreadCount.value > 0
+      ? `(${unreadCount.value}) ${route.meta.title || 'Dashboard'} — Jarvis`
+      : `${route.meta.title || 'Dashboard'} — Jarvis`
   } catch (_) {}
 }
 
-useSSEConnection(buildSSEUrl('/api/scheduler/stream'), {
-  onMessage(ev) {
-    try {
-      const data = JSON.parse(ev.data)
-      if (data.type === 'new_notification') {
-        unreadCount.value += 1
-        document.title = unreadCount.value > 0
-          ? `(${unreadCount.value}) ${route.meta.title || 'Dashboard'} — Jarvis`
-          : `${route.meta.title || 'Dashboard'} — Jarvis`
-      }
-    } catch (_) {}
-  },
-})
-
 // ─── MCP warning toasts ───
 const toast = useToast()
-useSSEConnection(buildSSEUrl('/api/mcp/events/stream'), {
-  onMessage(ev) {
-    try {
-      const data = JSON.parse(ev.data)
-      if (data.type !== 'mcp' || data.action !== 'warn') return
-      const detail = data.detail || {}
-      const category = detail.category || 'warn'
-      const summary = (detail.hits || [])
-        .map((h) => h.why)
-        .filter(Boolean)
-        .join('; ') || category
-      toast.warning(`MCP warning — ${data.server || 'unknown'}`, {
-        description: summary,
-        duration: 8000,
-      })
-    } catch (_) {}
-  },
-})
 
 // ─── Nav (grouped per redesign/chrome.jsx) ───
 // Each item resolves to a router-link path declared in router.js.

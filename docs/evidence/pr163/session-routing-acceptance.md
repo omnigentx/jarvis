@@ -1,4 +1,4 @@
-# PR 163 session routing acceptance (in progress)
+# Session routing acceptance history (#163 consolidated into #159)
 
 ## Latest acceptance checkpoint (2026-09-28)
 
@@ -14,6 +14,7 @@
   River completed a read-only Monitor inspection. SCRUM-36 duplicated the
   task after River tried the wrong local ports; it was closed with an explicit
   duplicate note. SCRUM-35 is Done; SCRUM-32 remains In Progress for PR review.
+  Confluence page 98855 advanced to version 9 for the MCP Cloud checks.
 - A backend shutdown emitted a role-only lifecycle event that overwrote two
   stored PM display names with `pm`. On worker close, event
   `14688e5f:worker_cycle_closed:3` woke `pm`, not Bailey. The code now takes
@@ -136,7 +137,9 @@ queued in one team's inbox could awaken another team's same-name PM.
   dense recall and knowledge graph were disabled. This is a separate test
   environment limitation, not evidence that session routing works or fails.
 
-PRs 159 and 163 remain Draft until the above acceptance gates are evidenced.
+At this earlier checkpoint, PRs 159 and 163 remained Draft. The current
+2026-09-28 acceptance results are recorded at the top of this document and in
+`../pr159/acceptance.md`.
 
 ## Additional safety checks (2026-09-27)
 
