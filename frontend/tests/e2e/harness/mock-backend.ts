@@ -37,7 +37,8 @@ export type MockBackend = {
 
 export async function mockBackend(
   page: Page,
-  fixturePath: string | string[]
+  fixturePath: string | string[],
+  locale: 'en' | 'vi' = 'en',
 ): Promise<MockBackend> {
   // Accept a single fixture OR an array — array order is precedence
   // (LATER entries WIN). Typical use: `[noiseFixture, flowFixture]` so the
@@ -55,13 +56,13 @@ export async function mockBackend(
   // this every text locator would miss once i18n landed. Runs on every
   // navigation, ahead of app scripts; specs that exercise the toggle itself
   // still change it at runtime after load.
-  await page.addInitScript(() => {
+  await page.addInitScript((selectedLocale) => {
     try {
-      localStorage.setItem('jarvis_lang', 'en')
+      localStorage.setItem('jarvis_lang', selectedLocale)
     } catch {
       /* storage unavailable in this context — ignore */
     }
-  })
+  }, locale)
 
   const matchedCounts = new Map<string, number>()
   for (const key of Object.keys(fixture.responses)) matchedCounts.set(key, 0)
