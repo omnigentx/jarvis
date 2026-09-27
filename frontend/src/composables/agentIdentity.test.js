@@ -15,3 +15,14 @@ test('agent identity is stable for same session and name', () => {
     agentIdentity({ name: 'Worker', session_id: 'team-a' }),
   )
 })
+
+test('roster event lookup fails closed for missing or wrong session on duplicate names', async () => {
+  const { findAgentByIdentity } = await import('./agentIdentity.js')
+  const roster = [
+    { name: 'Worker', session_id: 'session-a' },
+    { name: 'Worker', session_id: 'session-b' },
+  ]
+  assert.equal(findAgentByIdentity(roster, 'Worker', undefined), undefined)
+  assert.equal(findAgentByIdentity(roster, 'Worker', 'session-c'), undefined)
+  assert.equal(findAgentByIdentity(roster, 'Worker', 'session-a'), roster[0])
+})
