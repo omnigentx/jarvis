@@ -70,6 +70,38 @@ queued in one team's inbox could awaken another team's same-name PM.
 
 PRs 159 and 163 remain Draft until the above acceptance gates are evidenced.
 
+## Additional safety checks (2026-09-27)
+
+- Fast-agent #14 `69af80e9` moves inbox acknowledgment from the
+  `before_llm_call` hook to `after_llm_call` after a non-cancelled model
+  response. A failed call leaves the message unread for a new runner; a
+  cancellation leaves it unread; a same-runner retry does not append the same
+  instruction twice. The focused hook tests and spawn suites passed
+  **113/113**; the fast-agent PR's latest CI jobs passed. This reduces message
+  loss, but side effects after the model response still require idempotency.
+- Jarvis #163 `7b965f2` rejects name-only pause, resume, and delete with HTTP
+  409 when records span multiple team sessions. Tests first failed against
+  the old routes, then passed; multiple runs in the *same* session remain
+  pauseable. This is a fail-closed guard, not a scoped-control API.
+- `delete_team` had a separate cross-team risk: after deleting by team name,
+  it called `delete_by_name()` for each member and purged activity/memory by
+  name. With shared member names that could remove another team's data.
+  Commit `1f6c197` rejects member-name or team-name collisions before any
+  cleanup. Both collision regression cases first failed on old code and now
+  pass. Session-scoped deletion and per-session memory ownership remain
+  backlog; concurrent create/delete must also be handled atomically.
+- A read-only probe of the localhost `/api/agents/activities/recent` path
+  returned **1,883 rows / 1,102,081 JSON bytes**. The service ran **124 SQL
+  queries** for 123 historical agent names in 125.2 ms server-side; one HTTP
+  request took 152.2 ms. The current Monitor does not render that activity
+  buffer: its canonical turn history comes from `useAgentTurns`. Removing the
+  unused prefetch is under review. These are response/DB measurements, not
+  claims of lower LLM token usage.
+- The team has a frontend identity patch in its isolated worktree. It has not
+  yet been integrated into #163 or accepted by a two-team browser run. The
+  localhost backend process is still serving the earlier code until the
+  active Dev task finishes and a controlled restart is safe.
+
 ## Follow-up on 2026-09-27 (current code `e53e1d1`)
 
 - The first direct Monitor inject (`fa01cf79`) **was processed**; its raw
