@@ -69,3 +69,40 @@ queued in one team's inbox could awaken another team's same-name PM.
   environment limitation, not evidence that session routing works or fails.
 
 PRs 159 and 163 remain Draft until the above acceptance gates are evidenced.
+
+## Follow-up on 2026-09-27 (current code `e53e1d1`)
+
+- The first direct Monitor inject (`fa01cf79`) **was processed**; its raw
+  JSONL line still said `unread`, but the separate processed-ID file and Dev's
+  turns proved consumption. The second inject (`fa403a9a`) reproduced a real
+  loss: its ID was marked processed, the child was killed, and no matching user
+  turn appeared. In fast-agent #14 `f97959d8`, the keepalive path now calls
+  `agent.send`, attempts the context snapshot, and only then acknowledges the
+  pending IDs. An interrupted send remains unacknowledged and retryable.
+- A new injection through the real localhost Monitor woke Eden [Dev]. The
+  subprocess log at 22:15:07 shows the Dashboard task as user `message_turn`
+  zero, before any tool calls. At 22:15:01 all 11 configured MCP servers were
+  connected. Dev then read a clone at `5554d00` and initially repeated the
+  missing-contract verdict. After an explicit correction through Monitor, Dev
+  cloned the `55d78e0` PR checkout locally. PM subsequently stopped Dev because
+  the history/SSE contract was still incomplete at that revision. This is
+  evidence of a moving-head handoff problem and unnecessary agent/tool cost,
+  not a successful frontend implementation.
+- Backend `e53e1d1` now scopes the roster, message history, full-turn reads,
+  live turn cache, and subprocess `message_turn` SSE by session. A name-only
+  history read for duplicate names returns 409; a wrong explicit session
+  returns 404. Session-isolation regression tests first failed on the old
+  implementation, then passed after the change. Focused suite: **65 passed**;
+  complete backend suite: **2,275 passed, 1 skipped, 5 deselected, 1 xfailed**.
+  The suite printed its result but retained a multiprocessing test child; after
+  terminating that child, pytest exited 0. This cleanup defect remains.
+- After restarting the README-equivalent localhost backend on `e53e1d1`, the
+  real HTTP request for Eden [Dev] with `session_id=450bcd26` returned 94 turns;
+  full turn zero returned 200. The same name with `session_id=wrong` returned
+  404. The browser Monitor reconnected and showed the same team
+  ([screenshot](monitor-after-restart.png)). This screenshot shows reconnection
+  and the team's current status, not duplicate-name UI acceptance.
+- Parent Jarvis #159 and fast-agent #14 latest CI jobs are green. PM has been
+  injected with the new `e53e1d1` contract and forwarded it to Dev for a
+  separate-workspace frontend implementation. The two-team same-name UI E2E,
+  QE verdict, screenshots, and task-level cost/quality analysis remain open.
