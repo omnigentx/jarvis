@@ -1520,6 +1520,7 @@ async def delete_team(team_name: str):
     # those stores can delete by session, refuse any overlapping identity
     # before the first destructive operation.
     import services.shared_state as state
+    target_sessions: set[str | None] = set()
     if state.registry_db:
         records = list(state.registry_db.get_all().values())
         members = [rec for rec in records if rec.get("team_name") == team_name]
@@ -1538,6 +1539,25 @@ async def delete_team(team_name: str):
                 status_code=409,
                 detail="Team deletion is ambiguous; member names or team name are shared across sessions",
             )
+
+    try:
+        from fast_agent.spawn.team_spawner import list_team_sessions
+        stored_team_sessions = list_team_sessions()
+    except Exception as exc:
+        logger.warning("[AGENTS API] Cannot verify team session ownership", exc_info=True)
+        raise HTTPException(status_code=503, detail="Team session ownership is unavailable") from exc
+
+    stored_session_ids = {
+        sess["session_id"] for sess in stored_team_sessions
+        if sess.get("team_name") == team_name and sess.get("session_id")
+    }
+    if (len(stored_session_ids) > 1 or
+            (stored_session_ids and target_sessions and
+             stored_session_ids != target_sessions)):
+        raise HTTPException(
+            status_code=409,
+            detail="Team deletion is ambiguous; team name is shared across sessions",
+        )
     
     # ── 1. Delete from SQLite registry (primary source) ──
     try:
@@ -1585,13 +1605,7 @@ async def delete_team(team_name: str):
     # there is no filesystem JSON copy any more — earlier versions of this
     # route scanned a non-existent ``workspaces/team_sessions/*.json`` dir,
     # which always matched zero files and silently leaked rows.
-    try:
-        from fast_agent.spawn.team_spawner import list_team_sessions as _list_team_sessions
-        for sess in _list_team_sessions():
-            if sess.get("team_name") == team_name and sess.get("session_id"):
-                session_ids.add(sess["session_id"])
-    except Exception as e:
-        logger.warning("[AGENTS API] team_sessions lookup error: %s", e)
+    session_ids.update(stored_session_ids)
 
     # ── 4. Remove workspace dirs (match by session_id suffix, not team_name) ──
     # Dirs are named "{template}_{session_id}", e.g. "agile-team_6d85b825"

@@ -82,3 +82,29 @@ async def test_team_delete_rejects_collisions_before_cleanup(monkeypatch, collis
     assert error.value.status_code == 409
     registry.delete_by_team.assert_not_called()
     registry.delete_by_name.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_team_delete_rejects_orphaned_same_name_session_before_cleanup(monkeypatch):
+    from fast_agent.spawn import team_spawner
+    from routes import agents
+    from services import shared_state
+
+    registry = MagicMock()
+    registry.get_all.return_value = {
+        "run-a": {
+            "run_id": "run-a", "agent_name": "Alex [Dev]",
+            "team_name": "target-team", "session_id": "session-a",
+        },
+    }
+    monkeypatch.setattr(shared_state, "registry_db", registry)
+    monkeypatch.setattr(team_spawner, "list_team_sessions", lambda: [
+        {"team_name": "target-team", "session_id": "session-a"},
+        {"team_name": "target-team", "session_id": "session-b"},
+    ])
+
+    with pytest.raises(HTTPException) as error:
+        await agents.delete_team("target-team")
+    assert error.value.status_code == 409
+    registry.delete_by_team.assert_not_called()
+    registry.delete_by_name.assert_not_called()
