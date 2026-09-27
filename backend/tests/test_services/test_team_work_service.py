@@ -240,3 +240,39 @@ async def test_startup_duplicate_display_names_route_by_session_inbox(teams):
     assert len(inbox_a) == len(inbox_b) == 1
     assert inbox_a[0].context["change_id"] == change_a["id"]
     assert inbox_b[0].context["change_id"] == change_b["id"]
+
+@pytest.mark.asyncio
+async def test_failed_wake_releases_claim_for_restart_retry(teams):
+    work.bind_team("team-a", "chat-1")
+    with sqlite3.connect(engine.url.database) as conn:
+        conn.execute("DELETE FROM team_revision_wake_claims")
+    change = work.create_revision("team-a", "chat-1", "Retry wake")
+    await work.deliver_revision(change["id"])
+    work._startup_wakes.clear()
+    with patch("fast_agent.spawn.servers._team_helpers.auto_wake_if_idle",
+               side_effect=RuntimeError("simulated crash before wake")):
+        await work.replay_pending_on_startup()
+    with sqlite3.connect(engine.url.database) as conn:
+        assert conn.execute("SELECT count(*) FROM team_revision_wake_claims "
+                            "WHERE session_id='team-a'").fetchone()[0] == 0
+    observed = []
+    with patch("fast_agent.spawn.servers._team_helpers.auto_wake_if_idle",
+               side_effect=lambda name: observed.append(name)):
+        await work.replay_pending_on_startup()
+    assert observed == ["Alex"]
+
+@pytest.mark.asyncio
+async def test_concurrent_startup_replay_claims_one_wake(teams):
+    work.bind_team("team-a", "chat-1")
+    with sqlite3.connect(engine.url.database) as conn:
+        conn.execute("DELETE FROM team_revision_wake_claims")
+    change = work.create_revision("team-a", "chat-1", "One wake")
+    await work.deliver_revision(change["id"])
+    work._startup_wakes.clear()
+    observed = []
+    with patch("fast_agent.spawn.servers._team_helpers.auto_wake_if_idle",
+               side_effect=lambda name: observed.append(name)):
+        await asyncio.gather(work.replay_pending_on_startup(),
+                             work.replay_pending_on_startup())
+    assert observed == ["Alex"]
+    assert work.get_team_revisions("team-a", "chat-1")[0]["status"] == "delivered"
