@@ -98,3 +98,27 @@ test('agent model card follows the light theme tokens', async ({ page }, testInf
   await testInfo.attach('model-selection-light', { body: await page.screenshot(), contentType: 'image/png' })
   expect(backend.unexpected).toEqual([])
 })
+
+test('spawned dynamic agent exposes model selection in Overview', async ({ page }) => {
+  await seedApiKey(page)
+  const backend = await mockBackend(page, [
+    join(FIXTURES, '_app_boot_noise.yaml'),
+    join(FIXTURES, 'agent_model_selection.yaml'),
+  ])
+  await page.route('**/api/agents/ModelProbe', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      name: 'ModelProbe', status: 'idle', type: 'dynamic', run_id: 'probe-run',
+      model: 'openai.coding-agent', configured_model: 'openai.coding-agent',
+      base_model: 'openai.coding-agent', model_revision: 0, overridden: false,
+      active_model: null, instruction: 'Probe model changes.', servers: [], tools: {}, skills: [],
+    }),
+  }))
+  await page.goto('/agents/ModelProbe')
+  const selection = page.getByRole('region', { name: 'Model selection' })
+  await expect(selection).toContainText('openai.coding-agent')
+  await selection.getByRole('button', { name: 'Change model' }).click()
+  await expect(selection.getByRole('combobox', { name: 'Model ID' })).toBeVisible()
+  expect(backend.unexpected).toEqual([])
+})

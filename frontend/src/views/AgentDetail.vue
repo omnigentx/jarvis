@@ -712,7 +712,7 @@ function historyBadgeLabel(type) {
 
       <!-- ===== OVERVIEW TAB ===== -->
       <div v-if="activeTab === 'overview'" class="animate-fade-in">
-        <AgentModelSelector v-if="['team', 'builtin', 'card'].includes(agent.type)"
+        <AgentModelSelector v-if="['team', 'dynamic', 'builtin', 'card'].includes(agent.type)"
           :agent="agent" :status-event="modelStatusEvent" @updated="fetchAgentDetail" />
         <!-- Stats Row (full width) -->
         <div class="stats-row">
