@@ -43,7 +43,14 @@ def _connect() -> sqlite3.Connection:
     conn.execute("PRAGMA busy_timeout=10000")
     conn.execute("CREATE TABLE IF NOT EXISTS team_revision_wake_claims ("
                  "session_id TEXT NOT NULL, message_id TEXT NOT NULL, "
+                 "claimed_at REAL NOT NULL DEFAULT 0, "
                  "PRIMARY KEY(session_id, message_id))")
+    columns = {row[1] for row in conn.execute(
+        "PRAGMA table_info(team_revision_wake_claims)"
+    )}
+    if "claimed_at" not in columns:
+        conn.execute("ALTER TABLE team_revision_wake_claims "
+                     "ADD COLUMN claimed_at REAL NOT NULL DEFAULT 0")
     return conn
 
 
@@ -389,15 +396,30 @@ async def replay_pending_on_startup() -> None:
                 wake_key = (change["session_id"], change.get("message_id") or "")
                 unread = any(message.message_id == change.get("message_id")
                              for message in bus.read_unread(agent_name))
-                if unread and wake_key not in _startup_wakes:
+                if unread:
+                    now = time.time()
                     with _database() as conn:
                         cursor = conn.execute(
-                            "INSERT OR IGNORE INTO team_revision_wake_claims "
-                            "(session_id, message_id) VALUES (?, ?)", wake_key
+                            "INSERT INTO team_revision_wake_claims "
+                            "(session_id, message_id, claimed_at) VALUES (?, ?, ?) "
+                            "ON CONFLICT(session_id, message_id) DO UPDATE SET "
+                            "claimed_at=excluded.claimed_at "
+                            "WHERE team_revision_wake_claims.claimed_at < ?",
+                            (*wake_key, now, now - 30),
                         )
                     if cursor.rowcount:
                         _startup_wakes.add(wake_key)
-                        auto_wake_if_idle(agent_name)
+                        try:
+                            auto_wake_if_idle(agent_name)
+                        except Exception:
+                            with _database() as conn:
+                                conn.execute(
+                                    "DELETE FROM team_revision_wake_claims "
+                                    "WHERE session_id=? AND message_id=? AND claimed_at=?",
+                                    (*wake_key, now),
+                                )
+                            _startup_wakes.discard(wake_key)
+                            raise
                 break
         except Exception:
             logger.warning("[TEAM-WORK] Startup reconciliation failed for %s",
@@ -406,7 +428,16 @@ async def replay_pending_on_startup() -> None:
         try:
             delivered = await deliver_revision(change_id)
             if delivered.get("message_id"):
-                _startup_wakes.add((delivered["session_id"], delivered["message_id"]))
+                wake_key = (delivered["session_id"], delivered["message_id"])
+                _startup_wakes.add(wake_key)
+                with _database() as conn:
+                    conn.execute(
+                        "INSERT INTO team_revision_wake_claims "
+                        "(session_id, message_id, claimed_at) VALUES (?, ?, ?) "
+                        "ON CONFLICT(session_id, message_id) DO UPDATE SET "
+                        "claimed_at=excluded.claimed_at",
+                        (*wake_key, time.time()),
+                    )
         except Exception:
             logger.warning("[TEAM-WORK] Startup delivery failed for %s",
                            change_id, exc_info=True)
