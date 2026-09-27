@@ -20,8 +20,10 @@ from typing import Iterator
 
 from core.database import engine
 from services.activity_stream import activity_stream_manager
+import services.shared_state as state
 
 logger = logging.getLogger(__name__)
+_startup_wakes: set[tuple[str, str]] = set()
 
 
 class TeamWorkError(ValueError):
@@ -39,6 +41,9 @@ def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(path, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout=10000")
+    conn.execute("CREATE TABLE IF NOT EXISTS team_revision_wake_claims ("
+                 "session_id TEXT NOT NULL, message_id TEXT NOT NULL, "
+                 "PRIMARY KEY(session_id, message_id))")
     return conn
 
 
@@ -347,15 +352,61 @@ async def retry_pending(session_id: str, conversation_id: str) -> list[dict]:
 
 
 async def replay_pending_on_startup() -> None:
-    """Replay durable outbox rows once after the agent runtime is ready."""
+    """Reconcile durable revisions with session-scoped inboxes after runtime readiness.
+
+    Pending rows are delivered idempotently. Delivered rows are not considered
+    applied until their exact message ID is acknowledged in that session inbox;
+    unread rows re-wake only the owning session's PM.
+    """
+    pending_ids: list[str] = []
     with _database() as conn:
-        ids = [row[0] for row in conn.execute(
-            "SELECT id FROM team_requirement_revisions WHERE status='pending' "
-            "ORDER BY created_at, revision"
-        )]
-    for change_id in ids:
+        rows = conn.execute(
+            "SELECT * FROM team_requirement_revisions "
+            "WHERE status IN ('pending', 'delivered') ORDER BY created_at, revision"
+        ).fetchall()
+        changes = [_as_dict(row) for row in rows]
+    from fast_agent.spawn.message_bus import MessageBus
+    from fast_agent.spawn.team_spawner import get_team_session
+    from fast_agent.spawn.servers._team_helpers import auto_wake_if_idle
+    pending_ids = [change["id"] for change in changes if change["status"] == "pending"]
+    changes = [change for change in changes if change["status"] == "delivered"]
+
+    for change in changes:
         try:
-            await deliver_revision(change_id)
+            session = get_team_session(change["session_id"])
+            if session is None:
+                continue
+            for agent_name, info in session.agents.items():
+                if info.get("role") != (session.template or {}).get("orchestrator"):
+                    continue
+                run_id = info.get("run_id")
+                record = state.registry_db.get_record(run_id) if state.registry_db and run_id else None
+                env_vars = (record or {}).get("original_config", {}).get("env_vars", {})
+                messages_dir = env_vars.get("TEAM_MESSAGES_DIR")
+                if not messages_dir:
+                    continue
+                bus = MessageBus(messages_dir)
+                wake_key = (change["session_id"], change.get("message_id") or "")
+                unread = any(message.message_id == change.get("message_id")
+                             for message in bus.read_unread(agent_name))
+                if unread and wake_key not in _startup_wakes:
+                    with _database() as conn:
+                        cursor = conn.execute(
+                            "INSERT OR IGNORE INTO team_revision_wake_claims "
+                            "(session_id, message_id) VALUES (?, ?)", wake_key
+                        )
+                    if cursor.rowcount:
+                        _startup_wakes.add(wake_key)
+                        auto_wake_if_idle(agent_name)
+                break
         except Exception:
-            logger.warning("[TEAM-WORK] Startup replay pending for %s", change_id,
-                           exc_info=True)
+            logger.warning("[TEAM-WORK] Startup reconciliation failed for %s",
+                           change["id"], exc_info=True)
+    for change_id in pending_ids:
+        try:
+            delivered = await deliver_revision(change_id)
+            if delivered.get("message_id"):
+                _startup_wakes.add((delivered["session_id"], delivered["message_id"]))
+        except Exception:
+            logger.warning("[TEAM-WORK] Startup delivery failed for %s",
+                           change_id, exc_info=True)

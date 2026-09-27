@@ -25,7 +25,7 @@ def teams(tmp_path: Path, monkeypatch):
 
     sessions = {}
     records = {}
-    for session_id, agent in (("team-a", "Alex"), ("team-b", "Bailey")):
+    for session_id, agent in (("team-a", "Alex"), ("team-b", "Alex")):
         sessions[session_id] = SimpleNamespace(
             session_id=session_id,
             team_name=session_id,
@@ -59,7 +59,7 @@ async def test_two_teams_receive_only_their_own_revisions(teams):
     await work.deliver_revision(second["id"])
 
     inbox_a = MessageBus(root / "messages" / "team-a").read_unread("Alex")
-    inbox_b = MessageBus(root / "messages" / "team-b").read_unread("Bailey")
+    inbox_b = MessageBus(root / "messages" / "team-b").read_unread("Alex")
     assert len(inbox_a) == len(inbox_b) == 1
     assert "Add export" in inbox_a[0].content
     assert "Change colors" in inbox_b[0].content
@@ -184,3 +184,59 @@ async def test_startup_replay_recovers_pending_without_duplicate(teams):
     inbox = MessageBus(root / "messages" / "team-a").read_inbox("Alex")
     assert len(inbox) == 1
     assert work.get_team_revisions("team-a", "chat-1")[0]["status"] == "delivered"
+
+@pytest.mark.asyncio
+async def test_startup_replay_only_wakes_pm_for_revision_team(teams):
+    """A pending revision recovers from disk-backed inbox on backend restart."""
+    from fast_agent.spawn.message_bus import MessageBus
+
+    _sessions, _records, root = teams
+    work.bind_team("team-a", "chat-1")
+    change = work.create_revision("team-a", "chat-1", "Recover after restart")
+    # Message is appended but revision status not committed: process crashed here.
+    work._queue_once(change)
+    observed = []
+    with patch("fast_agent.spawn.servers._team_helpers.auto_wake_if_idle",
+               side_effect=lambda name: observed.append(name)):
+        await work.replay_pending_on_startup()
+        await work.replay_pending_on_startup()
+    inbox = MessageBus(root / "messages" / "team-a").read_inbox("Alex")
+    assert len(inbox) == 1
+    assert observed == ["Alex"]
+    assert work.get_team_revisions("team-a", "chat-1")[0]["status"] == "delivered"
+
+@pytest.mark.asyncio
+async def test_startup_recovers_delivered_but_unread_revision(teams):
+    """A queued message remains recoverable if backend dies before PM reads it."""
+    work.bind_team("team-a", "chat-1")
+    change = work.create_revision("team-a", "chat-1", "Unread after restart")
+    await work.deliver_revision(change["id"])
+    observed = []
+    work._startup_wakes.clear()  # Simulate a fresh backend process.
+    with patch("fast_agent.spawn.servers._team_helpers.auto_wake_if_idle",
+               side_effect=lambda name: observed.append(name)):
+        await work.replay_pending_on_startup()
+    assert observed == ["Alex"]
+
+@pytest.mark.asyncio
+async def test_startup_duplicate_display_names_route_by_session_inbox(teams):
+    from fast_agent.spawn.message_bus import MessageBus
+
+    _sessions, _records, root = teams
+    work.bind_team("team-a", "chat-1")
+    work.bind_team("team-b", "chat-1")
+    change_a = work.create_revision("team-a", "chat-1", "Only A")
+    change_b = work.create_revision("team-b", "chat-1", "Only B")
+    await work.deliver_revision(change_a["id"])
+    await work.deliver_revision(change_b["id"])
+    work._startup_wakes.clear()
+    observed = []
+    with patch("fast_agent.spawn.servers._team_helpers.auto_wake_if_idle",
+               side_effect=lambda name: observed.append(name)):
+        await work.replay_pending_on_startup()
+    assert observed == ["Alex", "Alex"]
+    inbox_a = MessageBus(root / "messages" / "team-a").read_unread("Alex")
+    inbox_b = MessageBus(root / "messages" / "team-b").read_unread("Alex")
+    assert len(inbox_a) == len(inbox_b) == 1
+    assert inbox_a[0].context["change_id"] == change_a["id"]
+    assert inbox_b[0].context["change_id"] == change_b["id"]
