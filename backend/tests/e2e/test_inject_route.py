@@ -301,6 +301,38 @@ async def test_inject_static_agent_generates_inline(monkeypatch):
     )
 
 
+async def test_explicit_static_inject_skips_same_named_team_member(monkeypatch):
+    """Monitor's built-in target must not enter a team's matching inbox."""
+    import services.shared_state as state
+    import routes.inject as inject_mod
+
+    registry = MagicMock()
+    registry.find_by_name.return_value = [{
+        "agent_name": "Jarvis", "session_id": "team-a", "status": "running",
+    }]
+    monkeypatch.setattr(state, "registry_db", registry)
+    result = MagicMock()
+    result.last_text.return_value = "static reply"
+    static_agent = MagicMock()
+    static_agent.generate = AsyncMock(return_value=result)
+    static_agent.tool_runner_hooks = None
+    agent_app = MagicMock()
+    agent_app._agents = {"Jarvis": static_agent}
+    agent_app.Jarvis = static_agent
+    monkeypatch.setattr(state, "agent_app", agent_app)
+    monkeypatch.setattr(inject_mod, "fast", MagicMock(agents={"Jarvis": {"config": {}}}))
+
+    async with _make_client() as client:
+        response = await client.post(
+            "/api/agents/Jarvis/inject?target=static", json={"message": "hello"},
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["path"] == "generate"
+    registry.find_by_name.assert_not_called()
+    static_agent.generate.assert_awaited_once()
+
+
 # ─────────────────────────────────────────────────────────────
 # 404: unknown agent
 # ─────────────────────────────────────────────────────────────

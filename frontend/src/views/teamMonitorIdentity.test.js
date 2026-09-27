@@ -2,10 +2,10 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { injectToAgent, deleteAgentByName, deleteAgentsByName } from '../composables/useTeamMonitorActions.js'
 
-test('built-in inject preserves name-only route without a session', async () => {
+test('built-in inject selects static target without a session', async () => {
   let request
   await injectToAgent(async (url, options) => { request = { url, options } }, { name: 'Jarvis', type: 'builtin' }, { text: 'hi' })
-  assert.equal(request.url, '/api/agents/Jarvis/inject')
+  assert.equal(request.url, '/api/agents/Jarvis/inject?target=static')
   assert.equal(request.options.method, 'POST')
 })
 

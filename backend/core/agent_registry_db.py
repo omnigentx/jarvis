@@ -253,6 +253,26 @@ class AgentRegistryDB:
                 ).fetchall()
                 for row in rows:
                     rec = json.loads(row["data_json"])
+                    original_config = rec.get("original_config") or {}
+                    configured_name = (
+                        original_config.get("agent_name")
+                        if isinstance(original_config, dict) else None
+                    )
+                    if isinstance(configured_name, str) and configured_name and (
+                        rec.get("agent_name") != configured_name
+                        or rec.get("name") != configured_name
+                    ):
+                        logger.warning(
+                            "[REGISTRY] Repairing role-only name for run=%s: %r -> %r",
+                            row["run_id"], rec.get("agent_name"), configured_name,
+                        )
+                        rec["agent_name"] = configured_name
+                        rec["name"] = configured_name
+                        conn.execute(
+                            "UPDATE spawn_registry SET data_json = ? WHERE run_id = ?",
+                            (json.dumps(rec, ensure_ascii=False), row["run_id"]),
+                        )
+                        cleaned += 1
                     status = rec.get("status")
                     pid = rec.get("pid")
 

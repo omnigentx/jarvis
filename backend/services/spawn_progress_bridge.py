@@ -177,6 +177,19 @@ class SpawnProgressBridge:
         data = event_data.get("data", {})
         run_id = event_data.get("run_id") or data.get("run_id")
 
+        # Some subprocess lifecycle events report a role key (e.g. "pm")
+        # instead of the display name. The registered spawn configuration is
+        # authoritative; otherwise an error event can rename a live member.
+        if run_id and self._registry_db:
+            record = self._registry_db.get_record(run_id) or {}
+            original_config = record.get("original_config") or {}
+            configured_name = (
+                original_config.get("agent_name")
+                if isinstance(original_config, dict) else None
+            )
+            if isinstance(configured_name, str) and configured_name:
+                agent_name = configured_name
+
         # 1. Always log to spawn_activity logger
         logger.info(
             "[SPAWN] [%s] %s | %s",
@@ -706,9 +719,18 @@ class SpawnProgressBridge:
             else:
                 status = "error"
 
+            original_config = db_rec.get("original_config") or {}
+            configured_name = (
+                original_config.get("agent_name")
+                if isinstance(original_config, dict) else None
+            )
+            canonical_name = (
+                configured_name
+                if isinstance(configured_name, str) and configured_name else role
+            )
             record_data = {
-                "agent_name": role,
-                "name": role,
+                "agent_name": canonical_name,
+                "name": canonical_name,
                 "status": status,
             }
             # Only set started_at on the spawn events — later events (idle,
@@ -1090,14 +1112,36 @@ class SpawnProgressBridge:
                 fall through to the spawn-order fallback below.
 
         Returns:
-            The member dict whose ``role`` equals
-            ``template.orchestrator`` (case-insensitive), or — only if
-            that lookup fails or no member matches — the first member by
-            ``started_at`` (because the orchestrator spawns first).
+            The roster-named member for ``template.orchestrator``. If the
+            roster exists but its member is absent from the registry, return
+            None rather than waking another role-matched row. Legacy sessions
+            without a usable roster fall back to role or spawn order.
         """
         orch_role = self._lookup_orchestrator_role(session_id) if session_id else ""
         if orch_role:
             target = orch_role.lower()
+            # Match the current roster run first. A stale/role-only registry
+            # row may share the role and must never receive the wake message.
+            try:
+                from fast_agent.spawn.team_spawner import get_team_session
+
+                session = get_team_session(session_id)
+                for name, info in (session.agents if session else {}).items():
+                    if (info.get("role") or "").lower() != target:
+                        continue
+                    named = [member for member in members if member.get("agent_name") == name]
+                    for member in named:
+                        if member.get("run_id") == info.get("run_id"):
+                            return member
+                    if named:
+                        return max(named, key=lambda m: m.get("started_at", 0) or 0)
+                    logger.error(
+                        "[CYCLE] session=%s: roster orchestrator %r has no registry row",
+                        session_id, name,
+                    )
+                    return None
+            except Exception as exc:
+                logger.debug("[CYCLE] roster lookup failed for %s: %s", session_id, exc)
             for m in members:
                 if (m.get("role") or "").lower() == target:
                     return m

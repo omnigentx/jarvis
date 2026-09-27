@@ -4,7 +4,9 @@ export async function injectToAgent(apiFetch, agent, { text = '', files = [] } =
   const sessionId = agent?.session_id
   if (!name) throw new Error('Agent name required')
   if (!sessionId && agent?.type !== 'builtin') throw new Error('Session identity required')
-  const query = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ''
+  const query = agent?.type === 'builtin'
+    ? '?target=static'
+    : `?session_id=${encodeURIComponent(sessionId)}`
   const url = `/api/agents/${encodeURIComponent(name)}/inject${query}`
   if (files.length) {
     const body = new FormData()

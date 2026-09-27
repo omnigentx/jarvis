@@ -1,5 +1,73 @@
 # PR 163 session routing acceptance (in progress)
 
+## Latest acceptance checkpoint (2026-09-28)
+
+- Jarvis Chat created a second independent session `14688e5f` alongside
+  `450bcd26`, visible together in Monitor. The spawner enforces globally
+  unique display names: it rejected requested duplicates Frankie [PM] and
+  Eden [Dev], then assigned Bailey [PM] and River [Dev]. The user changed the
+  requirement through Chat; revisions 1 and 2 reached team B's PM inbox and
+  did not appear in team A's inbox. [Creation](team-b-created-ui.png) ·
+  [revision](team-b-revision-ui.png) · [two-team Monitor](monitor-team-b-after-frontend.png).
+- Team B PM created Jira [SCRUM-35](https://omnigentx.atlassian.net/browse/SCRUM-35)
+  and [Confluence page 98855](https://omnigentx.atlassian.net/wiki/spaces/SCRUM/pages/98855).
+  River completed a read-only Monitor inspection. SCRUM-36 duplicated the
+  task after River tried the wrong local ports; it was closed with an explicit
+  duplicate note. SCRUM-35 is Done; SCRUM-32 remains In Progress for PR review.
+- A backend shutdown emitted a role-only lifecycle event that overwrote two
+  stored PM display names with `pm`. On worker close, event
+  `14688e5f:worker_cycle_closed:3` woke `pm`, not Bailey. The code now takes
+  the canonical name from the registered spawn configuration, repairs legacy
+  rows at startup, and resolves the orchestrator against the session roster.
+  Startup log repaired runs `44a26c4f` and `f04aae05`. A second real Monitor
+  inject to River produced `ACK-REPAIR-02`; event
+  `14688e5f:worker_cycle_closed:4` woke **Bailey [PM]**. Bailey connected
+  9/9 MCP servers, read SCRUM-35, replied, idled, and event
+  `14688e5f:full_cycle_closed:4` notified the user.
+  [Monitor screenshot](team-b-wake-after-repair.png). The screenshot shows
+  the visible team; the run IDs and routing outcome come from
+  `backend/core/logs/spawn_activity.log` and the session inbox JSONL.
+- The merged team frontend patch keys Monitor identity and history by session.
+  A built-in inject now sends `target=static` so a same-named team member
+  cannot intercept it. A regression HTTP test checks that routing. New
+  role-only event, repair, and stale-roster tests are included. Focused
+  backend **53 passed**; full non-Cloud backend **2,292 passed, 4 skipped,
+  1 expected failure**; frontend unit **227 passed**, build passed; focused
+  desktop/mobile browser matrix **4 passed**. The full backend suite retained
+  a multiprocessing child after printing its summary; terminating that child
+  allowed exit code 0. This test-harness cleanup remains backlog.
+- Recorded team B usage at this checkpoint: **58 model calls**, **251,752
+  uncached input**, **198,400 cache-hit input**, **3,358 output** tokens,
+  estimated **USD 0.877**. Team A recorded 1,553 calls, 1,355,201 uncached
+  input, 1,690,624 cache-hit input, 115,729 output, USD 5.669 estimate.
+  A single River `ACK-REPAIR-02` resume consumed 41,115 input for 10 output
+  tokens. Actual Monitor turns show full PM skill and Jira tool responses
+  repeated in agent history; the cost number alone does not establish which
+  content is removable. A follow-up must compare task success and tool calls
+  with and without bounded history, then retain only proven improvements.
+
+### Remaining backlog, prioritized
+
+1. **P1 — Prevent repeated full-context resumes.** Measure the River 41k/10
+   turn and PM 33k input turn by content section; test a bounded-history
+   strategy against the same multi-step task before changing defaults.
+2. **P1 — Atomic per-session team identity.** The spawner still forbids
+   duplicate display names globally, so true same-name *natural UI* E2E
+   could not run. Scoped socket/HTTP tests prove isolation for injected
+   fixtures; they do not prove same-name team creation through Chat.
+3. **P2 — Keep team task status aligned.** Team B finished SCRUM-35 while
+   Jira still read To Do; Codex reconciled it manually. The PM workflow
+   should transition at actual phase boundaries and close duplicates.
+4. **P2 — Reduce redundant PM/QE exchanges and tool output.** Review the
+   repeated no-reply emails, large skill fetches, and verbose Jira responses
+   in actual turns. Use a controlled A/B task with quality and cost metrics.
+5. **P2 — Repair test-harness child shutdown.** Full pytest passes but leaves
+   a multiprocessing child alive until termination.
+
+This checkpoint proves independent-team operation and the observed worker-to-PM
+cycle after restart. It does not establish exactly-once side effects after a
+crash, nor a natural UI same-name-team creation path.
+
 ## Reproduced failure before the fix
 
 Two `AgentChannel("Alex", same_dir)` servers resolved to the same socket path.

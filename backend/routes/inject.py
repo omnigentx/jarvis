@@ -55,6 +55,7 @@ async def inject_prompt(
     agent_name: str,
     request: Request,
     session_id: str | None = None,
+    target: str | None = None,
 ):
     """Inject a prompt into an agent (any state).
 
@@ -78,7 +79,11 @@ async def inject_prompt(
         attachment_desc = f" [+{len(files_data)} file(s): {', '.join(names)}]"
 
     # ── Determine agent state and route accordingly ───────────────────────
-    if state.registry_db:
+    if target not in (None, "static"):
+        raise HTTPException(status_code=400, detail="Unknown injection target")
+    if target == "static" and session_id:
+        raise HTTPException(status_code=400, detail="Static agents have no team session")
+    if state.registry_db and target != "static":
         try:
             records = state.registry_db.find_by_name(agent_name)
 

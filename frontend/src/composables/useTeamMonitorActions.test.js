@@ -31,6 +31,12 @@ test('inject always scopes request by encoded session and preserves 409', async 
   assert.equal(request.options.method, 'POST')
 })
 
+test('builtin agent uses explicit static target instead of team namesake', async () => {
+  let request
+  await injectToAgent(async url => { request = url }, { name: 'Jarvis', type: 'builtin' }, { text: 'hi' })
+  assert.equal(request, '/api/agents/Jarvis/inject?target=static')
+})
+
 test('bulk inject retains each rejected agent result', async () => {
   const agents = [{ name: 'A' }, { name: 'B' }]
   const results = await injectToAgents(async agent => { if (agent.name === 'B') { const e = new Error('ambiguous'); e.status = 409; throw e } }, agents, { text: 'hi' })
