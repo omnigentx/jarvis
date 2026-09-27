@@ -69,21 +69,6 @@ export const useAgentsStore = defineStore('agents', () => {
     }
   }
 
-  /**
-   * Fetch persisted activities for ALL agents in one bulk call.
-   * Returns a Map<agentName, Event[]> of persisted events.
-   */
-  async function fetchAllActivities(perAgent = 20) {
-    try {
-      const data = await apiFetch(`/api/agents/activities/recent?per_agent=${perAgent}`)
-      // data is { agentName: [{id, event_type, message, run_id, data, created_at}, ...], ... }
-      return data
-    } catch (e) {
-      console.error('[Store] Failed to fetch activities:', e)
-      return {}
-    }
-  }
-
   function upsertAgent(name, updates) {
     const existingByIdentity = findAgentByIdentity([...agents.value.values()], name, updates.session_id)
     if (!existingByIdentity && agents.value.size > 0 && !updates.session_id) return
@@ -528,7 +513,6 @@ export const useAgentsStore = defineStore('agents', () => {
     recentEvents,
     tokenMetrics,
     fetchAgents,
-    fetchAllActivities,
     processEvent,
     upsertAgent,
     pauseAgent,

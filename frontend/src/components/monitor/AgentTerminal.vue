@@ -38,6 +38,8 @@ const props = defineProps({
   loading: { type: Boolean, default: false },
   onFetchFull: { type: Function, default: null },
   onPauseToggle: { type: Function, default: null },
+  pauseDisabled: { type: Boolean, default: false },
+  pauseDisabledReason: { type: String, default: '' },
   onDelete: { type: Function, default: null },
   onInject: { type: Function, default: null },
   onOpenFullscreen: { type: Function, default: null },
@@ -161,7 +163,7 @@ async function submitInject() {
     injectText.value = ''
     injectFiles.value = []
   } catch (e) {
-    injectResult.value = { status: 'error', response: e?.message || String(e) }
+    injectResult.value = { status: 'error', response: e?.status === 409 ? t('teamMonitor.ambiguousActionBlocked') : (e?.message || String(e)) }
   } finally {
     injectBusy.value = false
     setTimeout(() => { injectResult.value = null }, 8000)
@@ -213,13 +215,13 @@ const canTogglePause = computed(() =>
           v-if="onPauseToggle && canTogglePause"
           class="ctrl-btn"
           :class="{ 'is-paused': isPaused, 'is-transition': isPauseTransitioning }"
-          :disabled="isPauseTransitioning"
-          :title="
+          :disabled="isPauseTransitioning || pauseDisabled"
+          :title="pauseDisabled ? pauseDisabledReason : (
             agent.status === 'pausing'  ? t('terminal.pausing') :
             agent.status === 'resuming' ? t('terminal.resuming') :
             isPaused                    ? t('terminal.resume') :
             t('terminal.pause')
-          "
+          )"
           @click="onPauseToggle"
         >{{ isPaused ? '▶' : '⏸' }}</button>
         <button

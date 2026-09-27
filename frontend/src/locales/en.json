@@ -1756,7 +1756,11 @@
     "bulkDeleteTitle": "Delete {n} agents?",
     "bulkDeleteConfirm": "Delete {n}",
     "bulkDeleteBody": "The following agents and their conversation history will be permanently removed:",
-    "builtinKept": "{n} built-in agents will be kept:"
+    "builtinKept": "{n} built-in agents will be kept:",
+    "ambiguousActionBlocked": "Team actions are disabled for duplicate names because this endpoint cannot target a single team session.",
+    "sessionIdentityRequired": "This action requires a session identity, which is unavailable for this agent.",
+    "activityHistoryUnavailable": "Some persisted activity is unavailable because the API identifies records by agent name only and cannot distinguish duplicate team sessions.",
+    "actionFailed": "The agent action failed."
   },
   "setup": {
     "wizard": {
