@@ -108,7 +108,15 @@ def find_teams(query: str = "", limit: int = 20) -> list[dict]:
     """Find team sessions across the single user's conversations on demand."""
     if limit < 1 or limit > 50:
         raise TeamWorkError("limit must be between 1 and 50")
-    pattern = f"%{query.strip().replace('%', '')[:100]}%"
+    terms = query.strip()[:100].split()
+    clauses = []
+    params: list[str | int] = []
+    for term in terms:
+        escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        pattern = f"%{escaped}%"
+        clauses.append("(b.team_name LIKE ? ESCAPE '\\' OR b.project_brief LIKE ? ESCAPE '\\')")
+        params.extend((pattern, pattern))
+    where = " AND ".join(clauses) if clauses else "1=1"
     with _database() as conn:
         rows = conn.execute(
             "SELECT b.session_id, b.conversation_id, b.team_name, "
@@ -116,9 +124,8 @@ def find_teams(query: str = "", limit: int = 20) -> list[dict]:
             "COALESCE(MAX(r.revision), 0) AS revision "
             "FROM team_work_bindings b LEFT JOIN team_requirement_revisions r "
             "ON r.session_id=b.session_id "
-            "WHERE b.team_name LIKE ? OR b.project_brief LIKE ? "
-            "GROUP BY b.session_id ORDER BY b.created_at DESC LIMIT ?",
-            (pattern, pattern, limit),
+            f"WHERE {where} GROUP BY b.session_id ORDER BY b.created_at DESC LIMIT ?",
+            (*params, limit),
         ).fetchall()
     return [dict(row) for row in rows]
 
@@ -295,15 +302,18 @@ async def deliver_revision(change_id: str) -> dict:
         return change
 
     message_id, agent_name = await asyncio.to_thread(_queue_once, change)
+    delivered_at = time.time()
     with _database() as conn:
         conn.execute(
             "UPDATE team_requirement_revisions SET status='delivered', "
             "message_id=?, delivered_at=? WHERE id=?",
-            (message_id, time.time(), change_id),
+            (message_id, delivered_at, change_id),
         )
     try:
         from fast_agent.spawn.servers._team_helpers import auto_wake_if_idle
-        await asyncio.to_thread(auto_wake_if_idle, agent_name)
+        # The dead-agent path schedules an inbox resume on the current event
+        # loop. Running this in a worker thread silently leaves the PM asleep.
+        auto_wake_if_idle(agent_name)
     except Exception:
         logger.warning("[TEAM-WORK] Could not wake orchestrator %s", agent_name,
                        exc_info=True)
@@ -316,7 +326,8 @@ async def deliver_revision(change_id: str) -> dict:
         "timestamp": time.time(),
         "data": {"change_id": change_id, "revision": change["revision"]},
     })
-    change.update(status="delivered", message_id=message_id)
+    change.update(status="delivered", message_id=message_id,
+                  delivered_at=delivered_at)
     return change
 
 

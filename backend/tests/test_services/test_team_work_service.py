@@ -1,6 +1,7 @@
 """Revisioned team directives across independent sessions."""
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
@@ -99,6 +100,22 @@ def test_conversation_scope_blocks_cross_team_changes(teams):
     assert work.list_teams("chat-2") == []
 
 
+def test_find_teams_matches_terms_out_of_order(teams):
+    work.bind_team("team-a", "chat-1")
+    work.bind_team("team-b", "chat-2")
+    with sqlite3.connect(engine.url.database) as conn:
+        conn.execute(
+            "UPDATE team_work_bindings SET project_brief=? WHERE session_id=?",
+            ("Rà soát luồng thay đổi requirement của Jarvis trên localhost", "team-a"),
+        )
+    assert [team["session_id"] for team in work.find_teams(
+        "luồng thay đổi requirement Jarvis localhost"
+    )] == [
+        "team-a"
+    ]
+    assert work.find_teams("team_a") == []
+
+
 @pytest.mark.asyncio
 async def test_retry_after_append_does_not_duplicate_message(teams):
     from fast_agent.spawn.message_bus import MessageBus
@@ -114,6 +131,24 @@ async def test_retry_after_append_does_not_duplicate_message(teams):
     inbox = MessageBus(root / "messages" / "team-a").read_inbox("Alex")
     assert len(inbox) == 1
     assert inbox[0].message_id == delivered["message_id"] == message_id
+    assert isinstance(delivered["delivered_at"], float)
+
+
+@pytest.mark.asyncio
+async def test_delivery_wakes_pm_on_the_running_event_loop(teams):
+    work.bind_team("team-a", "chat-1")
+    change = work.create_revision("team-a", "chat-1", "Handle reconnect")
+    loop = asyncio.get_running_loop()
+    observed = []
+
+    def check_wake(agent_name: str) -> None:
+        observed.append((agent_name, asyncio.get_running_loop()))
+
+    with patch("fast_agent.spawn.servers._team_helpers.auto_wake_if_idle",
+               side_effect=check_wake):
+        await work.deliver_revision(change["id"])
+
+    assert observed == [("Alex", loop)]
 
 
 @pytest.mark.asyncio
