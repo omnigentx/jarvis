@@ -303,3 +303,22 @@ test('fetchAgents keeps duplicate names from different sessions in roster', asyn
     globalThis.fetch = originalFetch
   }
 })
+
+test('same-named agents in separate sessions keep independent lifecycle updates', () => {
+  const store = useAgentsStore()
+  store.upsertAgent('Worker', { session_id: 'session-a', status: 'running' })
+  store.upsertAgent('Worker', { session_id: 'session-b', status: 'idle' })
+  store.processEvent({ agent_name: 'Worker', session_id: 'session-a', event_type: 'result', timestamp: 5 })
+  const bySession = Object.fromEntries(store.agentsList.map(a => [a.session_id, a]))
+  assert.equal(bySession['session-a'].status, 'idle')
+  assert.equal(bySession['session-b'].status, 'idle')
+  assert.equal(store.agentsList.length, 2)
+})
+
+test('sessionless event does not mutate ambiguous duplicate-name roster entries', () => {
+  const store = useAgentsStore()
+  store.upsertAgent('Worker', { session_id: 'session-a', status: 'running' })
+  store.upsertAgent('Worker', { session_id: 'session-b', status: 'running' })
+  store.processEvent({ agent_name: 'Worker', event_type: 'result', timestamp: 6 })
+  assert.deepEqual(store.agentsList.map(a => a.status), ['running', 'running'])
+})

@@ -20,7 +20,7 @@ import { ref, shallowRef, onUnmounted, watch } from 'vue'
 import { apiFetch } from '../api'
 import { useAgentsStore } from '../stores/agents'
 import { insertTurn, isResetSignal, lastAssistantText } from './agentTurnsUtils.js'
-import { agentIdentity } from './agentIdentity.js'
+import { agentIdentity, findAgentByIdentity } from './agentIdentity.js'
 
 export function useAgentTurns(options = {}) {
   const maxPerAgent = options.maxPerAgent ?? 200
@@ -151,7 +151,7 @@ export function useAgentTurns(options = {}) {
           run_id: evt.run_id || null,
           ts: evt.timestamp || null,
         }
-        const rosterAgent = store.agentsList.find(a => a.name === evt.agent_name && (!evt.session_id || a.session_id === evt.session_id))
+        const rosterAgent = findAgentByIdentity(store.agentsList, evt.agent_name, evt.session_id)
         if (!rosterAgent) continue
         handlePossibleReset(rosterAgent, turn)
         ingestTurn(rosterAgent, turn)
