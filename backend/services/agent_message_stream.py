@@ -120,10 +120,14 @@ def get_recent_turns(agent_name: str, *, session_id: str | None = None) -> list[
     return list(_recent_turns.get(_turn_key(agent_name, session_id)) or [])
 
 
-def reset_recent_turns(agent_name: str | None = None) -> None:
-    """Test helper: clear the cache (one agent or all)."""
+def reset_recent_turns(
+    agent_name: str | None = None, *, session_id: str | None = None,
+) -> None:
+    """Clear one team's cache, every cache for a name, or the whole cache."""
     if agent_name is None:
         _recent_turns.clear()
+    elif session_id is not None:
+        _recent_turns.pop(_turn_key(agent_name, session_id), None)
     else:
         for key in [key for key in _recent_turns if key[1] == agent_name]:
             _recent_turns.pop(key, None)

@@ -445,3 +445,7 @@ def test_recent_turns_are_isolated_by_team_session():
     assert ams.list_agent_messages(name, session_id="team-b")["turns"][0]["message"]["content"][0]["text"] == "team B"
     assert ams.get_agent_turn_full(name, 0, session_id="team-a")["message"]["content"][0]["text"] == "team A"
     assert ams.get_agent_turn_full(name, 0, session_id="team-b")["message"]["content"][0]["text"] == "team B"
+
+    ams.reset_recent_turns(name, session_id="team-a")
+    assert ams.get_recent_turns(name, session_id="team-a") == []
+    assert len(ams.get_recent_turns(name, session_id="team-b")) == 1

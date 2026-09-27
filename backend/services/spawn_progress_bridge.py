@@ -378,6 +378,16 @@ class SpawnProgressBridge:
         except Exception as e:
             logger.warning("Could not import DB for activity persistence: %s", e)
 
+    def _session_id_for_run(self, run_id: str | None, data: dict) -> str:
+        """Resolve a team session from the event or its exact spawn record."""
+        session_id = data.get("session_id") or ""
+        if session_id or not run_id or not self._registry_db:
+            return session_id
+        record = self._registry_db.get_record(run_id) or {}
+        return (record.get("session_id") or
+                ((record.get("original_config") or {}).get("env_vars") or {})
+                .get("TEAM_SESSION_ID") or "")
+
     def _forward_message_turn(self, agent_name: str, data: dict, raw: dict) -> None:
         """Forward a subprocess ``message_turn`` event to the activity stream.
 
@@ -400,10 +410,7 @@ class SpawnProgressBridge:
             full = data.get("message") or {}
             turn_idx = data.get("turn_idx")
             run_id = raw.get("run_id") or data.get("run_id")
-            session_id = data.get("session_id") or ""
-            if not session_id and run_id and self._registry_db:
-                record = self._registry_db.get_record(run_id) or {}
-                session_id = record.get("session_id") or ""
+            session_id = self._session_id_for_run(run_id, data)
             if isinstance(turn_idx, int):
                 _record_recent_turn(
                     agent_name, turn_idx, full, session_id=session_id,
@@ -437,12 +444,14 @@ class SpawnProgressBridge:
 
             safe_data = _sanitize_event_data(event_type_str, data)
             _, sse_data = self._map_event(role, event_type_str, safe_data)
+            run_id = raw.get("run_id") or safe_data.get("run_id")
             activity_stream_manager.broadcast({
                 "agent_name": role,
                 "event_type": event_type_str,
                 "message": sse_data.get("message", ""),
                 "data": safe_data,
-                "run_id": raw.get("run_id") or safe_data.get("run_id"),
+                "run_id": run_id,
+                "session_id": self._session_id_for_run(run_id, safe_data) or None,
                 "timestamp": raw.get("timestamp") or time.time(),
             })
         except Exception as e:
@@ -463,6 +472,7 @@ class SpawnProgressBridge:
             run_id = raw.get("run_id") or data.get("run_id", "")
             lifecycle = data.get("lifecycle", "oneshot")
             reason = data.get("reason", "cleanup")
+            session_id = self._session_id_for_run(run_id, data)
 
             activity_stream_manager.broadcast({
                 "agent_name": agent_name,
@@ -476,6 +486,7 @@ class SpawnProgressBridge:
                     "team_name": data.get("team_name", ""),
                 },
                 "run_id": run_id,
+                "session_id": session_id or None,
                 "timestamp": raw.get("timestamp") or time.time(),
             })
 
@@ -492,7 +503,7 @@ class SpawnProgressBridge:
             # up. Clearing on lifecycle removal is the natural pairing.
             try:
                 from services.agent_message_stream import reset_recent_turns
-                reset_recent_turns(agent_name)
+                reset_recent_turns(agent_name, session_id=session_id or None)
             except Exception as _evict_exc:
                 logger.warning(
                     "Failed to evict _recent_turns for %s: %s",
