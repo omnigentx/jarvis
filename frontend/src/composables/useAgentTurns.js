@@ -17,8 +17,8 @@
  */
 
 import { ref, shallowRef, onUnmounted, watch } from 'vue'
-import { apiFetch } from '../api'
-import { useAgentsStore } from '../stores/agents'
+import { apiFetch } from '../api.js'
+import { useAgentsStore } from '../stores/agents.js'
 import { insertTurn, isResetSignal, lastAssistantText } from './agentTurnsUtils.js'
 import { agentIdentity, findAgentByIdentity } from './agentIdentity.js'
 
