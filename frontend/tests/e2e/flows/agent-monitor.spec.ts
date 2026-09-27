@@ -61,7 +61,7 @@ test('team monitor — roster renders and SSE event flips one agent status', asy
 
   // Assertion 4: mount-time fetches fired.
   recorder.assertContains('GET', '/api/agents')
-  recorder.assertContains('GET', '/api/agents/activities/recent')
+  expect(recorder.calls.some(request => request.path === '/api/agents/activities/recent')).toBe(false)
 
   // Assertion 5: no request hit the mock without a fixture match.
   expect(backend.unexpected.length).toBe(0)
@@ -91,7 +91,7 @@ test('team monitor — empty roster renders empty-state placeholder', async ({
 
   // Assertion 4: boot-time fetches still fired.
   recorder.assertContains('GET', '/api/agents')
-  recorder.assertContains('GET', '/api/agents/activities/recent')
+  expect(recorder.calls.some(request => request.path === '/api/agents/activities/recent')).toBe(false)
 
   // Assertion 5: no unexpected requests.
   expect(backend.unexpected.length).toBe(0)

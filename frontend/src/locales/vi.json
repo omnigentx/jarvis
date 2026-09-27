@@ -1625,7 +1625,11 @@
     "bulkDeleteTitle": "Xoá {n} agent?",
     "bulkDeleteConfirm": "Xoá {n}",
     "bulkDeleteBody": "Các agent sau cùng lịch sử trò chuyện của chúng sẽ bị xoá vĩnh viễn:",
-    "builtinKept": "{n} agent built-in sẽ được giữ lại:"
+    "builtinKept": "{n} agent built-in sẽ được giữ lại:",
+    "ambiguousActionBlocked": "Đã tắt thao tác với agent trùng tên vì API hiện không thể nhắm riêng một phiên nhóm.",
+    "sessionIdentityRequired": "Thao tác này cần mã phiên nhưng agent hiện không có mã phiên.",
+    "activityHistoryUnavailable": "Một số hoạt động đã lưu không khả dụng vì API chỉ định danh bằng tên agent và không phân biệt được các phiên nhóm trùng tên.",
+    "actionFailed": "Thao tác với agent thất bại."
   },
   "setup": {
     "auth": {
