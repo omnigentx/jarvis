@@ -785,6 +785,8 @@
     "modelCurrentCall": "Lượt gọi đang chạy: {model}",
     "modelEdit": "Đổi model",
     "modelId": "Mã model",
+    "modelSuggestions": "Model phù hợp",
+    "modelSearchHint": "Nhập để tìm trong {n} mã model, hoặc nhập mã thủ công.",
     "modelNextCall": "Lượt gọi model tiếp theo sẽ dùng lựa chọn này. Lượt đang chạy tiếp tục với model cũ.",
     "modelCatalogUnavailable": "Không tải được gợi ý. Bạn vẫn có thể nhập mã model.",
     "modelRetry": "Thử lại",

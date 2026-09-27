@@ -838,6 +838,8 @@
     "modelCurrentCall": "Current call: {model}",
     "modelEdit": "Change model",
     "modelId": "Model ID",
+    "modelSuggestions": "Matching models",
+    "modelSearchHint": "Type to search {n} available model IDs, or enter one manually.",
     "modelNextCall": "The next model call uses this selection. A call already running finishes on its previous model.",
     "modelCatalogUnavailable": "Suggestions are unavailable. You can still enter a model ID.",
     "modelRetry": "Retry",

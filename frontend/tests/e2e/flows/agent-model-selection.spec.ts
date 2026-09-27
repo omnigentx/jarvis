@@ -27,7 +27,11 @@ test('agent model UI applies, resets, and preserves state on canary failure', as
   const input = selection.getByRole('combobox', { name: 'Model ID' })
   await testInfo.attach('model-selection-desktop', { body: await page.screenshot(), contentType: 'image/png' })
 
-  await input.fill('openai.cx/gpt-6-luna')
+  await input.fill('gpt-6-luna')
+  await expect(selection.getByRole('listbox', { name: 'Matching models' }).getByRole('option')).toHaveCount(1)
+  await input.press('ArrowDown')
+  await input.press('Enter')
+  await expect(input).toHaveValue('openai.cx/gpt-6-luna')
   await selection.getByRole('button', { name: 'Apply' }).click()
   await expect(selection).toContainText('openai.cx/gpt-6-luna')
   await expect(selection).toContainText('Custom')
@@ -56,6 +60,11 @@ test('agent model editor fits a mobile viewport', async ({ page }, testInfo) => 
     join(FIXTURES, '_app_boot_noise.yaml'),
     join(FIXTURES, 'agent_model_selection.yaml'),
   ], 'vi')
+  await page.route('**/api/agents/model-catalog', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ models: Array.from({ length: 570 }, (_, index) => `openai.cx/model-${index}`) }),
+  }))
   await page.route('**/api/agents/Jarvis/model', route => route.fulfill({
     status: 422,
     contentType: 'application/json',
@@ -66,12 +75,19 @@ test('agent model editor fits a mobile viewport', async ({ page }, testInfo) => 
   await selection.getByRole('button', { name: 'Đổi model' }).click()
   await expect(selection.getByRole('combobox', { name: 'Mã model' })).toBeVisible()
   await expect(selection.getByRole('button', { name: 'Hủy' })).toBeVisible()
+  await expect(selection).toContainText('570 mã model')
+  const mobileInput = selection.getByRole('combobox', { name: 'Mã model' })
+  await mobileInput.fill('model-')
+  await expect(selection.getByRole('listbox').getByRole('option')).toHaveCount(8)
+  await testInfo.attach('model-search-570-mobile', { body: await selection.screenshot(), contentType: 'image/png' })
+  await selection.getByRole('option', { name: 'openai.cx/model-0', exact: true }).click()
+  await expect(mobileInput).toHaveValue('openai.cx/model-0')
+  await mobileInput.fill('openai.coding-agent')
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
   expect(await selection.getByRole('button', { name: 'Hủy' }).evaluate(element => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44)
   await testInfo.attach('model-selection-mobile', { body: await page.screenshot(), contentType: 'image/png' })
   await page.setViewportSize({ width: 320, height: 700 })
-  const input = selection.getByRole('combobox', { name: 'Mã model' })
-  await input.fill('openai.invalid-model')
+  await mobileInput.fill('openai.invalid-model')
   await selection.getByRole('button', { name: 'Áp dụng' }).click()
   await expect(selection.getByRole('alert')).toContainText('bounded inference probe')
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)

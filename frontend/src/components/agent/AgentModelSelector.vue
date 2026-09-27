@@ -17,8 +17,15 @@ const error = ref('')
 const catalogError = ref(false)
 const message = ref('')
 const models = ref([])
+const showSuggestions = ref(false)
+const suggestionIndex = ref(-1)
 const configuredModel = computed(() => props.agent.configured_model || props.agent.model || props.agent.base_model || '—')
 const stale = computed(() => editing.value && editRevision.value !== (props.agent.model_revision ?? 0))
+const suggestions = computed(() => {
+  const query = modelId.value.trim().toLowerCase()
+  if (query.length < 2) return []
+  return models.value.filter(item => item.toLowerCase().includes(query)).slice(0, 8)
+})
 const remoteStatus = computed(() => {
   const event = props.statusEvent
   if (!event) return ''
@@ -52,12 +59,38 @@ function startEditing() {
   editRevision.value = props.agent.model_revision ?? 0
   error.value = ''
   message.value = ''
+  showSuggestions.value = false
+  suggestionIndex.value = -1
   editing.value = true
 }
 
 function cancelEditing() {
   editing.value = false
+  showSuggestions.value = false
   error.value = ''
+}
+
+function chooseModel(value) {
+  modelId.value = value
+  showSuggestions.value = false
+  suggestionIndex.value = -1
+}
+
+function onModelKeydown(event) {
+  if (event.key === 'Escape') {
+    showSuggestions.value = false
+    suggestionIndex.value = -1
+  } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    if (!suggestions.value.length) return
+    event.preventDefault()
+    showSuggestions.value = true
+    suggestionIndex.value = event.key === 'ArrowDown'
+      ? (suggestionIndex.value + 1) % suggestions.value.length
+      : (suggestionIndex.value + suggestions.value.length) % suggestions.value.length
+  } else if (event.key === 'Enter' && showSuggestions.value && suggestionIndex.value >= 0) {
+    event.preventDefault()
+    chooseModel(suggestions.value[suggestionIndex.value])
+  }
 }
 
 async function submit(requestedModel) {
@@ -106,20 +139,36 @@ function reset() { return submit('') }
     </div>
     <form v-if="editing" class="model-editor" @submit.prevent="save">
       <label for="agent-model-id">{{ t('agentDetail.modelId') }}</label>
-      <input
-        id="agent-model-id"
-        v-model="modelId"
-        list="available-agent-models"
-        placeholder="openai.coding-agent"
-        autocomplete="off"
-        :disabled="saving"
-        :aria-invalid="!!error"
-        :aria-describedby="error ? 'model-change-error' : undefined"
-      />
-      <datalist id="available-agent-models">
-        <option v-for="item in models" :key="item" :value="item" />
-      </datalist>
+      <div class="model-input-wrap">
+        <input
+          id="agent-model-id"
+          v-model="modelId"
+          role="combobox"
+          aria-autocomplete="list"
+          :aria-controls="showSuggestions && suggestions.length ? 'available-agent-models' : undefined"
+          :aria-expanded="showSuggestions && suggestions.length > 0"
+          :aria-activedescendant="showSuggestions && suggestionIndex >= 0 ? `agent-model-option-${suggestionIndex}` : undefined"
+          placeholder="openai.coding-agent"
+          autocomplete="off"
+          :disabled="saving"
+          :aria-invalid="!!error"
+          :aria-describedby="error ? 'model-change-error' : 'model-search-help'"
+          @focus="showSuggestions = true"
+          @blur="showSuggestions = false"
+          @input="showSuggestions = true; suggestionIndex = -1"
+          @keydown="onModelKeydown"
+        />
+        <ul v-if="showSuggestions && suggestions.length" id="available-agent-models" class="model-suggestions" role="listbox"
+          :aria-label="t('agentDetail.modelSuggestions')">
+          <li v-for="(item, index) in suggestions" :id="`agent-model-option-${index}`" :key="item" role="option"
+            :aria-selected="index === suggestionIndex" :class="{ active: index === suggestionIndex }"
+            @pointerdown.prevent="chooseModel(item)" @click="chooseModel(item)">{{ item }}</li>
+        </ul>
+      </div>
       <p v-if="error" id="model-change-error" class="model-error" role="alert">{{ error }}</p>
+      <p v-if="!error && models.length" id="model-search-help" class="model-help">
+        {{ t('agentDetail.modelSearchHint', { n: models.length }) }}
+      </p>
       <p v-if="!error" class="model-help">{{ t('agentDetail.modelNextCall') }}</p>
       <p v-if="catalogError" class="model-warning">
         {{ t('agentDetail.modelCatalogUnavailable') }}
@@ -158,7 +207,11 @@ function reset() { return submit('') }
 .model-edit { flex-shrink: 0; border: 1px solid var(--border-strong); background: var(--bg-3); color: var(--text); }
 .model-editor { display: grid; gap: 8px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); }
 .model-editor label { color: var(--text-dim); font-size: 12px; font-weight: 600; }
+.model-input-wrap { position: relative; min-width: 0; }
 .model-editor input { width: 100%; min-width: 0; min-height: 42px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--bg-2); color: var(--text); padding: 8px 11px; font-family: var(--font-mono, monospace); font-size: 13px; }
+.model-suggestions { position: absolute; z-index: 10; top: calc(100% + 4px); left: 0; right: 0; max-height: 240px; overflow-y: auto; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--bg-2); box-shadow: var(--shadow-md); list-style: none; }
+.model-suggestions li { overflow-wrap: anywhere; padding: 8px 11px; color: var(--text); font-family: var(--font-mono, monospace); font-size: 12px; cursor: pointer; }
+.model-suggestions li:hover, .model-suggestions li.active { background: var(--primary-bg-strong); }
 .model-editor input:focus-visible, .model-panel button:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .model-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
 .model-save { border: 1px solid var(--primary); background: var(--primary); color: #fff; }
