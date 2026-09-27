@@ -682,7 +682,6 @@ function historyBadgeLabel(type) {
             <p class="header-meta">
               {{ agent.description || t('agentDetail.aiAgent') }}
               · {{ agent.type }}
-              · {{ agent.model || 'openai.gpt-4o-mini' }}
             </p>
           </div>
         </div>
@@ -697,9 +696,6 @@ function historyBadgeLabel(type) {
           </router-link>
         </div>
       </div>
-
-      <AgentModelSelector v-if="['team', 'builtin', 'card'].includes(agent.type)"
-        :agent="agent" :status-event="modelStatusEvent" @updated="fetchAgentDetail" />
 
       <!-- Tabs -->
       <div class="tabs-bar">
@@ -716,12 +712,10 @@ function historyBadgeLabel(type) {
 
       <!-- ===== OVERVIEW TAB ===== -->
       <div v-if="activeTab === 'overview'" class="animate-fade-in">
+        <AgentModelSelector v-if="['team', 'builtin', 'card'].includes(agent.type)"
+          :agent="agent" :status-event="modelStatusEvent" @updated="fetchAgentDetail" />
         <!-- Stats Row (full width) -->
         <div class="stats-row">
-          <div class="stat-card">
-            <span class="stat-label">{{ t('agentDetail.statModel') }}</span>
-            <span class="stat-value stat-green">{{ agent.model?.includes('.') ? agent.model.slice(agent.model.indexOf('.') + 1) : (agent.model || '—') }}</span>
-          </div>
           <div class="stat-card">
             <span class="stat-label">{{ t('agentDetail.statType') }}</span>
             <span class="stat-value stat-blue">{{ agent.type }}</span>
@@ -1678,7 +1672,7 @@ function historyBadgeLabel(type) {
 /* ── Stats Row ── */
 .stats-row {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 10px;
   margin-bottom: 16px;
 }
@@ -2385,7 +2379,7 @@ function historyBadgeLabel(type) {
 
   /* ── Overview: 1-column ── */
   .stats-row {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 8px;
     padding: 12px 14px;
     background: transparent;
