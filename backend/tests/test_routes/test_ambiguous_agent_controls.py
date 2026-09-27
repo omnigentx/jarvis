@@ -55,3 +55,30 @@ async def test_same_team_multiple_runs_remains_pauseable(monkeypatch):
     result = await agents.pause_agent("Alex [Dev]")
     assert result["status"] == "paused"
     pause.assert_called_once_with("Alex [Dev]")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("collision", ["member_name", "team_name"])
+async def test_team_delete_rejects_collisions_before_cleanup(monkeypatch, collision):
+    from routes import agents
+    from services import shared_state
+
+    registry = MagicMock()
+    other_team = "different-team" if collision == "member_name" else "target-team"
+    registry.get_all.return_value = {
+        "run-a": {
+            "run_id": "run-a", "agent_name": "Alex [Dev]",
+            "team_name": "target-team", "session_id": "session-a",
+        },
+        "run-b": {
+            "run_id": "run-b", "agent_name": "Alex [Dev]",
+            "team_name": other_team, "session_id": "session-b",
+        },
+    }
+    monkeypatch.setattr(shared_state, "registry_db", registry)
+
+    with pytest.raises(HTTPException) as error:
+        await agents.delete_team("target-team")
+    assert error.value.status_code == 409
+    registry.delete_by_team.assert_not_called()
+    registry.delete_by_name.assert_not_called()

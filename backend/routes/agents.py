@@ -1515,10 +1515,32 @@ async def delete_team(team_name: str):
     cleanup_log = []
     team_agent_names = []
     session_ids: set[str] = set()
+
+    # The cleanup below includes legacy name-scoped rows and memory. Until
+    # those stores can delete by session, refuse any overlapping identity
+    # before the first destructive operation.
+    import services.shared_state as state
+    if state.registry_db:
+        records = list(state.registry_db.get_all().values())
+        members = [rec for rec in records if rec.get("team_name") == team_name]
+        member_names = {rec.get("agent_name") for rec in members if rec.get("agent_name")}
+        target_sessions = {
+            rec.get("session_id") or
+            ((rec.get("original_config") or {}).get("env_vars") or {}).get("TEAM_SESSION_ID")
+            for rec in members
+        }
+        shared_name = any(
+            rec.get("agent_name") in member_names and rec.get("team_name") != team_name
+            for rec in records
+        )
+        if len(target_sessions) > 1 or shared_name:
+            raise HTTPException(
+                status_code=409,
+                detail="Team deletion is ambiguous; member names or team name are shared across sessions",
+            )
     
     # ── 1. Delete from SQLite registry (primary source) ──
     try:
-        import services.shared_state as state
         if hasattr(state, 'registry_db') and state.registry_db:
             # First gather info before delete
             all_records = state.registry_db.get_all()
