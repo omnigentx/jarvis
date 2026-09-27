@@ -23,7 +23,6 @@ from services.activity_stream import activity_stream_manager
 import services.shared_state as state
 
 logger = logging.getLogger(__name__)
-_startup_wakes: set[tuple[str, str]] = set()
 
 
 class TeamWorkError(ValueError):
@@ -41,16 +40,6 @@ def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(path, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout=10000")
-    conn.execute("CREATE TABLE IF NOT EXISTS team_revision_wake_claims ("
-                 "session_id TEXT NOT NULL, message_id TEXT NOT NULL, "
-                 "claimed_at REAL NOT NULL DEFAULT 0, "
-                 "PRIMARY KEY(session_id, message_id))")
-    columns = {row[1] for row in conn.execute(
-        "PRAGMA table_info(team_revision_wake_claims)"
-    )}
-    if "claimed_at" not in columns:
-        conn.execute("ALTER TABLE team_revision_wake_claims "
-                     "ADD COLUMN claimed_at REAL NOT NULL DEFAULT 0")
     return conn
 
 
@@ -249,7 +238,7 @@ def create_revision(
         return _as_dict(row)
 
 
-def _queue_once(change: dict) -> tuple[str, str]:
+def _queue_once(change: dict) -> tuple[str, str, str]:
     """Append once to the PM's session inbox; safe to replay after a crash."""
     from fast_agent.spawn.message_bus import MessageBus
     from fast_agent.spawn.team_spawner import get_team_session
@@ -267,6 +256,8 @@ def _queue_once(change: dict) -> tuple[str, str]:
         raise TeamWorkError("Team has no orchestrator", 409)
     agent_name, info = pm
     run_id = info.get("run_id")
+    if not run_id:
+        raise TeamWorkError("Orchestrator run is unavailable", 503)
     record = state.registry_db.get_record(run_id) if state.registry_db and run_id else None
     env_vars = (record or {}).get("original_config") or {}
     messages_dir = (env_vars.get("env_vars") or {}).get("TEAM_MESSAGES_DIR")
@@ -289,14 +280,14 @@ def _queue_once(change: dict) -> tuple[str, str]:
                  if m.context.get("change_id") == change["id"]), None,
             )
             if previous:
-                return previous.message_id, agent_name
+                return previous.message_id, agent_name, run_id
             msg = bus.send(
                 from_name="Jarvis", to_name=agent_name, content=content,
                 message_type="directive", priority="high",
                 context={"session_id": change["session_id"],
                          "change_id": change["id"], "revision": change["revision"]},
             )
-            return msg.message_id, agent_name
+            return msg.message_id, agent_name, run_id
         finally:
             fcntl.flock(lock_file, fcntl.LOCK_UN)
 
@@ -313,7 +304,7 @@ async def deliver_revision(change_id: str) -> dict:
     if change["status"] == "delivered":
         return change
 
-    message_id, agent_name = await asyncio.to_thread(_queue_once, change)
+    message_id, agent_name, run_id = await asyncio.to_thread(_queue_once, change)
     delivered_at = time.time()
     with _database() as conn:
         conn.execute(
@@ -322,10 +313,10 @@ async def deliver_revision(change_id: str) -> dict:
             (message_id, delivered_at, change_id),
         )
     try:
-        from fast_agent.spawn.servers._team_helpers import auto_wake_if_idle
+        from fast_agent.spawn.servers._team_helpers import wake_team_agent
         # The dead-agent path schedules an inbox resume on the current event
         # loop. Running this in a worker thread silently leaves the PM asleep.
-        auto_wake_if_idle(agent_name)
+        wake_team_agent(change["session_id"], agent_name, run_id)
     except Exception:
         logger.warning("[TEAM-WORK] Could not wake orchestrator %s", agent_name,
                        exc_info=True)
@@ -365,79 +356,65 @@ async def replay_pending_on_startup() -> None:
     applied until their exact message ID is acknowledged in that session inbox;
     unread rows re-wake only the owning session's PM.
     """
-    pending_ids: list[str] = []
     with _database() as conn:
         rows = conn.execute(
-            "SELECT * FROM team_requirement_revisions "
-            "WHERE status IN ('pending', 'delivered') ORDER BY created_at, revision"
+            "SELECT id FROM team_requirement_revisions WHERE status='pending' "
+            "ORDER BY created_at, revision"
         ).fetchall()
-        changes = [_as_dict(row) for row in rows]
-    from fast_agent.spawn.message_bus import MessageBus
-    from fast_agent.spawn.team_spawner import get_team_session
-    from fast_agent.spawn.servers._team_helpers import auto_wake_if_idle
-    pending_ids = [change["id"] for change in changes if change["status"] == "pending"]
-    changes = [change for change in changes if change["status"] == "delivered"]
+        pending_ids = [row["id"] for row in rows]
 
-    for change in changes:
-        try:
-            session = get_team_session(change["session_id"])
-            if session is None:
-                continue
-            for agent_name, info in session.agents.items():
-                if info.get("role") != (session.template or {}).get("orchestrator"):
-                    continue
-                run_id = info.get("run_id")
-                record = state.registry_db.get_record(run_id) if state.registry_db and run_id else None
-                env_vars = (record or {}).get("original_config", {}).get("env_vars", {})
-                messages_dir = env_vars.get("TEAM_MESSAGES_DIR")
-                if not messages_dir:
-                    continue
-                bus = MessageBus(messages_dir)
-                wake_key = (change["session_id"], change.get("message_id") or "")
-                unread = any(message.message_id == change.get("message_id")
-                             for message in bus.read_unread(agent_name))
-                if unread:
-                    now = time.time()
-                    with _database() as conn:
-                        cursor = conn.execute(
-                            "INSERT INTO team_revision_wake_claims "
-                            "(session_id, message_id, claimed_at) VALUES (?, ?, ?) "
-                            "ON CONFLICT(session_id, message_id) DO UPDATE SET "
-                            "claimed_at=excluded.claimed_at "
-                            "WHERE team_revision_wake_claims.claimed_at < ?",
-                            (*wake_key, now, now - 30),
-                        )
-                    if cursor.rowcount:
-                        _startup_wakes.add(wake_key)
-                        try:
-                            auto_wake_if_idle(agent_name)
-                        except Exception:
-                            with _database() as conn:
-                                conn.execute(
-                                    "DELETE FROM team_revision_wake_claims "
-                                    "WHERE session_id=? AND message_id=? AND claimed_at=?",
-                                    (*wake_key, now),
-                                )
-                            _startup_wakes.discard(wake_key)
-                            raise
-                break
-        except Exception:
-            logger.warning("[TEAM-WORK] Startup reconciliation failed for %s",
-                           change["id"], exc_info=True)
     for change_id in pending_ids:
         try:
-            delivered = await deliver_revision(change_id)
-            if delivered.get("message_id"):
-                wake_key = (delivered["session_id"], delivered["message_id"])
-                _startup_wakes.add(wake_key)
-                with _database() as conn:
-                    conn.execute(
-                        "INSERT INTO team_revision_wake_claims "
-                        "(session_id, message_id, claimed_at) VALUES (?, ?, ?) "
-                        "ON CONFLICT(session_id, message_id) DO UPDATE SET "
-                        "claimed_at=excluded.claimed_at",
-                        (*wake_key, time.time()),
-                    )
+            await deliver_revision(change_id)
         except Exception:
             logger.warning("[TEAM-WORK] Startup delivery failed for %s",
                            change_id, exc_info=True)
+
+    # A DB 'delivered' row only means the message reached the inbox. On
+    # restart, compare its exact message_id with the session's unread inbox
+    # before waking. Group by session so one PM receives at most one wake for
+    # several queued revisions. The fast-agent launch guard owns concurrency;
+    # a fixed-duration wake lease could suppress recovery after a crash.
+    with _database() as conn:
+        rows = conn.execute(
+            "SELECT session_id, message_id FROM team_requirement_revisions "
+            "WHERE status='delivered' AND message_id IS NOT NULL"
+        ).fetchall()
+    by_session: dict[str, set[str]] = {}
+    for row in rows:
+        by_session.setdefault(row["session_id"], set()).add(row["message_id"])
+
+    from fast_agent.spawn.message_bus import MessageBus
+    from fast_agent.spawn.team_spawner import get_team_session
+    from fast_agent.spawn.servers._team_helpers import wake_team_agent
+
+    for session_id, message_ids in by_session.items():
+        try:
+            session = get_team_session(session_id)
+            if session is None:
+                logger.warning("[TEAM-WORK] Session %s missing during startup replay",
+                               session_id)
+                continue
+            orchestrator_found = False
+            for agent_name, info in session.agents.items():
+                if info.get("role") != (session.template or {}).get("orchestrator"):
+                    continue
+                orchestrator_found = True
+                run_id = info.get("run_id")
+                if not run_id:
+                    raise TeamWorkError("Orchestrator run is unavailable", 503)
+                record = state.registry_db.get_record(run_id) if state.registry_db and run_id else None
+                env_vars = ((record or {}).get("original_config") or {}).get("env_vars") or {}
+                messages_dir = env_vars.get("TEAM_MESSAGES_DIR")
+                if not messages_dir:
+                    raise TeamWorkError("Orchestrator inbox is unavailable", 503)
+                bus = MessageBus(messages_dir)
+                if any(message.message_id in message_ids
+                       for message in bus.read_unread(agent_name)):
+                    wake_team_agent(session_id, agent_name, run_id)
+                break
+            if not orchestrator_found:
+                raise TeamWorkError("Team has no orchestrator", 409)
+        except Exception:
+            logger.warning("[TEAM-WORK] Startup reconciliation failed for %s",
+                           session_id, exc_info=True)

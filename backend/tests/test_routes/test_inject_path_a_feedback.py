@@ -16,7 +16,7 @@ Two contracts pinned by this file:
      dashboard reflects "running" immediately on submit (parity with
      Path B and Path C which already do this).
 
-  2. Path A MUST call ``auto_wake_if_idle(agent_name)`` so the alive
+  2. Path A MUST call ``wake_team_agent(session_id, agent_name, run_id)`` so the alive
      agent picks up the inbox message NOW via the AgentChannel socket
      signal — instead of waiting indefinitely for some other event to
      trigger an LLM call (and thus an inbox check inside
@@ -40,12 +40,13 @@ async def test_path_a_uses_session_inbox_from_spawn_record(tmp_path):
     record = {
         "agent_name": "Bennett [PM]",
         "session_id": "team-123",
+        "run_id": "run-team-123",
         "workspace": str(tmp_path / "data" / "workspaces" / "team-123"),
         "original_config": {"env_vars": {"TEAM_MESSAGES_DIR": str(inbox_dir)}},
     }
 
     with patch("routes.inject.activity_stream_manager"), patch(
-        "fast_agent.spawn.servers._team_helpers.auto_wake_if_idle"
+        "fast_agent.spawn.servers._team_helpers.wake_team_agent"
     ):
         result = await _inject_via_message_bus(
             "Bennett [PM]", "Use revision checks", record,
@@ -75,6 +76,7 @@ async def test_path_a_broadcasts_started_event_immediately():
     spawn_record = {
         "agent_name": "Bailey [PM]",
         "session_id": "test-sid",
+        "run_id": "run-test-sid",
         "workspace": "",  # force the fallback path that uses session_id
         "status": "idle",
     }
@@ -88,7 +90,7 @@ async def test_path_a_broadcasts_started_event_immediately():
     # from to avoid hitting real MessageBus / activity_stream / wake.
     with patch("routes.inject.activity_stream_manager") as mock_asm, \
             patch("fast_agent.spawn.message_bus.MessageBus") as mock_bus_cls, \
-            patch("fast_agent.spawn.servers._team_helpers.auto_wake_if_idle") as mock_wake, \
+            patch("fast_agent.spawn.servers._team_helpers.wake_team_agent") as mock_wake, \
             patch.dict("os.environ", {"SPAWN_PROJECT_DIR": "/tmp/fake-project"}):
         mock_asm.broadcast.side_effect = _capture
         mock_bus = MagicMock()
@@ -106,12 +108,12 @@ async def test_path_a_broadcasts_started_event_immediately():
 
     # Wake signal must fire so the alive agent picks up the inbox.
     assert mock_wake.called, (
-        "auto_wake_if_idle was NOT called. Without it the agent's "
+        "wake_team_agent was NOT called. Without it the agent's "
         "InboxWatcherHook only sees the message on the next "
         "before_llm_call tick — which never fires while the agent "
         "is idle. The inject would sit unread indefinitely."
     )
-    assert mock_wake.call_args[0][0] == "Bailey [PM]"
+    assert mock_wake.call_args.args == ("test-sid", "Bailey [PM]", "run-test-sid")
 
     # Started event must be broadcast so the UI flips status.
     started = [e for e in broadcasted if e.get("event_type") == "started"]
@@ -134,12 +136,13 @@ async def test_path_a_uses_the_agent_session_inbox(tmp_path: Path):
     session_dir = tmp_path / "messages" / "team-a"
     record = {
         "session_id": "team-a",
+        "run_id": "run-team-a",
         "workspace": str(tmp_path / "unrelated-workspace"),
         "original_config": {"env_vars": {"TEAM_MESSAGES_DIR": str(session_dir)}},
     }
 
     with patch("routes.inject.activity_stream_manager"), patch(
-        "fast_agent.spawn.servers._team_helpers.auto_wake_if_idle"
+        "fast_agent.spawn.servers._team_helpers.wake_team_agent"
     ):
         result = await _inject_via_message_bus("Alex", "updated requirement", record)
 
@@ -165,13 +168,14 @@ async def test_path_a_inject_does_not_fail_when_wake_raises():
     spawn_record = {
         "agent_name": "Bailey [PM]",
         "session_id": "test-sid",
+        "run_id": "run-test-sid",
         "workspace": "",
     }
 
     with patch("routes.inject.activity_stream_manager"), \
             patch("fast_agent.spawn.message_bus.MessageBus"), \
             patch(
-                "fast_agent.spawn.servers._team_helpers.auto_wake_if_idle",
+                "fast_agent.spawn.servers._team_helpers.wake_team_agent",
                 side_effect=RuntimeError("registry not loaded"),
             ), \
             patch.dict("os.environ", {"SPAWN_PROJECT_DIR": "/tmp/fake-project"}):

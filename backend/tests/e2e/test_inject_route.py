@@ -140,6 +140,44 @@ async def test_inject_running_agent_queues_via_messagebus(monkeypatch, tmp_path)
     assert send_kwargs.get("content") == "hi"
 
 
+async def test_inject_idle_team_member_uses_scoped_inbox_not_direct_resume(
+    monkeypatch, tmp_path,
+):
+    """An idle team's inject must not race a revision wake or load name-only context."""
+    import services.shared_state as state
+    import services.inject_resume as inject_resume_mod
+    import fast_agent.spawn.message_bus as mb_mod
+    import fast_agent.spawn.servers._team_helpers as team_helpers
+
+    inbox = tmp_path / "team-b"
+    record = {
+        "agent_name": "Alex [PM]", "session_id": "team-b",
+        "run_id": "run-b", "status": "idle", "started_at": 2.0,
+        "original_config": {"env_vars": {"TEAM_MESSAGES_DIR": str(inbox)}},
+    }
+    registry = MagicMock()
+    registry.find_by_name.return_value = [record]
+    monkeypatch.setattr(state, "registry_db", registry)
+    bus = MagicMock()
+    monkeypatch.setattr(mb_mod, "MessageBus", MagicMock(return_value=bus))
+    wake = MagicMock(return_value="scheduled")
+    monkeypatch.setattr(team_helpers, "wake_team_agent", wake)
+    direct_resume = AsyncMock()
+    monkeypatch.setattr(inject_resume_mod, "resume_with_inject", direct_resume)
+
+    async with _make_client() as client:
+        response = await client.post(
+            "/api/agents/Alex%20%5BPM%5D/inject?session_id=team-b",
+            json={"message": "new criterion"},
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["path"] == "message_bus"
+    bus.send.assert_called_once()
+    wake.assert_called_once_with("team-b", "Alex [PM]", "run-b")
+    direct_resume.assert_not_awaited()
+
+
 # ─────────────────────────────────────────────────────────────
 # Path B: Resume (process dead but resumable)
 # ─────────────────────────────────────────────────────────────
@@ -313,6 +351,116 @@ async def test_inject_idle_without_original_config_returns_409(monkeypatch):
     assert resp.status_code == 409, resp.text
     detail = resp.json().get("detail", "")
     assert "no saved config" in detail.lower()
+
+
+async def test_duplicate_agent_name_requires_team_and_routes_to_matching_session(monkeypatch):
+    """A name reused by two teams cannot send to the first registry match."""
+    import services.shared_state as state
+    import routes.inject as inject_mod
+
+    records = [
+        {"agent_name": "Quinn [PM]", "status": "running",
+         "session_id": session_id, "run_id": f"run-{session_id}"}
+        for session_id in ("team-a", "team-b")
+    ]
+    fake_registry = MagicMock()
+    fake_registry.find_by_name.return_value = records
+    monkeypatch.setattr(state, "registry_db", fake_registry)
+    message_bus = AsyncMock(return_value=inject_mod.InjectResponse(
+        status="queued", agent_name="Quinn [PM]", path="message_bus"
+    ))
+    monkeypatch.setattr(inject_mod, "_inject_via_message_bus", message_bus)
+    broadcast = MagicMock()
+    monkeypatch.setattr(inject_mod.activity_stream_manager, "broadcast", broadcast)
+
+    async with _make_client() as client:
+        ambiguous = await client.post(
+            "/api/agents/Quinn%20%5BPM%5D/inject", json={"message": "hello"},
+        )
+        selected = await client.post(
+            "/api/agents/Quinn%20%5BPM%5D/inject?session_id=team-b",
+            json={"message": "hello"},
+        )
+
+    assert ambiguous.status_code == 409
+    assert ambiguous.json()["detail"]["session_ids"] == ["team-a", "team-b"]
+    assert selected.status_code == 200
+    message_bus.assert_awaited_once_with("Quinn [PM]", "hello", records[1])
+    broadcast.assert_called_once()
+    assert broadcast.call_args.args[0]["session_id"] == "team-b"
+
+
+async def test_team_and_unscoped_agent_with_same_name_are_ambiguous(monkeypatch):
+    import services.shared_state as state
+
+    fake_registry = MagicMock()
+    fake_registry.find_by_name.return_value = [
+        {"agent_name": "Alex", "status": "running", "session_id": "team-a"},
+        {"agent_name": "Alex", "status": "running", "session_id": ""},
+    ]
+    monkeypatch.setattr(state, "registry_db", fake_registry)
+    async with _make_client() as client:
+        response = await client.post(
+            "/api/agents/Alex/inject", json={"message": "check routing"},
+        )
+    assert response.status_code == 409
+    assert response.json()["detail"]["session_ids"] == ["", "team-a"]
+
+
+async def test_inject_http_routes_to_exact_live_team_socket(monkeypatch, tmp_path):
+    """The HTTP selector, inbox and real Unix wake must agree on identity."""
+    from fast_agent.spawn.agent_channel import AgentChannel
+    from fast_agent.spawn.message_bus import MessageBus
+    from fast_agent.spawn.spawn_registry import SpawnRecord, SpawnRegistry
+    import services.shared_state as state
+
+    monkeypatch.setenv("SPAWN_PROJECT_DIR", str(tmp_path))
+    registry_path = tmp_path / "spawn_registry.db"
+    monkeypatch.setenv("SPAWN_REGISTRY_DB", str(registry_path))
+    registry = SpawnRegistry(registry_path)
+    records = []
+    for session_id in ("team-a", "team-b"):
+        messages_dir = tmp_path / "messages" / session_id
+        run_id = f"run-{session_id}"
+        registry.register(SpawnRecord(
+            run_id=run_id, agent_name="Alex [PM]", role="pm",
+            team_name=session_id, session_id=session_id, status="running",
+        ))
+        records.append({
+            "agent_name": "Alex [PM]", "status": "running",
+            "session_id": session_id, "run_id": run_id,
+            "original_config": {"env_vars": {
+                "TEAM_MESSAGES_DIR": str(messages_dir),
+            }},
+        })
+    fake_registry = MagicMock()
+    fake_registry.find_by_name.return_value = records
+    monkeypatch.setattr(state, "registry_db", fake_registry)
+
+    first = AgentChannel("Alex [PM]", session_id="team-a", run_id="run-team-a")
+    second = AgentChannel("Alex [PM]", session_id="team-b", run_id="run-team-b")
+    await first.start_server()
+    await second.start_server()
+    try:
+        async with _make_client() as client:
+            ambiguous = await client.post(
+                "/api/agents/Alex%20%5BPM%5D/inject",
+                json={"message": "must not deliver"},
+            )
+            selected = await client.post(
+                "/api/agents/Alex%20%5BPM%5D/inject?session_id=team-b",
+                json={"message": "only team B"},
+            )
+        assert ambiguous.status_code == 409
+        assert selected.status_code == 200, selected.text
+        assert await second.listen(timeout=0.5) == "wake"
+        assert await first.listen(timeout=0.05) is None
+        assert MessageBus(tmp_path / "messages" / "team-a").read_unread("Alex [PM]") == []
+        inbox_b = MessageBus(tmp_path / "messages" / "team-b").read_unread("Alex [PM]")
+        assert [message.content for message in inbox_b] == ["only team B"]
+    finally:
+        await second.stop()
+        await first.stop()
 
 
 # ─────────────────────────────────────────────────────────────

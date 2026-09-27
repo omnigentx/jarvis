@@ -42,7 +42,7 @@ def teams(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(state, "registry_db", SimpleNamespace(
         get_record=records.get
     ))
-    with patch("fast_agent.spawn.servers._team_helpers.auto_wake_if_idle"):
+    with patch("fast_agent.spawn.servers._team_helpers.wake_team_agent"):
         yield sessions, records, tmp_path
 
 
@@ -125,7 +125,7 @@ async def test_retry_after_append_does_not_duplicate_message(teams):
     change = work.create_revision("team-a", "chat-1", "Keep acceptance criteria")
 
     # Simulate a crash after the JSONL append but before the DB status update.
-    message_id, _ = work._queue_once(change)
+    message_id, _, _ = work._queue_once(change)
     delivered = await work.deliver_revision(change["id"])
 
     inbox = MessageBus(root / "messages" / "team-a").read_inbox("Alex")
@@ -141,14 +141,14 @@ async def test_delivery_wakes_pm_on_the_running_event_loop(teams):
     loop = asyncio.get_running_loop()
     observed = []
 
-    def check_wake(agent_name: str) -> None:
-        observed.append((agent_name, asyncio.get_running_loop()))
+    def check_wake(session_id: str, agent_name: str, run_id: str) -> None:
+        observed.append((session_id, agent_name, run_id, asyncio.get_running_loop()))
 
-    with patch("fast_agent.spawn.servers._team_helpers.auto_wake_if_idle",
+    with patch("fast_agent.spawn.servers._team_helpers.wake_team_agent",
                side_effect=check_wake):
         await work.deliver_revision(change["id"])
 
-    assert observed == [("Alex", loop)]
+    assert observed == [("team-a", "Alex", "run-team-a", loop)]
 
 
 @pytest.mark.asyncio
@@ -196,13 +196,14 @@ async def test_startup_replay_only_wakes_pm_for_revision_team(teams):
     # Message is appended but revision status not committed: process crashed here.
     work._queue_once(change)
     observed = []
-    with patch("fast_agent.spawn.servers._team_helpers.auto_wake_if_idle",
-               side_effect=lambda name: observed.append(name)):
+    with patch("fast_agent.spawn.servers._team_helpers.wake_team_agent",
+               side_effect=lambda session, name, run: observed.append((session, name, run))):
         await work.replay_pending_on_startup()
         await work.replay_pending_on_startup()
     inbox = MessageBus(root / "messages" / "team-a").read_inbox("Alex")
     assert len(inbox) == 1
-    assert observed == ["Alex"]
+    assert observed
+    assert set(observed) == {("team-a", "Alex", "run-team-a")}
     assert work.get_team_revisions("team-a", "chat-1")[0]["status"] == "delivered"
 
 @pytest.mark.asyncio
@@ -212,11 +213,10 @@ async def test_startup_recovers_delivered_but_unread_revision(teams):
     change = work.create_revision("team-a", "chat-1", "Unread after restart")
     await work.deliver_revision(change["id"])
     observed = []
-    work._startup_wakes.clear()  # Simulate a fresh backend process.
-    with patch("fast_agent.spawn.servers._team_helpers.auto_wake_if_idle",
-               side_effect=lambda name: observed.append(name)):
+    with patch("fast_agent.spawn.servers._team_helpers.wake_team_agent",
+               side_effect=lambda session, name, run: observed.append((session, name, run))):
         await work.replay_pending_on_startup()
-    assert observed == ["Alex"]
+    assert observed == [("team-a", "Alex", "run-team-a")]
 
 @pytest.mark.asyncio
 async def test_startup_duplicate_display_names_route_by_session_inbox(teams):
@@ -229,12 +229,14 @@ async def test_startup_duplicate_display_names_route_by_session_inbox(teams):
     change_b = work.create_revision("team-b", "chat-1", "Only B")
     await work.deliver_revision(change_a["id"])
     await work.deliver_revision(change_b["id"])
-    work._startup_wakes.clear()
     observed = []
-    with patch("fast_agent.spawn.servers._team_helpers.auto_wake_if_idle",
-               side_effect=lambda name: observed.append(name)):
+    with patch("fast_agent.spawn.servers._team_helpers.wake_team_agent",
+               side_effect=lambda session, name, run: observed.append((session, name, run))):
         await work.replay_pending_on_startup()
-    assert observed == ["Alex", "Alex"]
+    assert set(observed) == {
+        ("team-a", "Alex", "run-team-a"),
+        ("team-b", "Alex", "run-team-b"),
+    }
     inbox_a = MessageBus(root / "messages" / "team-a").read_unread("Alex")
     inbox_b = MessageBus(root / "messages" / "team-b").read_unread("Alex")
     assert len(inbox_a) == len(inbox_b) == 1
@@ -242,37 +244,92 @@ async def test_startup_duplicate_display_names_route_by_session_inbox(teams):
     assert inbox_b[0].context["change_id"] == change_b["id"]
 
 @pytest.mark.asyncio
-async def test_failed_wake_releases_claim_for_restart_retry(teams):
+async def test_failed_wake_can_retry_on_next_startup_replay(teams):
     work.bind_team("team-a", "chat-1")
-    with sqlite3.connect(engine.url.database) as conn:
-        conn.execute("DELETE FROM team_revision_wake_claims")
     change = work.create_revision("team-a", "chat-1", "Retry wake")
     await work.deliver_revision(change["id"])
-    work._startup_wakes.clear()
-    with patch("fast_agent.spawn.servers._team_helpers.auto_wake_if_idle",
+    with patch("fast_agent.spawn.servers._team_helpers.wake_team_agent",
                side_effect=RuntimeError("simulated crash before wake")):
         await work.replay_pending_on_startup()
-    with sqlite3.connect(engine.url.database) as conn:
-        assert conn.execute("SELECT count(*) FROM team_revision_wake_claims "
-                            "WHERE session_id='team-a'").fetchone()[0] == 0
     observed = []
-    with patch("fast_agent.spawn.servers._team_helpers.auto_wake_if_idle",
-               side_effect=lambda name: observed.append(name)):
+    with patch("fast_agent.spawn.servers._team_helpers.wake_team_agent",
+               side_effect=lambda session, name, run: observed.append((session, name, run))):
         await work.replay_pending_on_startup()
-    assert observed == ["Alex"]
+    assert observed == [("team-a", "Alex", "run-team-a")]
 
 @pytest.mark.asyncio
-async def test_concurrent_startup_replay_claims_one_wake(teams):
+async def test_concurrent_startup_replay_targets_same_session(teams):
     work.bind_team("team-a", "chat-1")
-    with sqlite3.connect(engine.url.database) as conn:
-        conn.execute("DELETE FROM team_revision_wake_claims")
     change = work.create_revision("team-a", "chat-1", "One wake")
     await work.deliver_revision(change["id"])
-    work._startup_wakes.clear()
     observed = []
-    with patch("fast_agent.spawn.servers._team_helpers.auto_wake_if_idle",
-               side_effect=lambda name: observed.append(name)):
+    with patch("fast_agent.spawn.servers._team_helpers.wake_team_agent",
+               side_effect=lambda session, name, run: observed.append((session, name, run))):
         await asyncio.gather(work.replay_pending_on_startup(),
                              work.replay_pending_on_startup())
-    assert observed == ["Alex"]
+    assert observed == [("team-a", "Alex", "run-team-a")] * 2
     assert work.get_team_revisions("team-a", "chat-1")[0]["status"] == "delivered"
+
+
+@pytest.mark.asyncio
+async def test_real_scoped_wake_for_same_name_pm_in_two_teams(tmp_path, monkeypatch):
+    """Bridge the durable revision service to two real Unix socket listeners."""
+    from fast_agent.spawn.agent_channel import AgentChannel
+    from fast_agent.spawn.spawn_registry import SpawnRecord, SpawnRegistry
+    from fast_agent.spawn import team_spawner
+    import services.shared_state as state
+
+    init_db()
+    with sqlite3.connect(engine.url.database) as conn:
+        conn.execute("DELETE FROM team_requirement_revisions")
+        conn.execute("DELETE FROM team_work_bindings")
+
+    monkeypatch.setenv("SPAWN_PROJECT_DIR", str(tmp_path))
+    registry_path = tmp_path / "spawn_registry.db"
+    monkeypatch.setenv("SPAWN_REGISTRY_DB", str(registry_path))
+    registry = SpawnRegistry(registry_path)
+    sessions = {}
+    records = {}
+    for session_id in ("team-a", "team-b"):
+        run_id = f"run-{session_id}"
+        messages_dir = tmp_path / "messages" / session_id
+        registry.register(SpawnRecord(
+            run_id=run_id, agent_name="Alex [PM]", role="pm",
+            team_name=session_id, session_id=session_id, status="idle",
+            original_config={"env_vars": {
+                "TEAM_SESSION_ID": session_id,
+                "TEAM_MESSAGES_DIR": str(messages_dir),
+            }},
+        ))
+        sessions[session_id] = SimpleNamespace(
+            session_id=session_id, team_name=session_id,
+            project_brief=f"Build {session_id}",
+            template={"orchestrator": "pm"},
+            agents={"Alex [PM]": {"role": "pm", "run_id": run_id}},
+        )
+        records[run_id] = {"original_config": {"env_vars": {
+            "TEAM_MESSAGES_DIR": str(messages_dir),
+        }}}
+    monkeypatch.setattr(team_spawner, "get_team_session", sessions.get)
+    monkeypatch.setattr(state, "registry_db", SimpleNamespace(get_record=records.get))
+
+    first = AgentChannel("Alex [PM]", session_id="team-a", run_id="run-team-a")
+    second = AgentChannel("Alex [PM]", session_id="team-b", run_id="run-team-b")
+    await first.start_server()
+    await second.start_server()
+    try:
+        assert first.socket_path != second.socket_path
+        work.bind_team("team-a", "chat-1")
+        work.bind_team("team-b", "chat-1")
+        change_a = work.create_revision("team-a", "chat-1", "Only team A")
+        await work.deliver_revision(change_a["id"])
+        assert await first.listen(timeout=0.5) == "wake"
+        assert await second.listen(timeout=0.05) is None
+
+        change_b = work.create_revision("team-b", "chat-1", "Only team B")
+        await work.deliver_revision(change_b["id"])
+        assert await second.listen(timeout=0.5) == "wake"
+        assert await first.listen(timeout=0.05) is None
+    finally:
+        await second.stop()
+        await first.stop()
