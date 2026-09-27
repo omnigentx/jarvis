@@ -22,6 +22,27 @@ import { useAgentsStore } from '../stores/agents.js'
 import { insertTurn, isResetSignal, lastAssistantText } from './agentTurnsUtils.js'
 import { agentIdentity, findAgentByIdentity } from './agentIdentity.js'
 
+/** Route a message_turn SSE event to its unambiguous session-scoped turn bucket. */
+export function ingestMessageTurnEvent(turns, agents, evt, maxPerAgent = 200) {
+  if (evt?.event_type !== 'message_turn') return false
+  const d = evt.data || {}
+  if (typeof d.turn_idx !== 'number') return false
+  const agent = findAgentByIdentity(agents, evt.agent_name, evt.session_id)
+  if (!agent) return false
+  const identity = agentIdentity(agent)
+  const turn = {
+    turn_idx: d.turn_idx,
+    role: d.role || d.message?.role || null,
+    message: d.message || {},
+    run_id: evt.run_id || null,
+    ts: evt.timestamp || null,
+  }
+  const current = turns.get(identity) || []
+  const next = isResetSignal(current, turn) ? [] : current
+  turns.set(identity, insertTurn(next, turn, maxPerAgent))
+  return true
+}
+
 export function useAgentTurns(options = {}) {
   const maxPerAgent = options.maxPerAgent ?? 200
 
@@ -141,20 +162,8 @@ export function useAgentTurns(options = {}) {
       // Process oldest first so turn_idx ordering is preserved.
       for (let i = batch.length - 1; i >= 0; i--) {
         const evt = batch[i]
-        if (evt?.event_type !== 'message_turn') continue
-        const d = evt.data || {}
-        if (typeof d.turn_idx !== 'number') continue
-        const turn = {
-          turn_idx: d.turn_idx,
-          role: d.role || d.message?.role || null,
-          message: d.message || {},
-          run_id: evt.run_id || null,
-          ts: evt.timestamp || null,
-        }
-        const rosterAgent = findAgentByIdentity(store.agentsList, evt.agent_name, evt.session_id)
-        if (!rosterAgent) continue
-        handlePossibleReset(rosterAgent, turn)
-        ingestTurn(rosterAgent, turn)
+        ingestMessageTurnEvent(turns.value, store.agentsList, evt, maxPerAgent)
+
       }
       _lastSeenEvent = events[0]
     },
