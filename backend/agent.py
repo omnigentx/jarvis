@@ -280,6 +280,8 @@ _JARVIS_SERVERS.append("team_work")
 _JARVIS_TOOLS["team_work"] = [
     "team_find", "team_revisions", "team_change_requirement", "team_retry_pending",
 ]
+_JARVIS_SERVERS.append("model_selection")
+_JARVIS_TOOLS["model_selection"] = ["model_get", "model_set"]
 
 if _SPAWNER_ENABLED:
     _JARVIS_SERVERS.append("agent_spawner")

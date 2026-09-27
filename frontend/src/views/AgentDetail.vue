@@ -9,6 +9,7 @@ import StatusBadge from '../components/StatusBadge.vue'
 import MarkdownRenderer from '../components/MarkdownRenderer.vue'
 import SkillEditorModal from '../components/agent/SkillEditorModal.vue'
 import SkillDeleteModal from '../components/agent/SkillDeleteModal.vue'
+import AgentModelSelector from '../components/agent/AgentModelSelector.vue'
 import AgentMemoryPanel from './AgentMemoryPanel.vue'
 import {
   roleAvaClass,
@@ -23,6 +24,7 @@ const route = useRoute()
 const router = useRouter()
 const store = useAgentsStore()
 const agentDetail = ref(null)
+const modelStatusEvent = ref(null)
 const validTabs = ['overview', 'skills', 'servers', 'instruction', 'context', 'versions', 'memory', 'activity']
 const initialTab = validTabs.includes(route.query.tab) ? route.query.tab : 'overview'
 const activeTab = ref(initialTab)
@@ -77,11 +79,17 @@ const _stopRuntimeWatch = watch(
   (events) => {
     if (!events?.length) return
     let hit = false
+    let statusSeen = false
     for (let i = 0; i < events.length; i++) {
       if (events[i] === _lastSeenEvent) break
       const ev = events[i]
+      if (!statusSeen && ev?.agent_name === agentName.value &&
+        ['model_change_requested', 'model_change_failed', 'model_changed'].includes(ev?.event_type)) {
+        modelStatusEvent.value = ev
+        statusSeen = true
+      }
       if (
-        ev?.event_type === 'runtime_config_ready'
+        ['runtime_config_ready', 'model_changed', 'model_call_started', 'model_call_finished'].includes(ev?.event_type)
         && ev?.agent_name === agentName.value
       ) {
         hit = true
@@ -674,7 +682,6 @@ function historyBadgeLabel(type) {
             <p class="header-meta">
               {{ agent.description || t('agentDetail.aiAgent') }}
               · {{ agent.type }}
-              · {{ agent.model || 'openai.gpt-4o-mini' }}
             </p>
           </div>
         </div>
@@ -705,12 +712,10 @@ function historyBadgeLabel(type) {
 
       <!-- ===== OVERVIEW TAB ===== -->
       <div v-if="activeTab === 'overview'" class="animate-fade-in">
+        <AgentModelSelector v-if="['team', 'dynamic', 'builtin', 'card'].includes(agent.type)"
+          :agent="agent" :status-event="modelStatusEvent" @updated="fetchAgentDetail" />
         <!-- Stats Row (full width) -->
         <div class="stats-row">
-          <div class="stat-card">
-            <span class="stat-label">{{ t('agentDetail.statModel') }}</span>
-            <span class="stat-value stat-green">{{ agent.model?.includes('.') ? agent.model.slice(agent.model.indexOf('.') + 1) : (agent.model || '—') }}</span>
-          </div>
           <div class="stat-card">
             <span class="stat-label">{{ t('agentDetail.statType') }}</span>
             <span class="stat-value stat-blue">{{ agent.type }}</span>
@@ -1667,7 +1672,7 @@ function historyBadgeLabel(type) {
 /* ── Stats Row ── */
 .stats-row {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 10px;
   margin-bottom: 16px;
 }
@@ -2374,7 +2379,7 @@ function historyBadgeLabel(type) {
 
   /* ── Overview: 1-column ── */
   .stats-row {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 8px;
     padding: 12px 14px;
     background: transparent;

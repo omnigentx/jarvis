@@ -192,6 +192,7 @@ async def lifespan(app: FastAPI):
             approval_rpc_handlers,
             team_template_rpc_handlers,
             team_work_rpc_handlers,
+            model_rpc_handlers,
         )
         from services.memory import rpc_handlers as memory_rpc_handlers
 
@@ -203,6 +204,7 @@ async def lifespan(app: FastAPI):
         team_template_rpc_handlers.register(runtime_rpc_server)
         team_work_rpc_handlers.register(runtime_rpc_server)
         memory_rpc_handlers.register(runtime_rpc_server)
+        model_rpc_handlers.register(runtime_rpc_server)
         await runtime_rpc_server.start()
         state.runtime_rpc_server = runtime_rpc_server
         logger.info(
@@ -631,6 +633,12 @@ async def lifespan(app: FastAPI):
             except Exception as _e:
                 logger.warning("[MEMORY] Failed to attach retrieval hook: %s", _e, exc_info=True)
 
+            try:
+                from services.inprocess_model_runtime import attach_inprocess_hooks
+                logger.info("[MODEL] In-process hook attached to %d agent(s)", attach_inprocess_hooks(agent))
+            except Exception:
+                logger.exception("[MODEL] Failed to attach in-process hooks")
+
             # Knowledge-graph migration/repair: (re)extract triples for memories that
             # lack them and re-project them as RELATES edges. MUST run here — AFTER
             # `state.agent_app = agent` — because the extractor LLM is resolved from
@@ -675,6 +683,8 @@ async def lifespan(app: FastAPI):
                     attach_compaction_hooks_to_all(agent)
                     from services.memory.retrieval_hook import attach_memory_hooks_to_all
                     attach_memory_hooks_to_all(agent)
+                    from services.inprocess_model_runtime import attach_inprocess_hooks
+                    attach_inprocess_hooks(agent)
                 except Exception as _e:
                     logger.warning("[COMPACT] Failed to re-attach hook after preload: %s", _e)
 

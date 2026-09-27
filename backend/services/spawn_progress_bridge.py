@@ -275,6 +275,11 @@ class SpawnProgressBridge:
             self._broadcast_activity(agent_name, event_type_str, data, event_data)
             return
 
+        # Model call boundaries are already on the activity stream. Keep the
+        # chat progress feed focused on user-visible work, not instrumentation.
+        if event_type_str.startswith("model_call_"):
+            return
+
         # 6. Push to chat SSE queue if there is an active chat request
         if not self._request_id:
             return
@@ -1942,4 +1947,3 @@ class SpawnProgressBridge:
         else:
             lines.append("\nReview outputs and decide next actions.")
         return "\n".join(lines)
-
