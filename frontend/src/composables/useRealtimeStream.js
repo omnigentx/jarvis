@@ -39,6 +39,7 @@ export function useRealtimeStream(options = {}) {
       onMessage: handleMessage,
       onConnected: () => {
         console.log('[SSE] Connected to activity stream')
+        options.onConnected?.()
         // NOTE: an earlier draft of this composable also fired
         // ``useAgentsStore().fetchAgents()`` here as a "catch up after
         // reconnect" call. That introduced a race: the REST response

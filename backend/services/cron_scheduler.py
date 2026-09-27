@@ -867,6 +867,13 @@ class SchedulerStreamManager:
 
     def broadcast(self, event: dict):
         """Fan out event to all subscribers."""
+        if event.get("type") == "new_notification":
+            from services.activity_stream import activity_stream_manager
+
+            activity_stream_manager.broadcast({
+                **event,
+                "event_type": "scheduler_notification",
+            })
         for sub_id, q in list(self._subscribers.items()):
             try:
                 q.put_nowait(event)
