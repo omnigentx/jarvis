@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { effectScope, nextTick } from 'vue'
+import { effectScope, nextTick, watch } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { useAgentsStore } from '../stores/agents.js'
 import { useAgentTurns, ingestMessageTurnEvent } from './useAgentTurns.js'
@@ -40,5 +40,40 @@ test('useAgentTurns watcher delegates incoming SSE events to production ingestio
     assert.deepEqual(agentTurns.getTurns(teamB).map(turn => turn.turn_idx), [2])
   } finally {
     scope.stop()
+  }
+})
+
+test('live SSE stays visible when a slower initial history response arrives', async () => {
+  setActivePinia(createPinia())
+  const store = useAgentsStore()
+  const agent = { name: 'Jarvis' }
+  store.agents.set(agentIdentity(agent), agent)
+  const originalFetch = globalThis.fetch
+  let releaseHistory
+  globalThis.fetch = () => new Promise(resolve => { releaseHistory = resolve })
+  const scope = effectScope()
+  const agentTurns = scope.run(() => useAgentTurns())
+  const observed = []
+  scope.run(() => watch(agentTurns.turns, map => {
+    observed.push(map.get(agentIdentity(agent))?.length || 0)
+  }))
+  try {
+    const pending = agentTurns.fetchInitial(agent)
+    store.recentEvents = [{
+      event_type: 'message_turn', agent_name: 'Jarvis', run_id: 'run-1',
+      data: { turn_idx: 2, role: 'assistant', message: { content: [{ text: 'live' }] } },
+    }]
+    await nextTick()
+    assert.deepEqual(observed, [1], 'the SSE delta must trigger a reactive render')
+
+    releaseHistory(new Response(JSON.stringify({ turns: [
+      { turn_idx: 0, role: 'user', message: { content: [{ text: 'request' }] } },
+      { turn_idx: 1, role: 'assistant', message: { content: [{ text: 'history' }] } },
+    ] }), { headers: { 'content-type': 'application/json' } }))
+    await pending
+    assert.deepEqual(agentTurns.getTurns(agent).map(turn => turn.turn_idx), [0, 1, 2])
+  } finally {
+    scope.stop()
+    globalThis.fetch = originalFetch
   }
 })

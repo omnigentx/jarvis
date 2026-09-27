@@ -29,6 +29,7 @@ responses:
     status: 200
     json:
       - name: "Jarvis"
+        session_id: "team-1"
         status: "running"
         type: "builtin"
         model: "claude-opus-4-7"
@@ -91,6 +92,7 @@ sse_streams:
     - data:
         agent_name: "Jarvis"
         event_type: "message_turn"
+        session_id: "team-1"
         run_id: "run-poc-1"
         timestamp: 1714000010.0
         data:

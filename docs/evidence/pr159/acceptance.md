@@ -23,8 +23,15 @@ below remain dated evidence of the defects before repair.
   SCRUM-30 In Progress pending review. Confluence page 98855 version 9 records
   the team rerun and MCP Cloud checks.
 - **Tests on the consolidated merge candidate:** backend non-Cloud full
-  suite 2,293 passed, 4 skipped, 1 xfailed; frontend unit 227 passed;
-  frontend build passed; focused desktop/mobile browser matrix 4 passed.
+  suite 2,293 passed, 4 skipped, 1 xfailed; frontend unit 228 passed;
+  frontend build passed; full Playwright suite 109 passed, including the
+  desktop/mobile browser matrix. The first consolidated-head CI run passed
+  backend and build but failed one Monitor E2E: its fixture assigned a team
+  session to a revision event while the roster declared the same Jarvis agent
+  as static, temporarily rendering two identities (2/4 turns). The fixture
+  now uses one session identity. A separate regression covers a real race:
+  a live SSE turn arriving before `/messages` must render reactively and
+  survive the slower history response. The new head still requires green CI.
   The full backend test process retained a multiprocessing child after the
   summary, then exited 0 once that child was terminated. The pushed head
   must pass its own CI before changing review state.

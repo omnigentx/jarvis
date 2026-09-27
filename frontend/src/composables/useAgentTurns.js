@@ -104,8 +104,15 @@ export function useAgentTurns(options = {}) {
           ts: t.timestamp || null,
         })).sort((a, b) => a.turn_idx - b.turn_idx)
 
+        // SSE can arrive while the history request is in flight. Keep those
+        // newer deltas, including a turn with the same key as stale history.
+        const live = turns.value.get(identity) || []
+        const merged = live.reduce(
+          (bucket, turn) => insertTurn(bucket, turn, maxPerAgent),
+          arr.slice(-maxPerAgent),
+        )
         const next = new Map(turns.value)
-        next.set(identity, arr.slice(-maxPerAgent))
+        next.set(identity, merged)
         turns.value = next
         fetched.value = new Set([...fetched.value, identity])
       } catch (e) {
@@ -160,11 +167,13 @@ export function useAgentTurns(options = {}) {
         batch.push(events[i])
       }
       // Process oldest first so turn_idx ordering is preserved.
+      const next = new Map(turns.value)
+      let changed = false
       for (let i = batch.length - 1; i >= 0; i--) {
         const evt = batch[i]
-        ingestMessageTurnEvent(turns.value, store.agentsList, evt, maxPerAgent)
-
+        changed = ingestMessageTurnEvent(next, store.agentsList, evt, maxPerAgent) || changed
       }
+      if (changed) turns.value = next
       _lastSeenEvent = events[0]
     },
     { flush: 'post' },
