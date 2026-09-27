@@ -11,6 +11,7 @@ import LifecycleBar from '../components/monitor/LifecycleBar.vue'
 import BulkInjectBar from '../components/monitor/BulkInjectBar.vue'
 import { useToast } from '../composables/useToast'
 import { statusColor } from '../components/agent/agentMeta.js'
+import { agentIdentity } from '../composables/agentIdentity.js'
 import { useLang } from '../composables/useLang'
 
 const { t } = useLang()
@@ -36,9 +37,9 @@ const agentTurns = useAgentTurns({ maxPerAgent: 200 })
 // roster. Skipping fetchInitial calls past the first per-agent is
 // handled inside ``useAgentTurns.fetchInitial``.
 watch(
-  () => filteredAgents.value.map(a => a.name),
-  (names) => {
-    for (const n of names) agentTurns.fetchInitial(n)
+  () => filteredAgents.value.map(agentIdentity),
+  () => {
+    for (const agent of filteredAgents.value) agentTurns.fetchInitial(agent)
   },
   { immediate: true },
 )
@@ -599,11 +600,11 @@ onMounted(() => {
     <div v-else class="agent-grid agent-grid-v2">
       <AgentTerminal
         v-for="agent in filteredAgents"
-        :key="agent.name"
+        :key="agentIdentity(agent)"
         :agent="agent"
-        :turns="agentTurns.getTurns(agent.name)"
-        :loading="!agentTurns.fetched.value.has(agent.name)"
-        :on-fetch-full="(turnIdx) => agentTurns.fetchTurnFull(agent.name, turnIdx)"
+        :turns="agentTurns.getTurns(agent)"
+        :loading="!agentTurns.fetched.value.has(agentIdentity(agent))"
+        :on-fetch-full="(turnIdx) => agentTurns.fetchTurnFull(agent, turnIdx)"
         :on-pause-toggle="['running', 'paused', 'pausing', 'resuming'].includes(agent.status)
           ? () => handlePauseToggle(agent.name, agent.status)
           : null"

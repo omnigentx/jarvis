@@ -4,6 +4,7 @@ import { defineStore } from 'pinia'
 // resolve the bare specifier without a custom loader. Vite ignores
 // the extension either way.
 import { apiFetch } from '../api.js'
+import { agentKey, findAgent } from './agentIdentity.js'
 
 export const useAgentsStore = defineStore('agents', () => {
   // --- State ---
@@ -50,8 +51,9 @@ export const useAgentsStore = defineStore('agents', () => {
       const newMap = new Map()
       for (const agent of data) {
         // Preserve existing realtime state if available
-        const existing = agents.value.get(agent.name)
-        newMap.set(agent.name, {
+        const key = agentKey(agent)
+        const existing = findAgent(agents.value, agent.name, agent.session_id)
+        newMap.set(key, {
           ...agent,
           status: existing?.status || agent.status || 'idle',
           lastAction: existing?.lastAction || null,
@@ -83,9 +85,11 @@ export const useAgentsStore = defineStore('agents', () => {
   }
 
   function upsertAgent(name, updates) {
-    const existing = agents.value.get(name)
+    const sessionId = updates.session_id || findAgent(agents.value, name)?.session_id
+    const key = agentKey({ name, session_id: sessionId })
+    const existing = agents.value.get(key) || findAgent(agents.value, name, sessionId)
     const isNew = !existing
-    agents.value.set(name, { ...(existing || { name }), ...updates })
+    agents.value.set(key, { ...(existing || { name }), ...updates, ...(sessionId ? { session_id: sessionId } : {}) })
     // Trigger reactivity
     agents.value = new Map(agents.value)
 
@@ -136,7 +140,7 @@ export const useAgentsStore = defineStore('agents', () => {
    * should write status while pause owns it.
    */
   function upsertAgentPreservingPauseCycle(name, fields) {
-    const current = agents.value.get(name)
+    const current = findAgent(agents.value, name)
     if (PAUSE_CYCLE.has(current?.status) && 'status' in fields) {
       const { status: _drop, ...rest } = fields
       if (Object.keys(rest).length) upsertAgent(name, rest)
@@ -151,6 +155,8 @@ export const useAgentsStore = defineStore('agents', () => {
    */
   function processEvent(event) {
     const { agent_name, event_type } = event
+    const eventSessionId = event.session_id
+    const eventKey = agentKey({ name: agent_name, session_id: eventSessionId })
     // GLOBAL memory events (memory_indexed, memory_reranker_loading) carry no
     // agent_name. Forward them to the memory store BEFORE the per-agent guard
     // below, which would otherwise drop every agent-less event on the floor.
@@ -166,6 +172,7 @@ export const useAgentsStore = defineStore('agents', () => {
     switch (event_type) {
       case 'team_requirement_change':
         upsertAgent(agent_name, {
+          session_id: eventSessionId,
           lastRequirementChange: {
             sessionId: event.session_id,
             revision: event.data?.revision,
@@ -182,6 +189,7 @@ export const useAgentsStore = defineStore('agents', () => {
         // pause — preserve the pause state instead of bouncing back
         // to running.
         upsertAgentPreservingPauseCycle(agent_name, {
+          session_id: eventSessionId,
           status: 'running',
           lastAction: { message: event.message, timestamp: event.timestamp },
         })
@@ -198,6 +206,7 @@ export const useAgentsStore = defineStore('agents', () => {
         // The previous version only checked 'paused' and missed both
         // transitional states.
         upsertAgentPreservingPauseCycle(agent_name, {
+          session_id: eventSessionId,
           status: 'running',
           lastAction: { message: event.message, timestamp: event.timestamp },
         })
@@ -210,6 +219,7 @@ export const useAgentsStore = defineStore('agents', () => {
         // resumable agents stay idle until the next resume.
         // Pause-aware: skip status override when pause-cycle owns it.
         upsertAgentPreservingPauseCycle(agent_name, {
+          session_id: eventSessionId,
           status: 'idle',
           lastAction: { message: event.message || 'Done', timestamp: event.timestamp },
         })
@@ -217,6 +227,7 @@ export const useAgentsStore = defineStore('agents', () => {
 
       case 'error':
         upsertAgent(agent_name, {
+          session_id: eventSessionId,
           status: 'error',
           lastError: event.data?.message || event.message,
           lastAction: { message: event.message || 'Error', timestamp: event.timestamp },
@@ -225,6 +236,7 @@ export const useAgentsStore = defineStore('agents', () => {
 
       case 'idle':
         upsertAgentPreservingPauseCycle(agent_name, {
+          session_id: eventSessionId,
           status: 'idle',
           lastAction: { message: 'Idle', timestamp: event.timestamp },
         })
@@ -232,6 +244,7 @@ export const useAgentsStore = defineStore('agents', () => {
 
       case 'response':
         upsertAgentPreservingPauseCycle(agent_name, {
+          session_id: eventSessionId,
           status: 'idle',
           lastAction: { message: event.message, timestamp: event.timestamp },
         })
@@ -251,7 +264,7 @@ export const useAgentsStore = defineStore('agents', () => {
         break
 
       case 'agent_removed':
-        agents.value.delete(agent_name)
+        agents.value.delete(eventKey)
         agents.value = new Map(agents.value) // trigger reactivity
         break
 
@@ -260,11 +273,12 @@ export const useAgentsStore = defineStore('agents', () => {
         // its in-flight LLM/tool call. Show a "Pausing…" spinner.
         // Snapshot the pre-pause status now (not at agent_paused) because
         // by the time we hit agent_paused the agent may have moved on.
-        const current = agents.value.get(agent_name)
+        const current = findAgent(agents.value, agent_name, eventSessionId)
         const prior = current?.status
         const restorable = (prior && prior !== 'paused' && prior !== 'pausing')
           ? prior : 'idle'
         upsertAgent(agent_name, {
+          session_id: eventSessionId,
           status: 'pausing',
           prePauseStatus: restorable,
           lastAction: { message: event.message || 'Pausing…', timestamp: event.timestamp },
@@ -276,12 +290,13 @@ export const useAgentsStore = defineStore('agents', () => {
         // Terminal: agent has actually blocked at a checkpoint (or was
         // already idle when pause arrived). prePauseStatus was captured
         // on agent_pausing — preserve it.
-        const current = agents.value.get(agent_name)
+        const current = findAgent(agents.value, agent_name, eventSessionId)
         const fallbackPrior = current?.status
         const restorable = current?.prePauseStatus
           || ((fallbackPrior && fallbackPrior !== 'paused' && fallbackPrior !== 'pausing')
               ? fallbackPrior : 'idle')
         upsertAgent(agent_name, {
+          session_id: eventSessionId,
           status: 'paused',
           prePauseStatus: restorable,
           lastAction: { message: event.message || 'Paused', timestamp: event.timestamp },
@@ -293,6 +308,7 @@ export const useAgentsStore = defineStore('agents', () => {
         // Transitional: resume request received, agent still blocked at
         // checkpoint waiting for the await to wake. Show "Resuming…".
         upsertAgent(agent_name, {
+          session_id: eventSessionId,
           status: 'resuming',
           lastAction: { message: event.message || 'Resuming…', timestamp: event.timestamp },
         })
@@ -305,9 +321,10 @@ export const useAgentsStore = defineStore('agents', () => {
         // forcing 'running'. If the agent has actual pending work, the
         // next 'thinking' / 'tool_call' / 'message_turn' event arrives
         // moments later and naturally bumps status to 'running' again.
-        const current = agents.value.get(agent_name)
+        const current = findAgent(agents.value, agent_name, eventSessionId)
         const restored = current?.prePauseStatus || 'idle'
         upsertAgent(agent_name, {
+          session_id: eventSessionId,
           status: restored,
           prePauseStatus: undefined,
           lastAction: { message: event.message || 'Resumed', timestamp: event.timestamp },
@@ -325,9 +342,9 @@ export const useAgentsStore = defineStore('agents', () => {
         const msg = event.data?.message
         const stop = msg?.stop_reason
         if (msg?.role === 'assistant' && msg?.tool_calls) {
-          upsertAgentPreservingPauseCycle(agent_name, { status: 'running' })
+          upsertAgentPreservingPauseCycle(agent_name, { session_id: eventSessionId, status: 'running' })
         } else if (msg?.role === 'assistant' && stop && stop !== 'toolUse') {
-          upsertAgentPreservingPauseCycle(agent_name, { status: 'idle' })
+          upsertAgentPreservingPauseCycle(agent_name, { session_id: eventSessionId, status: 'idle' })
         }
         break
       }
@@ -335,11 +352,11 @@ export const useAgentsStore = defineStore('agents', () => {
       case 'token_usage': {
         // Accumulate token metrics per agent from SSE
         const d = event.data || {}
-        const prev = tokenMetrics.value.get(agent_name) || {
+        const prev = tokenMetrics.value.get(eventKey) || {
           total_tokens: 0, input_tokens: 0, output_tokens: 0,
           cached_tokens: 0, reasoning_tokens: 0, est_cost: 0, llm_calls: 0,
         }
-        tokenMetrics.value.set(agent_name, {
+        tokenMetrics.value.set(eventKey, {
           total_tokens: prev.total_tokens + (d.total_tokens || 0),
           input_tokens: prev.input_tokens + (d.input_tokens || 0),
           output_tokens: prev.output_tokens + (d.output_tokens || 0),
@@ -352,6 +369,7 @@ export const useAgentsStore = defineStore('agents', () => {
         tokenMetrics.value = new Map(tokenMetrics.value) // trigger reactivity
         // Also update the agent's tokenCount for card display
         upsertAgent(agent_name, {
+          session_id: eventSessionId,
           tokenCount: formatTokenCount(prev.total_tokens + (d.total_tokens || 0)),
         })
         break
@@ -361,12 +379,14 @@ export const useAgentsStore = defineStore('agents', () => {
         // Status untouched — compaction is a background maintenance step,
         // not an agent state transition (the agent stays running).
         upsertAgent(agent_name, {
-          compaction: { inProgress: true, last: agents.value.get(agent_name)?.compaction?.last || null },
+          session_id: eventSessionId,
+          compaction: { inProgress: true, last: findAgent(agents.value, agent_name, eventSessionId)?.compaction?.last || null },
         })
         break
 
       case 'context_compaction_completed':
         upsertAgent(agent_name, {
+          session_id: eventSessionId,
           compaction: {
             inProgress: false,
             last: {
@@ -382,6 +402,7 @@ export const useAgentsStore = defineStore('agents', () => {
 
       case 'context_compaction_failed':
         upsertAgent(agent_name, {
+          session_id: eventSessionId,
           compaction: {
             inProgress: false,
             last: {
@@ -430,6 +451,7 @@ export const useAgentsStore = defineStore('agents', () => {
         }
         // Unknown event — still track
         upsertAgent(agent_name, {
+          session_id: eventSessionId,
           lastAction: { message: event.message, timestamp: event.timestamp },
         })
     }

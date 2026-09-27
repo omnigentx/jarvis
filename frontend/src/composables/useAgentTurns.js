@@ -16,10 +16,11 @@
  * (one per agent per turn), so it lives in its own keyed map.
  */
 
-import { ref, shallowRef, triggerRef, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, shallowRef, onUnmounted, watch } from 'vue'
 import { apiFetch } from '../api'
 import { useAgentsStore } from '../stores/agents'
 import { insertTurn, isResetSignal, lastAssistantText } from './agentTurnsUtils.js'
+import { agentIdentity } from './agentIdentity.js'
 
 export function useAgentTurns(options = {}) {
   const maxPerAgent = options.maxPerAgent ?? 200
@@ -38,37 +39,41 @@ export function useAgentTurns(options = {}) {
   const store = useAgentsStore()
 
   /** Internal: get-or-create the array for an agent, returning a fresh copy. */
-  function _bucket(agentName) {
-    return turns.value.get(agentName) || []
+  function _bucket(identity) {
+    return turns.value.get(identity) || []
   }
 
   /** Insert/replace a turn keyed by turn_idx. Sorted ascending. Bounded by maxPerAgent. */
-  function ingestTurn(agentName, turn) {
-    if (!agentName || !turn || typeof turn.turn_idx !== 'number') return
-    const arr = insertTurn(_bucket(agentName), turn, maxPerAgent)
+  function ingestTurn(agent, turn) {
+    if (!agent?.name || !turn || typeof turn.turn_idx !== 'number') return
+    const identity = agentIdentity(agent)
+    const arr = insertTurn(_bucket(identity), turn, maxPerAgent)
     const next = new Map(turns.value)
-    next.set(agentName, arr)
+    next.set(identity, arr)
     turns.value = next
   }
 
   /** If the delta is a reset signal, drop the bucket so old turns don't linger. */
-  function handlePossibleReset(agentName, turn) {
-    if (isResetSignal(_bucket(agentName), turn)) {
+  function handlePossibleReset(agent, turn) {
+    const identity = agentIdentity(agent)
+    if (isResetSignal(_bucket(identity), turn)) {
       const next = new Map(turns.value)
-      next.set(agentName, [])
+      next.set(identity, [])
       turns.value = next
     }
   }
 
   /** Fetch initial message history for an agent (idempotent). */
-  async function fetchInitial(agentName) {
-    if (!agentName) return
-    if (fetched.value.has(agentName)) return
-    if (_pendingFetches.has(agentName)) return _pendingFetches.get(agentName)
+  async function fetchInitial(agent) {
+    if (!agent?.name) return
+    const { name: agentName, session_id: sessionId } = agent
+    const identity = agentIdentity(agent)
+    if (fetched.value.has(identity)) return
+    if (_pendingFetches.has(identity)) return _pendingFetches.get(identity)
 
     const p = (async () => {
       try {
-        const data = await apiFetch(`/api/agents/${encodeURIComponent(agentName)}/messages?limit=200`)
+        const data = await apiFetch(`/api/agents/${encodeURIComponent(agentName)}/messages?limit=200${sessionId ? `&session_id=${encodeURIComponent(sessionId)}` : ''}`)
         const items = data?.turns || []
         const arr = items.map(t => ({
           turn_idx: t.turn_idx,
@@ -79,26 +84,27 @@ export function useAgentTurns(options = {}) {
         })).sort((a, b) => a.turn_idx - b.turn_idx)
 
         const next = new Map(turns.value)
-        next.set(agentName, arr.slice(-maxPerAgent))
+        next.set(identity, arr.slice(-maxPerAgent))
         turns.value = next
-        fetched.value = new Set([...fetched.value, agentName])
+        fetched.value = new Set([...fetched.value, identity])
       } catch (e) {
         console.warn(`[useAgentTurns] initial fetch failed for ${agentName}:`, e?.message || e)
       } finally {
-        _pendingFetches.delete(agentName)
+        _pendingFetches.delete(identity)
       }
     })()
 
-    _pendingFetches.set(agentName, p)
+    _pendingFetches.set(identity, p)
     return p
   }
 
   /** Fetch the untruncated content for one turn (used by "Show full" UX). */
-  async function fetchTurnFull(agentName, turnIdx) {
-    if (!agentName || typeof turnIdx !== 'number') return null
+  async function fetchTurnFull(agent, turnIdx) {
+    if (!agent?.name || typeof turnIdx !== 'number') return null
+    const { name: agentName, session_id: sessionId } = agent
     try {
       return await apiFetch(
-        `/api/agents/${encodeURIComponent(agentName)}/turns/${turnIdx}/full`,
+        `/api/agents/${encodeURIComponent(agentName)}/turns/${turnIdx}/full${sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ''}`,
       )
     } catch (e) {
       console.warn(`[useAgentTurns] full fetch failed for ${agentName}#${turnIdx}:`, e?.message || e)
@@ -107,13 +113,13 @@ export function useAgentTurns(options = {}) {
   }
 
   /** Reactive accessor: turns for one agent, ascending. */
-  function getTurns(agentName) {
-    return turns.value.get(agentName) || []
+  function getTurns(agent) {
+    return turns.value.get(typeof agent === 'string' ? agent : agentIdentity(agent)) || []
   }
 
   /** Last assistant text — useful for header preview. */
-  function getLastAssistantText(agentName) {
-    return lastAssistantText(getTurns(agentName))
+  function getLastAssistantText(agent) {
+    return lastAssistantText(getTurns(agent))
   }
 
   // ── Bridge: pull message_turn events from the store as they arrive ──
@@ -145,8 +151,10 @@ export function useAgentTurns(options = {}) {
           run_id: evt.run_id || null,
           ts: evt.timestamp || null,
         }
-        handlePossibleReset(evt.agent_name, turn)
-        ingestTurn(evt.agent_name, turn)
+        const rosterAgent = store.agentsList.find(a => a.name === evt.agent_name && (!evt.session_id || a.session_id === evt.session_id))
+        if (!rosterAgent) continue
+        handlePossibleReset(rosterAgent, turn)
+        ingestTurn(rosterAgent, turn)
       }
       _lastSeenEvent = events[0]
     },
