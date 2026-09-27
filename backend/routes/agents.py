@@ -1317,6 +1317,31 @@ async def update_team_agent_model(name: str, update: TeamModelUpdate):
     return result
 
 
+def _require_unambiguous_spawn_name(name: str) -> None:
+    """Fail closed when a name-only control could target multiple teams."""
+    import services.shared_state as state
+
+    if not state.registry_db:
+        return
+    try:
+        records = state.registry_db.find_by_name(name)
+    except Exception as exc:
+        logger.warning("[AGENTS API] Cannot resolve agent identity: %s", name, exc_info=True)
+        raise HTTPException(status_code=503, detail="Agent identity unavailable") from exc
+    identities = set()
+    for record in records:
+        env = (record.get("original_config") or {}).get("env_vars") or {}
+        identities.add(
+            record.get("session_id") or env.get("TEAM_SESSION_ID")
+            or record.get("team_name") or record.get("run_id")
+        )
+    if len(identities) > 1:
+        raise HTTPException(
+            status_code=409,
+            detail="Agent name belongs to multiple teams; this control requires a scoped target",
+        )
+
+
 @router.delete("/{name}", dependencies=[Depends(verify_api_key)])
 async def delete_agent(name: str):
     """Delete a dynamic agent definition or remove a team/spawn agent
@@ -1330,6 +1355,7 @@ async def delete_agent(name: str):
     """
     if _is_static_agent(name):
         raise HTTPException(status_code=403, detail=f"'{name}' is a static agent (cannot be deleted)")
+    _require_unambiguous_spawn_name(name)
 
     from services import agent_definitions as defs_svc
 
@@ -1392,6 +1418,7 @@ async def pause_agent(agent_name: str):
     """
     from services.pause_manager import pause_manager
 
+    _require_unambiguous_spawn_name(agent_name)
     changed = pause_manager.pause(agent_name)
     if not changed:
         return {"status": "already_paused", "agent": agent_name}
@@ -1415,6 +1442,7 @@ async def resume_agent(agent_name: str):
     """
     from services.pause_controller import pause_controller, PauseProtected
 
+    _require_unambiguous_spawn_name(agent_name)
     try:
         changed = pause_controller.resume(agent_name)
     except PauseProtected as exc:
