@@ -61,6 +61,60 @@ class TestSpawnProgressBridge:
         assert evt["data"]["role"] == "assistant"
         assert evt["data"]["message"]["content"][0]["text"] == "summary"
 
+    def test_same_named_team_members_stream_to_separate_histories(self, monkeypatch):
+        from services import agent_message_stream as stream
+        import services.activity_stream as act
+
+        captured = []
+        monkeypatch.setattr(act.activity_stream_manager, "broadcast", captured.append)
+        bridge, _pm = self._make_bridge()
+        bridge._registry_db = MagicMock()
+        bridge._registry_db.get_record.side_effect = lambda run: {
+            "run-a": {"session_id": "team-a"},
+            "run-b": {"session_id": "team-b"},
+        }[run]
+
+        for run, body in (("run-a", "A"), ("run-b", "B")):
+            bridge._forward_message_turn("Alex [Dev]", {
+                "turn_idx": 0, "msg_role": "assistant",
+                "message": {"role": "assistant", "content": [{"type": "text", "text": body}]},
+            }, {"run_id": run})
+
+        assert [event["session_id"] for event in captured] == ["team-a", "team-b"]
+        assert stream.get_recent_turns("Alex [Dev]", session_id="team-a")[0]["message"]["content"][0]["text"] == "A"
+        assert stream.get_recent_turns("Alex [Dev]", session_id="team-b")[0]["message"]["content"][0]["text"] == "B"
+
+    def test_lifecycle_event_carries_team_session(self, monkeypatch):
+        import services.activity_stream as act
+
+        captured = []
+        monkeypatch.setattr(act.activity_stream_manager, "broadcast", captured.append)
+        bridge, _pm = self._make_bridge()
+        bridge._registry_db = MagicMock()
+        bridge._registry_db.get_record.return_value = {"session_id": "team-a"}
+
+        bridge._broadcast_activity(
+            "Alex [Dev]", "idle", {}, {"run_id": "run-a"},
+        )
+
+        assert captured[0]["session_id"] == "team-a"
+
+    def test_removing_one_team_member_preserves_other_team_turns(self, monkeypatch):
+        from services import agent_message_stream as stream
+        import services.activity_stream as act
+
+        monkeypatch.setattr(act.activity_stream_manager, "broadcast", lambda _event: None)
+        bridge, _pm = self._make_bridge()
+        bridge._registry_db = MagicMock()
+        bridge._registry_db.get_record.return_value = {"session_id": "team-a"}
+        stream._record_recent_turn("Alex [Dev]", 0, {"role": "user"}, session_id="team-a")
+        stream._record_recent_turn("Alex [Dev]", 0, {"role": "user"}, session_id="team-b")
+
+        bridge._broadcast_agent_removed("Alex [Dev]", {}, {"run_id": "run-a"})
+
+        assert stream.get_recent_turns("Alex [Dev]", session_id="team-a") == []
+        assert len(stream.get_recent_turns("Alex [Dev]", session_id="team-b")) == 1
+
     def test_message_turn_truncates_large_blocks(self, monkeypatch):
         """Large content blocks are trimmed before broadcast to keep SSE chunks small."""
         from services.agent_message_stream import MAX_BLOCK_TEXT_BYTES

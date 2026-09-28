@@ -452,6 +452,10 @@ async def chat_stream(raw_request: Request, _=Depends(verify_api_key)):
         try:
             original_hooks = {}
             progress_hooks = create_progress_hooks(request_id, session_id=conversation_id)
+            from services.team_work_hooks import create_team_binding_hooks
+            progress_hooks = merge_hooks(
+                progress_hooks, create_team_binding_hooks(conversation_id)
+            )
 
             # Wire request-scoped progress hooks + pause hooks. The merge
             # logic that used to live inline here (create_pause_hooks +

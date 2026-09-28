@@ -43,7 +43,11 @@ MAX_BLOCK_TEXT_BYTES = 16 * 1024
 # turn_idx to 0 and overwrite earlier entries). Capped so memory stays
 # bounded across many runs.
 _RECENT_TURNS_PER_AGENT_CAP = 200
-_recent_turns: dict[str, list[dict]] = {}
+_recent_turns: dict[tuple[str, str], list[dict]] = {}
+
+
+def _turn_key(agent_name: str, session_id: str | None = None) -> tuple[str, str]:
+    return (session_id or "", agent_name)
 
 
 def _truncate_block(block: Any) -> Any:
@@ -86,16 +90,20 @@ def trim_message_for_stream(payload: dict) -> dict:
     return payload
 
 
-def _record_recent_turn(agent_name: str, turn_idx: int, full_payload: dict) -> None:
+def _record_recent_turn(
+    agent_name: str, turn_idx: int, full_payload: dict,
+    *, session_id: str | None = None,
+) -> None:
     """Cache the FULL (untruncated) turn dump in the per-agent ring buffer.
 
     Keeps the latest ``_RECENT_TURNS_PER_AGENT_CAP`` entries. Replaces by
     turn_idx so re-runs (turn_idx resets to 0) overwrite earlier slots.
     """
-    bucket = _recent_turns.get(agent_name)
+    key = _turn_key(agent_name, session_id)
+    bucket = _recent_turns.get(key)
     if bucket is None:
         bucket = []
-        _recent_turns[agent_name] = bucket
+        _recent_turns[key] = bucket
     # Replace existing slot if present, else insert in sorted order.
     for i, existing in enumerate(bucket):
         if existing.get("turn_idx") == turn_idx:
@@ -107,17 +115,22 @@ def _record_recent_turn(agent_name: str, turn_idx: int, full_payload: dict) -> N
         del bucket[: len(bucket) - _RECENT_TURNS_PER_AGENT_CAP]
 
 
-def get_recent_turns(agent_name: str) -> list[dict]:
+def get_recent_turns(agent_name: str, *, session_id: str | None = None) -> list[dict]:
     """Return cached turns for an agent (read-only snapshot)."""
-    return list(_recent_turns.get(agent_name) or [])
+    return list(_recent_turns.get(_turn_key(agent_name, session_id)) or [])
 
 
-def reset_recent_turns(agent_name: str | None = None) -> None:
-    """Test helper: clear the cache (one agent or all)."""
+def reset_recent_turns(
+    agent_name: str | None = None, *, session_id: str | None = None,
+) -> None:
+    """Clear one team's cache, every cache for a name, or the whole cache."""
     if agent_name is None:
         _recent_turns.clear()
+    elif session_id is not None:
+        _recent_turns.pop(_turn_key(agent_name, session_id), None)
     else:
-        _recent_turns.pop(agent_name, None)
+        for key in [key for key in _recent_turns if key[1] == agent_name]:
+            _recent_turns.pop(key, None)
 
 
 def emit_message_history_delta(agent, agent_name: str, run_id: str | None) -> int:
@@ -184,7 +197,7 @@ def emit_message_history_delta(agent, agent_name: str, run_id: str | None) -> in
 # ── Read-side helpers used by the messages REST endpoints ──
 
 
-def _resolve_agent_history(agent_name: str) -> list:
+def _resolve_agent_history(agent_name: str, *, session_id: str | None = None) -> list:
     """Return the agent's PromptMessageExtended list, live or from snapshot.
 
     Resolution order:
@@ -194,12 +207,13 @@ def _resolve_agent_history(agent_name: str) -> list:
          in-process agents that have shut down.
     Returns ``[]`` if neither source has data.
     """
-    # 1. Live in-process agent
+    # Static in-process agents have no team session. A scoped request must
+    # never read their same-named template instead of the team's snapshot.
     try:
         import services.shared_state as state
 
         agent_app = getattr(state, "agent_app", None)
-        if agent_app is not None:
+        if agent_app is not None and not session_id:
             agents_map = getattr(agent_app, "_agents", None) or {}
             agent = agents_map.get(agent_name)
             if agent is not None and hasattr(agent, "message_history"):
@@ -217,7 +231,7 @@ def _resolve_agent_history(agent_name: str) -> list:
     try:
         from services.context_persistence import load_latest_context
 
-        snapshot = load_latest_context(agent_name)
+        snapshot = load_latest_context(agent_name, session_id=session_id)
         if snapshot:
             return list(snapshot)
     except Exception as exc:
@@ -231,6 +245,7 @@ def list_agent_messages(
     *,
     since: int = 0,
     limit: int = 200,
+    session_id: str | None = None,
 ) -> dict:
     """Return ``{turns: [{turn_idx, message}, ...], total: N}`` with trimming applied.
 
@@ -249,8 +264,10 @@ def list_agent_messages(
         since = 0
 
     # 1. Live agent.message_history
-    history = _resolve_agent_history(agent_name)
-    if history:
+    history = _resolve_agent_history(agent_name, session_id=session_id)
+    cached = get_recent_turns(agent_name, session_id=session_id)
+    cache_total = max((t.get("turn_idx", -1) for t in cached), default=-1) + 1
+    if history and len(history) >= cache_total:
         total = len(history)
         if since >= total:
             return {"turns": [], "total": total}
@@ -275,7 +292,6 @@ def list_agent_messages(
         return {"turns": turns, "total": total, "start": start}
 
     # 2. Recent broadcast cache — used when the live agent is a discarded clone
-    cached = get_recent_turns(agent_name)
     if cached:
         # cached entries are sorted by insertion order; sort by turn_idx to
         # be safe against out-of-order replacements.
@@ -299,7 +315,9 @@ def list_agent_messages(
     return {"turns": [], "total": 0}
 
 
-def get_agent_turn_full(agent_name: str, turn_idx: int) -> dict | None:
+def get_agent_turn_full(
+    agent_name: str, turn_idx: int, *, session_id: str | None = None,
+) -> dict | None:
     """Return the untruncated PromptMessageExtended dump for a single turn.
 
     Reads cache first (covers clones), then live agent (covers persistent
@@ -307,11 +325,11 @@ def get_agent_turn_full(agent_name: str, turn_idx: int) -> dict | None:
     exist anywhere.
     """
     # Try cache first — same reasoning as list_agent_messages.
-    for entry in get_recent_turns(agent_name):
+    for entry in get_recent_turns(agent_name, session_id=session_id):
         if entry.get("turn_idx") == turn_idx:
             return {"turn_idx": turn_idx, "message": entry["message"]}
 
-    history = _resolve_agent_history(agent_name)
+    history = _resolve_agent_history(agent_name, session_id=session_id)
     if turn_idx < 0 or turn_idx >= len(history):
         return None
     msg = history[turn_idx]

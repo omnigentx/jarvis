@@ -38,6 +38,8 @@ const props = defineProps({
   loading: { type: Boolean, default: false },
   onFetchFull: { type: Function, default: null },
   onPauseToggle: { type: Function, default: null },
+  pauseDisabled: { type: Boolean, default: false },
+  pauseDisabledReason: { type: String, default: '' },
   onDelete: { type: Function, default: null },
   onInject: { type: Function, default: null },
   onOpenFullscreen: { type: Function, default: null },
@@ -161,7 +163,7 @@ async function submitInject() {
     injectText.value = ''
     injectFiles.value = []
   } catch (e) {
-    injectResult.value = { status: 'error', response: e?.message || String(e) }
+    injectResult.value = { status: 'error', response: e?.status === 409 ? t('teamMonitor.ambiguousActionBlocked') : (e?.message || String(e)) }
   } finally {
     injectBusy.value = false
     setTimeout(() => { injectResult.value = null }, 8000)
@@ -200,6 +202,11 @@ const canTogglePause = computed(() =>
         <span class="status-dot" :class="{ pulse: isRunning }" />
         <span class="agent-name">{{ agent.name }}</span>
         <span v-if="agent.team_name" class="team-tag">{{ agent.team_name }}</span>
+        <span
+          v-if="agent.lastRequirementChange?.revision"
+          class="revision-tag"
+          :title="t('terminal.requirementQueuedTitle', { session: agent.lastRequirementChange.sessionId })"
+        >{{ t('terminal.requirementQueued', { n: agent.lastRequirementChange.revision }) }}</span>
         <span class="agent-model">{{ agent.model || '—' }}</span>
       </div>
       <div class="term-controls">
@@ -208,13 +215,13 @@ const canTogglePause = computed(() =>
           v-if="onPauseToggle && canTogglePause"
           class="ctrl-btn"
           :class="{ 'is-paused': isPaused, 'is-transition': isPauseTransitioning }"
-          :disabled="isPauseTransitioning"
-          :title="
+          :disabled="isPauseTransitioning || pauseDisabled"
+          :title="pauseDisabled ? pauseDisabledReason : (
             agent.status === 'pausing'  ? t('terminal.pausing') :
             agent.status === 'resuming' ? t('terminal.resuming') :
             isPaused                    ? t('terminal.resume') :
             t('terminal.pause')
-          "
+          )"
           @click="onPauseToggle"
         >{{ isPaused ? '▶' : '⏸' }}</button>
         <button
@@ -426,6 +433,14 @@ const canTogglePause = computed(() =>
   background: rgba(99, 102, 241, 0.15);
   color: #a5b4fc;
   font-family: 'Inter', sans-serif;
+}
+.revision-tag {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgba(59, 130, 246, 0.15);
+  color: #93c5fd;
+  white-space: nowrap;
 }
 .agent-model {
   font-size: 10px;

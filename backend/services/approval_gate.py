@@ -22,6 +22,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import threading
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,43 @@ logger = logging.getLogger(__name__)
 # Default: wait up to 1 hour for user. After that, treat as rejected so the
 # caller (cron tick, tool call) returns control rather than hanging forever.
 DEFAULT_GATE_TIMEOUT_S = 3600.0
+_request_lock = threading.Lock()
+
+
+def request_approval(
+    *, approval_type: str, scope_key: str, content_md: str,
+    title: str, agent_name: str = "Jarvis",
+) -> tuple[bool, str]:
+    """Create or reuse a review request without blocking an MCP tool call.
+
+    Callers retry the exact operation after the approval event is resolved.
+    The content hash prevents a changed payload from borrowing that decision.
+    """
+    from services.approval_service import approval_service
+
+    content_hash = _content_hash(content_md)
+    with _request_lock:
+        prior = _find_prior_decision(approval_type, scope_key, content_hash)
+        if prior == "approved":
+            return True, "previously approved (same content hash)"
+        if prior == "rejected":
+            return False, "rejected by user"
+        approval_id = _find_pending_match(approval_type, scope_key, content_hash)
+        if not approval_id:
+            record = approval_service.create_approval({
+                "agent_name": agent_name,
+                "approval_type": approval_type,
+                "title": title,
+                "content": content_md,
+                "content_format": "markdown",
+                "urgency": "normal",
+                "metadata": {
+                    "scope_key": scope_key,
+                    "content_hash": content_hash,
+                },
+            })
+            approval_id = record["id"]
+        return False, f"pending approval {approval_id}; retry after the user decides"
 
 
 def _content_hash(content: str) -> str:

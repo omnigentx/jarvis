@@ -19,6 +19,7 @@
 import { ref, computed, watch } from 'vue'
 import { useVoiceSession } from '../../composables/useVoiceSession.js'
 import { useLang } from '../../composables/useLang'
+import { submitBulkInject } from './bulkInjectSubmit.js'
 
 const { t } = useLang()
 
@@ -94,26 +95,25 @@ function onPaste(e) {
 }
 
 async function submit() {
-  const t = text.value.trim()
-  if (!t && !files.value.length) return
-  if (!props.selectedNames.length) {
-    feedback.value = t('bulkInject.noAgents')
-    setTimeout(() => (feedback.value = ''), 3000)
-    return
-  }
   busy.value = true
   feedback.value = ''
   try {
-    const payload = { text: t, files: files.value }
-    // Parent decides how to fan out — we just pass the payload.
-    const results = await props.onSubmit?.(payload)
+    const outcome = await submitBulkInject({
+      text: text.value,
+      files: files.value,
+      targets: props.selectedNames,
+      onSubmit: props.onSubmit,
+      translate: t,
+    })
+    if (outcome.ignored) {
+      feedback.value = outcome.feedback
+      setTimeout(() => (feedback.value = ''), 3000)
+      return
+    }
     text.value = ''
     files.value = []
-    const okCount = Array.isArray(results)
-      ? results.filter(r => r?.status === 'fulfilled').length
-      : props.selectedNames.length
-    feedback.value = t('bulkInject.injectedTo', { ok: okCount, total: props.selectedNames.length })
-    setTimeout(() => (feedback.value = ''), 4000)
+    feedback.value = outcome.feedback
+    setTimeout(() => (feedback.value = ''), outcome.feedback.includes('; ') ? 8000 : 4000)
   } catch (e) {
     feedback.value = t('bulkInject.error', { msg: e?.message || String(e) })
     setTimeout(() => (feedback.value = ''), 5000)

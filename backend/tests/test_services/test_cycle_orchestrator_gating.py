@@ -500,6 +500,45 @@ def test_find_orchestrator_falls_back_to_first_spawned_without_session(
     assert found is earliest
 
 
+def test_find_orchestrator_prefers_current_roster_run_over_stale_role_row(
+    bridge, temp_db, monkeypatch,
+):
+    """A legacy 'pm' ghost must not receive the next worker-cycle wake."""
+    import fast_agent.spawn.team_spawner as spawner
+
+    _seed_team_session(
+        temp_db, "session-b", team_name="team-b", orchestrator_role="pm",
+    )
+    current = _member(
+        "run-current", role="pm", status="idle", session_id="session-b",
+        agent_name="Bailey [PM]", started_at=200,
+    )
+    stale = _member(
+        "run-stale", role="pm", status="error", session_id="session-b",
+        agent_name="pm", started_at=100,
+    )
+    session = MagicMock()
+    session.template = {"orchestrator": "pm"}
+    session.agents = {"Bailey [PM]": {"role": "pm", "run_id": "run-current"}}
+    monkeypatch.setattr(spawner, "get_team_session", lambda _id: session)
+
+    assert bridge._find_orchestrator(
+        [stale, current], session_id="session-b",
+    ) is current
+
+    resumed = _member(
+        "run-resumed", role="pm", status="idle", session_id="session-b",
+        agent_name="Bailey [PM]", started_at=300,
+    )
+    # The roster may lag behind a resume, while the registry has a newer run.
+    assert bridge._find_orchestrator(
+        [stale, resumed], session_id="session-b",
+    ) is resumed
+    assert bridge._find_orchestrator(
+        [stale], session_id="session-b",
+    ) is None
+
+
 # ─── 7. The 2026-05-19 sequence reconstructed end-to-end ─────────────
 
 

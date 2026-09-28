@@ -28,7 +28,11 @@ def _isolated_workspace(tmp_path, monkeypatch, mcp_db_isolation):
     # teardown, so any rows promote() inserts only persist within the test.
     monkeypatch.setattr(svc, "_ROOT", tmp_path)
     monkeypatch.setattr(svc, "GENERATED_DIR", tmp_path / "generated")
+    monkeypatch.setattr(svc, "PROMOTED_DIR", tmp_path / "promoted")
     monkeypatch.setattr(svc, "TEST_RUNS_DIR", tmp_path / "test_runs")
+    async def approved_for_existing_pipeline_tests(*args, **kwargs):
+        return True, "approved in isolated test"
+    monkeypatch.setattr(svc, "approve_candidate", approved_for_existing_pipeline_tests)
     yield
 
 
@@ -175,10 +179,10 @@ async def test_static_check_warns_forbidden_patterns():
     server_py.write_text(bad)
 
     res = await svc.static_check("danger")
-    # Warnings only — `ok` reflects issues, not warnings.
-    kinds = {w["kind"] for w in res["warnings"]}
+    kinds = {w["kind"] for w in res["issues"]}
     assert "forbidden_pattern" in kinds
-    bodies = {w["why"] for w in res["warnings"] if w["kind"] == "forbidden_pattern"}
+    assert res["ok"] is False
+    bodies = {w["why"] for w in res["issues"] if w["kind"] == "forbidden_pattern"}
     assert "uses eval()" in bodies
     assert any("shell=True" in b for b in bodies)
 
@@ -200,6 +204,9 @@ async def test_static_check_syntax_error_blocks():
 
 def _set_history(name: str, entries: list[dict]):
     m = svc._read_manifest(name)
+    fingerprint = svc.candidate_snapshot(svc._server_dir(name))[0]
+    for entry in entries:
+        entry.setdefault("detail", {})["source_fingerprint"] = fingerprint
     m["history"] = entries
     svc._write_manifest(name, m)
 
@@ -224,6 +231,7 @@ def test_verify_passes_when_all_stages_ok():
         {"stage": "install_deps", "ok": True, "ts": 1, "detail": {}},
         {"stage": "smoke_test", "ok": True, "ts": 2, "detail": {}},
         {"stage": "tool_test", "ok": True, "ts": 3, "detail": {"tool": "ping"}},
+        {"stage": "test_suite", "ok": True, "ts": 4, "detail": {}},
     ])
     res = svc.verify("vok")
     assert res["ready"] is True
@@ -447,6 +455,7 @@ async def test_promote_persists_cwd_to_catalog(monkeypatch):
         {"stage": "install_deps", "ok": True, "ts": 1, "detail": {}},
         {"stage": "smoke_test", "ok": True, "ts": 2, "detail": {}},
         {"stage": "tool_test", "ok": True, "ts": 3, "detail": {"tool": "ping"}},
+        {"stage": "test_suite", "ok": True, "ts": 4, "detail": {}},
     ])
 
     res = await svc.promote("withcwd", attach_to=[])
@@ -455,6 +464,6 @@ async def test_promote_persists_cwd_to_catalog(monkeypatch):
     with SessionLocal() as db:
         row = db.get(McpServerModel, "withcwd")
         assert row is not None
-        assert row.cwd == str(sdir), (
-            f"promote() must persist cwd; got {row.cwd!r}, expected {str(sdir)!r}"
-        )
+        assert row.cwd.startswith(str(svc.PROMOTED_DIR / "withcwd"))
+        assert (Path(row.cwd) / "server.py").exists()
+        assert json.loads(row.env_json)["PYTHONPATH"] == row.cwd

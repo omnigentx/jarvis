@@ -177,6 +177,19 @@ class SpawnProgressBridge:
         data = event_data.get("data", {})
         run_id = event_data.get("run_id") or data.get("run_id")
 
+        # Some subprocess lifecycle events report a role key (e.g. "pm")
+        # instead of the display name. The registered spawn configuration is
+        # authoritative; otherwise an error event can rename a live member.
+        if run_id and self._registry_db:
+            record = self._registry_db.get_record(run_id) or {}
+            original_config = record.get("original_config") or {}
+            configured_name = (
+                original_config.get("agent_name")
+                if isinstance(original_config, dict) else None
+            )
+            if isinstance(configured_name, str) and configured_name:
+                agent_name = configured_name
+
         # 1. Always log to spawn_activity logger
         logger.info(
             "[SPAWN] [%s] %s | %s",
@@ -378,6 +391,16 @@ class SpawnProgressBridge:
         except Exception as e:
             logger.warning("Could not import DB for activity persistence: %s", e)
 
+    def _session_id_for_run(self, run_id: str | None, data: dict) -> str:
+        """Resolve a team session from the event or its exact spawn record."""
+        session_id = data.get("session_id") or ""
+        if session_id or not run_id or not self._registry_db:
+            return session_id
+        record = self._registry_db.get_record(run_id) or {}
+        return (record.get("session_id") or
+                ((record.get("original_config") or {}).get("env_vars") or {})
+                .get("TEAM_SESSION_ID") or "")
+
     def _forward_message_turn(self, agent_name: str, data: dict, raw: dict) -> None:
         """Forward a subprocess ``message_turn`` event to the activity stream.
 
@@ -399,8 +422,12 @@ class SpawnProgressBridge:
 
             full = data.get("message") or {}
             turn_idx = data.get("turn_idx")
+            run_id = raw.get("run_id") or data.get("run_id")
+            session_id = self._session_id_for_run(run_id, data)
             if isinstance(turn_idx, int):
-                _record_recent_turn(agent_name, turn_idx, full)
+                _record_recent_turn(
+                    agent_name, turn_idx, full, session_id=session_id,
+                )
 
             try:
                 trimmed = trim_message_for_stream(_json.loads(_json.dumps(full)))
@@ -410,7 +437,8 @@ class SpawnProgressBridge:
             activity_stream_manager.broadcast({
                 "agent_name": agent_name,
                 "event_type": "message_turn",
-                "run_id": raw.get("run_id") or data.get("run_id"),
+                "run_id": run_id,
+                "session_id": session_id or None,
                 "timestamp": raw.get("timestamp") or time.time(),
                 "data": {
                     "turn_idx": turn_idx,
@@ -429,12 +457,14 @@ class SpawnProgressBridge:
 
             safe_data = _sanitize_event_data(event_type_str, data)
             _, sse_data = self._map_event(role, event_type_str, safe_data)
+            run_id = raw.get("run_id") or safe_data.get("run_id")
             activity_stream_manager.broadcast({
                 "agent_name": role,
                 "event_type": event_type_str,
                 "message": sse_data.get("message", ""),
                 "data": safe_data,
-                "run_id": raw.get("run_id") or safe_data.get("run_id"),
+                "run_id": run_id,
+                "session_id": self._session_id_for_run(run_id, safe_data) or None,
                 "timestamp": raw.get("timestamp") or time.time(),
             })
         except Exception as e:
@@ -455,6 +485,7 @@ class SpawnProgressBridge:
             run_id = raw.get("run_id") or data.get("run_id", "")
             lifecycle = data.get("lifecycle", "oneshot")
             reason = data.get("reason", "cleanup")
+            session_id = self._session_id_for_run(run_id, data)
 
             activity_stream_manager.broadcast({
                 "agent_name": agent_name,
@@ -468,6 +499,7 @@ class SpawnProgressBridge:
                     "team_name": data.get("team_name", ""),
                 },
                 "run_id": run_id,
+                "session_id": session_id or None,
                 "timestamp": raw.get("timestamp") or time.time(),
             })
 
@@ -484,7 +516,7 @@ class SpawnProgressBridge:
             # up. Clearing on lifecycle removal is the natural pairing.
             try:
                 from services.agent_message_stream import reset_recent_turns
-                reset_recent_turns(agent_name)
+                reset_recent_turns(agent_name, session_id=session_id or None)
             except Exception as _evict_exc:
                 logger.warning(
                     "Failed to evict _recent_turns for %s: %s",
@@ -687,9 +719,18 @@ class SpawnProgressBridge:
             else:
                 status = "error"
 
+            original_config = db_rec.get("original_config") or {}
+            configured_name = (
+                original_config.get("agent_name")
+                if isinstance(original_config, dict) else None
+            )
+            canonical_name = (
+                configured_name
+                if isinstance(configured_name, str) and configured_name else role
+            )
             record_data = {
-                "agent_name": role,
-                "name": role,
+                "agent_name": canonical_name,
+                "name": canonical_name,
                 "status": status,
             }
             # Only set started_at on the spawn events — later events (idle,
@@ -1071,14 +1112,36 @@ class SpawnProgressBridge:
                 fall through to the spawn-order fallback below.
 
         Returns:
-            The member dict whose ``role`` equals
-            ``template.orchestrator`` (case-insensitive), or — only if
-            that lookup fails or no member matches — the first member by
-            ``started_at`` (because the orchestrator spawns first).
+            The roster-named member for ``template.orchestrator``. If the
+            roster exists but its member is absent from the registry, return
+            None rather than waking another role-matched row. Legacy sessions
+            without a usable roster fall back to role or spawn order.
         """
         orch_role = self._lookup_orchestrator_role(session_id) if session_id else ""
         if orch_role:
             target = orch_role.lower()
+            # Match the current roster run first. A stale/role-only registry
+            # row may share the role and must never receive the wake message.
+            try:
+                from fast_agent.spawn.team_spawner import get_team_session
+
+                session = get_team_session(session_id)
+                for name, info in (session.agents if session else {}).items():
+                    if (info.get("role") or "").lower() != target:
+                        continue
+                    named = [member for member in members if member.get("agent_name") == name]
+                    for member in named:
+                        if member.get("run_id") == info.get("run_id"):
+                            return member
+                    if named:
+                        return max(named, key=lambda m: m.get("started_at", 0) or 0)
+                    logger.error(
+                        "[CYCLE] session=%s: roster orchestrator %r has no registry row",
+                        session_id, name,
+                    )
+                    return None
+            except Exception as exc:
+                logger.debug("[CYCLE] roster lookup failed for %s: %s", session_id, exc)
             for m in members:
                 if (m.get("role") or "").lower() == target:
                     return m
@@ -1293,33 +1356,29 @@ class SpawnProgressBridge:
     async def _trigger_orchestrator_resume(
         self, orch_record: dict, team_name: str,
     ) -> None:
-        """Resume idle orchestrator to process team status notification.
+        """Wake the session's orchestrator to consume its queued status report.
 
-        Uses the same inject_resume pattern as prompt injection — loads
-        context from DB, spawns new subprocess with full conversation history.
-        The team status report is already in MessageBus inbox, so
-        _check_and_resume_on_inbox will pick it up during spawn.
+        Registry status may say idle while its process and channel are still
+        alive. The scoped wake probes the channel before scheduling a guarded
+        resume, preventing two live runs for one team member.
         """
         orch_name = orch_record.get("agent_name", "")
         try:
-            from services.inject_resume import resume_with_inject
+            from fast_agent.spawn.servers._team_helpers import wake_team_agent
 
-            result = await resume_with_inject(
-                agent_name=orch_name,
-                inject_message=(
-                    "Check your inbox for team status updates. "
-                    "Review member results and decide next actions."
-                ),
-                spawn_record=orch_record,
-                bridge=self,
+            session_id = (orch_record.get("session_id") or
+                          ((orch_record.get("original_config") or {}).get("env_vars") or {})
+                          .get("TEAM_SESSION_ID", ""))
+            result = wake_team_agent(
+                session_id, orch_name, orch_record.get("run_id", ""),
             )
             logger.info(
-                "[TEAM_NOTIFY] Resumed orchestrator %s → run_id=%s (team=%s)",
-                orch_name, result.get("run_id"), team_name,
+                "[TEAM_NOTIFY] Woke orchestrator %s via %s (team=%s, session=%s)",
+                orch_name, result, team_name, session_id,
             )
         except Exception as e:
             logger.warning(
-                "[TEAM_NOTIFY] Failed to resume orchestrator %s: %s",
+                "[TEAM_NOTIFY] Failed to wake orchestrator %s: %s",
                 orch_name, e, exc_info=True,
             )
 

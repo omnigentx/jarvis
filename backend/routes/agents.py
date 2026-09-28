@@ -714,20 +714,24 @@ async def list_agents(include_completed: bool = False):
             registry = {}
             
         # ── Two-pass dedup: correctly classify team agents ──
-        # Pass 1: Group ALL non-oneshot records by agent_name.
+        # Pass 1: Group runs by team session and display name. Independent
+        # teams may reuse the same display name and must remain separate.
         # Include error/failed records for team_name resolution, but
         # mark them so we can deprioritize them for display.
-        all_agent_records: dict[str, list[tuple[str, dict]]] = {}  # name → [(run_id, record)]
+        all_agent_records: dict[tuple[str, str], list[tuple[str, dict]]] = {}
         for run_id, record in registry.items():
             lifecycle = record.get("lifecycle", "")
             if lifecycle == "oneshot":
                 continue
             agent_name = record.get("agent_name", record.get("role", "agent"))
-            all_agent_records.setdefault(agent_name, []).append((run_id, record))
+            session_id = (record.get("session_id") or
+                          ((record.get("original_config") or {}).get("env_vars") or {})
+                          .get("TEAM_SESSION_ID") or "")
+            all_agent_records.setdefault((session_id, agent_name), []).append((run_id, record))
         
         # Pass 2: Pick best record per agent, with correct team classification
-        seen_names: dict[str, tuple[str, dict]] = {}  # name → (run_id, record)
-        for agent_name, records in all_agent_records.items():
+        seen_agents: dict[tuple[str, str], tuple[str, dict]] = {}
+        for identity, records in all_agent_records.items():
             # Determine if this agent is a team member (ANY record has team_name,
             # including error/failed ones — they still carry team metadata)
             any_team_name = ""
@@ -783,7 +787,7 @@ async def list_agents(include_completed: bool = False):
                 best_record = dict(best_record)  # Don't mutate original
                 best_record["team_name"] = any_team_name
             
-            seen_names[agent_name] = (best_run_id, best_record)
+            seen_agents[identity] = (best_run_id, best_record)
         
         # Resolve snapshot DB path once for the whole loop — avoids
         # re-running Path.resolve() per agent.
@@ -796,11 +800,11 @@ async def list_agents(include_completed: bool = False):
         # used to fan out 7 selects per ``/agents`` poll).
         _all_names = [
             r.get("agent_name") or r.get("role") or ""
-            for _, r in seen_names.values()
+            for _, r in seen_agents.values()
         ]
         _snapshot_cache = _fetch_latest_snapshots_batch(_all_names, _snap_db)
 
-        for run_id, record in seen_names.values():
+        for (session_id, _), (run_id, record) in seen_agents.items():
             agent_name = record.get("agent_name", record.get("role", "agent"))
             # Multi-signal status (channel sock + snapshot trigger) instead
             # of trusting the bridge-fed DB field alone. See
@@ -857,6 +861,7 @@ async def list_agents(include_completed: bool = False):
                 "status": status,
                 "role": role,
                 "run_id": run_id,
+                "session_id": session_id or None,
                 "lifecycle": record.get("lifecycle", ""),
                 "team_name": team_name,
                 "skills": spawn_skills,
@@ -1312,6 +1317,31 @@ async def update_team_agent_model(name: str, update: TeamModelUpdate):
     return result
 
 
+def _require_unambiguous_spawn_name(name: str) -> None:
+    """Fail closed when a name-only control could target multiple teams."""
+    import services.shared_state as state
+
+    if not state.registry_db:
+        return
+    try:
+        records = state.registry_db.find_by_name(name)
+    except Exception as exc:
+        logger.warning("[AGENTS API] Cannot resolve agent identity: %s", name, exc_info=True)
+        raise HTTPException(status_code=503, detail="Agent identity unavailable") from exc
+    identities = set()
+    for record in records:
+        env = (record.get("original_config") or {}).get("env_vars") or {}
+        identities.add(
+            record.get("session_id") or env.get("TEAM_SESSION_ID")
+            or record.get("team_name") or record.get("run_id")
+        )
+    if len(identities) > 1:
+        raise HTTPException(
+            status_code=409,
+            detail="Agent name belongs to multiple teams; this control requires a scoped target",
+        )
+
+
 @router.delete("/{name}", dependencies=[Depends(verify_api_key)])
 async def delete_agent(name: str):
     """Delete a dynamic agent definition or remove a team/spawn agent
@@ -1325,6 +1355,7 @@ async def delete_agent(name: str):
     """
     if _is_static_agent(name):
         raise HTTPException(status_code=403, detail=f"'{name}' is a static agent (cannot be deleted)")
+    _require_unambiguous_spawn_name(name)
 
     from services import agent_definitions as defs_svc
 
@@ -1387,6 +1418,7 @@ async def pause_agent(agent_name: str):
     """
     from services.pause_manager import pause_manager
 
+    _require_unambiguous_spawn_name(agent_name)
     changed = pause_manager.pause(agent_name)
     if not changed:
         return {"status": "already_paused", "agent": agent_name}
@@ -1410,6 +1442,7 @@ async def resume_agent(agent_name: str):
     """
     from services.pause_controller import pause_controller, PauseProtected
 
+    _require_unambiguous_spawn_name(agent_name)
     try:
         changed = pause_controller.resume(agent_name)
     except PauseProtected as exc:
@@ -1482,10 +1515,52 @@ async def delete_team(team_name: str):
     cleanup_log = []
     team_agent_names = []
     session_ids: set[str] = set()
+
+    # The cleanup below includes legacy name-scoped rows and memory. Until
+    # those stores can delete by session, refuse any overlapping identity
+    # before the first destructive operation.
+    import services.shared_state as state
+    target_sessions: set[str | None] = set()
+    if state.registry_db:
+        records = list(state.registry_db.get_all().values())
+        members = [rec for rec in records if rec.get("team_name") == team_name]
+        member_names = {rec.get("agent_name") for rec in members if rec.get("agent_name")}
+        target_sessions = {
+            rec.get("session_id") or
+            ((rec.get("original_config") or {}).get("env_vars") or {}).get("TEAM_SESSION_ID")
+            for rec in members
+        }
+        shared_name = any(
+            rec.get("agent_name") in member_names and rec.get("team_name") != team_name
+            for rec in records
+        )
+        if len(target_sessions) > 1 or shared_name:
+            raise HTTPException(
+                status_code=409,
+                detail="Team deletion is ambiguous; member names or team name are shared across sessions",
+            )
+
+    try:
+        from fast_agent.spawn.team_spawner import list_team_sessions
+        stored_team_sessions = list_team_sessions()
+    except Exception as exc:
+        logger.warning("[AGENTS API] Cannot verify team session ownership", exc_info=True)
+        raise HTTPException(status_code=503, detail="Team session ownership is unavailable") from exc
+
+    stored_session_ids = {
+        sess["session_id"] for sess in stored_team_sessions
+        if sess.get("team_name") == team_name and sess.get("session_id")
+    }
+    if (len(stored_session_ids) > 1 or
+            (stored_session_ids and target_sessions and
+             stored_session_ids != target_sessions)):
+        raise HTTPException(
+            status_code=409,
+            detail="Team deletion is ambiguous; team name is shared across sessions",
+        )
     
     # ── 1. Delete from SQLite registry (primary source) ──
     try:
-        import services.shared_state as state
         if hasattr(state, 'registry_db') and state.registry_db:
             # First gather info before delete
             all_records = state.registry_db.get_all()
@@ -1530,13 +1605,7 @@ async def delete_team(team_name: str):
     # there is no filesystem JSON copy any more — earlier versions of this
     # route scanned a non-existent ``workspaces/team_sessions/*.json`` dir,
     # which always matched zero files and silently leaked rows.
-    try:
-        from fast_agent.spawn.team_spawner import list_team_sessions as _list_team_sessions
-        for sess in _list_team_sessions():
-            if sess.get("team_name") == team_name and sess.get("session_id"):
-                session_ids.add(sess["session_id"])
-    except Exception as e:
-        logger.warning("[AGENTS API] team_sessions lookup error: %s", e)
+    session_ids.update(stored_session_ids)
 
     # ── 4. Remove workspace dirs (match by session_id suffix, not team_name) ──
     # Dirs are named "{template}_{session_id}", e.g. "agile-team_6d85b825"
@@ -1727,8 +1796,38 @@ async def list_all_skills():
 # ─── Agent Activity Endpoints ─────────────────────────────────────────────────────
 
 
+def _validate_message_session(name: str, session_id: str | None) -> str | None:
+    """Resolve a safe team scope or reject an ambiguous history read."""
+    import services.shared_state as state
+
+    registry = state.registry_db
+    if registry is None:
+        if session_id:
+            raise HTTPException(status_code=404, detail="Team session not found")
+        return None
+    records = registry.find_by_name(name)
+    sessions = {
+        record.get("session_id") or
+        ((record.get("original_config") or {}).get("env_vars") or {})
+        .get("TEAM_SESSION_ID") or ""
+        for record in records
+    }
+    if session_id and session_id not in sessions:
+        raise HTTPException(status_code=404, detail="Agent not found in team session")
+    if not session_id and len(sessions) > 1:
+        raise HTTPException(
+            status_code=409,
+            detail={"message": "Agent name is ambiguous; choose a team",
+                    "session_ids": sorted(sessions)},
+        )
+    return session_id or next(iter(sessions), None) or None
+
+
 @router.get("/{name}/messages", dependencies=[Depends(verify_api_key)])
-async def get_agent_messages(name: str, since: int = 0, limit: int = 200):
+async def get_agent_messages(
+    name: str, since: int = 0, limit: int = 200,
+    session_id: str | None = None,
+):
     """Return PromptMessageExtended turns from agent.message_history.
 
     Source of truth for the Team Monitor v2 UI. Each turn is one item:
@@ -1744,20 +1843,26 @@ async def get_agent_messages(name: str, since: int = 0, limit: int = 200):
     """
     from services.agent_message_stream import list_agent_messages
 
+    session_id = _validate_message_session(name, session_id)
     if limit <= 0 or limit > 500:
         limit = 200
-    return list_agent_messages(name, since=max(0, since), limit=limit)
+    return list_agent_messages(
+        name, since=max(0, since), limit=limit, session_id=session_id,
+    )
 
 
 @router.get("/{name}/turns/{turn_idx}/full", dependencies=[Depends(verify_api_key)])
-async def get_agent_turn_full(name: str, turn_idx: int):
+async def get_agent_turn_full(
+    name: str, turn_idx: int, session_id: str | None = None,
+):
     """Return the untruncated PromptMessageExtended for one turn.
 
     Called when a user clicks "Show full" on a truncated content block.
     """
     from services.agent_message_stream import get_agent_turn_full as _get_full
 
-    result = _get_full(name, turn_idx)
+    session_id = _validate_message_session(name, session_id)
+    result = _get_full(name, turn_idx, session_id=session_id)
     if result is None:
         raise HTTPException(
             status_code=404,

@@ -29,9 +29,7 @@ Two flows are supported:
 All mutations emit `audit(action="...")` so the dashboard activity stream
 sees Jarvis self-management in realtime.
 
-Forbidden patterns are warned (not hard-blocked) per user policy: regex
-hits emit an `audit(action="warn")` row + activity broadcast which the UI
-surfaces as a persistent toast.
+Forbidden patterns block verification and are also broadcast for review.
 """
 from __future__ import annotations
 
@@ -51,6 +49,9 @@ from typing import Any
 from sqlalchemy.exc import OperationalError
 
 from services.mcp_runtime import audit
+from services.mcp_code_review import (
+    approve_candidate, candidate_snapshot, freeze_candidate,
+)
 
 logger = logging.getLogger("mcp")
 
@@ -58,6 +59,7 @@ logger = logging.getLogger("mcp")
 
 _ROOT = Path(__file__).parent.parent / ".fast-agent" / "mcp_workspace"
 GENERATED_DIR = _ROOT / "generated"
+PROMOTED_DIR = _ROOT / "promoted"
 TEST_RUNS_DIR = _ROOT / "test_runs"
 
 NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,62}[a-z0-9]$")
@@ -158,8 +160,10 @@ def _write_manifest(name: str, manifest: dict[str, Any]) -> None:
 
 def _bump_status(name: str, stage: str, ok: bool, detail: dict[str, Any] | None = None) -> None:
     m = _read_manifest(name)
+    stage_detail = dict(detail or {})
+    stage_detail["source_fingerprint"] = candidate_snapshot(_server_dir(name))[0]
     m.setdefault("history", []).append(
-        {"stage": stage, "ok": ok, "ts": time.time(), "detail": detail or {}}
+        {"stage": stage, "ok": ok, "ts": time.time(), "detail": stage_detail}
     )
     m["last_stage"] = stage
     m["last_stage_ok"] = ok
@@ -557,8 +561,7 @@ def _extract_decorated_tools(tree: ast.AST) -> set[str]:
 async def static_check(name: str) -> dict[str, Any]:
     """AST parse + tool-name match + lint + forbidden-pattern scan.
 
-    Forbidden hits are recorded as `audit(action="warn")` so the dashboard
-    surfaces a toast — they do NOT fail the check.
+    Forbidden hits block execution and are recorded for dashboard review.
     """
     sdir = _server_dir(name)
     server_py = sdir / "server.py"
@@ -590,7 +593,7 @@ async def static_check(name: str) -> dict[str, Any]:
     # Forbidden patterns → warnings (broadcast)
     hits = _scan_forbidden(text)
     if hits:
-        warnings.extend([{"kind": "forbidden_pattern", **h} for h in hits])
+        issues.extend([{"kind": "forbidden_pattern", **h} for h in hits])
         async with audit(
             "warn", server=name, actor="jarvis",
             detail={"category": "forbidden_pattern", "hits": hits},
@@ -638,11 +641,19 @@ async def install_dependencies(name: str) -> dict[str, Any]:
         raise LookupError(f"requirements.txt missing for {name!r}")
     venv = sdir / ".venv"
 
+    # Build backends and editable installs may execute local generated code
+    # during package installation, before the later smoke-test gate.
+    approved_code, code_reason = await approve_candidate(
+        name, sdir, action="execute"
+    )
+    if not approved_code:
+        return {"ok": False, "error": f"code review blocked install: {code_reason}"}
+
     # Approval gate — see services/approval_gate.py. Once a (server, hash)
     # pair is approved, identical requirements.txt re-installs (re-runs of
     # smoke tests etc.) auto-proceed without prompting.
     req_text = req.read_text(encoding="utf-8")
-    from services.approval_gate import gate as _gate
+    from services.approval_gate import request_approval
     warning_md = (
         "\n\n---\n\n"
         "⚠️ **Use at your own risk.** Approving runs `pip install` against the "
@@ -659,7 +670,7 @@ async def install_dependencies(name: str) -> dict[str, Any]:
         f"```text\n{req_text.rstrip()}\n```"
         f"{warning_md}"
     )
-    approved, reason = await _gate(
+    approved, reason = request_approval(
         approval_type="mcp_install",
         scope_key=f"mcp:{name}",
         content_md=content_md,
@@ -667,6 +678,12 @@ async def install_dependencies(name: str) -> dict[str, Any]:
     )
     if not approved:
         return {"ok": False, "error": f"install_dependencies blocked by approval gate: {reason}"}
+
+    approved_code, code_reason = await approve_candidate(
+        name, sdir, action="execute"
+    )
+    if not approved_code:
+        return {"ok": False, "error": f"code review blocked install: {code_reason}"}
 
     async with audit("install_deps", server=name, actor="jarvis") as a:
         uv = shutil.which("uv")
@@ -759,6 +776,12 @@ async def run_smoke_test(name: str) -> dict[str, Any]:
     """
     from services import mcp_catalog
 
+    approved, reason = await approve_candidate(
+        name, _server_dir(name), action="execute"
+    )
+    if not approved:
+        return {"ok": False, "error": f"code review blocked execution: {reason}"}
+
     # cwd needs to be the server dir so any relative manifest reads work.
     payload = _generated_payload(name)
     # mcp_catalog.smoke_test reads cwd from MCPServerSettings.cwd if set
@@ -810,6 +833,13 @@ async def run_tool_test(
     from mcp.client.session import ClientSession
 
     from services import mcp_catalog, shared_state
+
+    approved, reason = await approve_candidate(
+        name, _server_dir(name), action="execute"
+    )
+    if not approved:
+        return {"ok": False, "error": f"code review blocked execution: {reason}",
+                "passed": [], "failed": []}
 
     agent_app = shared_state.agent_app
     if agent_app is None:
@@ -975,6 +1005,12 @@ async def run_test_suite(name: str) -> dict[str, Any]:
     if not venv_py.exists():
         return {"ok": False, "error": ".venv missing — run install_dependencies first"}
 
+    approved, reason = await approve_candidate(
+        name, sdir, action="execute"
+    )
+    if not approved:
+        return {"ok": False, "error": f"code review blocked execution: {reason}"}
+
     _ensure_root()
     run_log = TEST_RUNS_DIR / f"{name}-{int(time.time())}.log"
 
@@ -1024,6 +1060,11 @@ def verify(name: str) -> dict[str, Any]:
 
     blockers: list[str] = []
     warnings: list[str] = []
+    current_fingerprint = candidate_snapshot(_server_dir(name))[0]
+    for stage in ("static_check", "install_deps", "smoke_test"):
+        prior = by_stage.get(stage)
+        if prior and prior.get("detail", {}).get("source_fingerprint") != current_fingerprint:
+            blockers.append(f"{stage} was run against different source")
 
     static = by_stage.get("static_check")
     if not static or not static.get("ok"):
@@ -1047,13 +1088,18 @@ def verify(name: str) -> dict[str, Any]:
             if t:
                 latest_tool_tests[t] = h
     tested_tools = {t for t, h in latest_tool_tests.items() if h.get("ok")}
+    for tool, result in latest_tool_tests.items():
+        if result.get("detail", {}).get("source_fingerprint") != current_fingerprint:
+            blockers.append(f"tool_test for {tool} was run against different source")
     missing_tested = [t for t in planned if t not in tested_tools]
     if missing_tested:
         blockers.append(f"these planned tools have no passing functional test: {missing_tested}")
 
     suite = by_stage.get("test_suite")
-    if suite and not suite.get("ok"):
-        blockers.append("test_suite is failing")
+    if not suite or not suite.get("ok"):
+        blockers.append("test_suite has not passed")
+    elif suite.get("detail", {}).get("source_fingerprint") != current_fingerprint:
+        blockers.append("test_suite was run against different source")
 
     # Spec drift: if planned_tools changed since scaffold, warn.
     current_hash = _spec_hash(manifest.get("planned_tools", []))
@@ -1100,11 +1146,23 @@ async def promote(
     if not gate["ready"]:
         raise RuntimeError(f"verify gate not ready: {gate['blockers']}")
 
+    approved, reason = await approve_candidate(
+        name, _server_dir(name), action="promote"
+    )
+    if not approved:
+        raise PermissionError(f"MCP promotion blocked by code review: {reason}")
+    # Code or tests may have changed while waiting for human review.
+    gate = verify(name)
+    if not gate["ready"]:
+        raise RuntimeError(f"verify gate changed: {gate['blockers']}")
+
     from services import mcp_attachments, mcp_catalog
     from core.database import McpServerModel, SessionLocal
 
+    frozen = freeze_candidate(_server_dir(name), PROMOTED_DIR, name)
     payload = _generated_payload(name)
-    payload["cwd"] = str(_server_dir(name))
+    payload["cwd"] = str(frozen)
+    payload["env"]["PYTHONPATH"] = str(frozen)
 
     async with audit("promote", server=name, actor=actor) as a:
         # Direct DB insert (skip the catalog smoke_test — we already smoke-tested

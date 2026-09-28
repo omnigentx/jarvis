@@ -413,6 +413,39 @@ class TeamTemplateHistory(Base):
     comment = Column(Text, nullable=True)
 
 
+class TeamWorkBinding(Base):
+    """Conversation ownership of a spawned team session."""
+
+    __tablename__ = "team_work_bindings"
+
+    session_id = Column(String(100), primary_key=True)
+    conversation_id = Column(String(100), nullable=False, index=True)
+    team_name = Column(String(255), nullable=False)
+    project_brief = Column(Text, nullable=False, default="")
+    created_at = Column(Float, default=lambda: datetime.now().timestamp())
+
+
+class TeamRequirementRevision(Base):
+    """Durable user changes delivered to a team's orchestrator."""
+
+    __tablename__ = "team_requirement_revisions"
+    __table_args__ = (
+        UniqueConstraint("session_id", "revision", name="uq_team_revision"),
+        UniqueConstraint("session_id", "idempotency_key", name="uq_team_change_key"),
+    )
+
+    id = Column(String(100), primary_key=True)
+    session_id = Column(String(100), nullable=False, index=True)
+    revision = Column(Integer, nullable=False)
+    idempotency_key = Column(String(100), nullable=True)
+    change_text = Column(Text, nullable=False)
+    source_refs_json = Column(Text, nullable=False, default="[]")
+    status = Column(String(20), nullable=False, default="pending")
+    message_id = Column(String(100), nullable=True)
+    created_at = Column(Float, default=lambda: datetime.now().timestamp())
+    delivered_at = Column(Float, nullable=True)
+
+
 class CronJobModel(Base):
     """Cron job definition — unified cron model (solar/lunar, one-shot/recurring)."""
     __tablename__ = "cron_jobs"

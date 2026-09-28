@@ -745,7 +745,12 @@ async def _voice_ws_impl(ws: WebSocket) -> None:
             # same socket would otherwise mix events).
             req_id = str(uuid.uuid4())
             progress_manager.create(req_id)
+            session_id = state.session_service.ensure_session(session_id)
             progress_hooks = create_progress_hooks(req_id, session_id=session_id)
+            from services.team_work_hooks import create_team_binding_hooks
+            progress_hooks = merge_hooks(
+                progress_hooks, create_team_binding_hooks(session_id)
+            )
 
             # Tag every LLM call this turn makes with req_id so the
             # always-on token-persistence hook can correlate token_usage

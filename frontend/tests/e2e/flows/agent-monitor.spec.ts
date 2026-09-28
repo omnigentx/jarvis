@@ -48,8 +48,8 @@ test('team monitor — roster renders and SSE event flips one agent status', asy
   await expect(alphaCard).toBeVisible()
   await expect(betaCard).toBeVisible()
 
-  // Assertion 2: header title confirms we're on the Team Monitor.
-  await expect(page.getByRole('heading', { name: 'Team Monitor' })).toBeVisible()
+  // Assertion 2: desktop heading or the mobile app bar identifies the view.
+  await expect(page.getByText('Team Monitor', { exact: true }).filter({ visible: true }).first()).toBeVisible()
 
   // Assertion 3: SSE event flips alpha-agent to Idle.
   // Initially alpha is "running" (from GET /api/agents); the SSE event
@@ -61,7 +61,7 @@ test('team monitor — roster renders and SSE event flips one agent status', asy
 
   // Assertion 4: mount-time fetches fired.
   recorder.assertContains('GET', '/api/agents')
-  recorder.assertContains('GET', '/api/agents/activities/recent')
+  expect(recorder.calls.some(request => request.path === '/api/agents/activities/recent')).toBe(false)
 
   // Assertion 5: no request hit the mock without a fixture match.
   expect(backend.unexpected.length).toBe(0)
@@ -80,8 +80,8 @@ test('team monitor — empty roster renders empty-state placeholder', async ({
 
   await page.goto('/monitor')
 
-  // Assertion 1: Team Monitor heading is visible — proves we reached the view.
-  await expect(page.getByRole('heading', { name: 'Team Monitor' })).toBeVisible()
+  // Assertion 1: desktop heading or mobile app bar proves we reached the view.
+  await expect(page.getByText('Team Monitor', { exact: true }).filter({ visible: true }).first()).toBeVisible()
 
   // Assertion 2: empty-state placeholder renders (default filter is 'all').
   await expect(page.locator('.empty-state')).toContainText('No agents found')
@@ -91,7 +91,7 @@ test('team monitor — empty roster renders empty-state placeholder', async ({
 
   // Assertion 4: boot-time fetches still fired.
   recorder.assertContains('GET', '/api/agents')
-  recorder.assertContains('GET', '/api/agents/activities/recent')
+  expect(recorder.calls.some(request => request.path === '/api/agents/activities/recent')).toBe(false)
 
   // Assertion 5: no unexpected requests.
   expect(backend.unexpected.length).toBe(0)

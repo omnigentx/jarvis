@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useActivityStream } from '../composables/useActivityStream'
 import { useAgentTurns } from '../composables/useAgentTurns'
-import { apiFetch } from '../api'
+import { apiFetch } from '../api.js'
 import { useAgentsStore } from '../stores/agents'
 import { useApprovalsStore } from '../stores/approvals'
 import ConfirmModal from '../components/ConfirmModal.vue'
@@ -11,6 +11,9 @@ import LifecycleBar from '../components/monitor/LifecycleBar.vue'
 import BulkInjectBar from '../components/monitor/BulkInjectBar.vue'
 import { useToast } from '../composables/useToast'
 import { statusColor } from '../components/agent/agentMeta.js'
+import { agentIdentity } from '../composables/agentIdentity.js'
+import { groupAgentsByTeam, makeTeamFilter, teamIdentity, teamLabel } from '../composables/teamIdentity.js'
+import { deleteAgentByName, deleteAgentsByName, injectToAgent as sendAgentInject, injectToAgents } from '../composables/useTeamMonitorActions.js'
 import { useLang } from '../composables/useLang'
 
 const { t } = useLang()
@@ -36,9 +39,9 @@ const agentTurns = useAgentTurns({ maxPerAgent: 200 })
 // roster. Skipping fetchInitial calls past the first per-agent is
 // handled inside ``useAgentTurns.fetchInitial``.
 watch(
-  () => filteredAgents.value.map(a => a.name),
-  (names) => {
-    for (const n of names) agentTurns.fetchInitial(n)
+  () => filteredAgents.value.map(agentIdentity),
+  () => {
+    for (const agent of filteredAgents.value) agentTurns.fetchInitial(agent)
   },
   { immediate: true },
 )
@@ -100,13 +103,15 @@ const dropdownLabel = computed(() => {
 // Pause/Resume per-agent
 const pauseLoading = ref(new Set())
 
-async function handlePauseToggle(agentName, currentStatus) {
-  if (pauseLoading.value.has(agentName)) return
+async function handlePauseToggle(agent, currentStatus) {
+  if (isAmbiguousName(agent)) { toast.warning?.(t('teamMonitor.ambiguousActionBlocked')); return }
+  const agentName = agent.name
+  if (pauseLoading.value.has(agentIdentity(agent))) return
   // Ignore clicks during transitional states — the previous request
   // hasn't completed yet. Double-firing causes pause/resume churn
   // (controller will no-op but UI flickers).
   if (currentStatus === 'pausing' || currentStatus === 'resuming') return
-  pauseLoading.value.add(agentName)
+  pauseLoading.value.add(agentIdentity(agent))
   pauseLoading.value = new Set(pauseLoading.value)
   try {
     if (currentStatus === 'paused') {
@@ -118,28 +123,24 @@ async function handlePauseToggle(agentName, currentStatus) {
       await store.pauseAgent(agentName)
     }
   } catch (e) {
-    if (e?.code === 'approval_pause_lock') {
+    if (e?.status === 409) {
+      toast.warning(t('teamMonitor.ambiguousActionBlocked'), { description: e?.message })
+    } else if (e?.code === 'approval_pause_lock') {
       toast?.show?.(
         t('teamMonitor.pausedByApproval', { id: e.approvalId }),
         { kind: 'warn' },
       )
     } else {
-      console.error('[TeamMonitor] Pause/resume failed:', e)
+      toast.error(t('teamMonitor.actionFailed'), { description: e?.message || String(e) })
     }
   } finally {
-    pauseLoading.value.delete(agentName)
+    pauseLoading.value.delete(agentIdentity(agent))
     pauseLoading.value = new Set(pauseLoading.value)
   }
 }
 
 // ── Disband Team ──
-const teamNames = computed(() => {
-  const names = new Set()
-  for (const a of store.agentsList) {
-    if (a.team_name) names.add(a.team_name)
-  }
-  return [...names]
-})
+const teamNames = computed(() => groupAgentsByTeam(store.agentsList).map(({ name, session_id }) => ({ name, sessionId: session_id })))
 
 // Team color: consistent hash-based color per team name
 const TEAM_COLORS = ['#6366f1', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#06b6d4', '#84cc16', '#e879f9']
@@ -151,26 +152,16 @@ function teamColor(teamName) {
 }
 
 // Agents grouped by team for dropdown
+function teamFilterValue(team) {
+  return makeTeamFilter({ session_id: team.sessionId, team_name: team.name })
+}
+
 const agentsGrouped = computed(() => {
-  const groups = []
-  const teamMap = new Map()
-  const noTeam = []
-  for (const a of store.agentsList) {
-    if (a.team_name) {
-      if (!teamMap.has(a.team_name)) teamMap.set(a.team_name, [])
-      teamMap.get(a.team_name).push(a)
-    } else {
-      noTeam.push(a)
-    }
-  }
-  // Teams first, then solo agents
-  for (const [name, agents] of teamMap) {
-    groups.push({ type: 'team', name, agents, color: teamColor(name) })
-  }
-  if (noTeam.length) {
-    groups.push({ type: 'solo', name: t('teamMonitor.individualAgents'), agents: noTeam, color: null })
-  }
-  return groups
+  const teams = groupAgentsByTeam(store.agentsList)
+  const teamGroups = teams.map(team => ({ type: 'team', name: teamLabel(team, teams), teamName: team.team_name, sessionId: team.session_id, agents: team.agents, color: teamColor(team.team_name) }))
+  const noTeam = store.agentsList.filter(agent => !agent.team_name || !agent.session_id)
+  if (noTeam.length) teamGroups.push({ type: 'solo', name: t('teamMonitor.individualAgents'), agents: noTeam, color: null })
+  return teamGroups
 })
 
 // Search-by-name filter for the dropdown. Case-insensitive substring match
@@ -217,14 +208,14 @@ function toggleGroup(group) {
   // a "Clear → click team" into "select all-except-team". That's
   // exactly the 29-selected bug user reported.
   if (s.size === 0) {
-    s = new Set(store.agentsList.map(a => a.name))
+    s = new Set(store.agentsList.map(agentIdentity))
   }
   s.delete('__none__')
-  const allSelected = agents.every(a => s.has(a.name))
+  const allSelected = agents.every(a => s.has(agentIdentity(a)))
   if (allSelected) {
-    agents.forEach(a => s.delete(a.name))
+    agents.forEach(a => s.delete(agentIdentity(a)))
   } else {
-    agents.forEach(a => s.add(a.name))
+    agents.forEach(a => s.add(agentIdentity(a)))
   }
   // No auto-collapse to empty when full: the new contract requires
   // explicit Set membership so destructive actions (bulk delete) know
@@ -260,30 +251,31 @@ function _isBuiltin(agent) {
   return agent?.type === 'builtin'
 }
 
-const selectedAgentNames = computed(() => {
-  const known = new Set(store.agentsList.map(a => a.name))
-  return [...selectedAgents.value].filter(n => n !== '__none__' && known.has(n))
+const selectedAgentRecords = computed(() => {
+  const byIdentity = new Map(store.agentsList.map(a => [agentIdentity(a), a]))
+  if (selectedAgents.value.size === 0) return []
+  return [...selectedAgents.value].map(key => byIdentity.get(key)).filter(Boolean)
 })
+const isAmbiguousName = agent => store.agentsList.filter(a => a.name === agent.name).length > 1
+const selectedIdentityCollides = computed(() => store.agentsList.some(agent =>
+  selectedAgents.value.has(agentIdentity(agent)) && isAmbiguousName(agent),
+))
 
-const deletableSelectedNames = computed(() => {
-  const byName = new Map(store.agentsList.map(a => [a.name, a]))
-  return selectedAgentNames.value.filter(n => !_isBuiltin(byName.get(n)))
-})
+const deletableSelectedNames = computed(() => selectedAgentRecords.value.filter(a => !_isBuiltin(a) && !isAmbiguousName(a)))
 
 // Built-ins inside the current selection — surfaced in the confirm
 // modal as "kept" so the user understands why the delete count is
 // smaller than their visible tick count.
-const protectedSelectedNames = computed(() => {
-  const byName = new Map(store.agentsList.map(a => [a.name, a]))
-  return selectedAgentNames.value.filter(n => _isBuiltin(byName.get(n)))
-})
+const protectedSelectedNames = computed(() => selectedAgentRecords.value.filter(a => _isBuiltin(a) || isAmbiguousName(a)))
 
-const canBulkDelete = computed(() => deletableSelectedNames.value.length > 0)
+const selectionHasAmbiguousName = computed(() => selectedIdentityCollides.value || selectedAgentRecords.value.some(isAmbiguousName))
+const canBulkDelete = computed(() => deletableSelectedNames.value.length > 0 && !selectionHasAmbiguousName.value)
 
 // Tooltip text reflects all three cases the user might be in: nothing
 // to delete, some deletable, or selection contains only built-ins
 // (visible but protected).
 const bulkDeleteTooltip = computed(() => {
+  if (selectionHasAmbiguousName.value) return t('teamMonitor.ambiguousActionBlocked')
   const n = deletableSelectedNames.value.length
   const skipped = protectedSelectedNames.value.length
   if (n === 0 && skipped > 0) {
@@ -296,10 +288,11 @@ const bulkDeleteTooltip = computed(() => {
 })
 
 function requestBulkDelete() {
+  if (selectionHasAmbiguousName.value) { toast.warning(t('teamMonitor.ambiguousActionBlocked')); return }
   if (!canBulkDelete.value) return
   bulkDeleteModal.value = {
     visible: true,
-    names: deletableSelectedNames.value.slice(),
+    names: deletableSelectedNames.value,
     protected: protectedSelectedNames.value.slice(),
     loading: false,
     error: '',
@@ -312,19 +305,27 @@ function cancelBulkDelete() {
 
 async function confirmBulkDelete() {
   const names = bulkDeleteModal.value.names
+  if (selectionHasAmbiguousName.value || names.some(isAmbiguousName)) {
+    bulkDeleteModal.value.error = t('teamMonitor.ambiguousActionBlocked')
+    return
+  }
   if (!names.length) return
   bulkDeleteModal.value.loading = true
   bulkDeleteModal.value.error = ''
   // Fire DELETEs in parallel — independent records, safe to overlap.
   // Use allSettled so a partial failure surfaces every error rather than
   // hiding all but the first.
-  const results = await Promise.allSettled(
-    names.map(n => apiFetch(`/api/agents/${encodeURIComponent(n)}`, { method: 'DELETE' })),
-  )
+  const deletion = await deleteAgentsByName(apiFetch, () => store.agentsList, names)
+  if (deletion.blocked) {
+    bulkDeleteModal.value.loading = false
+    bulkDeleteModal.value.error = t('teamMonitor.ambiguousActionBlocked')
+    return
+  }
+  const results = deletion.results
   const ok = []
   const fail = []
   results.forEach((r, i) => {
-    if (r.status === 'fulfilled') ok.push(names[i])
+    if (r.status === 'fulfilled') ok.push(agentIdentity(names[i]))
     else fail.push({ name: names[i], err: r.reason?.message || String(r.reason) })
   })
 
@@ -360,26 +361,17 @@ async function confirmBulkDelete() {
  * inject footer. Returns the API response so the caller can display
  * feedback.
  */
-async function injectToAgent(agentName, { text = '', files = [] } = {}) {
-  if (!text.trim() && !files.length) return null
-  if (files.length > 0) {
-    const formData = new FormData()
-    formData.append('message', text.trim())
-    for (const file of files) formData.append('files', file)
-    return apiFetch(`/api/agents/${agentName}/inject`, { method: 'POST', body: formData })
-  }
-  return apiFetch(`/api/agents/${agentName}/inject`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message: text.trim() }),
-  })
+async function injectToAgent(agent, payload = {}) {
+  if (!payload.text?.trim() && !payload.files?.length) return null
+  return sendAgentInject(apiFetch, agent, payload)
 }
 
 // Delete agent — modal-based confirmation
 const deleteModal = ref({ visible: false, agentName: '', loading: false, error: '' })
 
-function requestDelete(name) {
-  deleteModal.value = { visible: true, agentName: name, loading: false, error: '' }
+function requestDelete(agent) {
+  if (isAmbiguousName(agent)) { toast.warning?.(t('teamMonitor.ambiguousActionBlocked')); return }
+  deleteModal.value = { visible: true, agentName: agent.name, loading: false, error: '' }
 }
 
 function cancelDelete() {
@@ -391,11 +383,18 @@ async function confirmDelete() {
   deleteModal.value.loading = true
   deleteModal.value.error = ''
   try {
-    await apiFetch(`/api/agents/${name}`, { method: 'DELETE' })
+    const deletion = await deleteAgentByName(apiFetch, () => store.agentsList, name)
+    if (deletion.blocked) {
+      deleteModal.value.loading = false
+      deleteModal.value.error = t('teamMonitor.ambiguousActionBlocked')
+      return
+    }
     store.agentsList = store.agentsList.filter(a => a.name !== name)
     deleteModal.value = { visible: false, agentName: '', loading: false, error: '' }
     toast.success(t('teamMonitor.agentDeletedToast', { name }))
   } catch (err) {
+    if (err?.status === 409) toast.warning(t('teamMonitor.ambiguousActionBlocked'), { description: err?.message })
+    else toast.error(t('teamMonitor.actionFailed'), { description: err?.message || String(err) })
     deleteModal.value.loading = false
     deleteModal.value.error = err.message || t('teamMonitor.deleteFailed')
   }
@@ -416,9 +415,9 @@ async function bulkInject({ text, files }) {
   // Resolve target agents from explicit selection or visible filteredAgents.
   let targets
   if (selectedAgents.value.size === 0) {
-    targets = filteredAgents.value.map(a => a.name)
+    targets = filteredAgents.value
   } else {
-    targets = selectedAgentNames.value
+    targets = selectedAgentRecords.value
   }
   if (!targets.length) {
     toast.warning?.(t('teamMonitor.noAgentsForInject'), { duration: 3000 })
@@ -426,16 +425,14 @@ async function bulkInject({ text, files }) {
   }
   // POST to each agent in parallel; allSettled so a partial failure
   // doesn't silently drop the rest of the broadcast.
-  return Promise.allSettled(
-    targets.map(name => injectToAgent(name, { text, files })),
-  )
+  return injectToAgents(injectToAgent, targets, { text, files })
 }
 
 // Names list passed to the bulk inject bar so its counter is honest.
 // Falls back to filteredAgents (visible) when selection is implicit-all.
 const bulkInjectTargets = computed(() => {
-  if (selectedAgents.value.size === 0) return filteredAgents.value.map(a => a.name)
-  return selectedAgentNames.value
+  if (selectedAgents.value.size === 0) return filteredAgents.value
+  return selectedAgentRecords.value
 })
 
 // Ensure the full roster is loaded. We can't gate on agentsList.length —
@@ -502,15 +499,15 @@ onMounted(() => {
 
         <!-- Team filter pills -->
         <button
-          v-for="tn in teamNames"
-          :key="'tf-' + tn"
+          v-for="team in teamNames"
+          :key="`tf-${team.sessionId}-${team.name}`"
           class="filter-btn team-filter-pill"
-          :class="{ active: filter === 'team:' + tn }"
-          @click="filter = filter === 'team:' + tn ? 'all' : 'team:' + tn"
-          :style="{ '--team-accent': teamColor(tn) }"
+          :class="{ active: filter === teamFilterValue(team) }"
+          @click="filter = filter === teamFilterValue(team) ? 'all' : teamFilterValue(team)"
+          :style="{ '--team-accent': teamColor(team.name) }"
         >
-          <span class="team-dot" :style="{ background: teamColor(tn) }"></span>
-          <span class="team-pill-label">{{ tn }}</span>
+          <span class="team-dot" :style="{ background: teamColor(team.name) }"></span>
+          <span class="team-pill-label">{{ teamLabel({ team_name: team.name, session_id: team.sessionId }, teamNames.map(item => ({ team_name: item.name, session_id: item.sessionId }))) }}</span>
         </button>
       </div>
 
@@ -549,7 +546,7 @@ onMounted(() => {
               {{ t('teamMonitor.noAgentsMatch', { q: dropdownSearch }) }}
             </div>
             <div v-else class="dropdown-list">
-              <template v-for="group in agentsGroupedFiltered" :key="group.name">
+              <template v-for="group in agentsGroupedFiltered" :key="group.type === 'team' ? teamIdentity({ session_id: group.sessionId, team_name: group.teamName }) : group.name">
                 <!-- Team header -->
                 <div class="dropdown-team-header" @click="toggleGroup(group)">
                   <span v-if="group.color" class="team-dot" :style="{ background: group.color }"></span>
@@ -558,14 +555,14 @@ onMounted(() => {
                 </div>
                 <label
                   v-for="a in group.agents"
-                  :key="a.name"
+                  :key="agentIdentity(a)"
                   class="dropdown-item"
-                  :class="{ checked: selectedAgents.size === 0 || selectedAgents.has(a.name) }"
+                  :class="{ checked: selectedAgents.size === 0 || selectedAgents.has(agentIdentity(a)) }"
                 >
                   <input
                     type="checkbox"
-                    :checked="selectedAgents.size === 0 || selectedAgents.has(a.name)"
-                    @change="toggleAgent(a.name)"
+                    :checked="selectedAgents.size === 0 || selectedAgents.has(agentIdentity(a))"
+                    @change="toggleAgent(a)"
                   />
                   <span class="dropdown-item-dot" :style="{ background: statusColor(a.status) }"></span>
                   <span class="dropdown-item-name">{{ a.name }}</span>
@@ -599,16 +596,18 @@ onMounted(() => {
     <div v-else class="agent-grid agent-grid-v2">
       <AgentTerminal
         v-for="agent in filteredAgents"
-        :key="agent.name"
+        :key="agentIdentity(agent)"
         :agent="agent"
-        :turns="agentTurns.getTurns(agent.name)"
-        :loading="!agentTurns.fetched.value.has(agent.name)"
-        :on-fetch-full="(turnIdx) => agentTurns.fetchTurnFull(agent.name, turnIdx)"
+        :turns="agentTurns.getTurns(agent)"
+        :loading="!agentTurns.fetched.value.has(agentIdentity(agent))"
+        :on-fetch-full="(turnIdx) => agentTurns.fetchTurnFull(agent, turnIdx)"
         :on-pause-toggle="['running', 'paused', 'pausing', 'resuming'].includes(agent.status)
-          ? () => handlePauseToggle(agent.name, agent.status)
+          ? () => handlePauseToggle(agent, agent.status)
           : null"
-        :on-delete="isDeletableAgent(agent) ? () => requestDelete(agent.name) : null"
-        :on-inject="(payload) => injectToAgent(agent.name, payload)"
+        :pause-disabled="isAmbiguousName(agent)"
+        :pause-disabled-reason="isAmbiguousName(agent) ? t('teamMonitor.ambiguousActionBlocked') : ''"
+        :on-delete="isDeletableAgent(agent) && !isAmbiguousName(agent) ? () => requestDelete(agent) : null"
+        :on-inject="(payload) => injectToAgent(agent, payload)"
       />
     </div>
 
@@ -647,7 +646,7 @@ onMounted(() => {
     >
       <p>{{ t('teamMonitor.bulkDeleteBody') }}</p>
       <ul class="bulk-delete-list">
-        <li v-for="n in bulkDeleteModal.names" :key="n">{{ n }}</li>
+        <li v-for="n in bulkDeleteModal.names" :key="agentIdentity(n)">{{ n.name }}<span v-if="n.team_name"> — {{ n.team_name }}</span><span v-if="isAmbiguousName(n)"> ({{ t('teamMonitor.ambiguousActionBlocked') }})</span></li>
       </ul>
       <!-- Built-in agents inside the selection are surfaced explicitly so
            the user understands why the delete count is smaller than
@@ -656,7 +655,7 @@ onMounted(() => {
         <span class="bulk-delete-protected-icon">🔒</span>
         <div>
           <strong>{{ t('teamMonitor.builtinKept', { n: bulkDeleteModal.protected.length }) }}</strong>
-          <span class="bulk-delete-protected-names">{{ bulkDeleteModal.protected.join(', ') }}</span>
+          <span class="bulk-delete-protected-names">{{ bulkDeleteModal.protected.map(agent => agent.name).join(', ') }}</span>
         </div>
       </div>
     </ConfirmModal>

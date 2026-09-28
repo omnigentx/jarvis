@@ -43,10 +43,19 @@ _PROCESS_ALIVE_STATUSES = {"running", "pending", "paused"}
 _RESUMABLE_STATUSES = {"idle", "completed", "error", "cancelled", "timeout"}
 
 
+def _record_session_id(record: dict) -> str:
+    """Read team identity from current or legacy persisted spawn records."""
+    return (record.get("session_id") or
+            ((record.get("original_config") or {}).get("env_vars") or {})
+            .get("TEAM_SESSION_ID") or "")
+
+
 @router.post("/{agent_name}/inject", dependencies=[Depends(verify_api_key)])
 async def inject_prompt(
     agent_name: str,
     request: Request,
+    session_id: str | None = None,
+    target: str | None = None,
 ):
     """Inject a prompt into an agent (any state).
 
@@ -69,20 +78,52 @@ async def inject_prompt(
         names = [f["filename"] for f in files_data]
         attachment_desc = f" [+{len(files_data)} file(s): {', '.join(names)}]"
 
-    activity_stream_manager.broadcast({
-        "event_type": "inject",
-        "agent_name": agent_name,
-        "message": f"Prompt injected: {message[:80]}{'…' if len(message) > 80 else ''}{attachment_desc}",
-        "timestamp": time.time(),
-        "data": {"source": "dashboard", "has_files": bool(files_data)},
-    })
-
     # ── Determine agent state and route accordingly ───────────────────────
-    if state.registry_db:
+    if target not in (None, "static"):
+        raise HTTPException(status_code=400, detail="Unknown injection target")
+    if target == "static" and session_id:
+        raise HTTPException(status_code=400, detail="Static agents have no team session")
+    if state.registry_db and target != "static":
         try:
             records = state.registry_db.find_by_name(agent_name)
 
             if records:
+                # Display names are reused by independent teams. A name-only
+                # injection must never choose an arbitrary team's inbox.
+                team_sessions = {_record_session_id(record) for record in records}
+                if session_id:
+                    records = [
+                        record for record in records
+                        if _record_session_id(record) == session_id
+                    ]
+                    if not records:
+                        raise HTTPException(
+                            status_code=404,
+                            detail=f"Agent '{agent_name}' not found in team '{session_id}'",
+                        )
+                elif len(team_sessions) > 1:
+                    raise HTTPException(
+                        status_code=409,
+                        detail={"message": "Agent name is ambiguous; choose a team",
+                                "session_ids": sorted(team_sessions)},
+                    )
+                activity_stream_manager.broadcast({
+                    "event_type": "inject",
+                    "agent_name": agent_name,
+                    "session_id": session_id or next(iter(team_sessions)),
+                    "run_id": records[0].get("run_id"),
+                    "message": f"Prompt injected: {message[:80]}{'…' if len(message) > 80 else ''}{attachment_desc}",
+                    "timestamp": time.time(),
+                    "data": {"source": "dashboard", "has_files": bool(files_data)},
+                })
+                # Team members always use their session inbox. The scoped
+                # wake owns resume serialization; direct resume_with_inject
+                # loads context by display name and can race another wake.
+                if _record_session_id(records[0]):
+                    return await _inject_via_message_bus(
+                        agent_name, message, records[0],
+                    )
+
                 # Path A: Process alive → MessageBus (inline delivery, no flow disruption)
                 alive = next(
                     (r for r in records if r.get("status") in _PROCESS_ALIVE_STATUSES),
@@ -120,6 +161,16 @@ async def inject_prompt(
     if not agent_data:
         _broadcast_error_and_idle(agent_name, f"Agent '{agent_name}' not found")
         raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
+
+    if session_id:
+        raise HTTPException(status_code=404, detail="Static agents have no team session")
+    activity_stream_manager.broadcast({
+        "event_type": "inject",
+        "agent_name": agent_name,
+        "message": f"Prompt injected: {message[:80]}{'…' if len(message) > 80 else ''}{attachment_desc}",
+        "timestamp": time.time(),
+        "data": {"source": "dashboard", "has_files": bool(files_data)},
+    })
 
     # Broadcast "started" for static agents
     activity_stream_manager.broadcast({
@@ -181,22 +232,25 @@ async def _inject_via_message_bus(
     try:
         from fast_agent.spawn.message_bus import MessageBus
 
-        # Use the inbox path that the spawned process actually reads. Team
-        # workspaces live inside ``.runtime/data/workspaces``; appending a
-        # second ``.runtime`` under that workspace strands the message.
+        # Spawned team members consume the exact inbox directory passed in
+        # their saved configuration. The workspace path is an output folder,
+        # not necessarily the MessageBus root.
         env_vars = (spawn_record.get("original_config") or {}).get("env_vars") or {}
-        configured_dir = env_vars.get("TEAM_MESSAGES_DIR")
+        configured_dir = env_vars.get("TEAM_MESSAGES_DIR", "")
+        session_id = _record_session_id(spawn_record)
+        project_dir = os.environ.get("SPAWN_PROJECT_DIR", "")
         if configured_dir:
             messages_dir = Path(configured_dir)
+        elif project_dir and session_id:
+            messages_dir = (
+                Path(project_dir) / ".runtime" / "state" / "messages" / session_id
+            )
+        elif spawn_record.get("workspace"):
+            messages_dir = (
+                Path(spawn_record["workspace"]) / ".runtime" / "state" / "messages"
+            )
         else:
-            session_id = spawn_record.get("session_id", "")
-            project_dir = os.environ.get("SPAWN_PROJECT_DIR", "")
-            if project_dir and session_id:
-                messages_dir = Path(project_dir) / ".runtime" / "state" / "messages" / session_id
-            elif spawn_record.get("workspace"):
-                messages_dir = Path(spawn_record["workspace"]) / ".runtime" / "state" / "messages"
-            else:
-                raise ValueError(f"Cannot find messages dir for '{agent_name}'")
+            raise ValueError(f"Cannot find messages dir for '{agent_name}'")
 
         if not messages_dir.exists():
             messages_dir.mkdir(parents=True, exist_ok=True)
@@ -231,8 +285,16 @@ async def _inject_via_message_bus(
         # flow; Path A relies on the alive agent's inbox watcher, so we
         # MUST send an explicit ``wake`` signal here for parity.
         try:
-            from fast_agent.spawn.servers._team_helpers import auto_wake_if_idle
-            auto_wake_if_idle(agent_name)
+            from fast_agent.spawn.servers._team_helpers import (
+                auto_wake_if_idle, wake_team_agent,
+            )
+            if session_id:
+                run_id = spawn_record.get("run_id")
+                if not run_id:
+                    raise ValueError("Team agent run identity is missing")
+                wake_team_agent(session_id, agent_name, run_id)
+            else:
+                auto_wake_if_idle(agent_name)
         except Exception as _wake_exc:
             # Wake is best-effort — failure here doesn't fail the inject
             # itself (the message is already in the inbox). Log loudly so
@@ -253,6 +315,8 @@ async def _inject_via_message_bus(
         activity_stream_manager.broadcast({
             "event_type": "started",
             "agent_name": agent_name,
+            "session_id": session_id or None,
+            "run_id": spawn_record.get("run_id"),
             "message": f"Processing inject: {message[:60]}{'…' if len(message) > 60 else ''}",
             "timestamp": time.time(),
         })
