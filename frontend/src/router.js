@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { createRouteLoadRecovery } from './services/routeLoadRecovery.js'
 
 const routes = [
   {
@@ -159,6 +160,8 @@ const router = createRouter({
   history: createWebHistory(),
   routes,
 })
+
+export const routeRecovery = createRouteLoadRecovery(router)
 
 // Update page title
 router.afterEach((to) => {

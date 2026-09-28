@@ -5,6 +5,7 @@ import AppLayout from './components/AppLayout.vue'
 import ToastContainer from './components/ToastContainer.vue'
 import ConfirmModal from './components/ConfirmModal.vue'
 import AuthGate from './components/AuthGate.vue'
+import RouteLoadNotice from './components/RouteLoadNotice.vue'
 import { useConfirmState } from './composables/useConfirm'
 import { onSetupRequired, onUnauthorized } from './api'
 import { useAuthStore, STATUS as AUTH_STATUS } from './stores/auth'
@@ -85,4 +86,5 @@ onMounted(async () => {
   <!-- Mounted at root so it covers both bare /setup and the main app
        layouts. Visibility is driven by the auth store. -->
   <AuthGate />
+  <RouteLoadNotice />
 </template>

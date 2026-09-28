@@ -1959,5 +1959,11 @@
     "loadingContent": "Loading content…",
     "previous": "Previous",
     "next": "Next"
+  },
+  "routeRecovery": {
+    "title": "This page could not be loaded",
+    "message": "Jarvis may have been updated, or the connection was interrupted. Save any unsent text before reloading the requested page.",
+    "reload": "Reload page",
+    "dismiss": "Keep working"
   }
 }

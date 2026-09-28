@@ -1,0 +1,9 @@
+backend_source:
+  - "backend/routes/agent_timeline.py"
+responses:
+  "GET /api/agent/meetings":
+    status: 200
+    json: { meetings: [] }
+sse_streams:
+  "/api/agent/meetings/stream":
+    - data: { type: "connected" }
