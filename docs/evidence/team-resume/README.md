@@ -86,7 +86,7 @@ behavior and cross-tool launch idempotency deserve follow-up coverage. Do not
 promote the previous agents' speculative architecture report into confirmed
 root causes without a reproduction.
 
-## Live LLM acceptance completed (2026-09-29 16:07 UTC / 23:07 ICT)
+## Live LLM acceptance completed (2026-09-29 17:07 UTC / 2026-09-30 00:07 ICT)
 
 The opt-in `backend/scripts/verify_team_resume_live.py` now runs the real team
 spawn/member/resume tools, real isolated Python runners, real email/meeting MCP
