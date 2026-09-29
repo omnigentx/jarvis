@@ -9,7 +9,7 @@ monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x104681350>
         from fast_agent.spawn.servers import agent_spawner_server as srv
         from fast_agent.spawn.agent_channel import AgentChannel
         from fast_agent.spawn.team_spawner import TeamSession
-    
+
         evidence = Path(__file__).parents[3] / 'docs/evidence/team-resume/production-resume.json'
         recorded = json.loads(evidence.read_text())['calls'][-1]['result']
         session = TeamSession('52051546', {}, Path('/tmp'), 'audit', team_name=recorded['team_name'])
