@@ -1,0 +1,506 @@
+[
+  {
+    "timestamp": 1790701636.291927,
+    "agent_name": "Bennett [DEV]",
+    "event_type": "started",
+    "run_id": "2dfb2303",
+    "data": {
+      "model": "openai.coding-agent",
+      "servers": [
+        "meeting_room",
+        "email"
+      ],
+      "lifecycle": "resumable",
+      "team_name": "live-resume-acceptance"
+    }
+  },
+  {
+    "timestamp": 1790701636.2919428,
+    "agent_name": "Jesse [PM]",
+    "event_type": "started",
+    "run_id": "b4c2d8e0",
+    "data": {
+      "model": "openai.coding-agent",
+      "servers": [
+        "meeting_room",
+        "email"
+      ],
+      "lifecycle": "resumable",
+      "team_name": "live-resume-acceptance"
+    }
+  },
+  {
+    "timestamp": 1790701637.301864,
+    "agent_name": "Jesse [PM]",
+    "event_type": "model_call_started",
+    "run_id": "b4c2d8e0",
+    "data": {
+      "model": "openai.coding-agent",
+      "revision": 0
+    }
+  },
+  {
+    "timestamp": 1790701637.3017972,
+    "agent_name": "Bennett [DEV]",
+    "event_type": "model_call_started",
+    "run_id": "2dfb2303",
+    "data": {
+      "model": "openai.coding-agent",
+      "revision": 0
+    }
+  },
+  {
+    "timestamp": 1790701639.2812538,
+    "agent_name": "Jesse [PM]",
+    "event_type": "response",
+    "run_id": "b4c2d8e0",
+    "data": {
+      "text": "INITIAL MEMORY-c7046e4189",
+      "reasoning": "",
+      "stop_reason": "LlmStopReason.END_TURN"
+    }
+  },
+  {
+    "timestamp": 1790701639.281402,
+    "agent_name": "Jesse [PM]",
+    "event_type": "token_usage",
+    "run_id": "b4c2d8e0",
+    "data": {
+      "model": "coding-agent",
+      "input_tokens": 4378,
+      "output_tokens": 12,
+      "total_tokens": 4390,
+      "cache_hit_tokens": 0,
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0
+    }
+  },
+  {
+    "timestamp": 1790701639.282241,
+    "agent_name": "Jesse [PM]",
+    "event_type": "model_call_finished",
+    "run_id": "b4c2d8e0",
+    "data": {}
+  },
+  {
+    "timestamp": 1790701639.288318,
+    "agent_name": "Jesse [PM]",
+    "event_type": "idle",
+    "run_id": "b4c2d8e0",
+    "data": {}
+  },
+  {
+    "timestamp": 1790701639.868469,
+    "agent_name": "Bennett [DEV]",
+    "event_type": "response",
+    "run_id": "2dfb2303",
+    "data": {
+      "text": "INITIAL MEMORY-c7046e4189",
+      "reasoning": "",
+      "stop_reason": "LlmStopReason.END_TURN"
+    }
+  },
+  {
+    "timestamp": 1790701639.8685582,
+    "agent_name": "Bennett [DEV]",
+    "event_type": "token_usage",
+    "run_id": "2dfb2303",
+    "data": {
+      "model": "coding-agent",
+      "input_tokens": 4409,
+      "output_tokens": 12,
+      "total_tokens": 4421,
+      "cache_hit_tokens": 0,
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0
+    }
+  },
+  {
+    "timestamp": 1790701639.8691351,
+    "agent_name": "Bennett [DEV]",
+    "event_type": "model_call_finished",
+    "run_id": "2dfb2303",
+    "data": {}
+  },
+  {
+    "timestamp": 1790701639.874578,
+    "agent_name": "Bennett [DEV]",
+    "event_type": "idle",
+    "run_id": "2dfb2303",
+    "data": {}
+  },
+  {
+    "timestamp": 1790701639.894491,
+    "agent_name": "Jesse [PM]",
+    "event_type": "resumed",
+    "run_id": "b4c2d8e0",
+    "data": {
+      "message_count": 1
+    }
+  },
+  {
+    "timestamp": 1790701639.8962162,
+    "agent_name": "Jesse [PM]",
+    "event_type": "model_call_started",
+    "run_id": "b4c2d8e0",
+    "data": {
+      "model": "openai.coding-agent",
+      "revision": 0
+    }
+  },
+  {
+    "timestamp": 1790701643.469504,
+    "agent_name": "Jesse [PM]",
+    "event_type": "response",
+    "run_id": "b4c2d8e0",
+    "data": {
+      "text": "INITIAL MEMORY-c7046e4189",
+      "reasoning": "",
+      "stop_reason": "LlmStopReason.END_TURN"
+    }
+  },
+  {
+    "timestamp": 1790701643.469596,
+    "agent_name": "Jesse [PM]",
+    "event_type": "token_usage",
+    "run_id": "b4c2d8e0",
+    "data": {
+      "model": "coding-agent",
+      "input_tokens": 4487,
+      "output_tokens": 104,
+      "total_tokens": 4591,
+      "cache_hit_tokens": 1792,
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0
+    }
+  },
+  {
+    "timestamp": 1790701643.470437,
+    "agent_name": "Jesse [PM]",
+    "event_type": "model_call_finished",
+    "run_id": "b4c2d8e0",
+    "data": {}
+  },
+  {
+    "timestamp": 1790701643.475759,
+    "agent_name": "Jesse [PM]",
+    "event_type": "idle",
+    "run_id": "b4c2d8e0",
+    "data": {}
+  },
+  {
+    "timestamp": 1790701643.4961421,
+    "agent_name": "Bennett [DEV]",
+    "event_type": "resumed",
+    "run_id": "2dfb2303",
+    "data": {
+      "message_count": 1
+    }
+  },
+  {
+    "timestamp": 1790701643.497752,
+    "agent_name": "Bennett [DEV]",
+    "event_type": "model_call_started",
+    "run_id": "2dfb2303",
+    "data": {
+      "model": "openai.coding-agent",
+      "revision": 0
+    }
+  },
+  {
+    "timestamp": 1790701643.509645,
+    "agent_name": "Jesse [PM]",
+    "event_type": "resumed",
+    "run_id": "b4c2d8e0",
+    "data": {
+      "message_count": 1
+    }
+  },
+  {
+    "timestamp": 1790701643.510934,
+    "agent_name": "Jesse [PM]",
+    "event_type": "model_call_started",
+    "run_id": "b4c2d8e0",
+    "data": {
+      "model": "openai.coding-agent",
+      "revision": 0
+    }
+  },
+  {
+    "timestamp": 1790701645.75696,
+    "agent_name": "Bennett [DEV]",
+    "event_type": "response",
+    "run_id": "2dfb2303",
+    "data": {
+      "text": "LIVE MEMORY-c7046e4189",
+      "reasoning": "",
+      "stop_reason": "LlmStopReason.END_TURN"
+    }
+  },
+  {
+    "timestamp": 1790701645.757031,
+    "agent_name": "Bennett [DEV]",
+    "event_type": "token_usage",
+    "run_id": "2dfb2303",
+    "data": {
+      "model": "coding-agent",
+      "input_tokens": 4479,
+      "output_tokens": 51,
+      "total_tokens": 4530,
+      "cache_hit_tokens": 1792,
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0
+    }
+  },
+  {
+    "timestamp": 1790701645.7577899,
+    "agent_name": "Bennett [DEV]",
+    "event_type": "model_call_finished",
+    "run_id": "2dfb2303",
+    "data": {}
+  },
+  {
+    "timestamp": 1790701645.762149,
+    "agent_name": "Bennett [DEV]",
+    "event_type": "idle",
+    "run_id": "2dfb2303",
+    "data": {}
+  },
+  {
+    "timestamp": 1790701645.836778,
+    "agent_name": "Jesse [PM]",
+    "event_type": "response",
+    "run_id": "b4c2d8e0",
+    "data": {
+      "text": "LIVE MEMORY-c7046e4189",
+      "reasoning": "",
+      "stop_reason": "LlmStopReason.END_TURN"
+    }
+  },
+  {
+    "timestamp": 1790701645.8368871,
+    "agent_name": "Jesse [PM]",
+    "event_type": "token_usage",
+    "run_id": "b4c2d8e0",
+    "data": {
+      "model": "coding-agent",
+      "input_tokens": 4557,
+      "output_tokens": 12,
+      "total_tokens": 4569,
+      "cache_hit_tokens": 0,
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0
+    }
+  },
+  {
+    "timestamp": 1790701645.837901,
+    "agent_name": "Jesse [PM]",
+    "event_type": "model_call_finished",
+    "run_id": "b4c2d8e0",
+    "data": {}
+  },
+  {
+    "timestamp": 1790701645.843155,
+    "agent_name": "Jesse [PM]",
+    "event_type": "idle",
+    "run_id": "b4c2d8e0",
+    "data": {}
+  },
+  {
+    "timestamp": 1790701646.538392,
+    "agent_name": "Bennett [DEV]",
+    "event_type": "started",
+    "run_id": "7883dc9e",
+    "data": {
+      "model": "openai.coding-agent",
+      "servers": [
+        "meeting_room",
+        "email"
+      ],
+      "lifecycle": "resumable",
+      "team_name": "live-resume-acceptance"
+    }
+  },
+  {
+    "timestamp": 1790701646.5384011,
+    "agent_name": "Jesse [PM]",
+    "event_type": "started",
+    "run_id": "2b33be96",
+    "data": {
+      "model": "openai.coding-agent",
+      "servers": [
+        "meeting_room",
+        "email"
+      ],
+      "lifecycle": "resumable",
+      "team_name": "live-resume-acceptance"
+    }
+  },
+  {
+    "timestamp": 1790701647.5491788,
+    "agent_name": "Bennett [DEV]",
+    "event_type": "model_call_started",
+    "run_id": "7883dc9e",
+    "data": {
+      "model": "openai.coding-agent",
+      "revision": 0
+    }
+  },
+  {
+    "timestamp": 1790701647.549014,
+    "agent_name": "Jesse [PM]",
+    "event_type": "model_call_started",
+    "run_id": "2b33be96",
+    "data": {
+      "model": "openai.coding-agent",
+      "revision": 0
+    }
+  },
+  {
+    "timestamp": 1790701649.793429,
+    "agent_name": "Jesse [PM]",
+    "event_type": "response",
+    "run_id": "2b33be96",
+    "data": {
+      "text": "RESTORED MEMORY-c7046e4189",
+      "reasoning": "",
+      "stop_reason": "LlmStopReason.END_TURN"
+    }
+  },
+  {
+    "timestamp": 1790701649.795788,
+    "agent_name": "Jesse [PM]",
+    "event_type": "token_usage",
+    "run_id": "2b33be96",
+    "data": {
+      "model": "coding-agent",
+      "input_tokens": 4447,
+      "output_tokens": 14,
+      "total_tokens": 4461,
+      "cache_hit_tokens": 0,
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0
+    }
+  },
+  {
+    "timestamp": 1790701649.796701,
+    "agent_name": "Jesse [PM]",
+    "event_type": "model_call_finished",
+    "run_id": "2b33be96",
+    "data": {}
+  },
+  {
+    "timestamp": 1790701649.8031628,
+    "agent_name": "Jesse [PM]",
+    "event_type": "idle",
+    "run_id": "2b33be96",
+    "data": {}
+  },
+  {
+    "timestamp": 1790701650.481032,
+    "agent_name": "Bennett [DEV]",
+    "event_type": "response",
+    "run_id": "7883dc9e",
+    "data": {
+      "text": "RESTORED MEMORY-c7046e4189",
+      "reasoning": "",
+      "stop_reason": "LlmStopReason.END_TURN"
+    }
+  },
+  {
+    "timestamp": 1790701650.481233,
+    "agent_name": "Bennett [DEV]",
+    "event_type": "token_usage",
+    "run_id": "7883dc9e",
+    "data": {
+      "model": "coding-agent",
+      "input_tokens": 4386,
+      "output_tokens": 73,
+      "total_tokens": 4459,
+      "cache_hit_tokens": 0,
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0
+    }
+  },
+  {
+    "timestamp": 1790701650.4819489,
+    "agent_name": "Bennett [DEV]",
+    "event_type": "model_call_finished",
+    "run_id": "7883dc9e",
+    "data": {}
+  },
+  {
+    "timestamp": 1790701650.4889338,
+    "agent_name": "Bennett [DEV]",
+    "event_type": "idle",
+    "run_id": "7883dc9e",
+    "data": {}
+  },
+  {
+    "timestamp": 1790701650.515457,
+    "agent_name": "Jesse [PM]",
+    "event_type": "resumed",
+    "run_id": "2b33be96",
+    "data": {
+      "message_count": 1
+    }
+  },
+  {
+    "timestamp": 1790701650.517097,
+    "agent_name": "Jesse [PM]",
+    "event_type": "model_call_started",
+    "run_id": "2b33be96",
+    "data": {
+      "model": "openai.coding-agent",
+      "revision": 0
+    }
+  },
+  {
+    "timestamp": 1790701653.7660391,
+    "agent_name": "Jesse [PM]",
+    "event_type": "response",
+    "run_id": "2b33be96",
+    "data": {
+      "text": "RESTORED MEMORY-c7046e4189",
+      "reasoning": "",
+      "stop_reason": "LlmStopReason.END_TURN"
+    }
+  },
+  {
+    "timestamp": 1790701653.766135,
+    "agent_name": "Jesse [PM]",
+    "event_type": "token_usage",
+    "run_id": "2b33be96",
+    "data": {
+      "model": "coding-agent",
+      "input_tokens": 4560,
+      "output_tokens": 56,
+      "total_tokens": 4616,
+      "cache_hit_tokens": 1792,
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0
+    }
+  },
+  {
+    "timestamp": 1790701653.7672782,
+    "agent_name": "Jesse [PM]",
+    "event_type": "model_call_finished",
+    "run_id": "2b33be96",
+    "data": {}
+  },
+  {
+    "timestamp": 1790701653.772903,
+    "agent_name": "Jesse [PM]",
+    "event_type": "idle",
+    "run_id": "2b33be96",
+    "data": {}
+  }
+]

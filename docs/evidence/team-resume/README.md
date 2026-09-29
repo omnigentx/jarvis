@@ -71,9 +71,9 @@ PYTHONPATH="$PWD/backend/fast-agent/src:$PWD/backend" python -m pytest \
   history, team session, name, workspace, skills, server overrides, successor
   chain and rejection of a repeat launch while the successor is running.
 
-Limits: the dead-process integration substitutes the LLM process launcher. This
+Initial deterministic-suite limits: the dead-process integration substitutes the LLM process launcher. This
 is deterministic regression/integration evidence, **not** a live-LLM team E2E
-or production-deployment acceptance. `queued` confirms enqueue/signal, not that
+or production-deployment acceptance. Live acceptance was subsequently completed below. `queued` confirms enqueue/signal, not that
 an agent finished its task. Cross-path launch races involving other tools are
 outside this session-lock guarantee.
 
@@ -85,3 +85,55 @@ of the confirmed idle-state rejection. Existing `send_team_message` inbox/wake
 behavior and cross-tool launch idempotency deserve follow-up coverage. Do not
 promote the previous agents' speculative architecture report into confirmed
 root causes without a reproduction.
+
+## Live LLM acceptance completed (2026-09-29 16:07 UTC / 23:07 ICT)
+
+The opt-in `backend/scripts/verify_team_resume_live.py` now runs the real team
+spawn/member/resume tools, real isolated Python runners, real email/meeting MCP
+startup, production SpawnProgressBridge + event socket, SQLite and local 9router
+(`openai.coding-agent`). No LLM or process launcher substitution is used.
+The harness owns a temporary project/DB and waits on pushed lifecycle events.
+
+Final run: **17.86 seconds, passed, cleanup passed**, session `742a6c89`.
+See `live-result.json` for the actual session ID, tool results and model replies.
+
+| Phase | Verified behavior |
+|---|---|
+| Initial | PM + Dev both produce the randomly generated memory marker |
+| Live resume | 2 queued, 0 restarted, same run IDs; both reply with LIVE and the original marker |
+| Dead resume | Stop the owned runner processes; 2 agents restored with successor run IDs, same session/names/workspace; both reply with RESTORED and the original marker |
+| Teardown | Test child processes stopped, socket clients closed, temporary credential copies removed; harness exits 0 |
+
+The follow-up prompts do not contain the marker. Dead-agent restoration uses
+SQLite history; `resume_spawn` reconstructs roster context without the initial
+project brief. PM roll-up wake events are allowed to finish before the next test
+phase, rather than mistaking an earlier idle event for current idleness.
+
+### Additional defect caught by the live test
+
+The first candidate queried `AgentChannel` using only agent name. The current
+runtime sockets are scoped by `(session_id, agent_name, run_id)`, so the probe
+incorrectly classified live agents as dead. `live-scope-failure.json` preserves
+the failed run showing two restarts instead of two queued deliveries. Fixed both
+liveness probe and wake delivery to use the same session/run identity as the
+runner. The real-socket regression test now creates a scoped socket, preventing
+the previous unscoped test fixture from masking this defect.
+
+Setup attempts also exposed missing email/meeting MCP specs and helper-module
+links in the isolated harness, and an unclosed parent socket during teardown.
+These harness defects were corrected; they are not attributed to production.
+`live-events.json` contains filtered actual model/lifecycle/token events. The
+model made zero tool calls in this narrow memory-continuity scenario: this
+acceptance covers team resume, not broader Jira/Confluence or coding workflows.
+
+Reproduce explicitly (uses live model quota):
+
+```sh
+python backend/scripts/verify_team_resume_live.py \
+  --secrets /path/to/local/fastagent.secrets.yaml \
+  --venv /path/to/existing/backend/.venv \
+  --output /tmp/resume-acceptance-evidence
+```
+
+Supersedes the earlier live-LLM limitation above. Production rollout remains a
+separate post-merge step; no production code or data was changed by acceptance.

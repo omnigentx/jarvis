@@ -140,12 +140,18 @@ async def test_live_idle_uses_real_inbox_and_socket(resume_case, monkeypatch, tm
 
     srv, session, record, resume, store = resume_case
     channel_dir = tmp_path / "channels"
-    channel = AgentChannel("Dev", channel_dir)
+    channel = AgentChannel("Dev", channel_dir, session_id="test-session", run_id="old")
     await channel.start_server()
     alive, signal = AgentChannel.is_alive, AgentChannel.send_signal
-    monkeypatch.setattr(AgentChannel, "is_alive", lambda name: alive(name, channel_dir))
     monkeypatch.setattr(
-        AgentChannel, "send_signal", lambda name, sig: signal(name, sig, channel_dir)
+        AgentChannel,
+        "is_alive",
+        lambda name, **scope: alive(name, channel_dir, **scope),
+    )
+    monkeypatch.setattr(
+        AgentChannel,
+        "send_signal",
+        lambda name, sig, **scope: signal(name, sig, channel_dir, **scope),
     )
     record.original_config = {
         "env_vars": {"TEAM_MESSAGES_DIR": str(tmp_path / "inbox")}
@@ -170,8 +176,8 @@ async def test_wake_failure_reports_saved_message(resume_case, monkeypatch):
     from fast_agent.spawn.agent_channel import AgentChannel
 
     srv, session, record, resume, store = resume_case
-    monkeypatch.setattr(AgentChannel, "is_alive", lambda _: True)
-    monkeypatch.setattr(AgentChannel, "send_signal", lambda *a: False)
+    monkeypatch.setattr(AgentChannel, "is_alive", lambda *a, **kw: True)
+    monkeypatch.setattr(AgentChannel, "send_signal", lambda *a, **kw: False)
     result = json.loads(await srv.resume_team_tool("test-session", "follow-up"))
     assert result["status"] == "not_resumed"
     assert result["agents"]["Dev"]["message_queued"] is True
