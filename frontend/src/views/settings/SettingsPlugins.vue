@@ -5,10 +5,13 @@ import { useLang } from '../../composables/useLang'
 import { useRealtimeStream } from '../../composables/useRealtimeStream'
 import { createPluginInventory } from '../../composables/pluginInventory'
 
+import PluginFilesReview from '../../components/plugins/PluginFilesReview.vue'
+import PluginExecutionPolicy from '../../components/plugins/PluginExecutionPolicy.vue'
+
 const { t } = useLang()
 const inventory = createPluginInventory(apiFetch)
 const { plugins, error: inventoryError, loading } = inventory
-useRealtimeStream({ onEvent: inventory.onEvent, onConnected: inventory.reload })
+useRealtimeStream({ onEvent: inventory.onEvent, onConnected: refresh })
 const repo = ref('openai/plugins')
 const catalog = ref([])
 const query = ref('')
@@ -16,6 +19,7 @@ const busy = ref(false)
 const error = ref('')
 const notice = ref('')
 const targets = ref({})
+const availableTargets = ref([])
 const revisions = ref({})
 const review = ref(null)
 const filtered = computed(() => catalog.value.filter(item => `${item.name} ${item.description}`.toLowerCase().includes(query.value.toLowerCase())))
@@ -39,12 +43,55 @@ function install(item) {
     await inventory.reload()
   })
 }
+async function refresh() {
+  await inventory.reload()
+  try { availableTargets.value = (await apiFetch('/api/plugins/targets')).targets }
+  catch (cause) { error.value = cause.message }
+}
+function targetKey(target) { return target.run_id || target.agent }
+function selectedTarget(plugin) {
+  return availableTargets.value.find(target => targetKey(target) === targets.value[plugin.id])
+}
+function supported(plugin) {
+  const allowed = plugin.policy_configured ? ['mcp_requires_policy_review', ...(plugin.skills.length ? [] : ['executable_content'])] : []
+  return !(plugin.blockers || []).some(blocker => !allowed.includes(blocker))
+}
 function activate(plugin) {
   return operation(async () => {
-    const result = await apiFetch(`/api/plugins/${encodeURIComponent(plugin.id)}/activate`, { method: 'POST', body: JSON.stringify({ agent: targets.value[plugin.id]?.trim() || 'Jarvis' }) })
+    const target = selectedTarget(plugin)
+    if (!target) throw new Error(t('settings.plugins.selectTarget'))
+    const result = await apiFetch(`/api/plugins/${encodeURIComponent(plugin.id)}/activate`, { method: 'POST', body: JSON.stringify({ agent: target.agent, run_id: target.run_id }) })
     const index = plugins.value.findIndex(item => item.id === result.id)
     if (index !== -1) plugins.value[index] = result
     notice.value = label(result.status)
+  })
+}
+function deactivate(plugin, binding) {
+  return operation(async () => {
+    await apiFetch(`/api/plugins/${encodeURIComponent(plugin.id)}/deactivate`, { method: 'POST', body: JSON.stringify({ agent: binding.agent_name || binding.agent, run_id: binding.run_id || null }) })
+    await inventory.reload()
+  })
+}
+function share(plugin) {
+  return operation(async () => {
+    const action = plugin.global_enabled ? 'stop-sharing' : 'promote'
+    const result = await apiFetch(`/api/plugins/${encodeURIComponent(plugin.id)}/${action}`, { method: 'POST' })
+    const index = plugins.value.findIndex(item => item.id === result.id)
+    if (index !== -1) plugins.value[index] = result
+    notice.value = label(result.status)
+  })
+}
+function checkUpdate(plugin) {
+  return operation(async () => {
+    repo.value = plugin.repo
+    query.value = plugin.name
+    catalog.value = (await apiFetch('/api/plugins/catalog', { method: 'POST', body: JSON.stringify({ repo: plugin.repo }) })).plugins
+  })
+}
+function uninstall(plugin) {
+  return operation(async () => {
+    await apiFetch(`/api/plugins/${encodeURIComponent(plugin.id)}`, { method: 'DELETE' })
+    await inventory.reload()
   })
 }
 function inspect(plugin, skill) {
@@ -80,16 +127,21 @@ function inspect(plugin, skill) {
       </ul>
     </section>
     <section aria-labelledby="plugin-installed-title">
-      <h2 id="plugin-installed-title">{{ t('settings.plugins.installed') }}</h2>
+      <header><h2 id="plugin-installed-title">{{ t('settings.plugins.installed') }}</h2><button :disabled="busy || loading" @click="refresh">{{ t('settings.plugins.refresh') }}</button></header>
       <p v-if="loading">{{ t('common.loading') }}</p>
       <p v-else-if="!plugins.length">{{ t('settings.plugins.empty') }}</p>
       <article v-for="plugin in plugins" :key="plugin.id" class="card" :data-testid="`plugin-${plugin.id}`">
-        <header><h3>{{ plugin.name }}</h3><span class="status" :class="{ ready: plugin.status === 'ready' }">{{ label(plugin.status) }}</span></header>
+        <header><h3>{{ plugin.name }} <small v-if="plugin.version">{{ plugin.version }}</small></h3><span class="status" :class="{ ready: plugin.status === 'ready' }">{{ label(plugin.status) }}</span></header>
+        <p v-if="plugin.global_enabled" class="support-note">{{ t('settings.plugins.sharedHint') }}</p>
+        <div class="controls"><button :disabled="busy || (!plugin.global_enabled && (!supported(plugin) || plugin.status === 'expired'))" @click="share(plugin)">{{ t(plugin.global_enabled ? 'settings.plugins.stopSharing' : 'settings.plugins.promote') }}</button><button :disabled="busy" @click="checkUpdate(plugin)">{{ t('settings.plugins.checkUpdate') }}</button></div>
+        <button v-if="plugin.status !== 'expired' && !plugin.global_enabled && !(plugin.bindings || []).some(binding => binding.status !== 'disabled')" :disabled="busy" @click="uninstall(plugin)">{{ t('settings.plugins.uninstall') }}</button>
         <p class="source">{{ plugin.repo }} · {{ plugin.commit }}<br />SHA-256: {{ plugin.digest }}</p>
         <ul v-if="plugin.blockers?.length" class="blocked"><li v-for="blocker in plugin.blockers" :key="blocker">{{ blocker }}</li></ul>
         <ul class="skills"><li v-for="skill in plugin.skills" :key="skill.name"><span>{{ skill.name }} — {{ skill.description }}</span><button :disabled="busy" @click="inspect(plugin, skill)">{{ t('settings.plugins.review') }}</button></li></ul>
-        <ul v-if="plugin.bindings?.length" class="bindings"><li v-for="binding in plugin.bindings" :key="binding.agent">{{ binding.agent }}: {{ label(binding.status) }}</li></ul>
-        <div class="controls"><label>{{ t('settings.plugins.target') }}<input v-model="targets[plugin.id]" placeholder="Jarvis" maxlength="128" /></label><button :disabled="busy || plugin.blockers?.length || plugin.status === 'expired'" @click="activate(plugin)">{{ t('settings.plugins.activate') }}</button></div>
+        <PluginFilesReview :plugin="plugin" />
+        <PluginExecutionPolicy v-if="plugin.server_names?.length" :plugin="plugin" @saved="inventory.reload" />
+        <ul v-if="plugin.bindings?.length" class="bindings"><li v-for="binding in plugin.bindings" :key="binding.agent"><span>{{ binding.agent_name || binding.agent }}: {{ label(binding.status) }}</span><button v-if="!['disabled','expired'].includes(binding.status)" :disabled="busy" @click="deactivate(plugin, binding)">{{ t('settings.plugins.disable') }}</button></li></ul>
+        <div class="controls"><label>{{ t('settings.plugins.target') }}<select v-model="targets[plugin.id]"><option value="" disabled>{{ t('settings.plugins.selectTarget') }}</option><option v-for="target in availableTargets" :key="targetKey(target)" :value="targetKey(target)">{{ target.label }}</option></select></label><button :disabled="busy || !selectedTarget(plugin) || !supported(plugin) || plugin.status === 'expired'" @click="activate(plugin)">{{ t('settings.plugins.activate') }}</button></div>
       </article>
     </section>
     <section v-if="review" class="card" aria-labelledby="plugin-review-title">
@@ -109,14 +161,14 @@ h2, h3 { margin: 0 0 12px; font-size: 16px; font-weight: 600; }
 header { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
 .controls { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; }
 label { display: grid; gap: 6px; color: var(--text-dim); font-size: 13px; flex: 1; min-width: 0; }
-input { width: 100%; box-sizing: border-box; padding: 11px 12px; border: 1px solid var(--border); background: var(--bg-0); color: var(--text); border-radius: var(--r-md); font: inherit; min-height: 44px; }
-input:focus-visible, button:focus-visible, pre:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+input, select { width: 100%; box-sizing: border-box; padding: 11px 12px; border: 1px solid var(--border); background: var(--bg-0); color: var(--text); border-radius: var(--r-md); font: inherit; min-height: 44px; }
+input:focus-visible, select:focus-visible, button:focus-visible, pre:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
 button { min-height: 44px; border: 1px solid var(--border); padding: 10px 16px; border-radius: var(--r-md); background: var(--primary-bg-strong); color: var(--text); cursor: pointer; white-space: nowrap; }
 button:disabled { opacity: .5; cursor: default; }
 .search { margin-top: 18px; }
 ul { list-style: none; padding: 0; }
 .catalog { max-height: 480px; overflow-y: auto; }
-.catalog li, .skills li { padding: 14px 0; border-top: 1px solid var(--border); display: flex; justify-content: space-between; gap: 16px; }
+.catalog li, .skills li, .bindings li { padding: 14px 0; border-top: 1px solid var(--border); display: flex; justify-content: space-between; gap: 16px; }
 .identity { min-width: 0; overflow-wrap: anywhere; }
 .identity p { margin: 6px 0; color: var(--text-dim); font-size: 13px; }
 small, .source { color: var(--text-muted); overflow-wrap: anywhere; font-size: 12px; }

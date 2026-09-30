@@ -1,4 +1,5 @@
 """Download only an immutable plugin subtree from fixed GitHub hosts."""
+
 from __future__ import annotations
 
 import asyncio
@@ -25,16 +26,32 @@ async def _read(client: httpx.AsyncClient, url: str, limit: int) -> bytes:
     return bytes(data)
 
 
-async def _tree(client: httpx.AsyncClient, repo: str, sha: str, *, recursive: bool = False) -> list[dict]:
+async def _tree(
+    client: httpx.AsyncClient, repo: str, sha: str, *, recursive: bool = False
+) -> list[dict]:
     url = f"https://api.github.com/repos/{repo}/git/trees/{sha}"
-    data = json.loads(await _read(client, url + ("?recursive=1" if recursive else ""), 2 * 1024 * 1024))
-    if not isinstance(data, dict) or data.get("truncated") or not isinstance(data.get("tree"), list):
+    data = json.loads(
+        await _read(
+            client, url + ("?recursive=1" if recursive else ""), 2 * 1024 * 1024
+        )
+    )
+    if (
+        not isinstance(data, dict)
+        or data.get("truncated")
+        or not isinstance(data.get("tree"), list)
+    ):
         raise PackageError("Incomplete Git tree inventory")
     return data["tree"]
 
 
-async def fetch_package(repo: str, commit: str, subdirectory: str, destination: Path,
-                        *, client: httpx.AsyncClient | None = None) -> Path:
+async def fetch_package(
+    repo: str,
+    commit: str,
+    subdirectory: str,
+    destination: Path,
+    *,
+    client: httpx.AsyncClient | None = None,
+) -> Path:
     """Validate all selected entries before writing, then verify Git blob hashes."""
     if not REPOSITORY.fullmatch(repo) or not COMMIT.fullmatch(commit):
         raise PackageError("Invalid pinned source")
@@ -42,12 +59,20 @@ async def fetch_package(repo: str, commit: str, subdirectory: str, destination: 
     if len(directory.parts) > 16:
         raise PackageError("Plugin directory depth limit exceeded")
     if client is None:
-        async with httpx.AsyncClient(timeout=30, follow_redirects=False, trust_env=False) as owned:
-            return await fetch_package(repo, commit, subdirectory, destination, client=owned)
+        async with httpx.AsyncClient(
+            timeout=30, follow_redirects=False, trust_env=False
+        ) as owned:
+            return await fetch_package(
+                repo, commit, subdirectory, destination, client=owned
+            )
     sha = commit
     for part in directory.parts:
         entries = await _tree(client, repo, sha)
-        matches = [entry for entry in entries if entry.get("path") == part and entry.get("type") == "tree"]
+        matches = [
+            entry
+            for entry in entries
+            if entry.get("path") == part and entry.get("type") == "tree"
+        ]
         if len(matches) != 1 or not COMMIT.fullmatch(matches[0].get("sha", "")):
             raise PackageError("Plugin subtree not found")
         sha = matches[0]["sha"]
@@ -61,7 +86,13 @@ async def fetch_package(repo: str, commit: str, subdirectory: str, destination: 
         if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
             raise PackageError("Invalid Git tree entry")
         path = PurePosixPath(entry["path"])
-        if path.is_absolute() or ".." in path.parts or "\\" in entry["path"] or path == PurePosixPath(".") or str(path) in seen:
+        if (
+            path.is_absolute()
+            or ".." in path.parts
+            or "\\" in entry["path"]
+            or path == PurePosixPath(".")
+            or str(path) in seen
+        ):
             raise PackageError("Unsafe Git tree path")
         seen.add(str(path))
         if entry.get("type") == "tree" and entry.get("mode") == "040000":
@@ -69,7 +100,12 @@ async def fetch_package(repo: str, commit: str, subdirectory: str, destination: 
         if entry.get("type") != "blob" or entry.get("mode") not in {"100644", "100755"}:
             raise PackageError("Symlinks and submodules are unsupported")
         size = entry.get("size")
-        if not isinstance(size, int) or isinstance(size, bool) or size < 0 or not COMMIT.fullmatch(entry.get("sha", "")):
+        if (
+            not isinstance(size, int)
+            or isinstance(size, bool)
+            or size < 0
+            or not COMMIT.fullmatch(entry.get("sha", ""))
+        ):
             raise PackageError("Invalid Git blob metadata")
         total += size
         if total > MAX_BYTES:
@@ -83,7 +119,9 @@ async def fetch_package(repo: str, commit: str, subdirectory: str, destination: 
             relative = str(directory / path)
             url = f"https://raw.githubusercontent.com/{repo}/{commit}/{quote(relative, safe='/')}"
             data = await _read(client, url, size)
-            digest = hashlib.sha1(f"blob {len(data)}\0".encode() + data, usedforsecurity=False).hexdigest()
+            digest = hashlib.sha1(
+                f"blob {len(data)}\0".encode() + data, usedforsecurity=False
+            ).hexdigest()
             if len(data) != size or digest != blob:
                 raise PackageError("Git blob integrity check failed")
             target = destination / str(path)

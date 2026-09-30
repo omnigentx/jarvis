@@ -311,3 +311,14 @@ async def test_gate_timeout_persist_failure_does_not_mask_timeout(isolated_db):
     assert ok is False
     assert "timeout" in reason
     assert "persist" not in reason  # caller still sees the real reason
+
+
+def test_deferred_plugin_review_does_not_pause_any_agent(isolated_db):
+    import json
+
+    allowed, _ = request_approval(approval_type='plugin_source', scope_key='plugin:deferred',
+        content_md='Review one immutable public source', title='Review source', pause=False)
+    assert allowed is False
+    with isolated_db.SessionLocal() as db:
+        row = db.query(isolated_db.ApprovalRequestModel).filter_by(approval_type='plugin_source').one()
+        assert json.loads(row.paused_agents) == []

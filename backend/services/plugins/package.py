@@ -3,6 +3,7 @@
 The immutable descriptor is an inventory, not an authorization to execute.
 Unsupported components fail closed until a runtime adapter is available.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -20,7 +21,20 @@ NAME = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
 SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
 MAX_BYTES = 16 * 1024 * 1024
 MAX_FILES = 2000
-DATA_SUFFIXES = {".md", ".txt", ".json", ".yaml", ".yml", ".png", ".jpg", ".jpeg", ".webp", ".svg", ".pdf", ".csv"}
+DATA_SUFFIXES = {
+    ".md",
+    ".txt",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+    ".svg",
+    ".pdf",
+    ".csv",
+}
 
 
 class PackageError(ValueError):
@@ -87,7 +101,10 @@ def _inventory(root: Path, max_bytes: int) -> tuple[str, set[str]]:
                 raise PackageError("Package size limit exceeded")
             relative = path.relative_to(root).as_posix()
             body = path.read_bytes()
-            if len(body) > max_bytes or len(body) + total - path.stat().st_size > max_bytes:
+            if (
+                len(body) > max_bytes
+                or len(body) + total - path.stat().st_size > max_bytes
+            ):
                 raise PackageError("Package size changed during inspection")
             files.add(relative)
             digest.update(relative.encode() + b"\0" + body + b"\0")
@@ -109,8 +126,10 @@ def _settings(root: Path) -> tuple[str, dict[str, Any], dict[str, Any]]:
         if overlay is not None and not isinstance(overlay, dict):
             raise PackageError("Invalid OpenAI extension")
         return "portable", manifest, overlay or {}
-    paths = [("claude", root / ".claude-plugin/plugin.json"),
-             ("codex", root / ".codex-plugin/plugin.json")]
+    paths = [
+        ("claude", root / ".claude-plugin/plugin.json"),
+        ("codex", root / ".codex-plugin/plugin.json"),
+    ]
     found = [(kind, path) for kind, path in paths if path.is_file()]
     if len(found) != 1:
         raise PackageError("Missing or ambiguous host manifest")
@@ -119,7 +138,9 @@ def _settings(root: Path) -> tuple[str, dict[str, Any], dict[str, Any]]:
     return kind, manifest, manifest
 
 
-def _skills(root: Path, settings: dict[str, Any], ecosystem: str) -> tuple[PluginSkill, ...]:
+def _skills(
+    root: Path, settings: dict[str, Any], ecosystem: str
+) -> tuple[PluginSkill, ...]:
     paths = [root / "skills"]
     if ecosystem != "portable":
         extra = settings.get("skills", [])
@@ -132,8 +153,13 @@ def _skills(root: Path, settings: dict[str, Any], ecosystem: str) -> tuple[Plugi
     if (root / "SKILL.md").is_file():
         paths.append(root / "SKILL.md")
     for directory in paths:
-        candidates = ([directory] if directory.is_file()
-                      else sorted(directory.rglob("SKILL.md")) if directory.exists() else [])
+        candidates = (
+            [directory]
+            if directory.is_file()
+            else sorted(directory.rglob("SKILL.md"))
+            if directory.exists()
+            else []
+        )
         for path in candidates:
             if path in seen_paths:
                 continue
@@ -154,13 +180,19 @@ def _skills(root: Path, settings: dict[str, Any], ecosystem: str) -> tuple[Plugi
                 raise PackageError("Invalid skill name")
             if not isinstance(description, str) or not description.strip():
                 raise PackageError("Missing skill description")
+            if len(description) > 4096 or len(found) >= 32:
+                raise PackageError("Skill metadata exceeds runtime context budget")
             if name in found:
                 raise PackageError("Duplicate skill name")
-            found[name] = PluginSkill(name, description, path.relative_to(root).as_posix())
+            found[name] = PluginSkill(
+                name, description, path.relative_to(root).as_posix()
+            )
     return tuple(found.values())
 
 
-def _servers(root: Path, settings: dict[str, Any], ecosystem: str) -> dict[str, dict[str, Any]]:
+def _servers(
+    root: Path, settings: dict[str, Any], ecosystem: str
+) -> dict[str, dict[str, Any]]:
     configs: list[dict[str, Any]] = []
     default = root / ("mcp.json" if ecosystem == "portable" else ".mcp.json")
     if default.is_file():
@@ -187,6 +219,10 @@ def _servers(root: Path, settings: dict[str, Any], ecosystem: str) -> dict[str, 
             transport = "http" if transport == "streamable-http" else transport
             if transport not in {"stdio", "http", "sse"}:
                 raise PackageError("Unsupported MCP transport")
+            if name in out:
+                raise PackageError("Duplicate MCP server name")
+            if len(out) >= 8:
+                raise PackageError("MCP server count exceeds runtime budget")
             out[name] = {**server, "transport": transport}
     return out
 
@@ -201,21 +237,44 @@ def inspect_package(root: Path, *, max_bytes: int = MAX_BYTES) -> PluginPackage:
     name = manifest.get("name")
     if not isinstance(name, str) or not NAME.fullmatch(name):
         raise PackageError("Invalid plugin name")
+    for key in ("version", "license"):
+        if manifest.get(key) is not None and (
+            not isinstance(manifest[key], str) or len(manifest[key]) > 256
+        ):
+            raise PackageError(f"Invalid plugin {key}")
     blockers: set[str] = set()
     for key, prefix, blocker in [
-        ("hooks", "hooks/", "hooks"), ("agents", "agents/", "agents"),
-        ("commands", "commands/", "commands"), ("apps", ".app.json", "host_connectors"),
+        ("hooks", "hooks/", "hooks"),
+        ("agents", "agents/", "agents"),
+        ("commands", "commands/", "commands"),
+        ("apps", ".app.json", "host_connectors"),
         ("lspServers", ".lsp.json", "lsp"),
     ]:
         if key in settings or any(p.startswith(prefix) for p in files):
             blockers.add(blocker)
-    if any(Path(p).suffix.lower() not in DATA_SUFFIXES or p.startswith(("bin/", "scripts/")) for p in files):
+    if any(
+        Path(p).suffix.lower() not in DATA_SUFFIXES
+        or p.startswith(("bin/", "scripts/"))
+        for p in files
+    ):
         blockers.add("executable_content")
-    for key in ("dependencies", "settings", "userConfig", "channels", "workflows", "experimental", "outputStyles"):
+    for key in (
+        "dependencies",
+        "settings",
+        "userConfig",
+        "channels",
+        "workflows",
+        "experimental",
+        "outputStyles",
+    ):
         if key in settings or key in manifest:
             blockers.add(f"unsupported_{key}")
-    for prefix, key in [("output-styles/", "outputStyles"), ("themes/", "themes"),
-                        ("monitors/", "monitors"), ("workflows/", "workflows")]:
+    for prefix, key in [
+        ("output-styles/", "outputStyles"),
+        ("themes/", "themes"),
+        ("monitors/", "monitors"),
+        ("workflows/", "workflows"),
+    ]:
         if any(path.startswith(prefix) for path in files):
             blockers.add(f"unsupported_{key}")
     servers = _servers(root, settings, ecosystem)
@@ -224,6 +283,13 @@ def inspect_package(root: Path, *, max_bytes: int = MAX_BYTES) -> PluginPackage:
     skills = _skills(root, settings, ecosystem)
     if not skills and not servers:
         blockers.add("no_supported_capabilities")
-    return PluginPackage(name, manifest.get("version"), ecosystem, digest,
-                         skills, servers,
-                         tuple(sorted(blockers)), manifest.get("license"))
+    return PluginPackage(
+        name,
+        manifest.get("version"),
+        ecosystem,
+        digest,
+        skills,
+        servers,
+        tuple(sorted(blockers)),
+        manifest.get("license"),
+    )

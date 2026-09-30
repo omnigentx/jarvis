@@ -371,7 +371,7 @@ const knownTypes = computed(() => [
               <span
                 v-if="item.status === 'pending'"
                 class="approvals-row__wait"
-              >{{ t('approvals.blockedAgo', { ago: formatTimeAgo(item.created_at) }) }}</span>
+              >{{ t(item.paused_agents?.length ? 'approvals.blockedAgo' : 'approvals.awaitingAgo', { ago: formatTimeAgo(item.created_at) }) }}</span>
               <span
                 v-else
                 class="chip"
@@ -416,7 +416,7 @@ const knownTypes = computed(() => [
               <span>{{ detail.agent_name }}</span>
               <span v-if="detail.team_name"> · {{ detail.team_name }}</span>
               <span> · {{ formatTimeAgo(detail.created_at) }}</span>
-              <span v-if="detail.status === 'pending'"> · {{ t('approvals.blocking') }}</span>
+              <span v-if="detail.status === 'pending'"> · {{ t(detail.paused_agents?.length ? 'approvals.blocking' : 'approvals.awaitingReview') }}</span>
             </div>
           </div>
           <div class="seg" v-if="detail.content_format === 'markdown' || detail.content_format === 'text'">
@@ -547,14 +547,14 @@ const knownTypes = computed(() => [
           ></textarea>
           <div class="approvals__resolve-actions">
             <button class="btn btn-primary" :disabled="isResolving" @click="doResolve('approve')">
-              ✓ {{ t('approvals.approveAction') }}
+              ✓ {{ t(detail.paused_agents?.length ? 'approvals.approveAction' : 'approvals.approveOnly') }}
             </button>
             <button class="btn btn-secondary approvals__btn-reject" :disabled="isResolving" @click="doResolve('reject')">
-              ✕ {{ t('approvals.rejectAction') }}
+              ✕ {{ t(detail.paused_agents?.length ? 'approvals.rejectAction' : 'approvals.rejectOnly') }}
             </button>
             <span class="approvals__resolve-status">
               <span class="chip-dot" style="background: var(--warning);"></span>
-              <strong>{{ detail.agent_name }}</strong> {{ t('approvals.blockedAwaiting', { duration: formatDuration(waitingTime) }) }}
+              <strong>{{ detail.agent_name }}</strong> {{ t(detail.paused_agents?.length ? 'approvals.blockedAwaiting' : 'approvals.unpausedAwaiting', { duration: formatDuration(waitingTime) }) }}
             </span>
           </div>
         </div>

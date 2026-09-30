@@ -360,7 +360,8 @@ def attach_model_hook(
     # Jarvis registry. They have no live team model configuration to read.
     try:
         with _connect() as conn:
-            if _record(conn, run_id) is None:
+            record = _record(conn, run_id)
+            if record is None:
                 return False
     except sqlite3.OperationalError as exc:
         if "no such table: spawn_registry" in str(exc):
@@ -368,7 +369,11 @@ def attach_model_hook(
         raise
 
     agent = (getattr(agent_app, "_agents", {}) or {}).get(agent_name)
-    if agent is None or getattr(agent, "_jarvis_model_hook", False):
+    if agent is None:
+        return False
+    from services.plugins.team_runtime import attach_team_runtime
+    attach_team_runtime(agent, run_id, record, emit_event)
+    if getattr(agent, "_jarvis_model_hook", False):
         return False
     hook = create_model_hook(run_id, agent_name, emit_event)
     existing = agent.tool_runner_hooks

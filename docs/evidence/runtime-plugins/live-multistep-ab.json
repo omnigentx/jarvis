@@ -1,0 +1,83 @@
+{
+  "model": "openai.coding-agent",
+  "package_digest": "b2e78c655ab3f098b982c5780fca0beba38b740a4a2827d7d01d8b6563febc3a",
+  "skill_chars": 9363,
+  "scope": "isolated real fast-agent; not the full Jarvis/team overhead; one sequential A/B sample",
+  "pricing": "custom proxy model; no verified monetary price, so no dollar-cost claim",
+  "results": {
+    "FullBody": {
+      "steps": [
+        {
+          "input": "Using the provided frontend design skill, give its title and the concrete line-length guidance. Read the skill if needed. Keep the answer under 70 words.",
+          "output": "Title: **Frontend Design**\n\nConcrete line-length guidance: Keep web text lines under 80 characters. Serif body text can run slightly longer, with slightly more line height than sans-serif body text.",
+          "elapsed_seconds": 3.806,
+          "llm_calls": 1,
+          "input_tokens": 3948,
+          "output_tokens": 43,
+          "cache_hit_tokens": 1792
+        },
+        {
+          "input": "Using that same skill, give three typography and visual hierarchy checks for a plugin settings UI. Reuse the content already read. Keep it under 100 words.",
+          "output": "- Choose typefaces deliberately; use one family or two clearly distinct families, with intentional weights, widths, and spacing.\n- Set a clear type scale, and use headline typography as an active part of the design rather than neutral delivery.\n- Keep text lines under 80 characters; use slightly more line height for serif body text.",
+          "elapsed_seconds": 4.625,
+          "llm_calls": 1,
+          "input_tokens": 4029,
+          "output_tokens": 70,
+          "cache_hit_tokens": 1792
+        },
+        {
+          "input": "Give a concise acceptance checklist for mobile: typography, focus, reduced motion, and error recovery. Distinguish explicit skill guidance from your inferred checks. Do not read the file again unless necessary. Keep it under 120 words.",
+          "output": "**Explicit skill guidance**\n- [ ] Keep web text lines under 80 characters; give serif body text slightly more line height than sans-serif.\n- [ ] Make keyboard focus visible.\n- [ ] Respect reduced-motion preferences.\n- [ ] Make errors specific and explain how to fix the problem.\n\n**Inferred mobile checks**\n- [ ] Verify text remains legible and unclipped at narrow widths; controls don’t force awkward line lengths.\n- [ ] Confirm focus indicators are visible on mobile keyboards and assistive navigation.\n- [ ] Ensure reduced-motion settings suppress nonessential animation.\n- [ ] After an error, preserve entered settings where possible and provide a clear recovery action.",
+          "elapsed_seconds": 9.005,
+          "llm_calls": 1,
+          "input_tokens": 4151,
+          "output_tokens": 139,
+          "cache_hit_tokens": 1792
+        }
+      ],
+      "tool_calls": [],
+      "input_tokens": 12128,
+      "output_tokens": 252,
+      "llm_calls": 3,
+      "elapsed_seconds": 17.436
+    },
+    "OnDemand": {
+      "steps": [
+        {
+          "input": "Using the provided frontend design skill, give its title and the concrete line-length guidance. Read the skill if needed. Keep the answer under 70 words.",
+          "output": "**Title:** Frontend Design\n\n**Line-length guidance:** Default to fewer than 80 characters per line. Serif typefaces can use slightly longer lines. Give serif body text slightly more line-height than sans-serif body text.",
+          "elapsed_seconds": 9.094,
+          "llm_calls": 2,
+          "input_tokens": 7135,
+          "output_tokens": 126,
+          "cache_hit_tokens": 0
+        },
+        {
+          "input": "Using that same skill, give three typography and visual hierarchy checks for a plugin settings UI. Reuse the content already read. Keep it under 100 words.",
+          "output": "- **Set a clear type scale:** Use deliberate typefaces, sizes, weights, and spacing so setting names, descriptions, and controls are easy to distinguish.\n- **Keep text readable:** Aim for line lengths under 80 characters; allow serif text slightly longer, with a little more line-height.\n- **Make hierarchy meaningful:** Use labels, dividers, and other structural cues to clarify relationships between settings—not as decoration. Avoid unnecessary typographic labels and all-caps.",
+          "elapsed_seconds": 17.914,
+          "llm_calls": 1,
+          "input_tokens": 4648,
+          "output_tokens": 99,
+          "cache_hit_tokens": 0
+        },
+        {
+          "input": "Give a concise acceptance checklist for mobile: typography, focus, reduced motion, and error recovery. Distinguish explicit skill guidance from your inferred checks. Do not read the file again unless necessary. Keep it under 120 words.",
+          "output": "**Explicit skill guidance**\n- [ ] Keep text legible; default to line lengths under 80 characters.\n- [ ] Provide visible keyboard focus.\n- [ ] Respect reduced-motion preferences.\n- [ ] Make errors specific and explain how to fix them.\n\n**Inferred mobile checks**\n- [ ] Verify text scales and wraps without clipping or horizontal scrolling.\n- [ ] Ensure focus indicators remain visible and controls are easy to reach and operate by touch.\n- [ ] Confirm essential feedback and recovery actions remain usable on small screens.",
+          "elapsed_seconds": 7.798,
+          "llm_calls": 1,
+          "input_tokens": 4799,
+          "output_tokens": 109,
+          "cache_hit_tokens": 1792
+        }
+      ],
+      "tool_calls": [
+        "read_skill"
+      ],
+      "input_tokens": 16582,
+      "output_tokens": 334,
+      "llm_calls": 4,
+      "elapsed_seconds": 34.806
+    }
+  }
+}

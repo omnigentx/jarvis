@@ -119,9 +119,13 @@ def attach_inprocess_hooks(agent_app: Any) -> int:
     from fast_agent.agents.tool_runner import ToolRunnerHooks
     from services.sse_progress import merge_hooks
     from agent import fast
+    from services.plugins.live_runtime import register_runtime
 
     count = 0
     for name, runner in (getattr(agent_app, "_agents", {}) or {}).items():
+        register_runtime(runner)
+        from services.plugins.restoration import attach_static_restoration
+        attach_static_restoration(runner, name)
         if getattr(runner, "_jarvis_inprocess_model_hook", False):
             continue
         call_id: ContextVar[str | None] = ContextVar(f"model_call_{name}", default=None)

@@ -599,7 +599,7 @@
     },
     "plugins": {
       "intro": "Install plugins from a pinned source and review their capabilities before activation. Status updates stream live.",
-      "support": "Preview: skills can activate in a live main-process agent. MCP, executable components and running-team activation are not available yet; affected packages cannot become Ready.",
+      "support": "Common adapters: skills and reviewed, isolated stdio MCP can update existing chat and team agents at the next safe model-call boundary. Host-specific hooks, commands, connectors and remote MCP remain blocked.",
       "failed": "Plugin operation failed",
       "approvals": "Open approvals",
       "marketplace": "Marketplace",
@@ -623,14 +623,35 @@
         "unsupported": "Unsupported capabilities",
         "activating": "Activating",
         "activation_failed": "Activation failed",
-        "activation_interrupted": "Activation interrupted",
+        "activation_interrupted": "Activation unconfirmed — removal required",
         "integrity_failed": "Integrity check failed",
         "disabled": "Disabled",
-        "detach_failed": "Removal failed",
-        "deactivating": "Removing",
+        "detach_failed": "Removal unconfirmed",
+        "deactivating": "Disabling",
         "expired": "Cache expired",
-        "needs_reactivation": "Needs runtime activation"
-      }
+        "needs_reactivation": "Needs runtime activation",
+        "rejected": "Rejected",
+        "needs_global_approval": "Awaiting global sharing approval"
+      },
+      "execution": "MCP execution policy",
+      "configured": "Configured",
+      "notConfigured": "Needs configuration",
+      "sandboxDescription": "MCP runs in a reviewed, immutable container: no network, read-only package, no host access. Only stdio is currently supported.",
+      "runtimeUnavailable": "The sandbox runtime is unavailable on this host. Activation stays blocked.",
+      "image": "Reviewed sandbox image digest",
+      "storedCredentials": "Encrypted credential slots",
+      "savePolicy": "Save policy",
+      "disable": "Disable",
+      "refresh": "Refresh inventory and targets",
+      "selectTarget": "Select an available agent",
+      "uninstall": "Uninstall inactive package",
+      "sharedHint": "Shared with current and future agents. Stopping sharing leaves existing bindings active; disable them below.",
+      "stopSharing": "Stop sharing to new agents",
+      "promote": "Share globally · requires approval",
+      "checkUpdate": "Check new version",
+      "reviewFiles": "Review package files",
+      "pinnedSource": "Open pinned source and license",
+      "reviewChanged": "Package changed; refresh and review again."
     }
   },
   "memory": {
@@ -1530,7 +1551,12 @@
     "descArchitecture": "SA submits ADRs / system design before DEV implements.",
     "descImplPlan": "DEV submits an impl plan (file map, branch, scope) before writing.",
     "descBrd": "BA submits a Business Requirements Doc for acceptance review.",
-    "typeMemoryCandidate": "Memory"
+    "typeMemoryCandidate": "Memory",
+    "awaitingAgo": "awaiting review {ago}",
+    "awaitingReview": "Awaiting review",
+    "approveOnly": "Approve",
+    "rejectOnly": "Reject",
+    "unpausedAwaiting": "continues working — review pending"
   },
   "notifications": {
     "title": "Notifications",

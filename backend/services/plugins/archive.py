@@ -1,4 +1,5 @@
 """Pinned GitHub downloads into private runtime staging; never run installers."""
+
 from __future__ import annotations
 
 import io
@@ -10,7 +11,9 @@ from pathlib import Path, PurePosixPath
 
 from services.plugins.package import MAX_BYTES, MAX_FILES, PackageError
 
-REPOSITORY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$")
+REPOSITORY = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$"
+)
 COMMIT = re.compile(r"^[a-f0-9]{40}$")
 
 
@@ -21,7 +24,9 @@ def _relative(value: str) -> PurePosixPath:
     return path
 
 
-def validate_source(repo: str, commit: str, subdirectory: str, approved: set[str]) -> None:
+def validate_source(
+    repo: str, commit: str, subdirectory: str, approved: set[str]
+) -> None:
     """Allow only server-approved GitHub identities and immutable commits."""
     if not REPOSITORY.fullmatch(repo):
         raise PackageError("Invalid repository identity")
@@ -33,7 +38,11 @@ def validate_source(repo: str, commit: str, subdirectory: str, approved: set[str
 
 
 def extract_package(
-    data: bytes, destination: Path, subdirectory: str, *, max_bytes: int = MAX_BYTES,
+    data: bytes,
+    destination: Path,
+    subdirectory: str,
+    *,
+    max_bytes: int = MAX_BYTES,
 ) -> Path:
     """Validate all archive entries before any writes, then extract one subtree."""
     relative = _relative(subdirectory)
@@ -97,7 +106,11 @@ def extract_package(
 
 
 async def download_package(
-    repo: str, commit: str, subdirectory: str, destination: Path, approved: set[str],
+    repo: str,
+    commit: str,
+    subdirectory: str,
+    destination: Path,
+    approved: set[str],
 ) -> Path:
     """Fetch from one fixed HTTPS host, without redirects or inherited auth."""
     validate_source(repo, commit, subdirectory, approved)
