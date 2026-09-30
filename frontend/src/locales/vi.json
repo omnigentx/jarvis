@@ -90,7 +90,8 @@
         "runningTmpl": "Mẫu đang chạy",
         "compaction": "Nén ngữ cảnh",
         "experimental": "Thử nghiệm",
-        "memory": "Bộ nhớ Agent"
+        "memory": "Bộ nhớ Agent",
+        "plugins": "Plugins"
       }
     },
     "common": {
@@ -572,6 +573,41 @@
       "revertTitle": "Hoàn tác thay đổi",
       "revertMsg": "Bỏ các thay đổi chưa lưu và hoàn nguyên về nội dung đã lưu lần cuối?",
       "saveFailed": "Lưu thất bại"
+    },
+    "plugins": {
+      "intro": "Cài plugin từ nguồn cố định và duyệt khả năng trước khi kích hoạt. Trạng thái cập nhật trực tiếp.",
+      "support": "Preview: skills can activate in a live main-process agent. MCP, executable components and running-team activation are not available yet; affected packages cannot become Ready.",
+      "failed": "Plugin operation failed",
+      "approvals": "Mở phê duyệt",
+      "marketplace": "Kho plugin",
+      "repository": "Repository GitHub",
+      "browse": "Xem plugin",
+      "search": "Tìm plugin",
+      "commit": "Pinned commit (40 characters)",
+      "external": "External publisher — separate source approval required",
+      "add": "Thêm plugin",
+      "installed": "Package đã cài",
+      "empty": "Chưa cài package nào.",
+      "review": "Xem skill",
+      "target": "Agent đích",
+      "activate": "Kích hoạt",
+      "content": "Duyệt nội dung skill",
+      "untrusted": "Third-party content, shown as text. Review before approving activation.",
+      "status": {
+        "ready": "Ready",
+        "needs_approval": "Awaiting content approval",
+        "needs_source_approval": "Awaiting source approval",
+        "unsupported": "Unsupported capabilities",
+        "activating": "Activating",
+        "activation_failed": "Activation failed",
+        "activation_interrupted": "Activation interrupted",
+        "integrity_failed": "Integrity check failed",
+        "disabled": "Disabled",
+        "detach_failed": "Removal failed",
+        "deactivating": "Removing",
+        "expired": "Cache expired",
+        "needs_reactivation": "Cần kích hoạt lại runtime"
+      }
     }
   },
   "memory": {

@@ -1,0 +1,1128 @@
+{
+  "summary": {
+    "changed_count": 182,
+    "affected_count": 1,
+    "changed_files": 37,
+    "risk_level": "medium"
+  },
+  "changed_symbols": [
+    {
+      "id": "Property:backend/routes/__init__.py:all_routers",
+      "name": "all_routers",
+      "filePath": "backend/routes/__init__.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/routes/plugins.py:get_installer",
+      "name": "get_installer",
+      "filePath": "backend/routes/plugins.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/routes/plugins.py:public_record",
+      "name": "public_record",
+      "filePath": "backend/routes/plugins.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/routes/plugins.py:api_error",
+      "name": "api_error",
+      "filePath": "backend/routes/plugins.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/routes/plugins.py:list_plugins",
+      "name": "list_plugins",
+      "filePath": "backend/routes/plugins.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/routes/plugins.py:plugin_catalog",
+      "name": "plugin_catalog",
+      "filePath": "backend/routes/plugins.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/routes/plugins.py:install_plugin",
+      "name": "install_plugin",
+      "filePath": "backend/routes/plugins.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/routes/plugins.py:activate_plugin",
+      "name": "activate_plugin",
+      "filePath": "backend/routes/plugins.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/routes/plugins.py:approval",
+      "name": "approval",
+      "filePath": "backend/routes/plugins.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/routes/plugins.py:review_skill",
+      "name": "review_skill",
+      "filePath": "backend/routes/plugins.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:backend/routes/plugins.py:CatalogBody.repo",
+      "name": "repo",
+      "filePath": "backend/routes/plugins.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:backend/routes/plugins.py:InstallBody.commit",
+      "name": "commit",
+      "filePath": "backend/routes/plugins.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:backend/routes/plugins.py:InstallBody.subdirectory",
+      "name": "subdirectory",
+      "filePath": "backend/routes/plugins.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:backend/routes/plugins.py:ActivationBody.agent",
+      "name": "agent",
+      "filePath": "backend/routes/plugins.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Class:backend/routes/plugins.py:CatalogBody",
+      "name": "CatalogBody",
+      "filePath": "backend/routes/plugins.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Class:backend/routes/plugins.py:InstallBody",
+      "name": "InstallBody",
+      "filePath": "backend/routes/plugins.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Class:backend/routes/plugins.py:ActivationBody",
+      "name": "ActivationBody",
+      "filePath": "backend/routes/plugins.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/scripts/probe_plugin_runtime.py:probe",
+      "name": "probe",
+      "filePath": "backend/scripts/probe_plugin_runtime.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/services/plugins/activation.py:apply_skills",
+      "name": "apply_skills",
+      "filePath": "backend/services/plugins/activation.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/services/plugins/activation.py:_refresh_manifests",
+      "name": "_refresh_manifests",
+      "filePath": "backend/services/plugins/activation.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/services/plugins/activation.py:remove_skills",
+      "name": "remove_skills",
+      "filePath": "backend/services/plugins/activation.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/services/plugins/archive.py:_relative",
+      "name": "_relative",
+      "filePath": "backend/services/plugins/archive.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/services/plugins/archive.py:validate_source",
+      "name": "validate_source",
+      "filePath": "backend/services/plugins/archive.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/services/plugins/archive.py:extract_package",
+      "name": "extract_package",
+      "filePath": "backend/services/plugins/archive.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/services/plugins/archive.py:download_package",
+      "name": "download_package",
+      "filePath": "backend/services/plugins/archive.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:backend/services/plugins/archive.py:seen",
+      "name": "seen",
+      "filePath": "backend/services/plugins/archive.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:backend/services/plugins/archive.py:top",
+      "name": "top",
+      "filePath": "backend/services/plugins/archive.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:backend/services/plugins/archive.py:selected",
+      "name": "selected",
+      "filePath": "backend/services/plugins/archive.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/services/plugins/fetch.py:_read",
+      "name": "_read",
+      "filePath": "backend/services/plugins/fetch.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/services/plugins/fetch.py:_tree",
+      "name": "_tree",
+      "filePath": "backend/services/plugins/fetch.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/services/plugins/fetch.py:fetch_package",
+      "name": "fetch_package",
+      "filePath": "backend/services/plugins/fetch.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/services/plugins/installation.py:PluginInstaller.__init__",
+      "name": "__init__",
+      "filePath": "backend/services/plugins/installation.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/services/plugins/installation.py:PluginInstaller.install",
+      "name": "install",
+      "filePath": "backend/services/plugins/installation.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/services/plugins/installation.py:PluginInstaller.download",
+      "name": "download",
+      "filePath": "backend/services/plugins/installation.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/services/plugins/installation.py:approve_source",
+      "name": "approve_source",
+      "filePath": "backend/services/plugins/installation.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/services/plugins/installation.py:approve_content",
+      "name": "approve_content",
+      "filePath": "backend/services/plugins/installation.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Class:backend/services/plugins/installation.py:PluginInstaller",
+      "name": "PluginInstaller",
+      "filePath": "backend/services/plugins/installation.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/services/plugins/lifecycle.py:PluginLifecycle.__init__",
+      "name": "__init__",
+      "filePath": "backend/services/plugins/lifecycle.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/services/plugins/lifecycle.py:PluginLifecycle.package_path",
+      "name": "package_path",
+      "filePath": "backend/services/plugins/lifecycle.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/services/plugins/lifecycle.py:PluginLifecycle.stage",
+      "name": "stage",
+      "filePath": "backend/services/plugins/lifecycle.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/services/plugins/lifecycle.py:PluginLifecycle.get",
+      "name": "get",
+      "filePath": "backend/services/plugins/lifecycle.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/services/plugins/lifecycle.py:PluginLifecycle.list",
+      "name": "list",
+      "filePath": "backend/services/plugins/lifecycle.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/services/plugins/lifecycle.py:PluginLifecycle._status",
+      "name": "_status",
+      "filePath": "backend/services/plugins/lifecycle.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/services/plugins/lifecycle.py:PluginLifecycle.activate",
+      "name": "activate",
+      "filePath": "backend/services/plugins/lifecycle.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/services/plugins/lifecycle.py:PluginLifecycle.deactivate",
+      "name": "deactivate",
+      "filePath": "backend/services/plugins/lifecycle.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/services/plugins/lifecycle.py:PluginLifecycle.cleanup",
+      "name": "cleanup",
+      "filePath": "backend/services/plugins/lifecycle.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:backend/services/plugins/lifecycle.py:PluginLifecycle.removed",
+      "name": "removed",
+      "filePath": "backend/services/plugins/lifecycle.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Class:backend/services/plugins/lifecycle.py:PluginStateError",
+      "name": "PluginStateError",
+      "filePath": "backend/services/plugins/lifecycle.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Class:backend/services/plugins/lifecycle.py:PluginLifecycle",
+      "name": "PluginLifecycle",
+      "filePath": "backend/services/plugins/lifecycle.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/services/plugins/marketplace.py:normalize_marketplace",
+      "name": "normalize_marketplace",
+      "filePath": "backend/services/plugins/marketplace.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/services/plugins/marketplace.py:_github_json",
+      "name": "_github_json",
+      "filePath": "backend/services/plugins/marketplace.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/services/plugins/marketplace.py:discover",
+      "name": "discover",
+      "filePath": "backend/services/plugins/marketplace.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:backend/services/plugins/marketplace.py:items",
+      "name": "items",
+      "filePath": "backend/services/plugins/marketplace.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/services/plugins/package.py:_json",
+      "name": "_json",
+      "filePath": "backend/services/plugins/package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/services/plugins/package.py:_path",
+      "name": "_path",
+      "filePath": "backend/services/plugins/package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/services/plugins/package.py:_inventory",
+      "name": "_inventory",
+      "filePath": "backend/services/plugins/package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/services/plugins/package.py:_settings",
+      "name": "_settings",
+      "filePath": "backend/services/plugins/package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/services/plugins/package.py:_skills",
+      "name": "_skills",
+      "filePath": "backend/services/plugins/package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/services/plugins/package.py:_servers",
+      "name": "_servers",
+      "filePath": "backend/services/plugins/package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/services/plugins/package.py:inspect_package",
+      "name": "inspect_package",
+      "filePath": "backend/services/plugins/package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:backend/services/plugins/package.py:PluginSkill.name",
+      "name": "name",
+      "filePath": "backend/services/plugins/package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:backend/services/plugins/package.py:PluginSkill.description",
+      "name": "description",
+      "filePath": "backend/services/plugins/package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:backend/services/plugins/package.py:PluginSkill.path",
+      "name": "path",
+      "filePath": "backend/services/plugins/package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:backend/services/plugins/package.py:PluginPackage.name",
+      "name": "name",
+      "filePath": "backend/services/plugins/package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:backend/services/plugins/package.py:PluginPackage.version",
+      "name": "version",
+      "filePath": "backend/services/plugins/package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:backend/services/plugins/package.py:PluginPackage.ecosystem",
+      "name": "ecosystem",
+      "filePath": "backend/services/plugins/package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:backend/services/plugins/package.py:PluginPackage.digest",
+      "name": "digest",
+      "filePath": "backend/services/plugins/package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:backend/services/plugins/package.py:PluginPackage.skills",
+      "name": "skills",
+      "filePath": "backend/services/plugins/package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:backend/services/plugins/package.py:PluginPackage.servers",
+      "name": "servers",
+      "filePath": "backend/services/plugins/package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:backend/services/plugins/package.py:PluginPackage.blockers",
+      "name": "blockers",
+      "filePath": "backend/services/plugins/package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:backend/services/plugins/package.py:PluginPackage.license",
+      "name": "license",
+      "filePath": "backend/services/plugins/package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:backend/services/plugins/package.py:files",
+      "name": "files",
+      "filePath": "backend/services/plugins/package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:backend/services/plugins/package.py:found",
+      "name": "found",
+      "filePath": "backend/services/plugins/package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:backend/services/plugins/package.py:seen_paths",
+      "name": "seen_paths",
+      "filePath": "backend/services/plugins/package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:backend/services/plugins/package.py:configs",
+      "name": "configs",
+      "filePath": "backend/services/plugins/package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:backend/services/plugins/package.py:out",
+      "name": "out",
+      "filePath": "backend/services/plugins/package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Property:backend/services/plugins/package.py:blockers",
+      "name": "blockers",
+      "filePath": "backend/services/plugins/package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Class:backend/services/plugins/package.py:PackageError",
+      "name": "PackageError",
+      "filePath": "backend/services/plugins/package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Class:backend/services/plugins/package.py:PluginSkill",
+      "name": "PluginSkill",
+      "filePath": "backend/services/plugins/package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Class:backend/services/plugins/package.py:PluginPackage",
+      "name": "PluginPackage",
+      "filePath": "backend/services/plugins/package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_routes/test_plugins.py:client",
+      "name": "client",
+      "filePath": "backend/tests/test_routes/test_plugins.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_routes/test_plugins.py:test_install_requires_authentication",
+      "name": "test_install_requires_authentication",
+      "filePath": "backend/tests/test_routes/test_plugins.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_routes/test_plugins.py:unauthorized",
+      "name": "unauthorized",
+      "filePath": "backend/tests/test_routes/test_plugins.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_routes/test_plugins.py:test_mutable_revision_is_validation_error",
+      "name": "test_mutable_revision_is_validation_error",
+      "filePath": "backend/tests/test_routes/test_plugins.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_routes/test_plugins.py:test_install_reports_source_pending_without_claiming_ready",
+      "name": "test_install_reports_source_pending_without_claiming_ready",
+      "filePath": "backend/tests/test_routes/test_plugins.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_routes/test_plugins.py:test_listing_does_not_expose_server_credentials",
+      "name": "test_listing_does_not_expose_server_credentials",
+      "filePath": "backend/tests/test_routes/test_plugins.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_routes/test_plugins.py:test_ready_inventory_does_not_survive_missing_runtime",
+      "name": "test_ready_inventory_does_not_survive_missing_runtime",
+      "filePath": "backend/tests/test_routes/test_plugins.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_activation.py:package",
+      "name": "package",
+      "filePath": "backend/tests/test_services/test_plugin_activation.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_activation.py:test_missing_live_agent_never_acknowledges",
+      "name": "test_missing_live_agent_never_acknowledges",
+      "filePath": "backend/tests/test_services/test_plugin_activation.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_activation.py:test_success_checks_rebuild_result_and_namespaces",
+      "name": "test_success_checks_rebuild_result_and_namespaces",
+      "filePath": "backend/tests/test_services/test_plugin_activation.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_activation.py:test_noop_refresh_does_not_claim_ready",
+      "name": "test_noop_refresh_does_not_claim_ready",
+      "filePath": "backend/tests/test_services/test_plugin_activation.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_activation.py:test_reapply_replaces_namespace_preserving_existing_skill",
+      "name": "test_reapply_replaces_namespace_preserving_existing_skill",
+      "filePath": "backend/tests/test_services/test_plugin_activation.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_activation.py:test_removal_preserves_unrelated_skills_and_requires_refresh_ack",
+      "name": "test_removal_preserves_unrelated_skills_and_requires_refresh_ack",
+      "filePath": "backend/tests/test_services/test_plugin_activation.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_activation.py:test_removing_old_version_does_not_remove_new_version_namespace",
+      "name": "test_removing_old_version_does_not_remove_new_version_namespace",
+      "filePath": "backend/tests/test_services/test_plugin_activation.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_activation.py:test_app_lookup_none_is_negative_ack",
+      "name": "test_app_lookup_none_is_negative_ack",
+      "filePath": "backend/tests/test_services/test_plugin_activation.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_archive.py:archive",
+      "name": "archive",
+      "filePath": "backend/tests/test_services/test_plugin_archive.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_archive.py:test_extract_only_selected_plugin",
+      "name": "test_extract_only_selected_plugin",
+      "filePath": "backend/tests/test_services/test_plugin_archive.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_archive.py:test_archive_traversal_rejected_before_writes",
+      "name": "test_archive_traversal_rejected_before_writes",
+      "filePath": "backend/tests/test_services/test_plugin_archive.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_archive.py:test_archive_symlink_rejected",
+      "name": "test_archive_symlink_rejected",
+      "filePath": "backend/tests/test_services/test_plugin_archive.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_archive.py:test_expansion_limit_checked_before_writes",
+      "name": "test_expansion_limit_checked_before_writes",
+      "filePath": "backend/tests/test_services/test_plugin_archive.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_archive.py:test_duplicate_member_rejected",
+      "name": "test_duplicate_member_rejected",
+      "filePath": "backend/tests/test_services/test_plugin_archive.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_archive.py:test_no_mutable_ref_or_unapproved_repo",
+      "name": "test_no_mutable_ref_or_unapproved_repo",
+      "filePath": "backend/tests/test_services/test_plugin_archive.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_archive.py:test_source_is_repository_identity_not_arbitrary_url",
+      "name": "test_source_is_repository_identity_not_arbitrary_url",
+      "filePath": "backend/tests/test_services/test_plugin_archive.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_archive.py:test_source_subdirectory_cannot_escape",
+      "name": "test_source_subdirectory_cannot_escape",
+      "filePath": "backend/tests/test_services/test_plugin_archive.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_fetch.py:test_fetches_only_pinned_subtree_and_never_executes",
+      "name": "test_fetches_only_pinned_subtree_and_never_executes",
+      "filePath": "backend/tests/test_services/test_plugin_fetch.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_fetch.py:reply",
+      "name": "reply",
+      "filePath": "backend/tests/test_services/test_plugin_fetch.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_fetch.py:test_invalid_inventory_is_rejected_before_raw_download",
+      "name": "test_invalid_inventory_is_rejected_before_raw_download",
+      "filePath": "backend/tests/test_services/test_plugin_fetch.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_installation.py:installer",
+      "name": "installer",
+      "filePath": "backend/tests/test_services/test_plugin_installation.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_installation.py:test_unapproved_source_is_not_downloaded",
+      "name": "test_unapproved_source_is_not_downloaded",
+      "filePath": "backend/tests/test_services/test_plugin_installation.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_installation.py:test_branch_name_is_rejected_before_approval_or_download",
+      "name": "test_branch_name_is_rejected_before_approval_or_download",
+      "filePath": "backend/tests/test_services/test_plugin_installation.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_installation.py:test_staging_removes_download_temporary_files",
+      "name": "test_staging_removes_download_temporary_files",
+      "filePath": "backend/tests/test_services/test_plugin_installation.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_installation.py:download",
+      "name": "download",
+      "filePath": "backend/tests/test_services/test_plugin_installation.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_installation.py:test_catalog_inspection_never_executes_capabilities",
+      "name": "test_catalog_inspection_never_executes_capabilities",
+      "filePath": "backend/tests/test_services/test_plugin_installation.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_lifecycle.py:lifecycle",
+      "name": "lifecycle",
+      "filePath": "backend/tests/test_services/test_plugin_lifecycle.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_lifecycle.py:candidate",
+      "name": "candidate",
+      "filePath": "backend/tests/test_services/test_plugin_lifecycle.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_lifecycle.py:test_registration_does_not_mean_ready",
+      "name": "test_registration_does_not_mean_ready",
+      "filePath": "backend/tests/test_services/test_plugin_lifecycle.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_lifecycle.py:test_pending_approval_never_calls_runtime",
+      "name": "test_pending_approval_never_calls_runtime",
+      "filePath": "backend/tests/test_services/test_plugin_lifecycle.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_lifecycle.py:test_ready_requires_positive_live_ack",
+      "name": "test_ready_requires_positive_live_ack",
+      "filePath": "backend/tests/test_services/test_plugin_lifecycle.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_lifecycle.py:test_real_ack_marks_binding_ready",
+      "name": "test_real_ack_marks_binding_ready",
+      "filePath": "backend/tests/test_services/test_plugin_lifecycle.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_lifecycle.py:test_source_change_during_approval_is_rejected",
+      "name": "test_source_change_during_approval_is_rejected",
+      "filePath": "backend/tests/test_services/test_plugin_lifecycle.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_lifecycle.py:approve",
+      "name": "approve",
+      "filePath": "backend/tests/test_services/test_plugin_lifecycle.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_lifecycle.py:test_executable_package_cannot_borrow_content_approval",
+      "name": "test_executable_package_cannot_borrow_content_approval",
+      "filePath": "backend/tests/test_services/test_plugin_lifecycle.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_lifecycle.py:test_invalid_identifier_cannot_address_files",
+      "name": "test_invalid_identifier_cannot_address_files",
+      "filePath": "backend/tests/test_services/test_plugin_lifecycle.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_lifecycle.py:test_failure_does_not_leak_exception_to_ui",
+      "name": "test_failure_does_not_leak_exception_to_ui",
+      "filePath": "backend/tests/test_services/test_plugin_lifecycle.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_lifecycle.py:test_concurrent_operation_rejected_without_second_apply",
+      "name": "test_concurrent_operation_rejected_without_second_apply",
+      "filePath": "backend/tests/test_services/test_plugin_lifecycle.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_lifecycle.py:apply",
+      "name": "apply",
+      "filePath": "backend/tests/test_services/test_plugin_lifecycle.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_lifecycle.py:test_cancelled_activation_is_not_left_activating",
+      "name": "test_cancelled_activation_is_not_left_activating",
+      "filePath": "backend/tests/test_services/test_plugin_lifecycle.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_lifecycle.py:test_cleanup_keeps_ready_agent_files",
+      "name": "test_cleanup_keeps_ready_agent_files",
+      "filePath": "backend/tests/test_services/test_plugin_lifecycle.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_lifecycle.py:test_failed_detach_never_deletes_bound_package",
+      "name": "test_failed_detach_never_deletes_bound_package",
+      "filePath": "backend/tests/test_services/test_plugin_lifecycle.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_lifecycle.py:test_cleanup_requires_acknowledged_detach_and_retention",
+      "name": "test_cleanup_requires_acknowledged_detach_and_retention",
+      "filePath": "backend/tests/test_services/test_plugin_lifecycle.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_lifecycle.py:test_cleanup_expires_unused_candidate_but_retains_audit_record",
+      "name": "test_cleanup_expires_unused_candidate_but_retains_audit_record",
+      "filePath": "backend/tests/test_services/test_plugin_lifecycle.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_lifecycle.py:test_existing_runtime_directory_is_not_left_world_writable",
+      "name": "test_existing_runtime_directory_is_not_left_world_writable",
+      "filePath": "backend/tests/test_services/test_plugin_lifecycle.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_marketplace.py:test_claude_relative_source_uses_catalog_repository",
+      "name": "test_claude_relative_source_uses_catalog_repository",
+      "filePath": "backend/tests/test_services/test_plugin_marketplace.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_marketplace.py:test_codex_relative_source_is_normalized",
+      "name": "test_codex_relative_source_is_normalized",
+      "filePath": "backend/tests/test_services/test_plugin_marketplace.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_marketplace.py:test_external_source_cannot_inherit_marketplace_commit_or_trust",
+      "name": "test_external_source_cannot_inherit_marketplace_commit_or_trust",
+      "filePath": "backend/tests/test_services/test_plugin_marketplace.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_marketplace.py:test_source_ref_is_not_treated_as_immutable_commit",
+      "name": "test_source_ref_is_not_treated_as_immutable_commit",
+      "filePath": "backend/tests/test_services/test_plugin_marketplace.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_marketplace.py:test_catalog_path_traversal_rejected",
+      "name": "test_catalog_path_traversal_rejected",
+      "filePath": "backend/tests/test_services/test_plugin_marketplace.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_marketplace.py:test_real_codex_external_sources_do_not_block_whole_catalog",
+      "name": "test_real_codex_external_sources_do_not_block_whole_catalog",
+      "filePath": "backend/tests/test_services/test_plugin_marketplace.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_marketplace.py:test_catalog_cannot_turn_external_url_into_network_request",
+      "name": "test_catalog_cannot_turn_external_url_into_network_request",
+      "filePath": "backend/tests/test_services/test_plugin_marketplace.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_package.py:write",
+      "name": "write",
+      "filePath": "backend/tests/test_services/test_plugin_package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_package.py:test_three_formats_share_inventory",
+      "name": "test_three_formats_share_inventory",
+      "filePath": "backend/tests/test_services/test_plugin_package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_package.py:test_digest_covers_helper_not_just_manifest",
+      "name": "test_digest_covers_helper_not_just_manifest",
+      "filePath": "backend/tests/test_services/test_plugin_package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_package.py:test_custom_components_cannot_escape_root",
+      "name": "test_custom_components_cannot_escape_root",
+      "filePath": "backend/tests/test_services/test_plugin_package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_package.py:test_symlink_rejected_even_for_internal_target",
+      "name": "test_symlink_rejected_even_for_internal_target",
+      "filePath": "backend/tests/test_services/test_plugin_package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_package.py:test_unsupported_components_cannot_silently_be_ready",
+      "name": "test_unsupported_components_cannot_silently_be_ready",
+      "filePath": "backend/tests/test_services/test_plugin_package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_package.py:test_portable_has_explicit_mcp_transport",
+      "name": "test_portable_has_explicit_mcp_transport",
+      "filePath": "backend/tests/test_services/test_plugin_package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_package.py:test_manifest_declared_inline_hook_detected",
+      "name": "test_manifest_declared_inline_hook_detected",
+      "filePath": "backend/tests/test_services/test_plugin_package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_package.py:test_codex_connector_not_misrepresented_as_mcp",
+      "name": "test_codex_connector_not_misrepresented_as_mcp",
+      "filePath": "backend/tests/test_services/test_plugin_package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_package.py:test_multiple_host_manifests_need_explicit_choice",
+      "name": "test_multiple_host_manifests_need_explicit_choice",
+      "filePath": "backend/tests/test_services/test_plugin_package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_package.py:test_invalid_namespace_rejected",
+      "name": "test_invalid_namespace_rejected",
+      "filePath": "backend/tests/test_services/test_plugin_package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_package.py:test_unknown_portable_schema_fails_closed",
+      "name": "test_unknown_portable_schema_fails_closed",
+      "filePath": "backend/tests/test_services/test_plugin_package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_package.py:test_content_is_bounded",
+      "name": "test_content_is_bounded",
+      "filePath": "backend/tests/test_services/test_plugin_package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_package.py:test_portable_inline_overlay_replaces_legacy_overlay",
+      "name": "test_portable_inline_overlay_replaces_legacy_overlay",
+      "filePath": "backend/tests/test_services/test_plugin_package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_package.py:test_portable_fallback_overlay_is_inspected",
+      "name": "test_portable_fallback_overlay_is_inspected",
+      "filePath": "backend/tests/test_services/test_plugin_package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_package.py:test_root_skill_is_discovered",
+      "name": "test_root_skill_is_discovered",
+      "filePath": "backend/tests/test_services/test_plugin_package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_package.py:test_unknown_component_directory_does_not_pass_ready",
+      "name": "test_unknown_component_directory_does_not_pass_ready",
+      "filePath": "backend/tests/test_services/test_plugin_package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_package.py:test_empty_plugin_does_not_claim_capability",
+      "name": "test_empty_plugin_does_not_claim_capability",
+      "filePath": "backend/tests/test_services/test_plugin_package.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_runtime_integration.py:package",
+      "name": "package",
+      "filePath": "backend/tests/test_services/test_plugin_runtime_integration.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_runtime_integration.py:test_live_instruction_and_reader_updated_without_restart",
+      "name": "test_live_instruction_and_reader_updated_without_restart",
+      "filePath": "backend/tests/test_services/test_plugin_runtime_integration.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:backend/tests/test_services/test_plugin_runtime_integration.py:test_skill_install_cannot_implicitly_grant_shell",
+      "name": "test_skill_install_cannot_implicitly_grant_shell",
+      "filePath": "backend/tests/test_services/test_plugin_runtime_integration.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Section:docs/evidence/runtime-plugins/README.md:L1:Runtime plugins \u2014 implementation checkpoint (SCRUM-42)",
+      "name": "Runtime plugins \u2014 implementation checkpoint (SCRUM-42)",
+      "filePath": "docs/evidence/runtime-plugins/README.md",
+      "change_type": "touched"
+    },
+    {
+      "id": "Section:docs/evidence/runtime-plugins/README.md:L5:Implemented",
+      "name": "Implemented",
+      "filePath": "docs/evidence/runtime-plugins/README.md",
+      "change_type": "touched"
+    },
+    {
+      "id": "Section:docs/evidence/runtime-plugins/README.md:L17:Evidence and its limits",
+      "name": "Evidence and its limits",
+      "filePath": "docs/evidence/runtime-plugins/README.md",
+      "change_type": "touched"
+    },
+    {
+      "id": "Section:docs/evidence/runtime-plugins/README.md:L35:Defects found by tests/probes",
+      "name": "Defects found by tests/probes",
+      "filePath": "docs/evidence/runtime-plugins/README.md",
+      "change_type": "touched"
+    },
+    {
+      "id": "Section:docs/evidence/runtime-plugins/README.md:L44:Decisions",
+      "name": "Decisions",
+      "filePath": "docs/evidence/runtime-plugins/README.md",
+      "change_type": "touched"
+    },
+    {
+      "id": "Section:docs/evidence/runtime-plugins/README.md:L52:Remaining acceptance gates",
+      "name": "Remaining acceptance gates",
+      "filePath": "docs/evidence/runtime-plugins/README.md",
+      "change_type": "touched"
+    },
+    {
+      "id": "Section:docs/runtime-plugins-acceptance.md:L1:Runtime plugins acceptance contract \u2014 SCRUM-42",
+      "name": "Runtime plugins acceptance contract \u2014 SCRUM-42",
+      "filePath": "docs/runtime-plugins-acceptance.md",
+      "change_type": "touched"
+    },
+    {
+      "id": "Section:docs/runtime-plugins-acceptance.md:L3:Product contract",
+      "name": "Product contract",
+      "filePath": "docs/runtime-plugins-acceptance.md",
+      "change_type": "touched"
+    },
+    {
+      "id": "Section:docs/runtime-plugins-acceptance.md:L19:Required evidence",
+      "name": "Required evidence",
+      "filePath": "docs/runtime-plugins-acceptance.md",
+      "change_type": "touched"
+    },
+    {
+      "id": "Section:docs/runtime-plugins-acceptance.md:L36:Runtime files",
+      "name": "Runtime files",
+      "filePath": "docs/runtime-plugins-acceptance.md",
+      "change_type": "touched"
+    },
+    {
+      "id": "Section:docs/runtime-plugins-acceptance.md:L47:Current gate",
+      "name": "Current gate",
+      "filePath": "docs/runtime-plugins-acceptance.md",
+      "change_type": "touched"
+    },
+    {
+      "id": "Section:docs/runtime-plugins-acceptance.md:L55:Current checkpoint",
+      "name": "Current checkpoint",
+      "filePath": "docs/runtime-plugins-acceptance.md",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:frontend/src/composables/pluginInventory.js:mergeEvent",
+      "name": "mergeEvent",
+      "filePath": "frontend/src/composables/pluginInventory.js",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:frontend/src/composables/pluginInventory.js:createPluginInventory",
+      "name": "createPluginInventory",
+      "filePath": "frontend/src/composables/pluginInventory.js",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:frontend/src/composables/pluginInventory.js:reload",
+      "name": "reload",
+      "filePath": "frontend/src/composables/pluginInventory.js",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:frontend/src/composables/pluginInventory.js:onEvent",
+      "name": "onEvent",
+      "filePath": "frontend/src/composables/pluginInventory.js",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:frontend/src/views/settings/SettingsPlugins.vue:label",
+      "name": "label",
+      "filePath": "frontend/src/views/settings/SettingsPlugins.vue",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:frontend/src/views/settings/SettingsPlugins.vue:operation",
+      "name": "operation",
+      "filePath": "frontend/src/views/settings/SettingsPlugins.vue",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:frontend/src/views/settings/SettingsPlugins.vue:browse",
+      "name": "browse",
+      "filePath": "frontend/src/views/settings/SettingsPlugins.vue",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:frontend/src/views/settings/SettingsPlugins.vue:install",
+      "name": "install",
+      "filePath": "frontend/src/views/settings/SettingsPlugins.vue",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:frontend/src/views/settings/SettingsPlugins.vue:activate",
+      "name": "activate",
+      "filePath": "frontend/src/views/settings/SettingsPlugins.vue",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:frontend/src/views/settings/SettingsPlugins.vue:inspect",
+      "name": "inspect",
+      "filePath": "frontend/src/views/settings/SettingsPlugins.vue",
+      "change_type": "touched"
+    }
+  ],
+  "affected_processes": [
+    {
+      "id": "proc_294_review_skill",
+      "name": "Review_skill \u2192 PluginStateError",
+      "process_type": "intra_community",
+      "step_count": 4,
+      "changed_steps": [
+        {
+          "symbol": "PluginStateError",
+          "step": 4
+        },
+        {
+          "symbol": "get",
+          "step": 2
+        },
+        {
+          "symbol": "package_path",
+          "step": 3
+        },
+        {
+          "symbol": "review_skill",
+          "step": 1
+        }
+      ]
+    }
+  ]
+}

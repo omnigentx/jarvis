@@ -1,6 +1,7 @@
 # API route modules
 from fastapi import APIRouter
 
+from routes.plugins import router as plugins_router
 from routes.auth import router as auth_router
 from routes.sessions import router as sessions_router
 from routes.tts import router as tts_router
@@ -33,6 +34,7 @@ from routes.gateways import router as gateways_router
 from routes.team_work import router as team_work_router
 
 all_routers: list[APIRouter] = [
+    plugins_router,
     auth_router,
     sessions_router,
     tts_router,

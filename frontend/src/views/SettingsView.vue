@@ -22,6 +22,7 @@ import SettingsLLM from './settings/SettingsLLM.vue'
 import SettingsVoice from './settings/SettingsVoice.vue'
 import SettingsCompaction from './settings/SettingsCompaction.vue'
 import SettingsMemory from './settings/SettingsMemory.vue'
+import SettingsPlugins from './settings/SettingsPlugins.vue'
 import SettingsExperimental from './settings/SettingsExperimental.vue'
 
 const { t } = useLang()
@@ -33,6 +34,7 @@ const TABS = [
   { id: 'auth',         labelKey: 'settings.shell.tab.auth',         eyebrow: 'CORE' },
   { id: 'llm',          labelKey: 'settings.shell.tab.llm',          eyebrow: 'MODELS' },
   { id: 'voice',        labelKey: 'settings.shell.tab.voice',        eyebrow: 'MODELS' },
+  { id: 'plugins', labelKey: 'settings.shell.tab.plugins', eyebrow: 'INTEGRATIONS' },
   { id: 'services',     labelKey: 'settings.shell.tab.services',     eyebrow: 'INTEGRATIONS' },
   { id: 'gateways',     labelKey: 'settings.shell.tab.gateways',     eyebrow: 'INTEGRATIONS' },
   { id: 'yaml',         labelKey: 'settings.shell.tab.yaml',         eyebrow: 'INTEGRATIONS' },
@@ -111,6 +113,7 @@ function labelFor(id) {
         <SettingsGateways v-else-if="active === 'gateways'" />
         <SettingsCompaction v-else-if="active === 'compaction'" />
         <SettingsMemory v-else-if="active === 'memory'" />
+        <SettingsPlugins v-else-if="active === 'plugins'" />
         <SettingsExperimental v-else-if="active === 'experimental'" />
       </section>
     </main>

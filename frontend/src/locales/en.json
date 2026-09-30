@@ -97,7 +97,8 @@
         "runningTmpl": "Running Templates",
         "compaction": "Context Compaction",
         "experimental": "Experimental",
-        "memory": "Agent Memory"
+        "memory": "Agent Memory",
+        "plugins": "Plugins"
       }
     },
     "common": {
@@ -595,6 +596,41 @@
       "revertTitle": "Revert changes",
       "revertMsg": "Discard unsaved changes and revert to last saved content?",
       "saveFailed": "Save failed"
+    },
+    "plugins": {
+      "intro": "Install plugins from a pinned source and review their capabilities before activation. Status updates stream live.",
+      "support": "Preview: skills can activate in a live main-process agent. MCP, executable components and running-team activation are not available yet; affected packages cannot become Ready.",
+      "failed": "Plugin operation failed",
+      "approvals": "Open approvals",
+      "marketplace": "Marketplace",
+      "repository": "GitHub repository",
+      "browse": "Browse plugins",
+      "search": "Search plugins",
+      "commit": "Pinned commit (40 characters)",
+      "external": "External publisher — separate source approval required",
+      "add": "Add plugin",
+      "installed": "Installed packages",
+      "empty": "No packages installed.",
+      "review": "Review skill",
+      "target": "Target agent",
+      "activate": "Activate",
+      "content": "Skill content review",
+      "untrusted": "Third-party content, shown as text. Review before approving activation.",
+      "status": {
+        "ready": "Ready",
+        "needs_approval": "Awaiting content approval",
+        "needs_source_approval": "Awaiting source approval",
+        "unsupported": "Unsupported capabilities",
+        "activating": "Activating",
+        "activation_failed": "Activation failed",
+        "activation_interrupted": "Activation interrupted",
+        "integrity_failed": "Integrity check failed",
+        "disabled": "Disabled",
+        "detach_failed": "Removal failed",
+        "deactivating": "Removing",
+        "expired": "Cache expired",
+        "needs_reactivation": "Needs runtime activation"
+      }
     }
   },
   "memory": {

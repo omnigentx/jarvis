@@ -1,0 +1,11 @@
+
+> frontend@0.0.0 test:e2e
+> playwright test settings-plugins.spec.ts --project=chromium-desktop
+
+
+Running 2 tests using 2 workers
+
+  ✓  1 [chromium-desktop] › tests/e2e/flows/settings-plugins.spec.ts:10:3 › plugin content review and truthful activation (mobile) (572ms)
+  ✓  2 [chromium-desktop] › tests/e2e/flows/settings-plugins.spec.ts:10:3 › plugin content review and truthful activation (desktop) (647ms)
+
+  2 passed (1.8s)
