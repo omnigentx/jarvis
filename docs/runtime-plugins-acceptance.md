@@ -52,6 +52,10 @@ security, production readiness, or UI acceptance. PR stays draft until all
 required evidence is available. Unknown components are reported and blocked;
 they are never silently discarded to make an install appear successful.
 
-## Current checkpoint
+## Acceptance report
 
-See `docs/evidence/runtime-plugins/README.md` for implemented code, defects found, exact test results and remaining gates. This checkpoint is WIP; it does not establish complete MCP or running-team compatibility.
+See `docs/evidence/runtime-plugins/README.md` for implemented scope, actual live
+UI/team/MCP evidence, tests, A/B results and tracked limitations. Local acceptance
+is complete. PR168 remains Draft until its final CI passes; dependency PR19 must
+be merged first. Unsupported host contributions fail closed rather than being
+silently omitted. Production deployment remains a separate operator action.

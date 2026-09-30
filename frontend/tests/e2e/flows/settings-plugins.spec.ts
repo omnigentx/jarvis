@@ -82,3 +82,17 @@ test('MCP policy uses the host profile and clears entered credentials after save
   expect(saved).toEqual({image:digest,credentials:{TEST_SLOT:'nonsecret-test-marker'}})
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBeTruthy()
 })
+
+test('reviewed Ready MCP has no false blocker and shows explicit target placeholder',async ({page}) => {
+  await seedApiKey(page)
+  await mockBackend(page,[noise])
+  await page.route('**/api/plugins**',route=>route.fulfill({json:new URL(route.request().url()).pathname.endsWith('/targets')
+    ? {targets:[{agent:'Jarvis',run_id:null,label:'Jarvis'}]}
+    : {plugins:[{...candidate,status:'ready',policy_configured:true,skills:[],blockers:['executable_content','mcp_requires_policy_review']}]}}))
+  await page.goto('/settings')
+  await page.getByRole('button',{name:'Plugins',exact:true}).click()
+  const card=page.getByTestId('plugin-sample')
+  await expect(card.getByText('Ready',{exact:true})).toBeVisible()
+  await expect(card.locator('.blocked')).not.toBeVisible()
+  expect(await card.getByLabel('Target agent').evaluate((select:any)=>select.selectedIndex)).toBe(0)
+})

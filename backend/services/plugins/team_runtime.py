@@ -7,6 +7,7 @@ import logging
 import os
 from pathlib import Path
 from typing import Any
+from weakref import WeakKeyDictionary
 
 from sqlalchemy import create_engine
 
@@ -92,10 +93,13 @@ async def start_team_runtime(
         _starting.pop(run_id, None)
 
 
+_attached: WeakKeyDictionary[Any, str] = WeakKeyDictionary()
+
+
 def attach_team_runtime(
     agent: Any, run_id: str, record: dict[str, Any], emit_event=None
 ) -> None:
-    if run_id in _servers or run_id in _starting:
+    if run_id in _servers or run_id in _starting or _attached.get(agent) == run_id:
         return
     from fast_agent.agents.tool_runner import ToolRunnerHooks
 
@@ -114,10 +118,23 @@ def attach_team_runtime(
         finally:
             _starting.pop(run_id, None)
 
-    task = asyncio.create_task(initialize())
-    _starting[run_id] = task
+    def launch() -> asyncio.Task:
+        pending = asyncio.create_task(initialize())
+        _starting[run_id] = pending
+        return pending
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        task = None
+    else:
+        task = launch()
+    _attached[agent] = run_id
 
     async def before_first_call(_runner, _messages) -> None:
+        nonlocal task
+        if task is None:
+            task = launch()
         # This hook precedes the capability controller. Restore must finish
         # before the controller marks the first turn as using a tool snapshot.
         await asyncio.shield(task)

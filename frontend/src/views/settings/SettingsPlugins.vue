@@ -45,6 +45,7 @@ function install(item) {
 }
 async function refresh() {
   await inventory.reload()
+  for (const plugin of plugins.value) targets.value[plugin.id] ??= ''
   try { availableTargets.value = (await apiFetch('/api/plugins/targets')).targets }
   catch (cause) { error.value = cause.message }
 }
@@ -136,7 +137,7 @@ function inspect(plugin, skill) {
         <div class="controls"><button :disabled="busy || (!plugin.global_enabled && (!supported(plugin) || plugin.status === 'expired'))" @click="share(plugin)">{{ t(plugin.global_enabled ? 'settings.plugins.stopSharing' : 'settings.plugins.promote') }}</button><button :disabled="busy" @click="checkUpdate(plugin)">{{ t('settings.plugins.checkUpdate') }}</button></div>
         <button v-if="plugin.status !== 'expired' && !plugin.global_enabled && !(plugin.bindings || []).some(binding => binding.status !== 'disabled')" :disabled="busy" @click="uninstall(plugin)">{{ t('settings.plugins.uninstall') }}</button>
         <p class="source">{{ plugin.repo }} · {{ plugin.commit }}<br />SHA-256: {{ plugin.digest }}</p>
-        <ul v-if="plugin.blockers?.length" class="blocked"><li v-for="blocker in plugin.blockers" :key="blocker">{{ blocker }}</li></ul>
+        <ul v-if="plugin.blockers?.length && !supported(plugin)" class="blocked"><li v-for="blocker in plugin.blockers" :key="blocker">{{ blocker }}</li></ul>
         <ul class="skills"><li v-for="skill in plugin.skills" :key="skill.name"><span>{{ skill.name }} — {{ skill.description }}</span><button :disabled="busy" @click="inspect(plugin, skill)">{{ t('settings.plugins.review') }}</button></li></ul>
         <PluginFilesReview :plugin="plugin" />
         <PluginExecutionPolicy v-if="plugin.server_names?.length" :plugin="plugin" @saved="inventory.reload" />

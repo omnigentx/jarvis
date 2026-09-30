@@ -1,0 +1,254 @@
+{
+  "team_session": "30e68868",
+  "run_id": "0f16a6ca",
+  "pid": 37636,
+  "skill_candidate": "7a1d16b6-432a-420e-9346-03cd05fa3ea9",
+  "mcp_candidate": "84a840dc-93e1-4635-b27f-0d3056b1d1f3",
+  "mcp_source_commit": "fe82dab07f5e495a9a93ac780f820dcdb0d1b20e",
+  "mcp_digest": "eea442498b41ca0467b2e1c990a2e9f409ec3a07cbcd356e3b08d1261c86771a",
+  "observation": "UI disable/reactivate/read skill and MCP attach/call/detach used the same child run and PID; no backend restart in those sequences. Separate restart/resume tests used earlier runs and are not counted as hot activation.",
+  "after_mcp_disable": {
+    "binding_status": "disabled",
+    "matching_sandbox_containers": 0,
+    "skill_bindings": [
+      "Jarvis:ready",
+      "Casey [PM]:ready"
+    ]
+  },
+  "turns": [
+    {
+      "turn_idx": 1,
+      "role": "assistant",
+      "message": {
+        "role": "assistant",
+        "content": [],
+        "tool_calls": {
+          "call_y81Z0oGjdOBhS7OxsH3iTiAk": {
+            "method": "tools/call",
+            "params": {
+              "name": "read_skill",
+              "arguments": {
+                "path": "$REPO/backend/data/plugin-acceptance/plugins/7a1d16b6-432a-420e-9346-03cd05fa3ea9/package/skills/frontend-design/SKILL.md"
+              }
+            }
+          }
+        },
+        "channels": {
+          "fast-agent-timing": [
+            {
+              "type": "text",
+              "text": "{\"start_time\": 452871.296399791, \"end_time\": 452877.853482541, \"duration_ms\": 6557.08, \"ttft_ms\": 4344.2, \"time_to_response_ms\": 4344.2}"
+            }
+          ],
+          "fast-agent-usage": [
+            {
+              "type": "text",
+              "text": "{\"turn\": {\"provider\": \"openai\", \"model\": \"coding-agent\", \"input_tokens\": 30662, \"output_tokens\": 77, \"total_tokens\": 30739, \"timestamp\": 1790795102.1604888, \"cache_usage\": {\"cache_read_tokens\": 0, \"cache_write_tokens\": 0, \"cache_hit_tokens\": 0, \"total_cache_tokens\": 0, \"has_cache_activity\": false}, \"tool_use_tokens\": 0, \"reasoning_tokens\": 0, \"tool_calls\": 1, \"current_context_tokens\": 30739, \"effective_input_tokens\": 30662, \"display_input_tokens\": 30662}, \"raw_usage\": {\"completion_tokens\": 77, \"prompt_tokens\": 30662, \"total_tokens\": 30739, \"completion_tokens_details\": null, \"prompt_tokens_details\": null}, \"summary\": {\"model\": \"coding-agent\", \"turn_count\": 1, \"cumulative_input_tokens\": 30662, \"cumulative_output_tokens\": 77, \"cumulative_billing_tokens\": 30739, \"cumulative_tool_use_tokens\": 0, \"cumulative_reasoning_tokens\": 0, \"cumulative_tool_calls\": 1, \"current_context_tokens\": 30739, \"context_window_size\": null, \"context_usage_percentage\": null, \"cumulative_cache_read_tokens\": 0, \"cumulative_cache_write_tokens\": 0, \"cumulative_cache_hit_tokens\": 0, \"cache_hit_rate_percent\": 0.0, \"cumulative_effective_input_tokens\": 30662}}"
+            }
+          ]
+        },
+        "stop_reason": "toolUse",
+        "is_template": false,
+        "timestamp": "2026-09-30T19:05:02.163311Z"
+      }
+    },
+    {
+      "turn_idx": 2,
+      "role": "user",
+      "message": {
+        "role": "user",
+        "content": [],
+        "tool_results": {
+          "call_y81Z0oGjdOBhS7OxsH3iTiAk": {
+            "content": [
+              {
+                "type": "text",
+                "text_sha256": "d91970639e9f5c37682ac7ab60094d35f1c7c1f38d731bd56396563aee10c1d3",
+                "text_chars": 9363,
+                "evidence_excerpt": "# Frontend Design\nDefault to line lengths of less than 80 characters.",
+                "body_omitted": "Third-party skill body remains runtime-only; this report records length/hash and a short excerpt."
+              }
+            ],
+            "isError": false
+          }
+        },
+        "channels": {
+          "fast-agent-tool-timing": [
+            {
+              "type": "text",
+              "text": "{\"call_y81Z0oGjdOBhS7OxsH3iTiAk\": {\"timing_ms\": 7.37, \"transport_channel\": null}}"
+            }
+          ],
+          "mcp-ui": []
+        },
+        "is_template": false,
+        "timestamp": "2026-09-30T19:05:02.210422Z"
+      }
+    },
+    {
+      "turn_idx": 5,
+      "role": "assistant",
+      "message": {
+        "role": "assistant",
+        "content": [],
+        "tool_calls": {
+          "call_hMVBkbz0h7HbsK5DljhNVSEU": {
+            "method": "tools/call",
+            "params": {
+              "name": "read_skill",
+              "arguments": {
+                "path": "$REPO/backend/data/plugin-acceptance/plugins/7a1d16b6-432a-420e-9346-03cd05fa3ea9/package/skills/frontend-design/SKILL.md"
+              }
+            }
+          }
+        },
+        "channels": {
+          "fast-agent-timing": [
+            {
+              "type": "text",
+              "text": "{\"start_time\": 452934.025688083, \"end_time\": 452938.827150041, \"duration_ms\": 4801.46, \"ttft_ms\": 3256.43, \"time_to_response_ms\": 3256.43}"
+            }
+          ],
+          "fast-agent-usage": [
+            {
+              "type": "text",
+              "text": "{\"turn\": {\"provider\": \"openai\", \"model\": \"coding-agent\", \"input_tokens\": 32819, \"output_tokens\": 77, \"total_tokens\": 32896, \"timestamp\": 1790795163.1103628, \"cache_usage\": {\"cache_read_tokens\": 0, \"cache_write_tokens\": 0, \"cache_hit_tokens\": 0, \"total_cache_tokens\": 0, \"has_cache_activity\": false}, \"tool_use_tokens\": 0, \"reasoning_tokens\": 0, \"tool_calls\": 1, \"current_context_tokens\": 32896, \"effective_input_tokens\": 32819, \"display_input_tokens\": 32819}, \"raw_usage\": {\"completion_tokens\": 77, \"prompt_tokens\": 32819, \"total_tokens\": 32896, \"completion_tokens_details\": null, \"prompt_tokens_details\": null}, \"summary\": {\"model\": \"coding-agent\", \"turn_count\": 3, \"cumulative_input_tokens\": 96130, \"cumulative_output_tokens\": 217, \"cumulative_billing_tokens\": 96347, \"cumulative_tool_use_tokens\": 0, \"cumulative_reasoning_tokens\": 0, \"cumulative_tool_calls\": 2, \"current_context_tokens\": 32896, \"context_window_size\": null, \"context_usage_percentage\": null, \"cumulative_cache_read_tokens\": 0, \"cumulative_cache_write_tokens\": 0, \"cumulative_cache_hit_tokens\": 28416, \"cache_hit_rate_percent\": 29.559970872776447, \"cumulative_effective_input_tokens\": 67714}}"
+            }
+          ]
+        },
+        "stop_reason": "toolUse",
+        "is_template": false,
+        "timestamp": "2026-09-30T19:06:03.111456Z"
+      }
+    },
+    {
+      "turn_idx": 6,
+      "role": "user",
+      "message": {
+        "role": "user",
+        "content": [],
+        "tool_results": {
+          "call_hMVBkbz0h7HbsK5DljhNVSEU": {
+            "content": [
+              {
+                "type": "text",
+                "text_sha256": "d91970639e9f5c37682ac7ab60094d35f1c7c1f38d731bd56396563aee10c1d3",
+                "text_chars": 9363,
+                "evidence_excerpt": "# Frontend Design\nDefault to line lengths of less than 80 characters.",
+                "body_omitted": "Third-party skill body remains runtime-only; this report records length/hash and a short excerpt."
+              }
+            ],
+            "isError": false
+          }
+        },
+        "channels": {
+          "fast-agent-tool-timing": [
+            {
+              "type": "text",
+              "text": "{\"call_hMVBkbz0h7HbsK5DljhNVSEU\": {\"timing_ms\": 5.82, \"transport_channel\": null}}"
+            }
+          ],
+          "mcp-ui": []
+        },
+        "is_template": false,
+        "timestamp": "2026-09-30T19:06:03.142121Z"
+      }
+    },
+    {
+      "turn_idx": 9,
+      "role": "assistant",
+      "message": {
+        "role": "assistant",
+        "content": [],
+        "tool_calls": {
+          "call_JulQCvoddKkcYSf7hZhJIxrW": {
+            "method": "tools/call",
+            "params": {
+              "name": "plg-c621dbd7adc95f2e6c69__echo",
+              "arguments": {
+                "value": "runtime-plugin-team-20261001"
+              }
+            }
+          }
+        },
+        "channels": {
+          "fast-agent-timing": [
+            {
+              "type": "text",
+              "text": "{\"start_time\": 453384.978836541, \"end_time\": 453388.470547875, \"duration_ms\": 3491.71, \"ttft_ms\": 2857.14, \"time_to_response_ms\": 2857.14}"
+            }
+          ],
+          "fast-agent-usage": [
+            {
+              "type": "text",
+              "text": "{\"turn\": {\"provider\": \"openai\", \"model\": \"coding-agent\", \"input_tokens\": 35043, \"output_tokens\": 39, \"total_tokens\": 35082, \"timestamp\": 1790795612.749779, \"cache_usage\": {\"cache_read_tokens\": 0, \"cache_write_tokens\": 0, \"cache_hit_tokens\": 22272, \"total_cache_tokens\": 22272, \"has_cache_activity\": true}, \"tool_use_tokens\": 0, \"reasoning_tokens\": 0, \"tool_calls\": 1, \"current_context_tokens\": 35082, \"effective_input_tokens\": 12771, \"display_input_tokens\": 35043}, \"raw_usage\": {\"completion_tokens\": 39, \"prompt_tokens\": 35043, \"total_tokens\": 35082, \"completion_tokens_details\": null, \"prompt_tokens_details\": {\"audio_tokens\": null, \"cached_tokens\": 22272}}, \"summary\": {\"model\": \"coding-agent\", \"turn_count\": 5, \"cumulative_input_tokens\": 165979, \"cumulative_output_tokens\": 330, \"cumulative_billing_tokens\": 166309, \"cumulative_tool_use_tokens\": 0, \"cumulative_reasoning_tokens\": 0, \"cumulative_tool_calls\": 3, \"current_context_tokens\": 35082, \"context_window_size\": null, \"context_usage_percentage\": null, \"cumulative_cache_read_tokens\": 0, \"cumulative_cache_write_tokens\": 0, \"cumulative_cache_hit_tokens\": 81152, \"cache_hit_rate_percent\": 48.8929322384157, \"cumulative_effective_input_tokens\": 84827}}"
+            }
+          ]
+        },
+        "stop_reason": "toolUse",
+        "is_template": false,
+        "timestamp": "2026-09-30T19:13:32.752306Z"
+      }
+    },
+    {
+      "turn_idx": 10,
+      "role": "user",
+      "message": {
+        "role": "user",
+        "content": [],
+        "tool_results": {
+          "call_JulQCvoddKkcYSf7hZhJIxrW": {
+            "content": [
+              {
+                "type": "text",
+                "text": "sandbox:runtime-plugin-team-20261001"
+              }
+            ],
+            "isError": false
+          }
+        },
+        "channels": {
+          "fast-agent-tool-timing": [
+            {
+              "type": "text",
+              "text": "{\"call_JulQCvoddKkcYSf7hZhJIxrW\": {\"timing_ms\": 14.58, \"transport_channel\": null}}"
+            }
+          ],
+          "mcp-ui": []
+        },
+        "is_template": false,
+        "timestamp": "2026-09-30T19:13:32.805878Z"
+      }
+    },
+    {
+      "turn_idx": 11,
+      "role": "assistant",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "sandbox:runtime-plugin-team-20261001"
+          }
+        ],
+        "channels": {
+          "fast-agent-timing": [
+            {
+              "type": "text",
+              "text": "{\"start_time\": 453388.526702083, \"end_time\": 453391.557582666, \"duration_ms\": 3030.88, \"ttft_ms\": 2457.17, \"time_to_response_ms\": 2457.17}"
+            }
+          ],
+          "fast-agent-usage": [
+            {
+              "type": "text",
+              "text": "{\"turn\": {\"provider\": \"openai\", \"model\": \"coding-agent\", \"input_tokens\": 35124, \"output_tokens\": 13, \"total_tokens\": 35137, \"timestamp\": 1790795615.836915, \"cache_usage\": {\"cache_read_tokens\": 0, \"cache_write_tokens\": 0, \"cache_hit_tokens\": 32512, \"total_cache_tokens\": 32512, \"has_cache_activity\": true}, \"tool_use_tokens\": 0, \"reasoning_tokens\": 0, \"tool_calls\": 0, \"current_context_tokens\": 35137, \"effective_input_tokens\": 2612, \"display_input_tokens\": 35124}, \"raw_usage\": {\"completion_tokens\": 13, \"prompt_tokens\": 35124, \"total_tokens\": 35137, \"completion_tokens_details\": null, \"prompt_tokens_details\": {\"audio_tokens\": null, \"cached_tokens\": 32512}}, \"summary\": {\"model\": \"coding-agent\", \"turn_count\": 6, \"cumulative_input_tokens\": 201103, \"cumulative_output_tokens\": 343, \"cumulative_billing_tokens\": 201446, \"cumulative_tool_use_tokens\": 0, \"cumulative_reasoning_tokens\": 0, \"cumulative_tool_calls\": 3, \"current_context_tokens\": 35137, \"context_window_size\": null, \"context_usage_percentage\": null, \"cumulative_cache_read_tokens\": 0, \"cumulative_cache_write_tokens\": 0, \"cumulative_cache_hit_tokens\": 113664, \"cache_hit_rate_percent\": 56.52029059735558, \"cumulative_effective_input_tokens\": 87439}}"
+            }
+          ]
+        },
+        "stop_reason": "endTurn",
+        "is_template": false,
+        "timestamp": "2026-09-30T19:13:35.839438Z"
+      }
+    }
+  ]
+}

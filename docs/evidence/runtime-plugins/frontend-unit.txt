@@ -6,226 +6,226 @@ TAP version 13
 # Subtest: subscribe + emit delivers payload
 ok 1 - subscribe + emit delivers payload
   ---
-  duration_ms: 0.673792
+  duration_ms: 0.682416
   type: 'test'
   ...
 # Subtest: multiple subscribers all fire in order
 ok 2 - multiple subscribers all fire in order
   ---
-  duration_ms: 0.774541
+  duration_ms: 1.32325
   type: 'test'
   ...
 # Subtest: unsubscribe stops further deliveries
 ok 3 - unsubscribe stops further deliveries
   ---
-  duration_ms: 0.238583
+  duration_ms: 0.521625
   type: 'test'
   ...
 # Subtest: emitter snapshots the listener set so unsubscribe-during-emit is safe
 ok 4 - emitter snapshots the listener set so unsubscribe-during-emit is safe
   ---
-  duration_ms: 0.316792
+  duration_ms: 0.371542
   type: 'test'
   ...
 # Subtest: handler that throws does not break other handlers
 ok 5 - handler that throws does not break other handlers
   ---
-  duration_ms: 0.401458
+  duration_ms: 1.246042
   type: 'test'
   ...
 # Subtest: emit on event with no subscribers is a no-op
 ok 6 - emit on event with no subscribers is a no-op
   ---
-  duration_ms: 0.120958
+  duration_ms: 0.133084
   type: 'test'
   ...
 # Subtest: event-name constants exist for the three transitions
 ok 7 - event-name constants exist for the three transitions
   ---
-  duration_ms: 0.053708
+  duration_ms: 0.068
   type: 'test'
   ...
 # Subtest: buildRenderRows inserts a run separator at the first turn
 ok 8 - buildRenderRows inserts a run separator at the first turn
   ---
-  duration_ms: 0.49
+  duration_ms: 0.503041
   type: 'test'
   ...
 # Subtest: buildRenderRows adds a separator only when run_id changes
 ok 9 - buildRenderRows adds a separator only when run_id changes
   ---
-  duration_ms: 0.363209
+  duration_ms: 0.370666
   type: 'test'
   ...
 # Subtest: buildRenderRows skips separator for turns missing run_id
 ok 10 - buildRenderRows skips separator for turns missing run_id
   ---
-  duration_ms: 0.08475
+  duration_ms: 0.085584
   type: 'test'
   ...
 # Subtest: buildRenderRows handles empty input
 ok 11 - buildRenderRows handles empty input
   ---
-  duration_ms: 0.044375
+  duration_ms: 0.045125
   type: 'test'
   ...
 # Subtest: textContent joins multi-block text with newlines
 ok 12 - textContent joins multi-block text with newlines
   ---
-  duration_ms: 0.109792
+  duration_ms: 0.108958
   type: 'test'
   ...
 # Subtest: textContent ignores non-text blocks
 ok 13 - textContent ignores non-text blocks
   ---
-  duration_ms: 0.039209
+  duration_ms: 0.040916
   type: 'test'
   ...
 # Subtest: textContent returns empty for missing content
 ok 14 - textContent returns empty for missing content
   ---
-  duration_ms: 0.091
+  duration_ms: 0.093334
   type: 'test'
   ...
 # Subtest: isTextTruncated true when any text block has _truncated
 ok 15 - isTextTruncated true when any text block has _truncated
   ---
-  duration_ms: 0.04675
+  duration_ms: 0.047542
   type: 'test'
   ...
 # Subtest: isTextTruncated false when no block is truncated
 ok 16 - isTextTruncated false when no block is truncated
   ---
-  duration_ms: 0.233
+  duration_ms: 0.239459
   type: 'test'
   ...
 # Subtest: toolCallList extracts name and args from tool_calls dict
 ok 17 - toolCallList extracts name and args from tool_calls dict
   ---
-  duration_ms: 0.302
+  duration_ms: 0.307958
   type: 'test'
   ...
 # Subtest: toolCallList returns empty for non-assistant turns
 ok 18 - toolCallList returns empty for non-assistant turns
   ---
-  duration_ms: 0.083792
+  duration_ms: 0.086166
   type: 'test'
   ...
 # Subtest: toolResultList carries _truncated/_full_size flags through
 ok 19 - toolResultList carries _truncated/_full_size flags through
   ---
-  duration_ms: 0.073041
+  duration_ms: 0.075708
   type: 'test'
   ...
 # Subtest: toolResultList flags isError
 ok 20 - toolResultList flags isError
   ---
-  duration_ms: 0.035541
+  duration_ms: 0.03475
   type: 'test'
   ...
 # Subtest: toolResultList concatenates multiple text blocks
 ok 21 - toolResultList concatenates multiple text blocks
   ---
-  duration_ms: 0.033041
+  duration_ms: 0.033875
   type: 'test'
   ...
 # Subtest: summarizeArgs handles short string args
 ok 22 - summarizeArgs handles short string args
   ---
-  duration_ms: 0.046125
+  duration_ms: 0.047459
   type: 'test'
   ...
 # Subtest: summarizeArgs truncates long string values to 60 chars + ellipsis
 ok 23 - summarizeArgs truncates long string values to 60 chars + ellipsis
   ---
-  duration_ms: 0.756667
+  duration_ms: 0.080833
   type: 'test'
   ...
 # Subtest: summarizeArgs JSON-stringifies non-string values
 ok 24 - summarizeArgs JSON-stringifies non-string values
   ---
-  duration_ms: 0.238834
+  duration_ms: 0.608042
   type: 'test'
   ...
 # Subtest: summarizeArgs lists at most 3 keys with "+N more" tail
 ok 25 - summarizeArgs lists at most 3 keys with "+N more" tail
   ---
-  duration_ms: 0.104958
+  duration_ms: 0.034291
   type: 'test'
   ...
 # Subtest: summarizeArgs handles empty / non-object
 ok 26 - summarizeArgs handles empty / non-object
   ---
-  duration_ms: 0.486542
+  duration_ms: 0.057
   type: 'test'
   ...
 # Subtest: statusLabel covers every pause-cycle state
 ok 27 - statusLabel covers every pause-cycle state
   ---
-  duration_ms: 0.048125
+  duration_ms: 0.028334
   type: 'test'
   ...
 # Subtest: statusLabel covers spawn lifecycle statuses
 ok 28 - statusLabel covers spawn lifecycle statuses
   ---
-  duration_ms: 0.027791
+  duration_ms: 0.0215
   type: 'test'
   ...
 # Subtest: statusLabel falls back to Unknown only for genuinely unknown states
 ok 29 - statusLabel falls back to Unknown only for genuinely unknown states
   ---
-  duration_ms: 0.026417
+  duration_ms: 0.022834
   type: 'test'
   ...
 # Subtest: statusColor covers every pause-cycle state
 ok 30 - statusColor covers every pause-cycle state
   ---
-  duration_ms: 0.049458
+  duration_ms: 0.042333
   type: 'test'
   ...
 # Subtest: bulk feedback surfaces each rejected target and 409 ambiguity text
 ok 31 - bulk feedback surfaces each rejected target and 409 ambiguity text
   ---
-  duration_ms: 0.559292
+  duration_ms: 1.145583
   type: 'test'
   ...
 # Subtest: submit invokes translation callback and formats success without shadowing it
 ok 32 - submit invokes translation callback and formats success without shadowing it
   ---
-  duration_ms: 0.777333
+  duration_ms: 0.639125
   type: 'test'
   ...
 # Subtest: submit produces no-target feedback using translation function
 ok 33 - submit produces no-target feedback using translation function
   ---
-  duration_ms: 0.108042
+  duration_ms: 0.103
   type: 'test'
   ...
 # Subtest: submit formats per-agent 409 failure and invokes translator for feedback
 ok 34 - submit formats per-agent 409 failure and invokes translator for feedback
   ---
-  duration_ms: 0.086625
+  duration_ms: 0.083583
   type: 'test'
   ...
 # Subtest: useActivityStream selection retains same-name agents by session
 ok 35 - useActivityStream selection retains same-name agents by session
   ---
-  duration_ms: 7.557084
+  duration_ms: 8.990916
   type: 'test'
   ...
 # [Store] Failed to fetch agents: TypeError: Failed to parse URL from /api/agents
 #     at node:internal/deps/undici/undici:14900:13
-#     at async apiFetch (file://frontend/src/api.js:138:20)
-#     at async fetchAgents (file://frontend/src/stores/agents.js:50:20) {
+#     at async apiFetch (file://$REPO/frontend/src/api.js:138:20)
+#     at async fetchAgents (file://$REPO/frontend/src/stores/agents.js:50:20) {
 #   [cause]: TypeError: Invalid URL
 #       at new URL (node:internal/url:827:25)
 #       at new Request (node:internal/deps/undici/undici:9776:25)
 #       at fetch (node:internal/deps/undici/undici:10505:25)
 #       at fetch (node:internal/deps/undici/undici:14898:10)
 #       at fetch (node:internal/bootstrap/web/exposed-window-or-worker:75:12)
-#       at apiFetch (file://frontend/src/api.js:138:26)
-#       at fetchAgents (file://frontend/src/stores/agents.js:50:26)
-#       at Timeout._onTimeout (file://frontend/src/stores/agents.js:106:7)
+#       at apiFetch (file://$REPO/frontend/src/api.js:138:26)
+#       at fetchAgents (file://$REPO/frontend/src/stores/agents.js:50:26)
+#       at Timeout._onTimeout (file://$REPO/frontend/src/stores/agents.js:106:7)
 #       at listOnTimeout (node:internal/timers:588:17)
 #       at process.processTimers (node:internal/timers:523:7) {
 #     code: 'ERR_INVALID_URL',
@@ -235,1274 +235,1298 @@ ok 35 - useActivityStream selection retains same-name agents by session
 # Subtest: agent identity distinguishes same-named agents from separate sessions
 ok 36 - agent identity distinguishes same-named agents from separate sessions
   ---
-  duration_ms: 0.358166
+  duration_ms: 0.358458
   type: 'test'
   ...
 # Subtest: agent identity is stable for same session and name
 ok 37 - agent identity is stable for same session and name
   ---
-  duration_ms: 0.05825
+  duration_ms: 0.057959
   type: 'test'
   ...
 # Subtest: roster event lookup fails closed for missing or wrong session on duplicate names
 ok 38 - roster event lookup fails closed for missing or wrong session on duplicate names
   ---
-  duration_ms: 0.10225
+  duration_ms: 0.10425
   type: 'test'
   ...
 # Subtest: message_turn SSE with missing or wrong session cannot assign turns across duplicate-name teams
 ok 39 - message_turn SSE with missing or wrong session cannot assign turns across duplicate-name teams
   ---
-  duration_ms: 0.581417
+  duration_ms: 0.632292
   type: 'test'
   ...
 # Subtest: insertTurn appends in sorted order
 ok 40 - insertTurn appends in sorted order
   ---
-  duration_ms: 2.0045
+  duration_ms: 1.755834
   type: 'test'
   ...
 # Subtest: insertTurn places out-of-order deltas in correct slot
 ok 41 - insertTurn places out-of-order deltas in correct slot
   ---
-  duration_ms: 0.160334
+  duration_ms: 0.168917
   type: 'test'
   ...
 # Subtest: insertTurn replaces a duplicate turn_idx (idempotent SSE replay)
 ok 42 - insertTurn replaces a duplicate turn_idx (idempotent SSE replay)
   ---
-  duration_ms: 0.076958
+  duration_ms: 0.075667
   type: 'test'
   ...
 # Subtest: insertTurn drops oldest entries when above maxPerAgent
 ok 43 - insertTurn drops oldest entries when above maxPerAgent
   ---
-  duration_ms: 0.092084
+  duration_ms: 0.091791
   type: 'test'
   ...
 # Subtest: insertTurn does not mutate the input array
 ok 44 - insertTurn does not mutate the input array
   ---
-  duration_ms: 0.054542
+  duration_ms: 0.060333
   type: 'test'
   ...
 # Subtest: isResetSignal true: turn_idx=0 arriving while bucket has higher idx
 ok 45 - isResetSignal true: turn_idx=0 arriving while bucket has higher idx
   ---
-  duration_ms: 0.053084
+  duration_ms: 0.056833
   type: 'test'
   ...
 # Subtest: isResetSignal false: turn_idx=0 on empty bucket (initial load)
 ok 46 - isResetSignal false: turn_idx=0 on empty bucket (initial load)
   ---
-  duration_ms: 0.087083
+  duration_ms: 0.156666
   type: 'test'
   ...
 # Subtest: isResetSignal false: bucket only has turn_idx=0
 ok 47 - isResetSignal false: bucket only has turn_idx=0
   ---
-  duration_ms: 0.037792
+  duration_ms: 0.037667
   type: 'test'
   ...
 # Subtest: isResetSignal false: non-zero turn_idx delta
 ok 48 - isResetSignal false: non-zero turn_idx delta
   ---
-  duration_ms: 0.256833
+  duration_ms: 0.266042
   type: 'test'
   ...
 # Subtest: isResetSignal false: turn_idx=0 with new run_id (resume_spawn case)
 ok 49 - isResetSignal false: turn_idx=0 with new run_id (resume_spawn case)
   ---
-  duration_ms: 0.256833
+  duration_ms: 0.266583
   type: 'test'
   ...
 # Subtest: isResetSignal true: turn_idx=0 with same run_id (real history reset)
 ok 50 - isResetSignal true: turn_idx=0 with same run_id (real history reset)
   ---
-  duration_ms: 0.083292
+  duration_ms: 0.084833
   type: 'test'
   ...
 # Subtest: insertTurn dedups within same run, stacks across runs (resume case)
 ok 51 - insertTurn dedups within same run, stacks across runs (resume case)
   ---
-  duration_ms: 0.060333
+  duration_ms: 0.0645
   type: 'test'
   ...
 # Subtest: insertTurn still replaces an exact (run_id, turn_idx) duplicate
 ok 52 - insertTurn still replaces an exact (run_id, turn_idx) duplicate
   ---
-  duration_ms: 0.036333
+  duration_ms: 0.036459
   type: 'test'
   ...
 # Subtest: lastAssistantText returns text of latest assistant turn
 ok 53 - lastAssistantText returns text of latest assistant turn
   ---
-  duration_ms: 0.043666
+  duration_ms: 0.04525
   type: 'test'
   ...
 # Subtest: lastAssistantText returns empty when no assistant turns
 ok 54 - lastAssistantText returns empty when no assistant turns
   ---
-  duration_ms: 0.024833
+  duration_ms: 0.024125
   type: 'test'
   ...
 # Subtest: lastAssistantText handles missing content gracefully
 ok 55 - lastAssistantText handles missing content gracefully
   ---
-  duration_ms: 0.023875
+  duration_ms: 0.025167
   type: 'test'
   ...
 # Subtest: lastAssistantText handles empty array
 ok 56 - lastAssistantText handles empty array
   ---
-  duration_ms: 0.025417
+  duration_ms: 0.026375
   type: 'test'
   ...
-#   [i18n] vi: 92% translated (147/1833 keys fall back to English)
+#   [i18n] vi: 92% translated (147/1859 keys fall back to English)
 # Subtest: every t() key used in source exists in en.json (base locale)
 ok 57 - every t() key used in source exists in en.json (base locale)
   ---
-  duration_ms: 17.851334
+  duration_ms: 25.466917
   type: 'test'
   ...
 # Subtest: translation coverage report (informational — never fails)
 ok 58 - translation coverage report (informational — never fails)
   ---
-  duration_ms: 3.221833
+  duration_ms: 3.665958
   type: 'test'
   ...
 # Subtest: does NOT fire while chunks are still playing (production not ended)
 ok 59 - does NOT fire while chunks are still playing (production not ended)
   ---
-  duration_ms: 0.343833
+  duration_ms: 0.354583
   type: 'test'
   ...
 # Subtest: fires once after tts_end AND queue drains
 ok 60 - fires once after tts_end AND queue drains
   ---
-  duration_ms: 0.102625
+  duration_ms: 0.102792
   type: 'test'
   ...
 # Subtest: idempotent — never sends twice for one turn
 ok 61 - idempotent — never sends twice for one turn
   ---
-  duration_ms: 0.044792
+  duration_ms: 0.045
   type: 'test'
   ...
 # Subtest: short reply: queue already drained before tts_end → fires on tts_end
 ok 62 - short reply: queue already drained before tts_end → fires on tts_end
   ---
-  duration_ms: 0.89225
+  duration_ms: 1.863125
   type: 'test'
   ...
 # Subtest: flush (barge-in) suppresses playback_done for the interrupted turn
 ok 63 - flush (barge-in) suppresses playback_done for the interrupted turn
   ---
-  duration_ms: 0.362208
+  duration_ms: 0.463625
   type: 'test'
   ...
 # Subtest: new turn re-arms after a completed turn
 ok 64 - new turn re-arms after a completed turn
   ---
-  duration_ms: 0.068083
+  duration_ms: 0.078
   type: 'test'
   ...
 # Subtest: new turn re-arms after a flushed (barged-in) turn
 ok 65 - new turn re-arms after a flushed (barged-in) turn
   ---
-  duration_ms: 0.118708
+  duration_ms: 0.119916
   type: 'test'
   ...
 # Subtest: an older snapshot cannot overwrite a pushed runtime ACK
 ok 66 - an older snapshot cannot overwrite a pushed runtime ACK
   ---
-  duration_ms: 1.01225
+  duration_ms: 1.05125
   type: 'test'
   ...
 # Subtest: unrelated events make no request
 ok 67 - unrelated events make no request
   ---
-  duration_ms: 1.979541
+  duration_ms: 2.176959
   type: 'test'
   ...
 # Subtest: a subsequent fresh snapshot replaces an older event
 ok 68 - a subsequent fresh snapshot replaces an older event
   ---
-  duration_ms: 0.209583
+  duration_ms: 0.515
+  type: 'test'
+  ...
+# Subtest: concurrent target ACKs both survive an older in-flight snapshot
+ok 69 - concurrent target ACKs both survive an older in-flight snapshot
+  ---
+  duration_ms: 0.66725
+  type: 'test'
+  ...
+# Subtest: sharing delta updates flag without adding an agent binding
+ok 70 - sharing delta updates flag without adding an agent binding
+  ---
+  duration_ms: 1.139584
+  type: 'test'
+  ...
+# Subtest: terminal runtime event invalidates only matching ready bindings without REST polling
+ok 71 - terminal runtime event invalidates only matching ready bindings without REST polling
+  ---
+  duration_ms: 0.441875
+  type: 'test'
+  ...
+# Subtest: runtime death during initial snapshot cannot restore a stale Ready
+ok 72 - runtime death during initial snapshot cannot restore a stale Ready
+  ---
+  duration_ms: 0.539959
   type: 'test'
   ...
 # Subtest: same team names across sessions stay distinct with readable labels
-ok 69 - same team names across sessions stay distinct with readable labels
+ok 73 - same team names across sessions stay distinct with readable labels
   ---
-  duration_ms: 0.622959
+  duration_ms: 0.648167
   type: 'test'
   ...
 # [Vue warn]: onUnmounted is called when there is no active component instance to be associated with. Lifecycle injection APIs can only be used during execution of setup(). If you are using async setup(), make sure to register lifecycle hooks before the first await statement.
 # [Vue warn]: onUnmounted is called when there is no active component instance to be associated with. Lifecycle injection APIs can only be used during execution of setup(). If you are using async setup(), make sure to register lifecycle hooks before the first await statement.
 # Subtest: ingestMessageTurnEvent rejects missing/wrong sessions and inserts only into valid session bucket
-ok 70 - ingestMessageTurnEvent rejects missing/wrong sessions and inserts only into valid session bucket
+ok 74 - ingestMessageTurnEvent rejects missing/wrong sessions and inserts only into valid session bucket
   ---
-  duration_ms: 0.703
+  duration_ms: 0.7355
   type: 'test'
   ...
 # Subtest: useAgentTurns watcher delegates incoming SSE events to production ingestion function
-ok 71 - useAgentTurns watcher delegates incoming SSE events to production ingestion function
+ok 75 - useAgentTurns watcher delegates incoming SSE events to production ingestion function
   ---
-  duration_ms: 7.88025
+  duration_ms: 8.503708
   type: 'test'
   ...
 # Subtest: live SSE stays visible when a slower initial history response arrives
-ok 72 - live SSE stays visible when a slower initial history response arrives
+ok 76 - live SSE stays visible when a slower initial history response arrives
   ---
-  duration_ms: 17.290167
+  duration_ms: 20.54675
   type: 'test'
   ...
 # Subtest: default UI locale stays vi; English is the complete fallback base
-ok 73 - default UI locale stays vi; English is the complete fallback base
+ok 77 - default UI locale stays vi; English is the complete fallback base
   ---
-  duration_ms: 0.483333
+  duration_ms: 0.562084
   type: 'test'
   ...
 # Subtest: toggling to vi uses the Vietnamese value
-ok 74 - toggling to vi uses the Vietnamese value
+ok 78 - toggling to vi uses the Vietnamese value
   ---
-  duration_ms: 0.0755
+  duration_ms: 0.081166
   type: 'test'
   ...
 # Subtest: missing vi key falls back to English
-ok 75 - missing vi key falls back to English
+ok 79 - missing vi key falls back to English
   ---
-  duration_ms: 0.049375
+  duration_ms: 0.052708
   type: 'test'
   ...
 # Subtest: interpolates {placeholders}
-ok 76 - interpolates {placeholders}
+ok 80 - interpolates {placeholders}
   ---
-  duration_ms: 0.081333
+  duration_ms: 0.086917
   type: 'test'
   ...
 # Subtest: unknown key returns the key itself
-ok 77 - unknown key returns the key itself
+ok 81 - unknown key returns the key itself
   ---
-  duration_ms: 0.046083
+  duration_ms: 0.052583
   type: 'test'
   ...
 # Subtest: single name-only delete rechecks live roster and aborts after modal-open collision
-ok 78 - single name-only delete rechecks live roster and aborts after modal-open collision
+ok 82 - single name-only delete rechecks live roster and aborts after modal-open collision
   ---
-  duration_ms: 0.395916
+  duration_ms: 0.984875
   type: 'test'
   ...
 # Subtest: bulk name-only delete makes zero requests if any selected name collides
-ok 79 - bulk name-only delete makes zero requests if any selected name collides
+ok 83 - bulk name-only delete makes zero requests if any selected name collides
   ---
-  duration_ms: 0.085292
+  duration_ms: 0.203417
   type: 'test'
   ...
 # Subtest: inject always scopes request by encoded session and preserves 409
-ok 80 - inject always scopes request by encoded session and preserves 409
+ok 84 - inject always scopes request by encoded session and preserves 409
   ---
-  duration_ms: 1.050375
+  duration_ms: 3.031167
   type: 'test'
   ...
 # Subtest: builtin agent uses explicit static target instead of team namesake
-ok 81 - builtin agent uses explicit static target instead of team namesake
+ok 85 - builtin agent uses explicit static target instead of team namesake
   ---
-  duration_ms: 0.173041
+  duration_ms: 0.103084
   type: 'test'
   ...
 # Subtest: bulk inject retains each rejected agent result
-ok 82 - bulk inject retains each rejected agent result
+ok 86 - bulk inject retains each rejected agent result
   ---
-  duration_ms: 0.805292
+  duration_ms: 0.394792
   type: 'test'
   ...
 # Subtest: bulk inject feedback identifies each rejected target and 409 ambiguity
-ok 83 - bulk inject feedback identifies each rejected target and 409 ambiguity
+ok 87 - bulk inject feedback identifies each rejected target and 409 ambiguity
   ---
-  duration_ms: 0.181167
+  duration_ms: 0.0995
   type: 'test'
   ...
 # Subtest: barge-in before the first reply keeps the previous user message
-ok 84 - barge-in before the first reply keeps the previous user message
+ok 88 - barge-in before the first reply keeps the previous user message
   ---
-  duration_ms: 0.641959
+  duration_ms: 1.159917
   type: 'test'
   ...
 # Subtest: normal sequence (reply landed before next turn) is unaffected
-ok 85 - normal sequence (reply landed before next turn) is unaffected
+ok 89 - normal sequence (reply landed before next turn) is unaffected
   ---
-  duration_ms: 0.072208
+  duration_ms: 0.084834
   type: 'test'
   ...
 # Subtest: failed → restarts immediately
-ok 86 - failed → restarts immediately
+ok 90 - failed → restarts immediately
   ---
-  duration_ms: 0.639292
+  duration_ms: 0.583334
   type: 'test'
   ...
 # Subtest: disconnected → waits grace, then restarts if not recovered
-ok 87 - disconnected → waits grace, then restarts if not recovered
+ok 91 - disconnected → waits grace, then restarts if not recovered
   ---
-  duration_ms: 31.121
+  duration_ms: 30.241625
   type: 'test'
   ...
 # Subtest: disconnected → connected within grace cancels the restart
-ok 88 - disconnected → connected within grace cancels the restart
+ok 92 - disconnected → connected within grace cancels the restart
   ---
-  duration_ms: 32.966
+  duration_ms: 32.337333
   type: 'test'
   ...
 # Subtest: gives up via fail() after maxRetries consecutive failures
-ok 89 - gives up via fail() after maxRetries consecutive failures
+ok 93 - gives up via fail() after maxRetries consecutive failures
   ---
-  duration_ms: 0.248042
+  duration_ms: 0.158583
   type: 'test'
   ...
 # Subtest: connected resets the retry budget — only consecutive failures count
-ok 90 - connected resets the retry budget — only consecutive failures count
+ok 94 - connected resets the retry budget — only consecutive failures count
   ---
-  duration_ms: 0.325667
+  duration_ms: 0.333875
   type: 'test'
   ...
 # Subtest: onRestartError consumes budget and eventually fails
-ok 91 - onRestartError consumes budget and eventually fails
+ok 95 - onRestartError consumes budget and eventually fails
   ---
-  duration_ms: 0.110209
+  duration_ms: 0.43325
   type: 'test'
   ...
 # Subtest: stop() silences everything, including a pending grace timer
-ok 92 - stop() silences everything, including a pending grace timer
+ok 96 - stop() silences everything, including a pending grace timer
   ---
-  duration_ms: 32.236584
+  duration_ms: 32.728333
   type: 'test'
   ...
 # Subtest: isSupported reflects browserSupportsWebAuthn
-ok 93 - isSupported reflects browserSupportsWebAuthn
+ok 97 - isSupported reflects browserSupportsWebAuthn
   ---
-  duration_ms: 0.598458
+  duration_ms: 0.600958
   type: 'test'
   ...
 # Subtest: hasAnyPasskey returns true on {has_passkey:true}
-ok 94 - hasAnyPasskey returns true on {has_passkey:true}
+ok 98 - hasAnyPasskey returns true on {has_passkey:true}
   ---
-  duration_ms: 12.627334
+  duration_ms: 11.28375
   type: 'test'
   ...
 # Subtest: hasAnyPasskey returns false on backend 5xx (graceful)
-ok 95 - hasAnyPasskey returns false on backend 5xx (graceful)
+ok 99 - hasAnyPasskey returns false on backend 5xx (graceful)
   ---
-  duration_ms: 0.206709
+  duration_ms: 0.208416
   type: 'test'
   ...
 # Subtest: hasAnyPasskey returns false on network error (graceful)
-ok 96 - hasAnyPasskey returns false on network error (graceful)
+ok 100 - hasAnyPasskey returns false on network error (graceful)
   ---
-  duration_ms: 0.102667
+  duration_ms: 0.107875
   type: 'test'
   ...
 # Subtest: registerPasskey unsupported short-circuits without fetching
-ok 97 - registerPasskey unsupported short-circuits without fetching
+ok 101 - registerPasskey unsupported short-circuits without fetching
   ---
-  duration_ms: 0.594125
+  duration_ms: 0.615166
   type: 'test'
   ...
 # Subtest: registerPasskey happy path returns credential id
-ok 98 - registerPasskey happy path returns credential id
+ok 102 - registerPasskey happy path returns credential id
   ---
-  duration_ms: 0.515458
+  duration_ms: 0.622458
   type: 'test'
   ...
 # Subtest: registerPasskey surfaces 401 from begin as auth_failed
-ok 99 - registerPasskey surfaces 401 from begin as auth_failed
+ok 103 - registerPasskey surfaces 401 from begin as auth_failed
   ---
-  duration_ms: 0.239209
+  duration_ms: 0.247334
   type: 'test'
   ...
 # Subtest: registerPasskey maps NotAllowedError → cancelled
-ok 100 - registerPasskey maps NotAllowedError → cancelled
+ok 104 - registerPasskey maps NotAllowedError → cancelled
   ---
-  duration_ms: 0.224708
+  duration_ms: 0.231583
   type: 'test'
   ...
 # Subtest: registerPasskey surfaces 400 verify failure with reason
-ok 101 - registerPasskey surfaces 400 verify failure with reason
+ok 105 - registerPasskey surfaces 400 verify failure with reason
   ---
-  duration_ms: 0.419958
+  duration_ms: 0.396084
   type: 'test'
   ...
 # Subtest: authenticateWithPasskey happy path returns csrf + expires
-ok 102 - authenticateWithPasskey happy path returns csrf + expires
+ok 106 - authenticateWithPasskey happy path returns csrf + expires
   ---
-  duration_ms: 0.930042
+  duration_ms: 0.930541
   type: 'test'
   ...
 # Subtest: authenticateWithPasskey maps 401 credential_unknown distinctly
-ok 103 - authenticateWithPasskey maps 401 credential_unknown distinctly
+ok 107 - authenticateWithPasskey maps 401 credential_unknown distinctly
   ---
-  duration_ms: 0.265
+  duration_ms: 0.26475
   type: 'test'
   ...
 # Subtest: authenticateWithPasskey maps NotAllowedError → cancelled
-ok 104 - authenticateWithPasskey maps NotAllowedError → cancelled
+ok 108 - authenticateWithPasskey maps NotAllowedError → cancelled
   ---
-  duration_ms: 0.118833
+  duration_ms: 0.120208
   type: 'test'
   ...
 # Subtest: authenticateWithPasskey maps 429 → rate_limited
-ok 105 - authenticateWithPasskey maps 429 → rate_limited
+ok 109 - authenticateWithPasskey maps 429 → rate_limited
   ---
-  duration_ms: 0.128375
+  duration_ms: 0.12925
   type: 'test'
   ...
 # Subtest: authenticateWithPasskey unsupported never reaches network
-ok 106 - authenticateWithPasskey unsupported never reaches network
+ok 110 - authenticateWithPasskey unsupported never reaches network
   ---
-  duration_ms: 1.068333
+  duration_ms: 0.052417
   type: 'test'
   ...
 # Subtest: listPasskeys returns rows on success
-ok 107 - listPasskeys returns rows on success
+ok 111 - listPasskeys returns rows on success
   ---
-  duration_ms: 0.762458
+  duration_ms: 1.539375
   type: 'test'
   ...
 # Subtest: deletePasskey returns not_found on 404
-ok 108 - deletePasskey returns not_found on 404
+ok 112 - deletePasskey returns not_found on 404
   ---
-  duration_ms: 0.224666
+  duration_ms: 0.201917
   type: 'test'
   ...
 # Subtest: deletePasskey url-encodes credential id
-ok 109 - deletePasskey url-encodes credential id
+ok 113 - deletePasskey url-encodes credential id
   ---
-  duration_ms: 0.217375
+  duration_ms: 0.193625
   type: 'test'
   ...
 # Subtest: teardown — restore _deps
-ok 110 - teardown — restore _deps
+ok 114 - teardown — restore _deps
   ---
-  duration_ms: 0.044375
+  duration_ms: 0.040917
   type: 'test'
   ...
 # Subtest: recognizes asset error: Failed to fetch dynamically imported module: /assets/MeetingsView-old.js
-ok 111 - recognizes asset error: Failed to fetch dynamically imported module: /assets/MeetingsView-old.js
+ok 115 - recognizes asset error: Failed to fetch dynamically imported module: /assets/MeetingsView-old.js
   ---
-  duration_ms: 0.511333
+  duration_ms: 0.55425
   type: 'test'
   ...
 # Subtest: recognizes asset error: error loading dynamically imported module: /assets/x.js
-ok 112 - recognizes asset error: error loading dynamically imported module: /assets/x.js
+ok 116 - recognizes asset error: error loading dynamically imported module: /assets/x.js
   ---
-  duration_ms: 0.156583
+  duration_ms: 0.152708
   type: 'test'
   ...
 # Subtest: recognizes asset error: Importing a module script failed.
-ok 113 - recognizes asset error: Importing a module script failed.
+ok 117 - recognizes asset error: Importing a module script failed.
   ---
-  duration_ms: 0.06575
+  duration_ms: 0.036708
   type: 'test'
   ...
 # Subtest: recognizes asset error: Unable to preload CSS for /assets/x.css
-ok 114 - recognizes asset error: Unable to preload CSS for /assets/x.css
+ok 118 - recognizes asset error: Unable to preload CSS for /assets/x.css
   ---
-  duration_ms: 0.034416
+  duration_ms: 0.033875
   type: 'test'
   ...
 # Subtest: recognizes asset error: Loading chunk 42 failed.
-ok 115 - recognizes asset error: Loading chunk 42 failed.
+ok 119 - recognizes asset error: Loading chunk 42 failed.
   ---
-  duration_ms: 0.0365
+  duration_ms: 0.037708
   type: 'test'
   ...
 # Subtest: does not treat API/network/runtime errors as obsolete routes
-ok 116 - does not treat API/network/runtime errors as obsolete routes
+ok 120 - does not treat API/network/runtime errors as obsolete routes
   ---
-  duration_ms: 0.050834
+  duration_ms: 0.050833
   type: 'test'
   ...
 # Subtest: real router retains current route, preserves requested query/hash, reloads only on user action
-ok 117 - real router retains current route, preserves requested query/hash, reloads only on user action
+ok 121 - real router retains current route, preserves requested query/hash, reloads only on user action
   ---
-  duration_ms: 2.275042
+  duration_ms: 2.246916
   type: 'test'
   ...
 # Subtest: dismiss/repeated failure and unrelated successful navigation
-ok 118 - dismiss/repeated failure and unrelated successful navigation
+ok 122 - dismiss/repeated failure and unrelated successful navigation
   ---
-  duration_ms: 0.769666
+  duration_ms: 0.763041
   type: 'test'
   ...
 # Subtest: initial route failure surfaces recovery without automatic retry
-ok 119 - initial route failure surfaces recovery without automatic retry
+ok 123 - initial route failure surfaces recovery without automatic retry
   ---
-  duration_ms: 1.7885
+  duration_ms: 15.6645
   type: 'test'
   ...
 # Subtest: message_turn final-turn does not clobber paused status
-ok 120 - message_turn final-turn does not clobber paused status
+ok 124 - message_turn final-turn does not clobber paused status
   ---
-  duration_ms: 19.071833
+  duration_ms: 12.909458
   type: 'test'
   ...
 # Subtest: message_turn final-turn sets idle when not in pause cycle
-ok 121 - message_turn final-turn sets idle when not in pause cycle
+ok 125 - message_turn final-turn sets idle when not in pause cycle
   ---
-  duration_ms: 0.574959
+  duration_ms: 0.581334
   type: 'test'
   ...
 # Subtest: message_turn does not clobber pausing or resuming states
-ok 122 - message_turn does not clobber pausing or resuming states
+ok 126 - message_turn does not clobber pausing or resuming states
   ---
-  duration_ms: 0.763458
+  duration_ms: 0.698375
   type: 'test'
   ...
 # Subtest: result event does not clobber paused status
-ok 123 - result event does not clobber paused status
+ok 127 - result event does not clobber paused status
   ---
-  duration_ms: 0.310542
+  duration_ms: 0.308167
   type: 'test'
   ...
 # Subtest: idle event does not clobber paused status
-ok 124 - idle event does not clobber paused status
+ok 128 - idle event does not clobber paused status
   ---
-  duration_ms: 0.550833
+  duration_ms: 0.547708
   type: 'test'
   ...
 # Subtest: response event does not clobber paused status
-ok 125 - response event does not clobber paused status
+ok 129 - response event does not clobber paused status
   ---
-  duration_ms: 0.740292
+  duration_ms: 0.555458
   type: 'test'
   ...
 # Subtest: result/idle/response set idle when not in pause cycle
-ok 126 - result/idle/response set idle when not in pause cycle
+ok 130 - result/idle/response set idle when not in pause cycle
   ---
-  duration_ms: 1.258792
+  duration_ms: 1.734041
   type: 'test'
   ...
 # Subtest: thinking event does not clobber paused status
-ok 127 - thinking event does not clobber paused status
+ok 131 - thinking event does not clobber paused status
   ---
-  duration_ms: 0.303833
+  duration_ms: 0.408875
   type: 'test'
   ...
 # Subtest: tool_call event does not clobber paused status
-ok 128 - tool_call event does not clobber paused status
+ok 132 - tool_call event does not clobber paused status
   ---
-  duration_ms: 0.418166
+  duration_ms: 0.446667
   type: 'test'
   ...
 # Subtest: tool_result event does not clobber paused status
-ok 129 - tool_result event does not clobber paused status
+ok 133 - tool_result event does not clobber paused status
   ---
-  duration_ms: 0.321625
+  duration_ms: 0.329458
   type: 'test'
   ...
 # Subtest: started event does not clobber paused status
-ok 130 - started event does not clobber paused status
+ok 134 - started event does not clobber paused status
   ---
-  duration_ms: 0.174208
+  duration_ms: 0.185667
   type: 'test'
   ...
 # Subtest: resumed event does not clobber paused status
-ok 131 - resumed event does not clobber paused status
+ok 135 - resumed event does not clobber paused status
   ---
-  duration_ms: 0.156166
+  duration_ms: 0.161958
   type: 'test'
   ...
 # Subtest: context_compaction_started sets inProgress without touching status
-ok 132 - context_compaction_started sets inProgress without touching status
+ok 136 - context_compaction_started sets inProgress without touching status
   ---
-  duration_ms: 0.136083
+  duration_ms: 0.145291
   type: 'test'
   ...
 # Subtest: context_compaction_completed records savings and clears inProgress
-ok 133 - context_compaction_completed records savings and clears inProgress
+ok 137 - context_compaction_completed records savings and clears inProgress
   ---
-  duration_ms: 0.126167
+  duration_ms: 0.127083
   type: 'test'
   ...
 # Subtest: context_compaction_failed records error and clears inProgress
-ok 134 - context_compaction_failed records error and clears inProgress
+ok 138 - context_compaction_failed records error and clears inProgress
   ---
-  duration_ms: 0.135625
+  duration_ms: 0.14625
   type: 'test'
   ...
 # Subtest: compaction events do not clobber paused status
-ok 135 - compaction events do not clobber paused status
+ok 139 - compaction events do not clobber paused status
   ---
-  duration_ms: 0.128042
+  duration_ms: 0.132875
   type: 'test'
   ...
 # Subtest: fetchAgents keeps duplicate names from different sessions in roster
-ok 136 - fetchAgents keeps duplicate names from different sessions in roster
+ok 140 - fetchAgents keeps duplicate names from different sessions in roster
   ---
-  duration_ms: 0.731834
+  duration_ms: 0.771791
   type: 'test'
   ...
 # Subtest: same-named agents in separate sessions keep independent lifecycle updates
-ok 137 - same-named agents in separate sessions keep independent lifecycle updates
+ok 141 - same-named agents in separate sessions keep independent lifecycle updates
   ---
-  duration_ms: 5.613
+  duration_ms: 5.699917
   type: 'test'
   ...
 # Subtest: sessionless event does not mutate ambiguous duplicate-name roster entries
-ok 138 - sessionless event does not mutate ambiguous duplicate-name roster entries
+ok 142 - sessionless event does not mutate ambiguous duplicate-name roster entries
   ---
-  duration_ms: 0.200333
+  duration_ms: 0.198666
   type: 'test'
   ...
 # Subtest: playFromChat: story reply → story playback, ignores read-aloud toggle
-ok 139 - playFromChat: story reply → story playback, ignores read-aloud toggle
+ok 143 - playFromChat: story reply → story playback, ignores read-aloud toggle
   ---
-  duration_ms: 14.309833
+  duration_ms: 14.081125
   type: 'test'
   ...
 # Subtest: playFromChat: plain reply → chatTts when read-aloud is ON
-ok 140 - playFromChat: plain reply → chatTts when read-aloud is ON
+ok 144 - playFromChat: plain reply → chatTts when read-aloud is ON
   ---
-  duration_ms: 0.804167
+  duration_ms: 2.278125
   type: 'test'
   ...
 # Subtest: playFromChat: plain reply is silent when read-aloud is OFF
-ok 141 - playFromChat: plain reply is silent when read-aloud is OFF
+ok 145 - playFromChat: plain reply is silent when read-aloud is OFF
   ---
-  duration_ms: 2.41525
+  duration_ms: 2.051167
   type: 'test'
   ...
 # Subtest: playFromChat: no audio and no story → no-op
-ok 142 - playFromChat: no audio and no story → no-op
+ok 146 - playFromChat: no audio and no story → no-op
   ---
-  duration_ms: 1.769459
+  duration_ms: 2.031167
   type: 'test'
   ...
 # [auth/store] probe network error: TypeError: Failed to fetch
-#     at file://frontend/src/stores/auth.test.js:148:33
-#     at globalThis.fetch (file://frontend/src/stores/auth.test.js:40:33)
-#     at file://frontend/src/stores/auth.js:133:30
-#     at Proxy.probe (file://frontend/src/stores/auth.js:161:9)
-#     at Proxy.wrappedAction (file://frontend/node_modules/pinia/dist/pinia.mjs:1400:26)
-#     at TestContext.<anonymous> (file://frontend/src/stores/auth.test.js:157:14)
+#     at file://$REPO/frontend/src/stores/auth.test.js:148:33
+#     at globalThis.fetch (file://$REPO/frontend/src/stores/auth.test.js:40:33)
+#     at file://$REPO/frontend/src/stores/auth.js:133:30
+#     at Proxy.probe (file://$REPO/frontend/src/stores/auth.js:161:9)
+#     at Proxy.wrappedAction (file://$REPO/frontend/node_modules/pinia/dist/pinia.mjs:1400:26)
+#     at TestContext.<anonymous> (file://$REPO/frontend/src/stores/auth.test.js:157:14)
 #     at Test.runInAsyncScope (node:async_hooks:214:14)
 #     at Test.run (node:internal/test_runner/test:1047:25)
 #     at async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
 # Subtest: initial state is unknown / not authenticated
-ok 143 - initial state is unknown / not authenticated
+ok 147 - initial state is unknown / not authenticated
   ---
-  duration_ms: 1.641458
+  duration_ms: 1.692292
   type: 'test'
   ...
 # Subtest: probe(): authenticated whoami → status=authenticated + RESTORED event
-ok 144 - probe(): authenticated whoami → status=authenticated + RESTORED event
+ok 148 - probe(): authenticated whoami → status=authenticated + RESTORED event
   ---
-  duration_ms: 10.816542
+  duration_ms: 10.918625
   type: 'test'
   ...
 # Subtest: probe(): unauthenticated whoami → status=unauthenticated + EXPIRED event
-ok 145 - probe(): unauthenticated whoami → status=unauthenticated + EXPIRED event
+ok 149 - probe(): unauthenticated whoami → status=unauthenticated + EXPIRED event
   ---
-  duration_ms: 0.5495
+  duration_ms: 0.559208
   type: 'test'
   ...
 # Subtest: probe(): network error keeps current status (no false lockout)
-ok 146 - probe(): network error keeps current status (no false lockout)
+ok 150 - probe(): network error keeps current status (no false lockout)
   ---
-  duration_ms: 0.723667
+  duration_ms: 0.722208
   type: 'test'
   ...
 # [auth/store] /refresh response missing expires_in; falling back to whoami
 # [auth/store] refresh got status 502
 # [auth/store] refresh network error: TypeError: Failed to fetch
-#     at file://frontend/src/stores/auth.test.js:583:13
-#     at globalThis.fetch (file://frontend/src/stores/auth.test.js:40:33)
-#     at Proxy.refresh (file://frontend/src/stores/auth.js:217:28)
-#     at Proxy.wrappedAction (file://frontend/node_modules/pinia/dist/pinia.mjs:1400:26)
-#     at Object.fn (file://frontend/src/stores/auth.js:77:18)
-#     at _fireTimer (file://frontend/src/stores/auth.test.js:78:11)
-#     at TestContext.<anonymous> (file://frontend/src/stores/auth.test.js:590:9)
+#     at file://$REPO/frontend/src/stores/auth.test.js:583:13
+#     at globalThis.fetch (file://$REPO/frontend/src/stores/auth.test.js:40:33)
+#     at Proxy.refresh (file://$REPO/frontend/src/stores/auth.js:217:28)
+#     at Proxy.wrappedAction (file://$REPO/frontend/node_modules/pinia/dist/pinia.mjs:1400:26)
+#     at Object.fn (file://$REPO/frontend/src/stores/auth.js:77:18)
+#     at _fireTimer (file://$REPO/frontend/src/stores/auth.test.js:78:11)
+#     at TestContext.<anonymous> (file://$REPO/frontend/src/stores/auth.test.js:590:9)
 #     at async Test.run (node:internal/test_runner/test:1054:7)
 #     at async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
 # Subtest: probe(): concurrent calls dedup to one HTTP request
-ok 147 - probe(): concurrent calls dedup to one HTTP request
+ok 151 - probe(): concurrent calls dedup to one HTTP request
   ---
-  duration_ms: 10.550042
+  duration_ms: 10.532834
   type: 'test'
   ...
 # Subtest: login() success → status=authenticated + RESTORED + broadcast
-ok 148 - login() success → status=authenticated + RESTORED + broadcast
+ok 152 - login() success → status=authenticated + RESTORED + broadcast
   ---
-  duration_ms: 0.98475
+  duration_ms: 0.782791
   type: 'test'
   ...
 # Subtest: RESTORED from boot probe carries from=unknown (no reload path)
-ok 149 - RESTORED from boot probe carries from=unknown (no reload path)
+ok 153 - RESTORED from boot probe carries from=unknown (no reload path)
   ---
-  duration_ms: 0.462708
+  duration_ms: 0.384708
   type: 'test'
   ...
 # Subtest: RESTORED from modal login after lockout carries from=unauthenticated
-ok 150 - RESTORED from modal login after lockout carries from=unauthenticated
+ok 154 - RESTORED from modal login after lockout carries from=unauthenticated
   ---
-  duration_ms: 0.234375
+  duration_ms: 0.232958
   type: 'test'
   ...
 # Subtest: RESTORED from cross-tab transition carries THIS tab previous status
-ok 151 - RESTORED from cross-tab transition carries THIS tab previous status
+ok 155 - RESTORED from cross-tab transition carries THIS tab previous status
   ---
-  duration_ms: 0.387459
+  duration_ms: 0.38175
   type: 'test'
   ...
 # Subtest: login() 401 returns reason from backend, status stays unchanged
-ok 152 - login() 401 returns reason from backend, status stays unchanged
+ok 156 - login() 401 returns reason from backend, status stays unchanged
   ---
-  duration_ms: 0.368791
+  duration_ms: 0.341708
   type: 'test'
   ...
 # Subtest: login() network error returns ok:false / status:0
-ok 153 - login() network error returns ok:false / status:0
+ok 157 - login() network error returns ok:false / status:0
   ---
-  duration_ms: 0.130458
+  duration_ms: 0.109625
   type: 'test'
   ...
 # Subtest: on401() probes once before locking; probe-success keeps user authenticated
-ok 154 - on401() probes once before locking; probe-success keeps user authenticated
+ok 158 - on401() probes once before locking; probe-success keeps user authenticated
   ---
-  duration_ms: 0.313208
+  duration_ms: 0.2585
   type: 'test'
   ...
 # Subtest: on401() locks UI when probe also says unauthenticated
-ok 155 - on401() locks UI when probe also says unauthenticated
+ok 159 - on401() locks UI when probe also says unauthenticated
   ---
-  duration_ms: 0.76575
+  duration_ms: 0.719959
   type: 'test'
   ...
 # Subtest: on401() is a no-op when already unauthenticated
-ok 156 - on401() is a no-op when already unauthenticated
+ok 160 - on401() is a no-op when already unauthenticated
   ---
-  duration_ms: 0.10025
+  duration_ms: 0.100458
   type: 'test'
   ...
 # Subtest: logout() clears state + broadcasts even if backend errors
-ok 157 - logout() clears state + broadcasts even if backend errors
+ok 161 - logout() clears state + broadcasts even if backend errors
   ---
-  duration_ms: 0.131042
+  duration_ms: 0.132417
   type: 'test'
   ...
 # Subtest: cross-tab: receiving authenticated transition restores local state
-ok 158 - cross-tab: receiving authenticated transition restores local state
+ok 162 - cross-tab: receiving authenticated transition restores local state
   ---
-  duration_ms: 0.257
+  duration_ms: 0.298167
   type: 'test'
   ...
 # Subtest: cross-tab: receiving unauthenticated transition locks local state
-ok 159 - cross-tab: receiving unauthenticated transition locks local state
+ok 163 - cross-tab: receiving unauthenticated transition locks local state
   ---
-  duration_ms: 0.261042
+  duration_ms: 0.265209
   type: 'test'
   ...
 # Subtest: login() schedules silent refresh ~5min before exp
-ok 160 - login() schedules silent refresh ~5min before exp
+ok 164 - login() schedules silent refresh ~5min before exp
   ---
-  duration_ms: 0.1915
+  duration_ms: 0.212083
   type: 'test'
   ...
 # Subtest: probe() also schedules silent refresh when authenticated
-ok 161 - probe() also schedules silent refresh when authenticated
+ok 165 - probe() also schedules silent refresh when authenticated
   ---
-  duration_ms: 0.140625
+  duration_ms: 0.169042
   type: 'test'
   ...
 # Subtest: schedule honours the 30s minimum delay for tiny expires_in
-ok 162 - schedule honours the 30s minimum delay for tiny expires_in
+ok 166 - schedule honours the 30s minimum delay for tiny expires_in
   ---
-  duration_ms: 0.1265
+  duration_ms: 0.145583
   type: 'test'
   ...
 # Subtest: refresh() success extends session, sends X-CSRF-Token header, and reschedules
-ok 163 - refresh() success extends session, sends X-CSRF-Token header, and reschedules
+ok 167 - refresh() success extends session, sends X-CSRF-Token header, and reschedules
   ---
-  duration_ms: 0.251292
+  duration_ms: 0.27775
   type: 'test'
   ...
 # Subtest: refresh() falls back to probe() when response is missing expires_in
-ok 164 - refresh() falls back to probe() when response is missing expires_in
+ok 168 - refresh() falls back to probe() when response is missing expires_in
   ---
-  duration_ms: 0.281333
+  duration_ms: 0.332333
   type: 'test'
   ...
 # Subtest: refresh() 401 (max_lifetime_exceeded) locks the UI
-ok 165 - refresh() 401 (max_lifetime_exceeded) locks the UI
+ok 169 - refresh() 401 (max_lifetime_exceeded) locks the UI
   ---
-  duration_ms: 0.206875
+  duration_ms: 0.198708
   type: 'test'
   ...
 # Subtest: refresh() 5xx keeps user authenticated and reschedules a short retry
-ok 166 - refresh() 5xx keeps user authenticated and reschedules a short retry
+ok 170 - refresh() 5xx keeps user authenticated and reschedules a short retry
   ---
-  duration_ms: 0.211166
+  duration_ms: 0.922708
   type: 'test'
   ...
 # Subtest: refresh() network error keeps user authenticated and reschedules a short retry
-ok 167 - refresh() network error keeps user authenticated and reschedules a short retry
+ok 171 - refresh() network error keeps user authenticated and reschedules a short retry
   ---
-  duration_ms: 0.975667
+  duration_ms: 0.309542
   type: 'test'
   ...
 # Subtest: logout() cancels the pending refresh timer
-ok 168 - logout() cancels the pending refresh timer
+ok 172 - logout() cancels the pending refresh timer
   ---
-  duration_ms: 0.270416
+  duration_ms: 0.194
   type: 'test'
   ...
 # Subtest: refresh() is a no-op when not authenticated
-ok 169 - refresh() is a no-op when not authenticated
+ok 173 - refresh() is a no-op when not authenticated
   ---
-  duration_ms: 0.101792
+  duration_ms: 0.08975
   type: 'test'
   ...
 # Subtest: cross-tab AUTHENTICATED with expiresIn schedules sibling refresh
-ok 170 - cross-tab AUTHENTICATED with expiresIn schedules sibling refresh
+ok 174 - cross-tab AUTHENTICATED with expiresIn schedules sibling refresh
   ---
-  duration_ms: 0.157334
+  duration_ms: 0.181834
   type: 'test'
   ...
 # Subtest: cross-tab UNAUTHENTICATED clears the local refresh timer
-ok 171 - cross-tab UNAUTHENTICATED clears the local refresh timer
+ok 175 - cross-tab UNAUTHENTICATED clears the local refresh timer
   ---
-  duration_ms: 0.13875
+  duration_ms: 0.153458
   type: 'test'
   ...
 # Subtest: showAuthGate is true ONLY when status is unauthenticated
-ok 172 - showAuthGate is true ONLY when status is unauthenticated
+ok 176 - showAuthGate is true ONLY when status is unauthenticated
   ---
-  duration_ms: 0.264083
+  duration_ms: 0.42525
   type: 'test'
   ...
 # [chat] approve memory failed: Error: network down
-#     at BOOM (file://frontend/src/stores/chat.test.js:184:28)
-#     at globalThis.fetch (file://frontend/src/stores/chat.test.js:179:12)
-#     at apiFetch (file://frontend/src/api.js:138:26)
-#     at Proxy.approveSavedMemory (file://frontend/src/stores/chat.js:517:13)
-#     at Proxy.wrappedAction (file://frontend/node_modules/pinia/dist/pinia.mjs:1400:26)
-#     at TestContext.<anonymous> (file://frontend/src/stores/chat.test.js:229:11)
+#     at BOOM (file://$REPO/frontend/src/stores/chat.test.js:184:28)
+#     at globalThis.fetch (file://$REPO/frontend/src/stores/chat.test.js:179:12)
+#     at apiFetch (file://$REPO/frontend/src/api.js:138:26)
+#     at Proxy.approveSavedMemory (file://$REPO/frontend/src/stores/chat.js:517:13)
+#     at Proxy.wrappedAction (file://$REPO/frontend/node_modules/pinia/dist/pinia.mjs:1400:26)
+#     at TestContext.<anonymous> (file://$REPO/frontend/src/stores/chat.test.js:229:11)
 #     at Test.runInAsyncScope (node:async_hooks:214:14)
 #     at Test.run (node:internal/test_runner/test:1047:25)
 #     at async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
 # Subtest: memory_recalled inserts a recall block before the streaming reply
-ok 173 - memory_recalled inserts a recall block before the streaming reply
+ok 177 - memory_recalled inserts a recall block before the streaming reply
   ---
-  duration_ms: 3.44225
+  duration_ms: 4.1595
   type: 'test'
   ...
 # Subtest: memory_recalled is ignored when no turn is streaming
-ok 174 - memory_recalled is ignored when no turn is streaming
+ok 178 - memory_recalled is ignored when no turn is streaming
   ---
-  duration_ms: 0.398667
+  duration_ms: 0.415292
   type: 'test'
   ...
 # Subtest: memory_recalled is ignored for a different agent
-ok 175 - memory_recalled is ignored for a different agent
+ok 179 - memory_recalled is ignored for a different agent
   ---
-  duration_ms: 0.383541
+  duration_ms: 0.385666
   type: 'test'
   ...
 # Subtest: memory_saved inserts a chip; same-turn saves batch into one block
-ok 176 - memory_saved inserts a chip; same-turn saves batch into one block
+ok 180 - memory_saved inserts a chip; same-turn saves batch into one block
   ---
-  duration_ms: 0.322875
+  duration_ms: 0.941208
   type: 'test'
   ...
 # Subtest: memory_saved transition pending→saved updates the same item in place
-ok 177 - memory_saved transition pending→saved updates the same item in place
+ok 181 - memory_saved transition pending→saved updates the same item in place
   ---
-  duration_ms: 1.49475
+  duration_ms: 0.612667
   type: 'test'
   ...
 # Subtest: memory_saved rejected for a never-seen candidate is ignored
-ok 178 - memory_saved rejected for a never-seen candidate is ignored
+ok 182 - memory_saved rejected for a never-seen candidate is ignored
   ---
-  duration_ms: 0.287083
+  duration_ms: 0.263791
   type: 'test'
   ...
 # Subtest: a new user turn starts a fresh saved block
-ok 179 - a new user turn starts a fresh saved block
+ok 183 - a new user turn starts a fresh saved block
   ---
-  duration_ms: 0.279958
+  duration_ms: 0.274875
   type: 'test'
   ...
 # Subtest: memory_saved is ignored for a different agent
-ok 180 - memory_saved is ignored for a different agent
+ok 184 - memory_saved is ignored for a different agent
   ---
-  duration_ms: 0.159208
+  duration_ms: 0.148959
   type: 'test'
   ...
 # Subtest: memory_recalled is dropped when conversation_id != the active conversation
-ok 181 - memory_recalled is dropped when conversation_id != the active conversation
+ok 185 - memory_recalled is dropped when conversation_id != the active conversation
   ---
-  duration_ms: 0.438417
+  duration_ms: 0.429
   type: 'test'
   ...
 # Subtest: memory_recalled is inserted when conversation_id matches
-ok 182 - memory_recalled is inserted when conversation_id matches
+ok 186 - memory_recalled is inserted when conversation_id matches
   ---
-  duration_ms: 0.317291
+  duration_ms: 0.304334
   type: 'test'
   ...
 # Subtest: memory_recalled still shows on a fresh conversation (no backendConversationId yet)
-ok 183 - memory_recalled still shows on a fresh conversation (no backendConversationId yet)
+ok 187 - memory_recalled still shows on a fresh conversation (no backendConversationId yet)
   ---
-  duration_ms: 0.181917
+  duration_ms: 0.17575
   type: 'test'
   ...
 # Subtest: memory_saved is dropped when conversation_id != the active conversation
-ok 184 - memory_saved is dropped when conversation_id != the active conversation
+ok 188 - memory_saved is dropped when conversation_id != the active conversation
   ---
-  duration_ms: 0.146
+  duration_ms: 0.155292
   type: 'test'
   ...
 # Subtest: memory_saved is inserted when conversation_id matches
-ok 185 - memory_saved is inserted when conversation_id matches
+ok 189 - memory_saved is inserted when conversation_id matches
   ---
-  duration_ms: 0.168459
+  duration_ms: 0.151167
   type: 'test'
   ...
 # Subtest: approveSavedMemory flips pending→saved and POSTs the approve route
-ok 186 - approveSavedMemory flips pending→saved and POSTs the approve route
+ok 190 - approveSavedMemory flips pending→saved and POSTs the approve route
   ---
-  duration_ms: 7.417792
+  duration_ms: 7.989084
   type: 'test'
   ...
 # Subtest: rejectSavedMemory flips pending→rejected and POSTs the reject route
-ok 187 - rejectSavedMemory flips pending→rejected and POSTs the reject route
+ok 191 - rejectSavedMemory flips pending→rejected and POSTs the reject route
   ---
-  duration_ms: 0.245792
+  duration_ms: 0.272042
   type: 'test'
   ...
 # Subtest: archiveSavedMemory flips saved→archived and POSTs the archive route
-ok 188 - archiveSavedMemory flips saved→archived and POSTs the archive route
+ok 192 - archiveSavedMemory flips saved→archived and POSTs the archive route
   ---
-  duration_ms: 0.204208
+  duration_ms: 0.197375
   type: 'test'
   ...
 # Subtest: a failed approve reverts the optimistic status (no silent loss)
-ok 189 - a failed approve reverts the optimistic status (no silent loss)
+ok 193 - a failed approve reverts the optimistic status (no silent loss)
   ---
-  duration_ms: 0.653167
+  duration_ms: 0.610875
   type: 'test'
   ...
 # Subtest: archiveSavedMemory is a no-op without a recordId (nothing to archive yet)
-ok 190 - archiveSavedMemory is a no-op without a recordId (nothing to archive yet)
+ok 194 - archiveSavedMemory is a no-op without a recordId (nothing to archive yet)
   ---
-  duration_ms: 0.159916
+  duration_ms: 0.13675
   type: 'test'
   ...
 # Subtest: memory_indexed bumps the index tick
-ok 191 - memory_indexed bumps the index tick
+ok 195 - memory_indexed bumps the index tick
   ---
-  duration_ms: 1.676125
+  duration_ms: 1.321791
   type: 'test'
   ...
 # Subtest: retrieval_degraded sets flag; retrieval_completed clears it
-ok 192 - retrieval_degraded sets flag; retrieval_completed clears it
+ok 196 - retrieval_degraded sets flag; retrieval_completed clears it
   ---
-  duration_ms: 0.3645
+  duration_ms: 0.245125
   type: 'test'
   ...
 # Subtest: events without agent_name are ignored
-ok 193 - events without agent_name are ignored
+ok 197 - events without agent_name are ignored
   ---
-  duration_ms: 0.390791
+  duration_ms: 0.329125
   type: 'test'
   ...
 # Subtest: memory_reranker_loading drives the global rerankerLoad progress
-ok 194 - memory_reranker_loading drives the global rerankerLoad progress
+ok 198 - memory_reranker_loading drives the global rerankerLoad progress
   ---
-  duration_ms: 0.325916
+  duration_ms: 0.306125
   type: 'test'
   ...
 # Subtest: memory_reranker_loading defaults progress to 0 when omitted
-ok 195 - memory_reranker_loading defaults progress to 0 when omitted
+ok 199 - memory_reranker_loading defaults progress to 0 when omitted
   ---
-  duration_ms: 0.394916
+  duration_ms: 0.376667
   type: 'test'
   ...
 # Subtest: normalizeTs: Unix seconds float → ms (the bug case)
-ok 196 - normalizeTs: Unix seconds float → ms (the bug case)
+ok 200 - normalizeTs: Unix seconds float → ms (the bug case)
   ---
-  duration_ms: 0.448416
+  duration_ms: 0.450584
   type: 'test'
   ...
 # Subtest: normalizeTs: Unix seconds int → ms
-ok 197 - normalizeTs: Unix seconds int → ms
+ok 201 - normalizeTs: Unix seconds int → ms
   ---
-  duration_ms: 0.148042
+  duration_ms: 0.285917
   type: 'test'
   ...
 # Subtest: normalizeTs: Unix milliseconds → unchanged
-ok 198 - normalizeTs: Unix milliseconds → unchanged
+ok 202 - normalizeTs: Unix milliseconds → unchanged
   ---
-  duration_ms: 0.054416
+  duration_ms: 0.079667
   type: 'test'
   ...
 # Subtest: normalizeTs: numeric string (seconds) → ms
-ok 199 - normalizeTs: numeric string (seconds) → ms
+ok 203 - normalizeTs: numeric string (seconds) → ms
   ---
-  duration_ms: 0.04875
+  duration_ms: 0.076167
   type: 'test'
   ...
 # Subtest: normalizeTs: numeric string (ms) → unchanged
-ok 200 - normalizeTs: numeric string (ms) → unchanged
+ok 204 - normalizeTs: numeric string (ms) → unchanged
   ---
-  duration_ms: 0.048167
+  duration_ms: 0.087791
   type: 'test'
   ...
 # Subtest: normalizeTs: ISO 8601 string → ms
-ok 201 - normalizeTs: ISO 8601 string → ms
+ok 205 - normalizeTs: ISO 8601 string → ms
   ---
-  duration_ms: 0.049708
+  duration_ms: 0.087208
   type: 'test'
   ...
 # Subtest: normalizeTs: null/undefined/0/empty → null
-ok 202 - normalizeTs: null/undefined/0/empty → null
+ok 206 - normalizeTs: null/undefined/0/empty → null
   ---
-  duration_ms: 0.094667
+  duration_ms: 0.342
   type: 'test'
   ...
 # Subtest: normalizeTs: NaN / non-finite → null
-ok 203 - normalizeTs: NaN / non-finite → null
+ok 207 - normalizeTs: NaN / non-finite → null
   ---
-  duration_ms: 0.0395
+  duration_ms: 0.142833
   type: 'test'
   ...
 # Subtest: normalizeTs: unparseable string → null
-ok 204 - normalizeTs: unparseable string → null
+ok 208 - normalizeTs: unparseable string → null
   ---
-  duration_ms: 0.229125
+  duration_ms: 0.736958
   type: 'test'
   ...
 # Subtest: formatTimestamp: invalid input → empty string
-ok 205 - formatTimestamp: invalid input → empty string
+ok 209 - formatTimestamp: invalid input → empty string
   ---
-  duration_ms: 0.283041
+  duration_ms: 0.326709
   type: 'test'
   ...
 # Subtest: formatTimestamp: Unix seconds renders correct year (not 1970)
-ok 206 - formatTimestamp: Unix seconds renders correct year (not 1970)
+ok 210 - formatTimestamp: Unix seconds renders correct year (not 1970)
   ---
-  duration_ms: 1.001375
+  duration_ms: 1.225791
   type: 'test'
   ...
 # Subtest: formatTimestamp: dateOnly returns dd/MM/yyyy
-ok 207 - formatTimestamp: dateOnly returns dd/MM/yyyy
+ok 211 - formatTimestamp: dateOnly returns dd/MM/yyyy
   ---
-  duration_ms: 0.307833
+  duration_ms: 0.147417
   type: 'test'
   ...
 # Subtest: formatTimestamp: timeOnly returns HH:mm:ss
-ok 208 - formatTimestamp: timeOnly returns HH:mm:ss
+ok 212 - formatTimestamp: timeOnly returns HH:mm:ss
   ---
-  duration_ms: 0.125042
+  duration_ms: 0.050208
   type: 'test'
   ...
 # Subtest: expandToolRequest yields one entry per tool when tools is an array
-ok 209 - expandToolRequest yields one entry per tool when tools is an array
+ok 213 - expandToolRequest yields one entry per tool when tools is an array
   ---
-  duration_ms: 0.64725
+  duration_ms: 0.659708
   type: 'test'
   ...
 # Subtest: expandToolRequest falls back to a single legacy entry when tools is missing
-ok 210 - expandToolRequest falls back to a single legacy entry when tools is missing
+ok 214 - expandToolRequest falls back to a single legacy entry when tools is missing
   ---
-  duration_ms: 0.491542
+  duration_ms: 0.988417
   type: 'test'
   ...
 # Subtest: expandToolRequest falls back to server name when tool is also missing
-ok 211 - expandToolRequest falls back to server name when tool is also missing
+ok 215 - expandToolRequest falls back to server name when tool is also missing
   ---
-  duration_ms: 0.045458
+  duration_ms: 0.141167
   type: 'test'
   ...
 # Subtest: expandToolRequest uses "tool" placeholder when no name source is available
-ok 212 - expandToolRequest uses "tool" placeholder when no name source is available
+ok 216 - expandToolRequest uses "tool" placeholder when no name source is available
   ---
-  duration_ms: 0.039083
+  duration_ms: 0.102792
   type: 'test'
   ...
 # Subtest: expandToolRequest treats empty tools array like missing
-ok 213 - expandToolRequest treats empty tools array like missing
+ok 217 - expandToolRequest treats empty tools array like missing
   ---
-  duration_ms: 0.102542
+  duration_ms: 0.347916
   type: 'test'
   ...
 # Subtest: expandToolDone yields one result entry per tool in the batch
-ok 214 - expandToolDone yields one result entry per tool in the batch
+ok 218 - expandToolDone yields one result entry per tool in the batch
   ---
-  duration_ms: 0.071625
+  duration_ms: 0.262125
   type: 'test'
   ...
 # Subtest: expandToolDone gives each tool its OWN result_preview (per-tool fix)
-ok 215 - expandToolDone gives each tool its OWN result_preview (per-tool fix)
+ok 219 - expandToolDone gives each tool its OWN result_preview (per-tool fix)
   ---
-  duration_ms: 0.091792
+  duration_ms: 0.367625
   type: 'test'
   ...
 # Subtest: expandToolDone falls back to batch result_preview when a tool lacks its own
-ok 216 - expandToolDone falls back to batch result_preview when a tool lacks its own
+ok 220 - expandToolDone falls back to batch result_preview when a tool lacks its own
   ---
-  duration_ms: 0.03875
+  duration_ms: 0.070833
   type: 'test'
   ...
 # Subtest: expandToolDone omits duration when duration_ms missing
-ok 217 - expandToolDone omits duration when duration_ms missing
+ok 221 - expandToolDone omits duration when duration_ms missing
   ---
-  duration_ms: 0.232167
+  duration_ms: 0.253208
   type: 'test'
   ...
 # Subtest: expandToolDone falls back to single legacy entry
-ok 218 - expandToolDone falls back to single legacy entry
+ok 222 - expandToolDone falls back to single legacy entry
   ---
-  duration_ms: 0.249542
+  duration_ms: 0.268458
   type: 'test'
   ...
 # Subtest: paired parallel request + done batches yield matching entry counts
-ok 219 - paired parallel request + done batches yield matching entry counts
+ok 223 - paired parallel request + done batches yield matching entry counts
   ---
-  duration_ms: 0.111333
+  duration_ms: 0.114208
   type: 'test'
   ...
 # Subtest: no tag → text unchanged, videoIds empty
-ok 220 - no tag → text unchanged, videoIds empty
+ok 224 - no tag → text unchanged, videoIds empty
   ---
-  duration_ms: 1.122875
+  duration_ms: 1.235375
   type: 'test'
   ...
 # Subtest: single tag at end → tag stripped, id extracted
-ok 221 - single tag at end → tag stripped, id extracted
+ok 225 - single tag at end → tag stripped, id extracted
   ---
-  duration_ms: 0.188167
+  duration_ms: 0.224417
   type: 'test'
   ...
 # Subtest: tag in middle of sentence → cleanly stripped
-ok 222 - tag in middle of sentence → cleanly stripped
+ok 226 - tag in middle of sentence → cleanly stripped
   ---
-  duration_ms: 0.060625
+  duration_ms: 0.067375
   type: 'test'
   ...
 # Subtest: multiple distinct tags → all ids in order
-ok 223 - multiple distinct tags → all ids in order
+ok 227 - multiple distinct tags → all ids in order
   ---
-  duration_ms: 0.048458
+  duration_ms: 0.049042
   type: 'test'
   ...
 # Subtest: duplicate ids are deduped while preserving order
-ok 224 - duplicate ids are deduped while preserving order
+ok 228 - duplicate ids are deduped while preserving order
   ---
-  duration_ms: 0.080958
+  duration_ms: 0.076834
   type: 'test'
   ...
 # Subtest: whitespace inside the tag is tolerated
-ok 225 - whitespace inside the tag is tolerated
+ok 229 - whitespace inside the tag is tolerated
   ---
-  duration_ms: 0.044833
+  duration_ms: 0.04825
   type: 'test'
   ...
 # Subtest: id with hyphen and underscore (valid YouTube chars)
-ok 226 - id with hyphen and underscore (valid YouTube chars)
+ok 230 - id with hyphen and underscore (valid YouTube chars)
   ---
-  duration_ms: 0.083875
+  duration_ms: 0.088875
   type: 'test'
   ...
 # Subtest: invalid id (too short) → tag NOT extracted, but text is left as-is
-ok 227 - invalid id (too short) → tag NOT extracted, but text is left as-is
+ok 231 - invalid id (too short) → tag NOT extracted, but text is left as-is
   ---
-  duration_ms: 0.042416
+  duration_ms: 0.043417
   type: 'test'
   ...
 # Subtest: other [[[TAG:...]]] tags are NOT stripped (only PLAY)
-ok 228 - other [[[TAG:...]]] tags are NOT stripped (only PLAY)
+ok 232 - other [[[TAG:...]]] tags are NOT stripped (only PLAY)
   ---
-  duration_ms: 0.24825
+  duration_ms: 0.251375
   type: 'test'
   ...
 # Subtest: null / undefined / non-string input → safe fallback
-ok 229 - null / undefined / non-string input → safe fallback
+ok 233 - null / undefined / non-string input → safe fallback
   ---
-  duration_ms: 0.262458
+  duration_ms: 0.282833
   type: 'test'
   ...
 # Subtest: trailing whitespace from stripped tag is trimmed
-ok 230 - trailing whitespace from stripped tag is trimmed
+ok 234 - trailing whitespace from stripped tag is trimmed
   ---
-  duration_ms: 0.085583
+  duration_ms: 0.091333
   type: 'test'
   ...
 # Subtest: tag on its own line → leftover blank line is collapsed
-ok 231 - tag on its own line → leftover blank line is collapsed
+ok 235 - tag on its own line → leftover blank line is collapsed
   ---
-  duration_ms: 0.046791
+  duration_ms: 0.045541
   type: 'test'
   ...
 # Subtest: youtubeEmbedUrl: first sighting → autoplay=1, second → autoplay=0
-ok 232 - youtubeEmbedUrl: first sighting → autoplay=1, second → autoplay=0
+ok 236 - youtubeEmbedUrl: first sighting → autoplay=1, second → autoplay=0
   ---
-  duration_ms: 0.0465
+  duration_ms: 0.048583
   type: 'test'
   ...
 # Subtest: youtubeEmbedUrl: each distinct id gets its own first-sight autoplay
-ok 233 - youtubeEmbedUrl: each distinct id gets its own first-sight autoplay
+ok 237 - youtubeEmbedUrl: each distinct id gets its own first-sight autoplay
   ---
-  duration_ms: 0.026792
+  duration_ms: 0.026458
   type: 'test'
   ...
 # Subtest: youtubeEmbedUrl: autoplayIfFresh=false forces autoplay=0
-ok 234 - youtubeEmbedUrl: autoplayIfFresh=false forces autoplay=0
+ok 238 - youtubeEmbedUrl: autoplayIfFresh=false forces autoplay=0
   ---
-  duration_ms: 0.027125
+  duration_ms: 0.027208
   type: 'test'
   ...
 # Subtest: youtubeEmbedUrl encodes characters defensively
-ok 235 - youtubeEmbedUrl encodes characters defensively
+ok 239 - youtubeEmbedUrl encodes characters defensively
   ---
-  duration_ms: 0.023875
+  duration_ms: 0.023333
   type: 'test'
   ...
 # Subtest: built-in inject selects static target without a session
-ok 236 - built-in inject selects static target without a session
+ok 240 - built-in inject selects static target without a session
   ---
-  duration_ms: 0.573792
+  duration_ms: 0.414959
   type: 'test'
   ...
 # Subtest: dynamic agent injects require an explicit session identity
-ok 237 - dynamic agent injects require an explicit session identity
+ok 241 - dynamic agent injects require an explicit session identity
   ---
-  duration_ms: 0.222625
+  duration_ms: 0.189208
   type: 'test'
   ...
 # Subtest: inject request includes session_id and propagates 409
-ok 238 - inject request includes session_id and propagates 409
+ok 242 - inject request includes session_id and propagates 409
   ---
-  duration_ms: 0.108042
+  duration_ms: 0.089375
   type: 'test'
   ...
 # Subtest: single-delete live guard blocks name collision before fetch
-ok 239 - single-delete live guard blocks name collision before fetch
+ok 243 - single-delete live guard blocks name collision before fetch
   ---
-  duration_ms: 0.364292
+  duration_ms: 0.441042
   type: 'test'
   ...
 # Subtest: bulk-delete preflight aborts all requests on any collision
-ok 240 - bulk-delete preflight aborts all requests on any collision
+ok 244 - bulk-delete preflight aborts all requests on any collision
   ---
-  duration_ms: 0.093583
+  duration_ms: 0.133625
   type: 'test'
   ...
-1..240
-# tests 240
+1..244
+# tests 244
 # suites 0
-# pass 240
+# pass 244
 # fail 0
 # cancelled 0
 # skipped 0
 # todo 0
-# duration_ms 439.3685
+# duration_ms 478.356959
