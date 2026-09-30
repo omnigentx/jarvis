@@ -250,5 +250,19 @@
         "timestamp": "2026-09-30T19:13:35.839438Z"
       }
     }
-  ]
+  ],
+  "final_source_resume": {
+    "source_commit": "0f19420398f687f45c5a22b4cf1c3a2180e387fe",
+    "run_id": "5627d7ef",
+    "pid": 48140,
+    "team_session": "30e68868",
+    "actual_tool": "read_skill",
+    "grounded_response": "Frontend Design; line lengths less than80 characters",
+    "skill_bindings": [
+      "Jarvis:ready",
+      "Casey [PM]:ready"
+    ],
+    "mcp_binding": "disabled",
+    "ui_limit": "Monitor displayed the new run after manual page reload; automatic reconnect observation is SCRUM-47."
+  }
 }

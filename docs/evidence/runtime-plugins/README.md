@@ -102,6 +102,9 @@ caught a sync wiring gap that was reproduced and fixed before final submission.
 7. Runtime restart/resume was tested separately and is not presented as hot-update
    evidence. Dead prior runs were ignored; the same logical team resumed with its
    approved reader before the first model call. Main Jarvis's binding also restored.
+   Final source0f19420 resumed to run5627d7ef/PID48140. The monitor needed a page
+   reload to show that run; `live-final-source-resume.jpg` is the refreshed snapshot,
+   not proof of automatic reconnect. That observation is tracked as SCRUM-47.
 8. Manual mobile inspection caught misleading red review flags on a Ready MCP card
    and an empty target placeholder. Both were reproduced by UI tests and corrected.
    A terminal event racing an in-flight snapshot also had a red→green regression.
@@ -166,6 +169,9 @@ requires workload measurements under SCRUM-16/21. No speculative prompt edit was
   hard-coded DB path rather than the configured isolated DB (small/high value).
 - [SCRUM-46](https://omnigentx.atlassian.net/browse/SCRUM-46): diagnose backend
   shutdown retaining spawn socket after SIGTERM; root cause not yet established.
+- [SCRUM-47](https://omnigentx.atlassian.net/browse/SCRUM-47): Team Monitor missed
+  resumed turns after local backend restart until page reload; root cause remains
+  open. Run-aware dedup and SSE retry already exist and were not blindly changed.
 - Existing SCRUM-16/21 track repeated context/tool/schema costs and meaningful
   workload-level optimization. SCRUM-29 covers narrow repository access.
 - Production Docker execution requires the documented operator profile. Remote MCP,
