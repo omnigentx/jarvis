@@ -1,0 +1,25 @@
+{
+  "model": "openai.coding-agent",
+  "started_at": 1790701385.233382,
+  "stages": [
+    {
+      "stage": "initial",
+      "responses": {
+        "Sam [DEV]": "INITIAL MEMORY-a0dcd1c6d7",
+        "Parker [PM]": "INITIAL MEMORY-a0dcd1c6d7"
+      },
+      "run_ids": {
+        "Sam [DEV]": "703790ee",
+        "Parker [PM]": "0667c970"
+      }
+    }
+  ],
+  "session_id": "da4bee86",
+  "agents": [
+    "Sam [DEV]",
+    "Parker [PM]"
+  ],
+  "status": "failed",
+  "error": "AssertionError({'status': 'resumed', 'session_id': 'da4bee86', 'team_name': 'live-resume-acceptance', 'resumed_agents': 2, 'queued_agents': 0, 'failed_agents': 0, 'skipped_agents': 0, 'agents': {'Sam [DEV]': {'status': 'resumed', 'new_run_id': 'ebcd6b85'}, 'Parker [PM]': {'status': 'resumed', 'new_run_id': '2d949d70'}}, 'message': '2 restarted, 0 queued, 0 failed, 0 skipped. Execution progress is delivered through agent activity events.'})",
+  "duration_seconds": 6.34
+}

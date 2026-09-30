@@ -1,0 +1,81 @@
+{
+  "model": "openai.coding-agent",
+  "started_at": 1790701635.925565,
+  "stages": [
+    {
+      "stage": "initial",
+      "responses": {
+        "Bennett [DEV]": "INITIAL MEMORY-c7046e4189",
+        "Jesse [PM]": "INITIAL MEMORY-c7046e4189"
+      },
+      "run_ids": {
+        "Bennett [DEV]": "2dfb2303",
+        "Jesse [PM]": "b4c2d8e0"
+      }
+    },
+    {
+      "stage": "live_resume",
+      "tool_result": {
+        "status": "queued",
+        "session_id": "742a6c89",
+        "team_name": "live-resume-acceptance",
+        "resumed_agents": 0,
+        "queued_agents": 2,
+        "failed_agents": 0,
+        "skipped_agents": 0,
+        "agents": {
+          "Bennett [DEV]": {
+            "status": "queued",
+            "run_id": "2dfb2303",
+            "message_id": "c936a342"
+          },
+          "Jesse [PM]": {
+            "status": "queued",
+            "run_id": "b4c2d8e0",
+            "message_id": "d53fc342"
+          }
+        },
+        "message": "0 restarted, 2 queued, 0 failed, 0 skipped. Execution progress is delivered through agent activity events."
+      },
+      "responses": {
+        "Bennett [DEV]": "LIVE MEMORY-c7046e4189",
+        "Jesse [PM]": "LIVE MEMORY-c7046e4189"
+      }
+    },
+    {
+      "stage": "dead_resume",
+      "tool_result": {
+        "status": "resumed",
+        "session_id": "742a6c89",
+        "team_name": "live-resume-acceptance",
+        "resumed_agents": 2,
+        "queued_agents": 0,
+        "failed_agents": 0,
+        "skipped_agents": 0,
+        "agents": {
+          "Bennett [DEV]": {
+            "status": "resumed",
+            "new_run_id": "7883dc9e"
+          },
+          "Jesse [PM]": {
+            "status": "resumed",
+            "new_run_id": "2b33be96"
+          }
+        },
+        "message": "2 restarted, 0 queued, 0 failed, 0 skipped. Execution progress is delivered through agent activity events."
+      },
+      "responses": {
+        "Bennett [DEV]": "RESTORED MEMORY-c7046e4189",
+        "Jesse [PM]": "RESTORED MEMORY-c7046e4189"
+      }
+    }
+  ],
+  "session_id": "742a6c89",
+  "agents": [
+    "Bennett [DEV]",
+    "Jesse [PM]"
+  ],
+  "status": "passed",
+  "duration_seconds": 17.86,
+  "cleanup_passed": true
+}

@@ -1,0 +1,39 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_____________________ test_production_idle_team_is_resumed _____________________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x104681350>
+
+    @pytest.mark.asyncio
+    async def test_production_idle_team_is_resumed(monkeypatch):
+        from fast_agent.spawn.servers import agent_spawner_server as srv
+        from fast_agent.spawn.agent_channel import AgentChannel
+        from fast_agent.spawn.team_spawner import TeamSession
+
+        evidence = Path(__file__).parents[3] / 'docs/evidence/team-resume/production-resume.json'
+        recorded = json.loads(evidence.read_text())['calls'][-1]['result']
+        session = TeamSession('52051546', {}, Path('/tmp'), 'audit', team_name=recorded['team_name'])
+        records = {}
+        for name, row in recorded['agents'].items():
+            available = 'not found' in row['reason']
+            session.agents[name] = {'run_id': name, 'status': 'available' if available else 'idle'}
+            if not available:
+                records[name] = SpawnRecord(run_id=name, agent_name=name, status='idle', lifecycle='resumable')
+        registry = MagicMock()
+        registry.get.side_effect = records.get
+        registry.get_latest.side_effect = records.get
+        resume = AsyncMock(side_effect=lambda rid, task: json.dumps({'status':'resumed','new_run_id':'new-'+rid}))
+        monkeypatch.setattr(srv, 'get_team_session', lambda sid: session)
+        monkeypatch.setattr(srv, '_registry', registry)
+        monkeypatch.setattr(srv, '_get_team_store', MagicMock())
+        monkeypatch.setattr(srv, 'resume_spawn', resume)
+        monkeypatch.setattr(AgentChannel, 'is_alive', lambda *a, **kw: False)
+        result = json.loads(await srv.resume_team_tool('52051546', 'Write revision 4'))
+>       assert result['resumed_agents'] == 4, result
+E       AssertionError: {'agents': {'Emery [DSO]': {'reason': "run_id 'Emery [DSO]' not found in registry", 'status': 'skipped'}, 'Finley [QE]... 0 agents. Use get_team_status(session_id='52051546') to monitor.", 'resumed_agents': 0, 'session_id': '52051546', ...}
+E       assert 0 == 4
+
+backend/tests/test_services/test_team_resume_incident.py:35: AssertionError
+=========================== short test summary info ============================
+FAILED backend/tests/test_services/test_team_resume_incident.py::test_production_idle_team_is_resumed
+1 failed in 0.38s

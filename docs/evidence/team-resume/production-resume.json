@@ -1,0 +1,92 @@
+{
+  "source": "/app/.fast-agent/sessions/2609281444-J3pKGw/history_Jarvis.json",
+  "source_sha256": "484ddd5009fb2b32c10034996600e31e019aa433d1b602511073f77f733cc394",
+  "calls": [
+    {
+      "timestamp": "2026-09-29T03:43:17.069269Z",
+      "session_id": "52051546",
+      "tool": "agent_spawner__resume_team_tool",
+      "result": {
+        "status": "resumed",
+        "session_id": "52051546",
+        "team_name": "jarvis-capability-roadmap",
+        "resumed_agents": 0,
+        "skipped_agents": 7,
+        "agents": {
+          "Toby [PM]": {
+            "status": "skipped",
+            "reason": "still running (status=idle)"
+          },
+          "Sydney [BA]": {
+            "status": "skipped",
+            "reason": "still running (status=idle)"
+          },
+          "Ryan [SA]": {
+            "status": "skipped",
+            "reason": "still running (status=idle)"
+          },
+          "Skyler [Dev]": {
+            "status": "skipped",
+            "reason": "still running (status=idle)"
+          },
+          "Sam [Designer]": {
+            "status": "skipped",
+            "reason": "run_id 'team_52051546_designer_9e0f88' not found in registry"
+          },
+          "Finley [QE]": {
+            "status": "skipped",
+            "reason": "run_id 'team_52051546_qe_9c18a0' not found in registry"
+          },
+          "Emery [DSO]": {
+            "status": "skipped",
+            "reason": "run_id 'team_52051546_dso_bfc0d6' not found in registry"
+          }
+        },
+        "message": "Team 'jarvis-capability-roadmap' resumed with 0 agents. Use get_team_status(session_id='52051546') to monitor."
+      }
+    },
+    {
+      "timestamp": "2026-09-29T04:28:56.644090Z",
+      "session_id": "52051546",
+      "tool": "agent_spawner__resume_team_tool",
+      "result": {
+        "status": "resumed",
+        "session_id": "52051546",
+        "team_name": "jarvis-capability-roadmap",
+        "resumed_agents": 0,
+        "skipped_agents": 7,
+        "agents": {
+          "Toby [PM]": {
+            "status": "skipped",
+            "reason": "still running (status=idle)"
+          },
+          "Sydney [BA]": {
+            "status": "skipped",
+            "reason": "still running (status=idle)"
+          },
+          "Ryan [SA]": {
+            "status": "skipped",
+            "reason": "still running (status=idle)"
+          },
+          "Skyler [Dev]": {
+            "status": "skipped",
+            "reason": "still running (status=idle)"
+          },
+          "Sam [Designer]": {
+            "status": "skipped",
+            "reason": "run_id 'team_52051546_designer_9e0f88' not found in registry"
+          },
+          "Finley [QE]": {
+            "status": "skipped",
+            "reason": "run_id 'team_52051546_qe_9c18a0' not found in registry"
+          },
+          "Emery [DSO]": {
+            "status": "skipped",
+            "reason": "run_id 'team_52051546_dso_bfc0d6' not found in registry"
+          }
+        },
+        "message": "Team 'jarvis-capability-roadmap' resumed with 0 agents. Use get_team_status(session_id='52051546') to monitor."
+      }
+    }
+  ]
+}
