@@ -650,6 +650,9 @@
       "promote": "Share globally · requires approval",
       "checkUpdate": "Check new version",
       "reviewFiles": "Review package files",
+      "capabilities": "Supported capabilities",
+      "sourceCommit": "Pinned commit",
+      "sourceDetails": "Source verification",
       "pinnedSource": "Open pinned source and license",
       "reviewChanged": "Package changed; refresh and review again."
     }

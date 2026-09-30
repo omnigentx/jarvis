@@ -56,16 +56,3 @@ async function save() {
     </form>
   </details>
 </template>
-
-<style scoped>
-.execution-policy { margin: 16px 0; border: 1px solid var(--border); border-radius: var(--r-md); padding: 12px; }
-summary { cursor: pointer; min-height: 32px; color: var(--text); }
-p, small { color: var(--text-muted); font-size: 13px; line-height: 1.6; }
-form { display: grid; gap: 12px; }
-label { display: grid; gap: 6px; font-size: 13px; min-width: 0; }
-input { box-sizing: border-box; width: 100%; min-height: 44px; background: var(--bg-0); color: var(--text); border: 1px solid var(--border); border-radius: var(--r-md); padding: 10px; }
-button { justify-self: start; min-height: 44px; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--primary-bg-strong); color: var(--text); cursor: pointer; }
-button:disabled { opacity: .5; }
-input:focus-visible, button:focus-visible, summary:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
-.error { color: var(--danger, #ef4444); }
-</style>

@@ -37,16 +37,3 @@ async function load(path) {
     </section>
   </div>
 </template>
-
-<style scoped>
-.package-review { margin: 12px 0; min-width: 0; }
-button { min-height: 44px; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--r-md); color: var(--text); background: var(--bg-0); cursor: pointer; max-width: 100%; overflow-wrap: anywhere; text-align: left; }
-button:disabled { opacity: .5; }
-button:focus-visible, pre:focus-visible, a:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
-ul { max-height: 220px; overflow: auto; list-style: none; padding: 0; }
-li { margin: 6px 0; }
-a { color: var(--primary); }
-p, small { color: var(--text-muted); overflow-wrap: anywhere; }
-pre { max-height: 400px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px var(--font-mono); line-height: 1.6; }
-[role=alert] { color: var(--danger, #ef4444); }
-</style>

@@ -185,3 +185,17 @@ full suites were run. Precommit change detection stayed within plugin UI/service
 approval's default-preserving pause option, model-hook integration and their tests.
 Early graph traversal limitations were supplemented by direct caller/source reads;
 they are not represented as complete graph coverage. No production changes occurred.
+
+## UI refinement after review feedback
+
+Plugin settings now reuse the dashboard's canonical surface, type, radius and semantic color tokens through one stylesheet scoped under `.plugin-panel`. The layout uses a 4px spacing rhythm (8/12/16/20/24px), 24px desktop/16px mobile card padding, and 44px minimum control targets. Browse/Activate are primary; source verification and capability compatibility are disclosures; update/global sharing/uninstall are separated into a secondary footer. Review source, permission controls, actual status and activation semantics remain available.
+
+Verification on the revised frontend: 244 unit tests passed, 5 plugin E2E tests passed (including mobile review, escaping untrusted content, truthful activation and credential clearing), production build passed with existing chunk warnings. This is a presentation change; prior backend/live execution evidence remains separately documented above.
+
+Computer-use verification against actual local inventory: desktop1440x1000, mobile390x844, dark/light, source verification expanded/collapsed and card action footer. Measured document width equals viewport (1440 and390px). No claim of physical-device Safari verification.
+
+- [Desktop overview](ui-refined-desktop.jpg)
+- [Desktop actions and MCP policy](ui-refined-desktop-actions.jpg)
+- [Mobile overview](ui-refined-mobile.jpg)
+- [Mobile card and target controls](ui-refined-mobile-card.jpg)
+- [Light theme](ui-refined-light.jpg)

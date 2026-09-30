@@ -105,7 +105,7 @@ function inspect(plugin, skill) {
 <template>
   <div class="plugin-panel">
     <p class="intro">{{ t('settings.plugins.intro') }}</p>
-    <p class="support-note">{{ t('settings.plugins.support') }}</p>
+    <details class="support-details"><summary>{{ t('settings.plugins.capabilities') }}</summary><p>{{ t('settings.plugins.support') }}</p></details>
     <div v-if="error || inventoryError" class="error" role="alert">{{ error || inventoryError }}</div>
     <div v-if="notice" class="notice" role="status">{{ notice }} <RouterLink to="/approvals">{{ t('settings.plugins.approvals') }}</RouterLink></div>
     <section aria-labelledby="plugin-marketplace-title" class="card">
@@ -113,7 +113,7 @@ function inspect(plugin, skill) {
       <form class="controls" @submit.prevent="browse">
         <label>{{ t('settings.plugins.repository') }}<input v-model="repo" list="plugin-sources" autocomplete="off" required maxlength="160" placeholder="owner/repository" /></label>
         <datalist id="plugin-sources"><option value="openai/plugins" /><option value="anthropics/claude-code" /></datalist>
-        <button :disabled="busy" type="submit">{{ t('settings.plugins.browse') }}</button>
+        <button class="primary-action" :disabled="busy" type="submit">{{ t('settings.plugins.browse') }}</button>
       </form>
       <label v-if="catalog.length" class="search">{{ t('settings.plugins.search') }}<input v-model="query" type="search" /></label>
       <ul v-if="catalog.length" class="catalog">
@@ -128,21 +128,25 @@ function inspect(plugin, skill) {
       </ul>
     </section>
     <section aria-labelledby="plugin-installed-title">
-      <header><h2 id="plugin-installed-title">{{ t('settings.plugins.installed') }}</h2><button :disabled="busy || loading" @click="refresh">{{ t('settings.plugins.refresh') }}</button></header>
+      <header class="section-heading"><h2 id="plugin-installed-title">{{ t('settings.plugins.installed') }} <span class="count">{{ plugins.length }}</span></h2><button :disabled="busy || loading" @click="refresh">{{ t('settings.plugins.refresh') }}</button></header>
       <p v-if="loading">{{ t('common.loading') }}</p>
       <p v-else-if="!plugins.length">{{ t('settings.plugins.empty') }}</p>
       <article v-for="plugin in plugins" :key="plugin.id" class="card" :data-testid="`plugin-${plugin.id}`">
         <header><h3>{{ plugin.name }} <small v-if="plugin.version">{{ plugin.version }}</small></h3><span class="status" :class="{ ready: plugin.status === 'ready' }">{{ label(plugin.status) }}</span></header>
         <p v-if="plugin.global_enabled" class="support-note">{{ t('settings.plugins.sharedHint') }}</p>
-        <div class="controls"><button :disabled="busy || (!plugin.global_enabled && (!supported(plugin) || plugin.status === 'expired'))" @click="share(plugin)">{{ t(plugin.global_enabled ? 'settings.plugins.stopSharing' : 'settings.plugins.promote') }}</button><button :disabled="busy" @click="checkUpdate(plugin)">{{ t('settings.plugins.checkUpdate') }}</button></div>
-        <button v-if="plugin.status !== 'expired' && !plugin.global_enabled && !(plugin.bindings || []).some(binding => binding.status !== 'disabled')" :disabled="busy" @click="uninstall(plugin)">{{ t('settings.plugins.uninstall') }}</button>
-        <p class="source">{{ plugin.repo }} · {{ plugin.commit }}<br />SHA-256: {{ plugin.digest }}</p>
+        <p class="repository-name">{{ plugin.repo }}</p>
+        <details class="source-details"><summary>{{ t('settings.plugins.sourceDetails') }}</summary><dl><dt>{{ t('settings.plugins.sourceCommit') }}</dt><dd>{{ plugin.commit }}</dd><dt>SHA-256</dt><dd>{{ plugin.digest }}</dd></dl></details>
         <ul v-if="plugin.blockers?.length && !supported(plugin)" class="blocked"><li v-for="blocker in plugin.blockers" :key="blocker">{{ blocker }}</li></ul>
-        <ul class="skills"><li v-for="skill in plugin.skills" :key="skill.name"><span>{{ skill.name }} — {{ skill.description }}</span><button :disabled="busy" @click="inspect(plugin, skill)">{{ t('settings.plugins.review') }}</button></li></ul>
+        <ul class="skills"><li v-for="skill in plugin.skills" :key="skill.name"><div class="skill-copy"><strong>{{ skill.name }}</strong><p>{{ skill.description }}</p></div><button :disabled="busy" @click="inspect(plugin, skill)">{{ t('settings.plugins.review') }}</button></li></ul>
         <PluginFilesReview :plugin="plugin" />
         <PluginExecutionPolicy v-if="plugin.server_names?.length" :plugin="plugin" @saved="inventory.reload" />
-        <ul v-if="plugin.bindings?.length" class="bindings"><li v-for="binding in plugin.bindings" :key="binding.agent"><span>{{ binding.agent_name || binding.agent }}: {{ label(binding.status) }}</span><button v-if="!['disabled','expired'].includes(binding.status)" :disabled="busy" @click="deactivate(plugin, binding)">{{ t('settings.plugins.disable') }}</button></li></ul>
-        <div class="controls"><label>{{ t('settings.plugins.target') }}<select v-model="targets[plugin.id]"><option value="" disabled>{{ t('settings.plugins.selectTarget') }}</option><option v-for="target in availableTargets" :key="targetKey(target)" :value="targetKey(target)">{{ target.label }}</option></select></label><button :disabled="busy || !selectedTarget(plugin) || !supported(plugin) || plugin.status === 'expired'" @click="activate(plugin)">{{ t('settings.plugins.activate') }}</button></div>
+        <ul v-if="plugin.bindings?.length" class="bindings"><li v-for="binding in plugin.bindings" :key="binding.agent"><div class="binding-copy"><strong>{{ binding.agent_name || binding.agent }}</strong><span class="binding-status" :class="{ ready: binding.status === 'ready' }">{{ label(binding.status) }}</span></div><button v-if="!['disabled','expired'].includes(binding.status)" :disabled="busy" @click="deactivate(plugin, binding)">{{ t('settings.plugins.disable') }}</button></li></ul>
+        <div class="controls activation"><label>{{ t('settings.plugins.target') }}<select v-model="targets[plugin.id]"><option value="" disabled>{{ t('settings.plugins.selectTarget') }}</option><option v-for="target in availableTargets" :key="targetKey(target)" :value="targetKey(target)">{{ target.label }}</option></select></label><button class="primary-action" :disabled="busy || !selectedTarget(plugin) || !supported(plugin) || plugin.status === 'expired'" @click="activate(plugin)">{{ t('settings.plugins.activate') }}</button></div>
+        <footer class="package-actions">
+          <button :disabled="busy" @click="checkUpdate(plugin)">{{ t('settings.plugins.checkUpdate') }}</button>
+          <button :disabled="busy || (!plugin.global_enabled && (!supported(plugin) || plugin.status === 'expired'))" @click="share(plugin)">{{ t(plugin.global_enabled ? 'settings.plugins.stopSharing' : 'settings.plugins.promote') }}</button>
+          <button class="danger-action" v-if="plugin.status !== 'expired' && !plugin.global_enabled && !(plugin.bindings || []).some(binding => binding.status !== 'disabled')" :disabled="busy" @click="uninstall(plugin)">{{ t('settings.plugins.uninstall') }}</button>
+        </footer>
       </article>
     </section>
     <section v-if="review" class="card" aria-labelledby="plugin-review-title">
@@ -153,32 +157,4 @@ function inspect(plugin, skill) {
   </div>
 </template>
 
-<style scoped>
-.plugin-panel { max-width: 1100px; display: grid; gap: 20px; }
-.intro, .support-note { margin: 0; color: var(--text-dim); line-height: 1.6; }
-.support-note { border-left: 3px solid var(--warning, #f59e0b); padding: 10px 14px; background: var(--bg-1); }
-.card { padding: 20px; border: 1px solid var(--border); background: var(--bg-1); border-radius: var(--r-md); margin-bottom: 12px; min-width: 0; }
-h2, h3 { margin: 0 0 12px; font-size: 16px; font-weight: 600; }
-header { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
-.controls { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; }
-label { display: grid; gap: 6px; color: var(--text-dim); font-size: 13px; flex: 1; min-width: 0; }
-input, select { width: 100%; box-sizing: border-box; padding: 11px 12px; border: 1px solid var(--border); background: var(--bg-0); color: var(--text); border-radius: var(--r-md); font: inherit; min-height: 44px; }
-input:focus-visible, select:focus-visible, button:focus-visible, pre:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
-button { min-height: 44px; border: 1px solid var(--border); padding: 10px 16px; border-radius: var(--r-md); background: var(--primary-bg-strong); color: var(--text); cursor: pointer; white-space: nowrap; }
-button:disabled { opacity: .5; cursor: default; }
-.search { margin-top: 18px; }
-ul { list-style: none; padding: 0; }
-.catalog { max-height: 480px; overflow-y: auto; }
-.catalog li, .skills li, .bindings li { padding: 14px 0; border-top: 1px solid var(--border); display: flex; justify-content: space-between; gap: 16px; }
-.identity { min-width: 0; overflow-wrap: anywhere; }
-.identity p { margin: 6px 0; color: var(--text-dim); font-size: 13px; }
-small, .source { color: var(--text-muted); overflow-wrap: anywhere; font-size: 12px; }
-.actions { display: grid; gap: 8px; align-content: center; flex-shrink: 0; max-width: 240px; }
-.status { padding: 4px 8px; background: var(--bg-0); border: 1px solid var(--border); border-radius: var(--r-md); font-size: 12px; }
-.status.ready { color: #10b981; }
-.blocked, .error { color: #ef4444; }
-.notice { color: var(--text); padding: 12px; border: 1px solid var(--border); border-radius: var(--r-md); }
-.notice a { color: var(--primary); margin-left: 8px; }
-pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 480px; overflow-y: auto; font: 13px var(--font-mono); line-height: 1.6; }
-@media (max-width: 600px) { .card { padding: 14px; } .catalog li, .skills li { flex-direction: column; } .actions { max-width: 100%; } .controls { align-items: stretch; flex-direction: column; } }
-</style>
+<style src="/src/components/plugins/plugin-ui.css"></style>

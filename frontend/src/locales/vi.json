@@ -627,6 +627,9 @@
       "promote": "Chia sẻ toàn hệ thống · cần duyệt",
       "checkUpdate": "Kiểm tra phiên bản mới",
       "reviewFiles": "Xem mã nguồn package",
+      "capabilities": "Khả năng hỗ trợ",
+      "sourceCommit": "Commit đã cố định",
+      "sourceDetails": "Thông tin xác minh nguồn",
       "pinnedSource": "Mở nguồn và giấy phép đã cố định",
       "reviewChanged": "Package đã thay đổi; hãy làm mới và duyệt lại."
     }
