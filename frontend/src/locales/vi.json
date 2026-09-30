@@ -1820,5 +1820,11 @@
   "selectMeetingBodySuffix": ", cuộc họp sẽ hiện ở cột bên trái và tự động stream khi có người tham gia.",
   "selectMeetingBodyPrefix": "Chọn một cuộc họp từ danh sách để xem nội dung trực tiếp theo thời gian thực. Khi agent gọi",
   "descAfter": "; TTS pregen chạy ngầm.",
-  "deleteConfirm": "Bạn có chắc muốn xoá truyện \"{title}\" không?\nCache âm thanh cũng sẽ bị xoá."
+  "deleteConfirm": "Bạn có chắc muốn xoá truyện \"{title}\" không?\nCache âm thanh cũng sẽ bị xoá.",
+  "routeRecovery": {
+    "title": "Không tải được màn hình",
+    "message": "Jarvis có thể vừa được cập nhật hoặc kết nối bị gián đoạn. Hãy lưu nội dung chưa gửi trước khi tải lại màn hình vừa chọn.",
+    "reload": "Tải lại màn hình",
+    "dismiss": "Tiếp tục làm việc"
+  }
 }
