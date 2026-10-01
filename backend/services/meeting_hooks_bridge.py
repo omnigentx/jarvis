@@ -124,3 +124,14 @@ class MeetingEventBridge:
         except Exception as e:
             logger.debug("[MeetingBridge] Poll error: %s", e)
             return []
+
+
+def create_meeting_bridge(manager: MeetingEventManager) -> MeetingEventBridge:
+    """Use the same SQLite identity as the application, including test overrides."""
+    from pathlib import Path
+    from core.database import engine
+
+    database = engine.url.database
+    if not database or database == ":memory:":
+        raise ValueError("Meeting subprocess bridge requires a file-backed database")
+    return MeetingEventBridge(str(Path(database).resolve()), manager)

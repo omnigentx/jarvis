@@ -219,17 +219,16 @@ async def lifespan(app: FastAPI):
     # Wire meeting events → SSE stream (cross-process via SQLite)
     meeting_watcher_task = None
     try:
-        from services.meeting_hooks_bridge import MeetingEventBridge
+        from services.meeting_hooks_bridge import create_meeting_bridge
         from services.meeting_events import meeting_event_manager
 
         state.meeting_event_manager = meeting_event_manager
-        db_path = str(Path("data/jarvis.db").resolve())
-        state.meeting_bridge = MeetingEventBridge(db_path, meeting_event_manager)
+        state.meeting_bridge = create_meeting_bridge(meeting_event_manager)
         state.meeting_bridge.reset_cursor()
         meeting_watcher_task = asyncio.create_task(
             state.meeting_bridge.watch()
         )
-        logger.info("Meeting event bridge watching: %s", db_path)
+        logger.info("Meeting event bridge watching configured application database")
     except Exception as e:
         logger.warning("Failed to start meeting event bridge: %s", e)
     
@@ -591,7 +590,13 @@ async def lifespan(app: FastAPI):
             # Message IDs are deduplicated against the session inbox; this is
             # an event-driven recovery step, not a status polling loop.
             from services.team_work_service import replay_pending_on_startup
-            state.team_replay_task = asyncio.create_task(replay_pending_on_startup())
+            async def reconcile_team_messages():
+                from services.team_inbox_recovery import recover_team_inboxes
+                if state.registry_db:
+                    await recover_team_inboxes(state.registry_db)
+                await replay_pending_on_startup()
+
+            state.team_replay_task = asyncio.create_task(reconcile_team_messages())
 
             # ── Always-on token-persistence hook ──────────────────
             # Attached BEFORE the cron scheduler is wired so any

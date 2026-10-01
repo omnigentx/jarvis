@@ -216,6 +216,10 @@ const kpis = computed(() => [
       </div>
     </div>
 
+    <p role="note" :aria-label="t('tokens.costProvenanceTitle')" class="tokens__desc" style="margin-bottom: var(--space-4, 16px);">
+      {{ t('tokens.costProvenance') }}
+    </p>
+
     <!-- ─── KPI cards ─── -->
     <div class="tokens__kpi">
       <div v-for="k in kpis" :key="k.label" class="card tokens__kpi-card">

@@ -1,0 +1,33 @@
+
+> frontend@0.0.0 test:e2e
+> playwright test tests/e2e/flows/token-provenance.spec.ts tests/e2e/flows/token-usage.spec.ts --project=chromium-desktop --project=chromium-mobile
+
+[WebServer] (node:46695) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+
+Running 8 tests using 6 workers
+
+(node:46700) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:46701) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:46696) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:46699) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:46697) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:46698) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  2 [chromium-desktop] › tests/e2e/flows/token-usage.spec.ts:97:1 › negative control: empty state renders without crashing or extra fetches (513ms)
+  ✓  5 [chromium-mobile] › tests/e2e/flows/token-usage.spec.ts:28:1 › populated view renders totals, per-agent rows, and formatted cost (561ms)
+  ✓  1 [chromium-desktop] › tests/e2e/flows/token-usage.spec.ts:142:1 › changing the period tab re-fetches with the new period query param (560ms)
+  ✓  6 [chromium-desktop] › tests/e2e/flows/token-provenance.spec.ts:6:1 › cost estimate discloses configuration source, fallback and historical limits (606ms)
+  ✓  4 [chromium-desktop] › tests/e2e/flows/token-usage.spec.ts:28:1 › populated view renders totals, per-agent rows, and formatted cost (670ms)
+(node:46747) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  3 [chromium-mobile] › tests/e2e/flows/token-provenance.spec.ts:6:1 › cost estimate discloses configuration source, fallback and historical limits (874ms)
+  ✓  7 [chromium-mobile] › tests/e2e/flows/token-usage.spec.ts:142:1 › changing the period tab re-fetches with the new period query param (463ms)
+  ✓  8 [chromium-mobile] › tests/e2e/flows/token-usage.spec.ts:97:1 › negative control: empty state renders without crashing or extra fetches (547ms)
+
+  8 passed (2.8s)

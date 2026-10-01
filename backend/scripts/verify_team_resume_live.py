@@ -20,6 +20,7 @@ async def main() -> None:
     parser.add_argument("--venv", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--model", default="openai.coding-agent")
+    parser.add_argument("--recover-inbox", action="store_true", help="Verify direct worker wake and startup inbox recovery")
     args = parser.parse_args()
     backend = Path(__file__).resolve().parents[1]
     root = Path(tempfile.mkdtemp(prefix="jarvis-live-resume-"))
@@ -212,12 +213,21 @@ async def main() -> None:
         )
 
         cursor = len(events)
-        live = json.loads(
-            await srv.resume_team_tool(
-                sid, "Output LIVE and the original secret marker from the first task."
+        if args.recover_inbox:
+            from fast_agent.spawn.message_bus import MessageBus
+            from fast_agent.spawn.servers._team_helpers import wake_team_agent
+            worker = next(n for n in names if "[PM]" not in n)
+            env = before[worker]["original_config"]["env_vars"]
+            MessageBus(env["TEAM_MESSAGES_DIR"]).send(
+                from_name="Dashboard", to_name=worker,
+                content="Output LIVE and the original secret marker from the first task.",
             )
-        )
-        assert live["queued_agents"] == 2 and live["resumed_agents"] == 0, live
+            live = {"wake": wake_team_agent(sid, worker, before[worker]["run_id"])}
+        else:
+            live = json.loads(await srv.resume_team_tool(
+                sid, "Output LIVE and the original secret marker from the first task."
+            ))
+            assert live["queued_agents"] == 2 and live["resumed_agents"] == 0, live
         response = await wait_stage(names, "LIVE", cursor)
         assert all(seed in value for value in response.values()), response
         for name, record in before.items():
@@ -249,20 +259,34 @@ async def main() -> None:
             for n in names
         )
         cursor = len(events)
-        restored = json.loads(
-            await srv.resume_team_tool(
-                sid,
-                "Output RESTORED and the original secret marker from the first task.",
-            )
-        )
-        assert restored["resumed_agents"] == 2, restored
+        if args.recover_inbox:
+            from services.team_inbox_recovery import recover_team_inboxes
+            for name in names:
+                env = before[name]["original_config"]["env_vars"]
+                MessageBus(env["TEAM_MESSAGES_DIR"]).send(
+                    from_name="Dashboard", to_name=name,
+                    content="Output RESTORED and the original secret marker from the first task.",
+                )
+            await recover_team_inboxes(bridge._registry_db)
+            restored = {"recovery": "startup-inbox-scan"}
+        else:
+            restored = json.loads(await srv.resume_team_tool(
+                sid, "Output RESTORED and the original secret marker from the first task."
+            ))
+            assert restored["resumed_agents"] == 2, restored
         response = await wait_stage(names, "RESTORED", cursor)
         assert all(seed in value for value in response.values()), response
         current = get_team_session(sid)
         assert set(current.agents) == set(names)
         assert current.workspace == session.workspace
         for name in names:
-            assert current.agents[name]["run_id"] != before[name]["run_id"]
+            latest = srv._registry.get_latest(before[name]["run_id"])
+            # Automatic inbox resume keeps session slots as chain anchors;
+            # get_team_status/get_team_result resolve get_latest, unlike the
+            # explicit resume_team tool which rewrites the slot directly.
+            assert latest and latest.run_id != before[name]["run_id"]
+            assert latest.session_id == sid and latest.agent_name == name
+            assert AgentChannel.is_alive(name, session_id=sid, run_id=latest.run_id)
         report["stages"].append(
             {"stage": "dead_resume", "tool_result": restored, "responses": response}
         )

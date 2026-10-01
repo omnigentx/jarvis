@@ -1,0 +1,19 @@
+{
+  "SCRUM-50": [
+    "FAILED tests/test_plugin_error_transport.py::test_wire_result_error_semantics[payload0-True]",
+    "FAILED tests/test_plugin_error_transport.py::test_wire_result_error_semantics[payload1-True]",
+    "2 failed, 2 passed in 0.13s"
+  ],
+  "SCRUM-45/46": [
+    "FAILED tests/test_runtime_boundary_regressions.py::test_meeting_bridge_uses_canonical_engine_database",
+    "FAILED tests/test_runtime_boundary_regressions.py::test_socket_shutdown_does_not_wait_for_idle_child_disconnect",
+    "2 failed, 1 warning in 0.63s"
+  ],
+  "socket-restart": [
+    "FAILED tests/test_runtime_boundary_regressions.py::test_socket_can_restart_same_instance",
+    "1 failed, 2 passed, 1 warning in 0.13s"
+  ],
+  "cost-provenance": [
+    "1 failed"
+  ]
+}

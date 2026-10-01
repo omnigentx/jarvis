@@ -211,6 +211,8 @@ class AgentActivity(Base):
 class TokenUsageRecord(Base):
     """Each record = 1 LLM API call (1 TurnUsage). Persisted for historical analysis."""
     __tablename__ = "token_usage"
+
+    source_event_id = Column(String(100), nullable=True)
     
     id = Column(Integer, primary_key=True, autoincrement=True)
     agent_name = Column(String(100), nullable=False, index=True)
@@ -1047,6 +1049,7 @@ def init_db():
             "ALTER TABLE memory_records ADD COLUMN entities_json TEXT",
             "ALTER TABLE memory_records ADD COLUMN relations_json TEXT",
             "ALTER TABLE token_usage ADD COLUMN category VARCHAR(40) DEFAULT 'agent'",
+            "ALTER TABLE token_usage ADD COLUMN source_event_id VARCHAR(100)",
         ]
         for sql in migrations:
             try:
@@ -1055,6 +1058,13 @@ def init_db():
             except Exception:
                 # Column already exists, skip
                 conn.rollback()
+
+    # Nullable legacy IDs do not collide; new source events are exactly-once.
+    with engine.begin() as conn:
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_token_usage_source_event "
+            "ON token_usage(source_event_id)"
+        ))
 
     # Memory degraded-search index (FTS5). Single virtual table fed from both
     # episodic_documents.content and memory_records.normalized_content by the

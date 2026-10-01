@@ -601,3 +601,27 @@ def test_2026_05_19_incident_sequence_emits_exactly_one_notify(
         f"machine must gate on orch_running transition, not "
         f"team_open."
     )
+
+
+def test_same_run_resumed_event_reopens_worker_cycle(bridge,fake_registry,monkeypatch):
+    """Replay idle -> resumed -> idle from the live Dev injection trace."""
+    pm=_member('pm',role='pm',status='idle',session_id='s',agent_name='Peyton')
+    dev=_member('dev',role='dev',status='idle',session_id='s',agent_name='Emery')
+    fake_registry.set_members([pm,dev])
+    monkeypatch.setattr(bridge,'_find_orchestrator',lambda *a,**k:pm)
+    def update(rid,data):
+        fake_registry.get_record(rid).update(data)
+    fake_registry.upsert_record.side_effect=update
+    bridge._save_cycle_state('s',False,False,False)
+    bridge.process_event(json.dumps({'event_type':'resumed','agent_name':'Emery','run_id':'dev','data':{},'timestamp':1}))
+    assert bridge._load_cycle_state('s')['worker_open'] is True
+    bridge.process_event(json.dumps({'event_type':'idle','agent_name':'Emery','run_id':'dev','data':{},'timestamp':2}))
+    assert len(bridge._probes['worker_notify'])==1
+    bridge.process_event(json.dumps({'event_type':'idle','agent_name':'Emery','run_id':'dev','data':{},'timestamp':2}))
+    assert len(bridge._probes['worker_notify'])==1
+
+
+def test_idle_report_does_not_claim_goal_completion(bridge):
+    text=bridge._format_worker_status_report([{'agent_name':'Dev','status':'idle','result':'needs_approval'}],'PM')
+    assert 'All members have finished' not in text
+    assert 'needs_approval' in text

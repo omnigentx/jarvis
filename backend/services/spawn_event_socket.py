@@ -53,6 +53,8 @@ class SpawnEventSocketServer:
         self._bridge = bridge
         self._server: asyncio.AbstractServer | None = None
         self._client_count = 0
+        self._writers: set[asyncio.StreamWriter] = set()
+        self._stopping = False
         # Inode of the file we bound at start() — stop() compares before
         # unlinking, so we never wipe another backend's freshly-bound file.
         # (See ROOT_CAUSE: 4 concurrent backends silently wiping each
@@ -75,6 +77,7 @@ class SpawnEventSocketServer:
         N-1 was actively listening on, orphaning every subprocess that
         had already connected to N-1.
         """
+        self._stopping = False
         socket_file = Path(self._socket_path)
         socket_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -127,13 +130,16 @@ class SpawnEventSocketServer:
         writer: asyncio.StreamWriter,
     ) -> None:
         """Handle a connected MCP subprocess client."""
+        self._writers.add(writer)
+        if self._stopping:
+            writer.close()
         self._client_count += 1
         client_id = self._client_count
         event_count = 0
         logger.info("[SOCKET] Client #%d connected", client_id)
 
         try:
-            while True:
+            while not self._stopping:
                 try:
                     line = await reader.readline()
                 except Exception as read_err:
@@ -163,6 +169,7 @@ class SpawnEventSocketServer:
         except Exception as e:
             logger.error("[SOCKET] Client #%d unhandled error after %d events: %s", client_id, event_count, e, exc_info=True)
         finally:
+            self._writers.discard(writer)
             writer.close()
             try:
                 await writer.wait_closed()
@@ -183,8 +190,14 @@ class SpawnEventSocketServer:
         socket, breaking every client that had connected to the newer
         instance.
         """
+        self._stopping = True
         if self._server:
             self._server.close()
+            # Python 3.13 waits for client transports too. Idle children keep
+            # their event socket open until shutdown later in the lifespan.
+            # Close our transports before waiting, so teardown cannot deadlock.
+            for writer in tuple(self._writers):
+                writer.close()
             await self._server.wait_closed()
             self._server = None
             logger.info("[SOCKET] Server stopped")

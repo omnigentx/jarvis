@@ -1,0 +1,10 @@
+Command: npm run test:unit
+1..244
+# tests 244
+# suites 0
+# pass 244
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 470.180334

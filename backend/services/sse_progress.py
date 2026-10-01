@@ -201,6 +201,7 @@ def _persist_and_broadcast_token_usage(
         db = next(get_db())
         try:
             record = TokenUsageRecord(
+                source_event_id=tokens.get("source_event_id"),
                 agent_name=agent_name,
                 run_id=run_id,
                 category=category,
@@ -215,7 +216,17 @@ def _persist_and_broadcast_token_usage(
                 est_cost=est,
             )
             db.add(record)
-            db.commit()
+            try:
+                db.commit()
+            except Exception as exc:
+                from sqlalchemy.exc import IntegrityError
+                db.rollback()
+                identity = tokens.get("source_event_id")
+                if isinstance(exc, IntegrityError) and identity and db.query(
+                    TokenUsageRecord.id
+                ).filter_by(source_event_id=identity).first():
+                    return  # Duplicate replay: neither another row nor another SSE event.
+                raise
         finally:
             db.close()
         

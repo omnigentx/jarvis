@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -94,6 +95,7 @@ async def test_path_a_broadcasts_started_event_immediately():
             patch.dict("os.environ", {"SPAWN_PROJECT_DIR": "/tmp/fake-project"}):
         mock_asm.broadcast.side_effect = _capture
         mock_bus = MagicMock()
+        mock_bus.send.return_value = SimpleNamespace(message_id="accepted-message")
         mock_bus_cls.return_value = mock_bus
 
         result = await _inject_via_message_bus(
@@ -173,21 +175,22 @@ async def test_path_a_inject_does_not_fail_when_wake_raises():
     }
 
     with patch("routes.inject.activity_stream_manager"), \
-            patch("fast_agent.spawn.message_bus.MessageBus"), \
+            patch("fast_agent.spawn.message_bus.MessageBus") as bus_cls, \
             patch(
                 "fast_agent.spawn.servers._team_helpers.wake_team_agent",
                 side_effect=RuntimeError("registry not loaded"),
             ), \
             patch.dict("os.environ", {"SPAWN_PROJECT_DIR": "/tmp/fake-project"}):
-        # Should NOT raise — wake failure is logged and swallowed.
+        # Message stays durable, but failed wake must be visible.
+        bus_cls.return_value.send.return_value = SimpleNamespace(message_id="accepted-message")
         result = await _inject_via_message_bus(
             agent_name="Bailey [PM]",
             message="ping",
             spawn_record=spawn_record,
         )
 
-    assert result.status == "queued", (
-        "Wake failure should not block the inject — the message is "
+    assert result.status == "error", (
+        "Wake failure must be visible although the message is "
         "already in the inbox and will be picked up on the next agent "
-        "trigger. Inject API must still return queued."
+        "trigger. Inject API must not claim processing started."
     )
