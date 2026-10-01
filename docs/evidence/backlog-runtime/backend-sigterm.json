@@ -1,0 +1,21 @@
+{
+  "rounds": [
+    {
+      "restart_round": 1,
+      "returncode": -15,
+      "sigterm_seconds": 0.755,
+      "client_eof": true,
+      "socket_removed": true,
+      "forced_kill": false
+    },
+    {
+      "restart_round": 2,
+      "returncode": -15,
+      "sigterm_seconds": 0.529,
+      "client_eof": true,
+      "socket_removed": true,
+      "forced_kill": false
+    }
+  ],
+  "passed": true
+}

@@ -117,3 +117,42 @@ def test_model_switch_keeps_per_call_cache_and_reasoning(tmp_path, monkeypatch):
         assert sum(x.cache_read_tokens for x in records) == 160
         assert sum(x.reasoning_tokens for x in records) == 20
     engine.dispose()
+
+
+def test_usage_identity_migration_preserves_legacy_rows(tmp_path, monkeypatch):
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import sessionmaker
+    import core.database as db
+
+    engine = create_engine("sqlite:///" + str(tmp_path / "legacy.db"))
+    monkeypatch.setattr(db, "engine", engine)
+    monkeypatch.setattr(db, "SessionLocal", sessionmaker(bind=engine))
+    db.Base.metadata.create_all(engine)
+    with db.SessionLocal() as session:
+        session.add_all(
+            [
+                db.TokenUsageRecord(
+                    agent_name="Legacy",
+                    run_id="old",
+                    model="old-model",
+                    input_tokens=100,
+                    output_tokens=10,
+                    total_tokens=110,
+                )
+                for _ in range(2)
+            ]
+        )
+        session.commit()
+    with engine.begin() as connection:
+        connection.execute(text("ALTER TABLE token_usage DROP COLUMN source_event_id"))
+    db.init_db()
+    db.init_db()  # Repeated boot must be idempotent.
+    with db.SessionLocal() as session:
+        records = session.query(db.TokenUsageRecord).all()
+        assert len(records) == 2
+        assert all(x.source_event_id is None for x in records)
+        assert sum(x.total_tokens for x in records) == 220
+    with engine.connect() as connection:
+        indices = connection.execute(text("PRAGMA index_list(token_usage)")).all()
+        assert any(x[1] == "ix_token_usage_source_event" and x[2] == 1 for x in indices)
+    engine.dispose()
