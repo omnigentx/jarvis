@@ -1,0 +1,8 @@
+2026-10-01 22:00:12,497 - server - INFO - Spawn event socket ready: /tmp/jarvis_0136927f/spawn_events.sock
+🚀 Jarvis backend ready | agents=8 | mcp_cached=4
+2026-10-01 22:00:41,674 - spawn_activity - INFO - [SOCKET] Server stopped
+2026-10-01 22:00:41,677 - server - INFO - FastAgent shutdown.
+2026-10-01 22:00:43,369 - server - INFO - Spawn event socket ready: /tmp/jarvis_0136927f/spawn_events.sock
+🚀 Jarvis backend ready | agents=8 | mcp_cached=4
+2026-10-01 22:01:18,044 - spawn_activity - INFO - [SOCKET] Server stopped
+2026-10-01 22:01:18,047 - server - INFO - FastAgent shutdown.

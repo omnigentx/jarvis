@@ -34,6 +34,8 @@ class InjectResponse(BaseModel):
     agent_name: str
     path: str  # "message_bus" | "resume_with_context" | "generate"
     response: str | None = None
+    message_id: str | None = None
+    wake_status: str | None = None
 
 
 # ── Statuses where agent process is alive and can read MessageBus ─────────
@@ -256,25 +258,9 @@ async def _inject_via_message_bus(
             messages_dir.mkdir(parents=True, exist_ok=True)
 
         bus = MessageBus(messages_dir=str(messages_dir))
-        bus.send(from_name="Dashboard", to_name=agent_name, content=message)
+        queued = bus.send(from_name="Dashboard", to_name=agent_name, content=message)
 
         logger.info("[INJECT] MessageBus: Dashboard → %s (queued)", agent_name)
-
-        # ── KNOWN GAP: token rows for this inject's LLM calls will carry
-        # an empty ``run_id`` (no correlation back to this request). See
-        # https://github.com/omnigentx/jarvis/issues/17.
-        #
-        # Why: setting ``current_run_id`` ContextVar here is useless. The
-        # LLM call that processes this inject fires in a DIFFERENT
-        # asyncio task — the alive agent's inbox-watcher loop running
-        # inside the spawned subprocess. ContextVar values don't
-        # propagate across that task boundary.
-        #
-        # The token hook still writes its row (with empty run_id) rather
-        # than silently dropping the LLM call. Dashboard per-conversation
-        # cost will be inaccurate for Path A injects until issue #17
-        # ships a proper fix (MessageBus context_meta → InboxWatcherHook
-        # → ContextVar bridging).
 
         # ── Wake agent NOW so it picks up the inbox message immediately ──
         # Without this, the agent only sees the message on the next
@@ -284,26 +270,28 @@ async def _inject_via_message_bus(
         # and Path C both kick off a fresh LLM call as part of their
         # flow; Path A relies on the alive agent's inbox watcher, so we
         # MUST send an explicit ``wake`` signal here for parity.
-        try:
-            from fast_agent.spawn.servers._team_helpers import (
-                auto_wake_if_idle, wake_team_agent,
-            )
-            if session_id:
-                run_id = spawn_record.get("run_id")
-                if not run_id:
-                    raise ValueError("Team agent run identity is missing")
-                wake_team_agent(session_id, agent_name, run_id)
-            else:
-                auto_wake_if_idle(agent_name)
-        except Exception as _wake_exc:
-            # Wake is best-effort — failure here doesn't fail the inject
-            # itself (the message is already in the inbox). Log loudly so
-            # we notice when the wake path regresses.
-            logger.warning(
-                "[INJECT] MessageBus: auto_wake_if_idle(%s) failed: %s. "
-                "Message is queued in inbox but agent will not start "
-                "processing until next external trigger.",
-                agent_name, _wake_exc,
+        wake_status = "paused" if spawn_record.get("status") == "paused" else "scheduled"
+        if wake_status != "paused":
+            try:
+                from fast_agent.spawn.servers._team_helpers import auto_wake_if_idle, wake_team_agent
+                if session_id:
+                    run_id = spawn_record.get("run_id")
+                    if not run_id:
+                        raise ValueError("Team agent run identity is missing")
+                    result = wake_team_agent(session_id, agent_name, run_id)
+                    wake_status = result if isinstance(result, str) else "scheduled"
+                else:
+                    auto_wake_if_idle(agent_name)
+            except Exception:
+                wake_status = "failed"
+                logger.exception("[INJECT] Message %s saved, wake failed for %s", queued.message_id, agent_name)
+        if wake_status in {"failed", "paused"}:
+            return InjectResponse(
+                status="error" if wake_status == "failed" else "queued",
+                agent_name=agent_name, path="message_bus",
+                message_id=queued.message_id, wake_status=wake_status,
+                response=("Message saved; agent could not be woken. It remains pending; do not resend."
+                          if wake_status == "failed" else "Message saved; agent remains paused."),
             )
 
         # ── Broadcast ``started`` so the dashboard reflects active state ──
@@ -325,6 +313,8 @@ async def _inject_via_message_bus(
             status="queued",
             agent_name=agent_name,
             path="message_bus",
+            message_id=queued.message_id,
+            wake_status=wake_status,
             response=None,
         )
     except Exception as e:

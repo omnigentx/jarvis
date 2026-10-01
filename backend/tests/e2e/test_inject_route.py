@@ -20,6 +20,7 @@ internals of the three paths.
 from __future__ import annotations
 
 import os
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -114,7 +115,7 @@ async def test_inject_running_agent_queues_via_messagebus(monkeypatch, tmp_path)
 
     # Capture MessageBus.send() call without touching the real class
     bus_instance = MagicMock()
-    bus_instance.send = MagicMock()
+    bus_instance.send = MagicMock(return_value=SimpleNamespace(message_id="accepted-message"))
     bus_ctor = MagicMock(return_value=bus_instance)
     monkeypatch.setattr(mb_mod, "MessageBus", bus_ctor)
 
@@ -160,6 +161,7 @@ async def test_inject_idle_team_member_uses_scoped_inbox_not_direct_resume(
     registry.find_by_name.return_value = [record]
     monkeypatch.setattr(state, "registry_db", registry)
     bus = MagicMock()
+    bus.send.return_value = SimpleNamespace(message_id="accepted-message")
     monkeypatch.setattr(mb_mod, "MessageBus", MagicMock(return_value=bus))
     wake = MagicMock(return_value="scheduled")
     monkeypatch.setattr(team_helpers, "wake_team_agent", wake)

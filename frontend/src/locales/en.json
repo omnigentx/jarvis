@@ -1605,6 +1605,8 @@
     "allTime": "all time",
     "lastPeriod": "last {p}",
     "descLead": "Aggregated from",
+    "costProvenanceTitle": "Cost provenance",
+    "costProvenance": "USD is estimated from config/model_pricing.yaml, not a provider invoice. Model aliases can match a generic fallback rate; the underlying provider price is unverified. Historical spawn totals may be undercounted; older rows are not rebuilt without validated source traces.",
     "descTail": "SSE events. Mono-numeric breakdown by agent / model / tool.",
     "periodAll": "All",
     "kpiTotalTokens": "TOTAL TOKENS",

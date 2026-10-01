@@ -250,7 +250,7 @@ class SpawnProgressBridge:
         # whole team stops running. Idempotent via DB event_id PK.
         # See _on_member_state_event docstring for the state machine.
         if run_id and event_type_str in {
-            "started", "result", "idle", "agent_completed",
+            "started", "resumed", "agent_resumed", "agent_paused", "result", "idle", "agent_completed",
             "error", "timeout", "cancelled", "killed",
         }:
             self._on_member_state_event(run_id)
@@ -790,80 +790,9 @@ class SpawnProgressBridge:
             logger.warning("Failed to upsert spawn record: %s", e)
 
     def _handle_token_usage(self, agent_name: str, data: dict, raw: dict) -> None:
-        """Persist and broadcast DELTA token usage from spawned child processes.
-
-        The subprocess reports cumulative totals that grow with each LLM call.
-        We track the last-seen cumulative values per (agent_name, run_id) and
-        only forward the DELTA to avoid double-counting on the dashboard.
-        """
-        try:
-            from services.sse_progress import _persist_and_broadcast_token_usage
-
-            run_id = raw.get("run_id") or data.get("run_id") or ""
-            key = f"{agent_name}:{run_id}"
-
-            # Current cumulative from subprocess
-            cum_input = data.get("input_tokens", 0)
-            cum_output = data.get("output_tokens", 0)
-            cum_cache_hit = data.get("cache_hit_tokens", 0)
-            cum_cache_read = data.get("cache_read_tokens", 0)
-            cum_cache_write = data.get("cache_write_tokens", 0)
-            cum_reasoning = data.get("reasoning_tokens", 0)
-
-            # Get previous cumulative values
-            prev = self._token_accumulators.get(key, {})
-            prev_input = prev.get("input", 0)
-            prev_output = prev.get("output", 0)
-            prev_cache_hit = prev.get("cache_hit", 0)
-            prev_cache_read = prev.get("cache_read", 0)
-            prev_cache_write = prev.get("cache_write", 0)
-            prev_reasoning = prev.get("reasoning", 0)
-
-            # Calculate deltas (clamp to 0 in case of reset)
-            delta_input = max(0, cum_input - prev_input)
-            delta_output = max(0, cum_output - prev_output)
-            delta_cache_hit = max(0, cum_cache_hit - prev_cache_hit)
-            delta_cache_read = max(0, cum_cache_read - prev_cache_read)
-            delta_cache_write = max(0, cum_cache_write - prev_cache_write)
-            delta_reasoning = max(0, cum_reasoning - prev_reasoning)
-
-            # Update accumulator with current cumulative values
-            self._token_accumulators[key] = {
-                "input": cum_input,
-                "output": cum_output,
-                "cache_hit": cum_cache_hit,
-                "cache_read": cum_cache_read,
-                "cache_write": cum_cache_write,
-                "reasoning": cum_reasoning,
-            }
-
-            # Skip if no delta (duplicate event)
-            if delta_input == 0 and delta_output == 0:
-                return
-
-            tokens = {
-                "input": delta_input,
-                "output": delta_output,
-                "total": delta_input + delta_output,
-                "model": data.get("model", "unknown"),
-                "cache_hit": delta_cache_hit,
-                "cache_read": delta_cache_read,
-                "cache_write": delta_cache_write,
-                "reasoning": delta_reasoning,
-            }
-            _persist_and_broadcast_token_usage(agent_name, run_id, tokens)
-            logger.info(
-                "[TOKEN] Spawned agent %s: model=%s Δin=%d Δout=%d Δcache=%d (cum: in=%d out=%d)",
-                agent_name,
-                tokens["model"],
-                delta_input,
-                delta_output,
-                delta_cache_hit + delta_cache_read,
-                cum_input,
-                cum_output,
-            )
-        except Exception as e:
-            logger.warning("Failed to handle spawned token_usage: %s", e)
+        """The isolated runner emits turns[-1]: one call, never cumulative usage."""
+        from services.spawn_token_usage import persist_spawn_usage
+        persist_spawn_usage(agent_name, data, raw)
 
     def _handle_runtime_config(self, agent_name: str, data: dict, raw: dict) -> None:
         """Persist runtime-resolved config from a spawned agent.
@@ -1989,7 +1918,10 @@ class SpawnProgressBridge:
                 f"{len(active_meetings)} meeting(s) still open. Team is NOT done."
             )
         else:
-            header = "📋 **Team Status Update** — All members have finished."
+            header = (
+                "📋 **Team Status Update** — All members have stopped running. "
+                "Idle may mean waiting for approval or input; review outcomes before declaring completion."
+            )
         lines = [header, "", "| Member | Status | Summary |", "|--------|--------|---------|"]
         for w in workers:
             name = w.get("agent_name", "?")

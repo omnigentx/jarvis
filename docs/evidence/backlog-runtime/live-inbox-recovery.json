@@ -1,0 +1,45 @@
+{
+  "model": "openai.coding-agent",
+  "started_at": 1790865252.46969,
+  "stages": [
+    {
+      "stage": "initial",
+      "responses": {
+        "Sam [DEV]": "INITIAL MEMORY-71a838065f",
+        "Finley [PM]": "INITIAL MEMORY-71a838065f"
+      },
+      "run_ids": {
+        "Sam [DEV]": "55bca888",
+        "Finley [PM]": "b16eef20"
+      }
+    },
+    {
+      "stage": "live_resume",
+      "tool_result": {
+        "wake": "signaled"
+      },
+      "responses": {
+        "Sam [DEV]": "LIVE MEMORY-71a838065f",
+        "Finley [PM]": "LIVE MEMORY-71a838065f"
+      }
+    },
+    {
+      "stage": "dead_resume",
+      "tool_result": {
+        "recovery": "startup-inbox-scan"
+      },
+      "responses": {
+        "Sam [DEV]": "RESTORED MEMORY-71a838065f",
+        "Finley [PM]": "RESTORED MEMORY-71a838065f"
+      }
+    }
+  ],
+  "session_id": "25e825d6",
+  "agents": [
+    "Sam [DEV]",
+    "Finley [PM]"
+  ],
+  "status": "passed",
+  "duration_seconds": 20.43,
+  "cleanup_passed": true
+}

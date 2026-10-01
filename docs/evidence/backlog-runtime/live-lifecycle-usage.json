@@ -1,0 +1,256 @@
+[
+  {
+    "timestamp": 1790865252.8594098,
+    "agent_name": "Sam [DEV]",
+    "event_type": "started",
+    "run_id": "55bca888",
+    "data": {}
+  },
+  {
+    "timestamp": 1790865252.8594089,
+    "agent_name": "Finley [PM]",
+    "event_type": "started",
+    "run_id": "b16eef20",
+    "data": {}
+  },
+  {
+    "timestamp": 1790865255.903611,
+    "agent_name": "Finley [PM]",
+    "event_type": "token_usage",
+    "run_id": "b16eef20",
+    "data": {
+      "model": "coding-agent",
+      "input_tokens": 4378,
+      "output_tokens": 12,
+      "total_tokens": 4390,
+      "cache_hit_tokens": 0,
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0
+    }
+  },
+  {
+    "timestamp": 1790865255.911148,
+    "agent_name": "Finley [PM]",
+    "event_type": "idle",
+    "run_id": "b16eef20",
+    "data": {}
+  },
+  {
+    "timestamp": 1790865255.981696,
+    "agent_name": "Sam [DEV]",
+    "event_type": "token_usage",
+    "run_id": "55bca888",
+    "data": {
+      "model": "coding-agent",
+      "input_tokens": 4404,
+      "output_tokens": 12,
+      "total_tokens": 4416,
+      "cache_hit_tokens": 0,
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0
+    }
+  },
+  {
+    "timestamp": 1790865255.988318,
+    "agent_name": "Sam [DEV]",
+    "event_type": "idle",
+    "run_id": "55bca888",
+    "data": {}
+  },
+  {
+    "timestamp": 1790865256.005166,
+    "agent_name": "Finley [PM]",
+    "event_type": "resumed",
+    "run_id": "b16eef20",
+    "data": {}
+  },
+  {
+    "timestamp": 1790865259.454029,
+    "agent_name": "Finley [PM]",
+    "event_type": "token_usage",
+    "run_id": "b16eef20",
+    "data": {
+      "model": "coding-agent",
+      "input_tokens": 4503,
+      "output_tokens": 50,
+      "total_tokens": 4553,
+      "cache_hit_tokens": 0,
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0
+    }
+  },
+  {
+    "timestamp": 1790865259.458817,
+    "agent_name": "Finley [PM]",
+    "event_type": "idle",
+    "run_id": "b16eef20",
+    "data": {}
+  },
+  {
+    "timestamp": 1790865259.509811,
+    "agent_name": "Sam [DEV]",
+    "event_type": "resumed",
+    "run_id": "55bca888",
+    "data": {}
+  },
+  {
+    "timestamp": 1790865263.538412,
+    "agent_name": "Sam [DEV]",
+    "event_type": "token_usage",
+    "run_id": "55bca888",
+    "data": {
+      "model": "coding-agent",
+      "input_tokens": 4472,
+      "output_tokens": 39,
+      "total_tokens": 4511,
+      "cache_hit_tokens": 1792,
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0
+    }
+  },
+  {
+    "timestamp": 1790865263.545859,
+    "agent_name": "Sam [DEV]",
+    "event_type": "idle",
+    "run_id": "55bca888",
+    "data": {}
+  },
+  {
+    "timestamp": 1790865263.5689821,
+    "agent_name": "Finley [PM]",
+    "event_type": "resumed",
+    "run_id": "b16eef20",
+    "data": {}
+  },
+  {
+    "timestamp": 1790865267.097743,
+    "agent_name": "Finley [PM]",
+    "event_type": "token_usage",
+    "run_id": "b16eef20",
+    "data": {
+      "model": "coding-agent",
+      "input_tokens": 4628,
+      "output_tokens": 52,
+      "total_tokens": 4680,
+      "cache_hit_tokens": 0,
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0
+    }
+  },
+  {
+    "timestamp": 1790865267.1069891,
+    "agent_name": "Finley [PM]",
+    "event_type": "idle",
+    "run_id": "b16eef20",
+    "data": {}
+  },
+  {
+    "timestamp": 1790865267.431922,
+    "agent_name": "pm",
+    "event_type": "result",
+    "run_id": "b16eef20",
+    "data": {}
+  },
+  {
+    "timestamp": 1790865267.445947,
+    "agent_name": "dev",
+    "event_type": "result",
+    "run_id": "55bca888",
+    "data": {}
+  },
+  {
+    "timestamp": 1790865267.771262,
+    "agent_name": "Finley [PM]",
+    "event_type": "started",
+    "run_id": "27a6bfb3",
+    "data": {}
+  },
+  {
+    "timestamp": 1790865267.771986,
+    "agent_name": "Sam [DEV]",
+    "event_type": "started",
+    "run_id": "0e44472b",
+    "data": {}
+  },
+  {
+    "timestamp": 1790865270.9323251,
+    "agent_name": "Sam [DEV]",
+    "event_type": "token_usage",
+    "run_id": "0e44472b",
+    "data": {
+      "model": "coding-agent",
+      "input_tokens": 4921,
+      "output_tokens": 14,
+      "total_tokens": 4935,
+      "cache_hit_tokens": 0,
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0
+    }
+  },
+  {
+    "timestamp": 1790865270.941472,
+    "agent_name": "Sam [DEV]",
+    "event_type": "idle",
+    "run_id": "0e44472b",
+    "data": {}
+  },
+  {
+    "timestamp": 1790865271.064554,
+    "agent_name": "Finley [PM]",
+    "event_type": "token_usage",
+    "run_id": "27a6bfb3",
+    "data": {
+      "model": "coding-agent",
+      "input_tokens": 4943,
+      "output_tokens": 14,
+      "total_tokens": 4957,
+      "cache_hit_tokens": 0,
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0
+    }
+  },
+  {
+    "timestamp": 1790865271.071619,
+    "agent_name": "Finley [PM]",
+    "event_type": "idle",
+    "run_id": "27a6bfb3",
+    "data": {}
+  },
+  {
+    "timestamp": 1790865271.0717728,
+    "agent_name": "Finley [PM]",
+    "event_type": "resumed",
+    "run_id": "27a6bfb3",
+    "data": {}
+  },
+  {
+    "timestamp": 1790865272.864917,
+    "agent_name": "Finley [PM]",
+    "event_type": "token_usage",
+    "run_id": "27a6bfb3",
+    "data": {
+      "model": "coding-agent",
+      "input_tokens": 5072,
+      "output_tokens": 14,
+      "total_tokens": 5086,
+      "cache_hit_tokens": 2816,
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 0
+    }
+  },
+  {
+    "timestamp": 1790865272.870544,
+    "agent_name": "Finley [PM]",
+    "event_type": "idle",
+    "run_id": "27a6bfb3",
+    "data": {}
+  }
+]

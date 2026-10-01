@@ -1496,6 +1496,8 @@
     "allTime": "toàn thời gian",
     "lastPeriod": "{p} gần nhất",
     "descLead": "Tổng hợp từ",
+    "costProvenanceTitle": "Nguồn ước tính chi phí",
+    "costProvenance": "USD được ước tính từ config/model_pricing.yaml, không phải hóa đơn nhà cung cấp. Alias model có thể dùng giá fallback chung; giá của model thực tế chưa được xác minh. Tổng token spawn cũ có thể bị đếm thiếu; chỉ dựng lại khi có trace nguồn đã kiểm chứng.",
     "descTail": "sự kiện SSE. Bóc tách theo agent / model / tool.",
     "periodAll": "Tất cả",
     "kpiTotalTokens": "TỔNG TOKEN",

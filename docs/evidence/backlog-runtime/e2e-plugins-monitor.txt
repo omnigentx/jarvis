@@ -1,0 +1,31 @@
+
+> frontend@0.0.0 test:e2e
+> playwright test tests/e2e/flows/team-monitor-v2.spec.ts tests/e2e/flows/settings-plugins.spec.ts
+
+[WebServer] (node:42756) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+
+Running 8 tests using 6 workers
+
+(node:42762) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:42758) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:42760) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:42761) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:42757) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:42759) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  3 [chromium-desktop] › tests/e2e/flows/team-monitor-v2.spec.ts:26:1 › team monitor v2 — terminal renders persisted history + SSE delta turn (934ms)
+  ✓  2 [chromium-desktop] › tests/e2e/flows/settings-plugins.spec.ts:45:1 › non-blocking plugin review does not claim agent paused or resumed (989ms)
+  ✓  1 [chromium-desktop] › tests/e2e/flows/settings-plugins.spec.ts:86:1 › reviewed Ready MCP has no false blocker and shows explicit target placeholder (983ms)
+  ✓  4 [chromium-desktop] › tests/e2e/flows/settings-plugins.spec.ts:57:1 › MCP policy uses the host profile and clears entered credentials after save (1.1s)
+  ✓  6 [chromium-desktop] › tests/e2e/flows/settings-plugins.spec.ts:10:3 › plugin content review and truthful activation (mobile) (1.2s)
+  ✓  5 [chromium-desktop] › tests/e2e/flows/settings-plugins.spec.ts:10:3 › plugin content review and truthful activation (desktop) (1.3s)
+  ✓  7 [chromium-desktop] › tests/e2e/flows/team-monitor-v2.spec.ts:72:1 › team monitor shows a pushed requirement revision without polling (495ms)
+  ✓  8 [chromium-desktop] › tests/e2e/flows/team-monitor-v2.spec.ts:84:1 › team monitor v2 — Show full expands truncated assistant turn (532ms)
+
+  8 passed (3.0s)

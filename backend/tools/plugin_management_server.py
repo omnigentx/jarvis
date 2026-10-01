@@ -1,10 +1,12 @@
 """Scoped, human-reviewed runtime plugin tools for Jarvis and team agents."""
 
 from __future__ import annotations
+import json
 import os
 import sys
 from pathlib import Path
 from mcp.server.fastmcp import Context, FastMCP
+from mcp.types import CallToolResult, TextContent
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from tools.caller_identity import caller_from_ctx  # noqa: E402
@@ -13,26 +15,41 @@ from tools.runtime_rpc_client import RuntimeRpcError, call as rpc_call  # noqa: 
 mcp = FastMCP("PluginManagement")
 
 
-def _call(method: str, params: dict, ctx: Context | None, timeout: float = 30) -> dict:
+def _result(payload: dict) -> CallToolResult:
+    """Preserve domain errors at the MCP boundary; pending review is not failure."""
+    return CallToolResult(
+        content=[
+            TextContent(type="text", text=json.dumps(payload, ensure_ascii=False))
+        ],
+        structuredContent=payload,
+        isError=bool(payload.get("error")),
+    )
+
+
+def _call(
+    method: str, params: dict, ctx: Context | None, timeout: float = 30
+) -> CallToolResult:
     caller = caller_from_ctx(ctx)
     if not caller:
-        return {"error": "Missing bound caller identity", "status": 403}
+        return _result({"error": "Missing bound caller identity", "status": 403})
     try:
-        return rpc_call(
-            method,
-            {
-                **params,
-                "caller_agent": caller,
-                "session_id": os.environ.get("TEAM_SESSION_ID", ""),
-            },
-            timeout=timeout,
+        return _result(
+            rpc_call(
+                method,
+                {
+                    **params,
+                    "caller_agent": caller,
+                    "session_id": os.environ.get("TEAM_SESSION_ID", ""),
+                },
+                timeout=timeout,
+            )
         )
     except (RuntimeRpcError, OSError) as exc:
-        return {"error": str(exc), "status": 503}
+        return _result({"error": str(exc), "status": 503})
 
 
 @mcp.tool()
-def plugin_list(ctx: Context = None) -> dict:
+def plugin_list(ctx: Context = None) -> CallToolResult:
     """List compact stored inventory and your binding, never content bodies.
 
     stored_status is historical, not proof of current availability. Use
@@ -49,7 +66,7 @@ def plugin_add(
     target_agent: str = "",
     run_id: str | None = None,
     ctx: Context = None,
-) -> dict:
+) -> CallToolResult:
     """Add AND activate an exact GitHub owner/repo + 40-char immutable commit/path.
 
     Omit target_agent for yourself. Only Jarvis or the team's orchestrator may
@@ -81,7 +98,7 @@ def plugin_activate(
     target_agent: str = "",
     run_id: str | None = None,
     ctx: Context = None,
-) -> dict:
+) -> CallToolResult:
     """Activate an installed ID for self or a managed subordinate after human review.
 
     Invoke in a separate batch from ordinary tools. Pending review is not Ready;
