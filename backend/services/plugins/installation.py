@@ -85,7 +85,7 @@ class PluginInstaller:
         return result
 
 
-async def approve_source(record: Record) -> bool:
+async def approve_source(record: Record, *, requested_by: str = "Jarvis") -> bool:
     """Reuse the human review gate for exact repository/commit/path identity."""
     import json
 
@@ -93,6 +93,7 @@ async def approve_source(record: Record) -> bool:
 
     allowed, _reason = request_approval(
         approval_type="plugin_source",
+        agent_name=requested_by,
         pause=False,
         scope_key="plugin-source:"
         + record["repo"]
@@ -131,8 +132,11 @@ async def approve_content(record: Record) -> bool:
         )
     }
     review["execution_policy"] = record.get("execution_policy")
+    if record.get("target_label"):
+        review["target_label"] = record["target_label"]
     allowed, _reason = request_approval(
         approval_type="plugin_content",
+        agent_name=record.get("requested_by", "Jarvis"),
         pause=False,
         scope_key="plugin:"
         + record["id"]

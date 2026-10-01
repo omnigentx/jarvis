@@ -172,6 +172,10 @@ requires workload measurements under SCRUM-16/21. No speculative prompt edit was
 - [SCRUM-47](https://omnigentx.atlassian.net/browse/SCRUM-47): Team Monitor missed
   resumed turns after local backend restart until page reload; root cause remains
   open. Run-aware dedup and SSE retry already exist and were not blindly changed.
+- [SCRUM-48](https://omnigentx.atlassian.net/browse/SCRUM-48): an injection queued
+  across deliberate backend restart remained unread; the recorded child PID later
+  disappeared while its registry row still said idle. This attempt is excluded
+  from plugin acceptance passes. Wake delivery/child-exit timing needs investigation.
 - Existing SCRUM-16/21 track repeated context/tool/schema costs and meaningful
   workload-level optimization. SCRUM-29 covers narrow repository access.
 - Production Docker execution requires the documented operator profile. Remote MCP,
@@ -199,3 +203,83 @@ Computer-use verification against actual local inventory: desktop1440x1000, mobi
 - [Mobile overview](ui-refined-mobile.jpg)
 - [Mobile card and target controls](ui-refined-mobile-card.jpg)
 - [Light theme](ui-refined-light.jpg)
+
+## Agent-managed install acceptance — 2026-10-01
+
+The earlier manual UI evidence did **not** establish agent-managed installation.
+This additional acceptance pass found missing MCP management tools and a real
+self-activation boundary gap. PR168 was returned to Draft while fixing and testing
+these gaps. The product prompts were not changed to hide failures.
+
+| Actual local user/agent flow | Outcome | Evidence |
+|---|---|---|
+| Human install/approve/activate via Settings → Plugins | Previously passed, including skill/MCP hot use | Earlier live UI evidence above |
+| Jarvis calls `plugin_add` for itself, then `read_skill` in the same chat turn | Passed; add took 2.6s; reused a prior exact source/content approval | `agent-self-add-skill.jpg`; do not interpret the agent's “no approval needed” wording as bypassing review |
+| Emerson [PM] adds skill for Adrian [Dev] | First returns `needs_approval`; correctly attributed human review; then Ready → email → actual `read_skill` | `agent-subordinate-approval.jpg`, `agent-subordinate-skill-ready.jpg`, JSON trace |
+| Emery [Dev] self-adds executable echo MCP | Pending review first; after UI approval, `plugin_add` → Ready → new echo tool in **the same agent turn** | `agent-self-mcp-approval.jpg`, `agent-self-mcp-ready.jpg`, JSON trace |
+| Emery tries to activate plugin for Peyton [PM] | Denied with `403`; no higher-agent installation | `agent-subordinate-denied.jpg`, JSON trace |
+
+[Sanitized actual tool arguments/results](agent-management-tool-evidence.json)
+contain correlated call IDs and turn indexes. Adrian's real read returned 9,363
+characters, exactly equal to the immutable downloaded skill file; the evidence
+stores a SHA-256 and title instead of redistributing the third-party body. Emery's
+new tool returned `sandbox:agent-self-mcp-20261001` after a Ready ACK. Run IDs and
+PIDs stayed unchanged within each activation/use window: Adrian `bfae8911` /
+78948; Emery `a2ecc327` / 81227. The parent/skill pass completed before a later
+intentional backend restart; its historical PID is not presented as currently
+alive. The final MCP pass uses the same live process without backend restart.
+
+### Bugs reproduced and fixed in this pass
+
+- A runner was marked busy until its next LLM boundary while its own plugin MCP
+  call waited for activation. A management-only tool batch now releases that
+  runner at `before_tool_call`; concurrent ordinary runners remain protected.
+  Mixing management mutations and ordinary work in one batch is rejected before
+  any tool executes. The next LLM call refreshes the actual tool snapshot.
+- Adding a first skill implicitly enabled shell in fast-agent. The defensive
+  adapter consequently returned `activation_failed` for the initial no-shell Dev.
+  The public scoped-reader preference now preserves existing shell access, so the
+  adapter can safely expose `read_skill` even for an agent without initial skills.
+  Default framework behavior remains covered by regression tests.
+- Agent review requests were attributed to Jarvis and exposed only a hashed team
+  binding. Reviews now name the transport-bound requester and human-readable
+  destination while retaining the immutable binding/digest approval scope.
+- Agent tool results now include only the selected binding. Stored inventory is
+  explicitly historical and cannot masquerade as a live Ready ACK. RPC denial is
+  `403`; unexpected failures return a redacted error.
+
+Caller identity comes from stamped MCP metadata; target arguments cannot change
+it. Self-management requires a persisted `plugin_management` server capability.
+Only Jarvis or the persisted team orchestrator can select a subordinate. Peer,
+higher-agent, wrong-team and ambiguous runtime selections are rejected before
+source download. Agents cannot approve source/content, configure executable
+policy/credentials, or promote globally through these tools. Shell remains trusted
+under the deployment's previously agreed trust model.
+
+### Tests and limitations
+
+- Full backend: **2,503 passed**, 1 skipped, 5 deselected, 1 expected failure;
+  real OCI integration enabled; 125.51s. Focused plugin/runtime set: 211 passed
+  before the additional inventory test; final new tool/review/RPC/boundary set:
+  16 passed. Framework skill/hook/refresh/environment regressions: 48 passed.
+- TDD failures were captured for absent management tools, self-boundary deadlock,
+  child environment propagation, reviewer identity and first-skill shell safety;
+  the real parent activation failure is retained as before-fix evidence.
+- The acceptance fixture is first-party YAML under
+  `backend/tests/fixtures/team_templates/plugin_acceptance.yaml`; copy it into
+  `backend/team_templates/` only for a local acceptance run. It does not change
+  production agent instructions. The temporary factory copy was removed after
+  spawning; the team's persisted role configuration remains available.
+- These are functional acceptance runs, not a token-saving benchmark. No new
+  savings claim supersedes the earlier measured +36.6% A/B token result.
+- SCRUM46/47 remain open. SCRUM48 tracks the excluded restart/injection attempt;
+  a fresh same-backend team was used for final self-MCP acceptance. Existing idle
+  lifecycle notifications caused extra PM response turns; broader communication
+  efficiency needs measured work in SCRUM16/21.
+- Parent PR168 depends on fast-agent PR19, now including environment propagation
+  and shell-preserving scoped readers at `8ac92274`. Merge the dependency first,
+  then resolve the parent submodule pin to the merged dependency commit if squash
+  changes its SHA. No production deployment or auto-merge was performed.
+
+![Agent self-add MCP and immediate tool use](agent-self-mcp-ready.jpg)
+![Scoped requester and target review](agent-subordinate-approval.jpg)

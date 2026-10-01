@@ -111,9 +111,32 @@ class RuntimeCapabilities:
             await self._drain()
             self._boundary.notify_all()
 
+    async def before_tools(self, runner: Any, message: Any) -> None:
+        names = {call.params.name for call in (message.tool_calls or {}).values()}
+        mutations = {
+            "plugin_management__plugin_add",
+            "plugin_management__plugin_activate",
+        }
+        if not names & mutations:
+            return
+        allowed = mutations | {"plugin_management__plugin_list"}
+        if names - allowed:
+            raise ValueError(
+                "Invoke plugin management in a separate batch from ordinary tools"
+            )
+        # Only management calls remain in this batch: they cannot execute an
+        # old plugin tool snapshot. Release this runner before its RPC waits
+        # for self-activation; other in-flight runners still protect theirs.
+        async with self._lock:
+            self._running.discard(id(runner))
+            await self._drain()
+            self._boundary.notify_all()
+
     def hooks(self):
         from fast_agent.agents.tool_runner import ToolRunnerHooks
 
         return ToolRunnerHooks(
-            before_llm_call=self.before_llm, after_turn_complete=self.turn_done
+            before_llm_call=self.before_llm,
+            before_tool_call=self.before_tools,
+            after_turn_complete=self.turn_done,
         )

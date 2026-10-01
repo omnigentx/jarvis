@@ -41,11 +41,13 @@ async def apply_skills(
         return False
     if agent is None:
         return False
-    # McpAgent.set_skill_manifests automatically enables shell unless the
-    # existing host context explicitly forbids it. Plugin install must not
-    # escalate an agent that currently has no shell capability.
-    if getattr(agent, "shell_runtime_enabled", None) is False and not getattr(
-        agent, "_no_shell_requested", False
+    # Older runtimes implicitly enable shell when adding the first skill.
+    # The supported scoped-reader API preserves current shell permissions;
+    # without it, decline activation rather than grant new shell access.
+    if (
+        getattr(agent, "shell_runtime_enabled", None) is False
+        and not getattr(agent, "_no_shell_requested", False)
+        and not callable(getattr(agent, "set_skill_reader_preference", None))
     ):
         logger.warning(
             "[plugins] Skill activation would grant shell agent=%s", agent_name

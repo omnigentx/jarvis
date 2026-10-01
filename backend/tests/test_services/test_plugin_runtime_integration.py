@@ -57,11 +57,12 @@ async def test_skill_install_cannot_implicitly_grant_shell(tmp_path):
         context=context,
     )
     assert agent.shell_runtime_enabled is False
-    assert not await apply_skills(
+    assert await apply_skills(
         tmp_path,
         package(tmp_path),
         "Jarvis",
         app=SimpleNamespace(get_agent=lambda _: agent),
     )
     assert agent.shell_runtime_enabled is False
-    assert not agent.skill_manifests
+    assert agent.skill_manifests
+    assert "read_skill" in {tool.name for tool in (await agent.list_tools()).tools}

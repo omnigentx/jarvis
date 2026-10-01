@@ -6,7 +6,6 @@ import asyncio
 import logging
 import re
 from functools import lru_cache
-from pathlib import Path
 from typing import Annotated, Any
 
 import httpx
@@ -17,13 +16,12 @@ from core.auth import verify_api_key
 from services.plugins.dispatch import dispatch
 from services.plugins.installation import (
     PluginInstaller,
-    approve_content,
     approve_source,
 )
-from services.plugins.lifecycle import PluginLifecycle, PluginStateError
+from services.plugins.lifecycle import PluginStateError
 from services.plugins.marketplace import discover
 from services.plugins.package import PackageError
-from services.plugins.policy import PluginPolicyStore, validate_policy
+from services.plugins.policy import PluginPolicyStore
 from services.plugins.targets import resolve_target
 
 logger = logging.getLogger(__name__)
@@ -50,10 +48,9 @@ class ActivationBody(BaseModel):
 
 @lru_cache(maxsize=1)
 def get_installer() -> PluginInstaller:
-    from core.database import engine
+    from services.plugins.operations import runtime_installer
 
-    path = Path(engine.url.database).parent / "plugins"
-    return PluginInstaller(PluginLifecycle(engine, path))
+    return runtime_installer()
 
 
 Installer = Annotated[PluginInstaller, Depends(get_installer)]
@@ -250,40 +247,9 @@ async def install_plugin(body: InstallBody, installer: Installer):
 async def activate_plugin(identity: str, body: ActivationBody, installer: Installer):
     try:
         binding = resolve_target(body.agent, body.run_id)
-        policies = PluginPolicyStore(installer.lifecycle.engine)
-        policy = None
+        from services.plugins.operations import activate_binding
 
-        async def approval(record):
-            nonlocal policy
-            policy = policies.get(identity)
-            reviewed = (
-                {
-                    "image": policy["image"],
-                    "credential_slots": sorted(policy["credentials"]),
-                    "network": "none",
-                    "read_only": True,
-                    "revision": policy["revision"],
-                }
-                if policy
-                else None
-            )
-            return await approve_content(
-                {**record, "target_agent": binding, "execution_policy": reviewed}
-            )
-
-        async def apply(root, package, target):
-            return await dispatch(
-                root, package, target, engine=installer.lifecycle.engine
-            )
-
-        def authorize(root, package):
-            nonlocal policy
-            policy = policies.get(identity)
-            return policy is not None and validate_policy(root, package, policy)
-
-        result = await installer.lifecycle.activate(
-            identity, binding, approve=approval, apply=apply, authorize=authorize
-        )
+        result = await activate_binding(identity, binding, installer)
         return await verified_record(result, installer)
     except Exception as exc:
         raise api_error(exc) from exc

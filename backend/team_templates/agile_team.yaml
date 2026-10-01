@@ -120,6 +120,7 @@ roles:
       [
         memory_server,
         model_selection,
+        plugin_management,
         filesystem,
         meeting_room,
         email,
@@ -173,6 +174,7 @@ roles:
       [
         memory_server,
         model_selection,
+        plugin_management,
         filesystem,
         meeting_room,
         email,
@@ -227,6 +229,7 @@ roles:
       [
         memory_server,
         model_selection,
+        plugin_management,
         filesystem,
         meeting_room,
         email,
@@ -304,6 +307,7 @@ roles:
       [
         memory_server,
         model_selection,
+        plugin_management,
         filesystem,
         meeting_room,
         email,
@@ -352,7 +356,7 @@ roles:
 
     skills: [figma-designer, team-roster, team-communication, self-audit-tools]
     servers:
-      [memory_server, model_selection, filesystem, meeting_room, email, github, mcp-atlassian, figma-ui-mcp]
+      [memory_server, model_selection, plugin_management, filesystem, meeting_room, email, github, mcp-atlassian, figma-ui-mcp]
     server_overrides:
       filesystem:
         args:
@@ -415,6 +419,7 @@ roles:
       [
         memory_server,
         model_selection,
+        plugin_management,
         filesystem,
         meeting_room,
         email,
@@ -470,6 +475,7 @@ roles:
       [
         memory_server,
         model_selection,
+        plugin_management,
         filesystem,
         meeting_room,
         email,
