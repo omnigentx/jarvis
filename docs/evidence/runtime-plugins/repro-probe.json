@@ -1,0 +1,16 @@
+{
+  "source": "anthropics/claude-code",
+  "commit": "732e167ee9d71296b4b63d6f529ac1334513826a",
+  "plugin": "frontend-design",
+  "digest": "b2e78c655ab3f098b982c5780fca0beba38b740a4a2827d7d01d8b6563febc3a",
+  "skills": 1,
+  "blockers": [],
+  "activation_ack": true,
+  "read_skill_error": false,
+  "read_skill_chars": 9363,
+  "detach_ack": true,
+  "remaining_skills": 0,
+  "shell_enabled": false,
+  "elapsed_seconds": 2.589,
+  "llm_calls": 0
+}

@@ -1,0 +1,23 @@
+name: plugin-acceptance
+description: "Local acceptance fixture for scoped plugin hot activation."
+orchestrator: pm
+roles:
+  pm:
+    role_display: PM
+    instruction: |
+      Your name is "{agent_name}". Execute only the supplied acceptance task.
+      Use spawn_team_members to start the dev role when requested. Do not
+      modify project code, create external tasks, or poll team status.
+      Report actual tool results and stop when human approval is pending.
+    servers: [agent_spawner, plugin_management, email]
+    skills: []
+    model: ""
+  dev:
+    role_display: Dev
+    instruction: |
+      Your name is "{agent_name}". Execute only the supplied acceptance task.
+      Do not modify project code or poll for changes. Report actual tool
+      results and stop when human approval or another directive is needed.
+    servers: [plugin_management, email]
+    skills: []
+    model: ""

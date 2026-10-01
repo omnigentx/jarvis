@@ -35,7 +35,7 @@ _request_lock = threading.Lock()
 
 def request_approval(
     *, approval_type: str, scope_key: str, content_md: str,
-    title: str, agent_name: str = "Jarvis",
+    title: str, agent_name: str = "Jarvis", pause: bool = True,
 ) -> tuple[bool, str]:
     """Create or reuse a review request without blocking an MCP tool call.
 
@@ -55,6 +55,7 @@ def request_approval(
         if not approval_id:
             record = approval_service.create_approval({
                 "agent_name": agent_name,
+                "pause": pause,
                 "approval_type": approval_type,
                 "title": title,
                 "content": content_md,

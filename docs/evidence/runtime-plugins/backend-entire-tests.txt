@@ -1,0 +1,66 @@
+...............................................................s........ [  2%]
+........................................................................ [  5%]
+........................................................................ [  8%]
+........................................................................ [ 11%]
+........................................................................ [ 14%]
+........................................................................ [ 17%]
+........................................................................ [ 20%]
+........................................................................ [ 23%]
+........................................................................ [ 26%]
+........................................................................ [ 28%]
+........................................................................ [ 31%]
+........................................................................ [ 34%]
+..........................................x............................. [ 37%]
+........................................................................ [ 40%]
+........................................................................ [ 43%]
+........................................................................ [ 46%]
+........................................................................ [ 49%]
+........................................................................ [ 52%]
+........................................................................ [ 54%]
+........................................................................ [ 57%]
+........................................................................ [ 60%]
+........................................................................ [ 63%]
+........................................................................ [ 66%]
+........................................................................ [ 69%]
+........................................................................ [ 72%]
+........................................................................ [ 75%]
+........................................................................ [ 78%]
+........................................................................ [ 80%]
+........................................................................ [ 83%]
+........................................................................ [ 86%]
+........................................................................ [ 89%]
+........................................................................ [ 92%]
+........................................................................ [ 95%]
+........................................................................ [ 98%]
+.........................................                                [100%]
+=============================== warnings summary ===============================
+core/database.py:49
+  $REPO/backend/core/database.py:49: MovedIn20Warning: The ``declarative_base()`` function is now available as sqlalchemy.orm.declarative_base(). (deprecated since: 2.0) (Background on SQLAlchemy 2.0 at: https://sqlalche.me/e/b8d9)
+    Base = declarative_base()
+
+services/library_manager.py:18
+  $REPO/backend/services/library_manager.py:18: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class AudioBook(BaseModel):
+
+tests/test_services/test_plugin_archive.py::test_duplicate_member_rejected
+  /Users/phucnguyenvan/.local/share/uv/python/cpython-3.13.9-macos-aarch64-none/lib/python3.13/zipfile/__init__.py:1642: UserWarning: Duplicate name: 'repo/a'
+    return self._open_to_write(zinfo, force_zip64=force_zip64)
+
+tests/test_services/test_voice_imports.py::TestRealtimeTTSImport::test_top_level_resolves_to_inner_package
+  $REPO/backend/.venv/lib/python3.13/site-packages/pydub/utils.py:300: SyntaxWarning: invalid escape sequence '\('
+    m = re.match('([su]([0-9]{1,2})p?) \(([0-9]{1,2}) bit\)$', token)
+
+tests/test_services/test_voice_imports.py::TestRealtimeTTSImport::test_top_level_resolves_to_inner_package
+  $REPO/backend/.venv/lib/python3.13/site-packages/pydub/utils.py:301: SyntaxWarning: invalid escape sequence '\('
+    m2 = re.match('([su]([0-9]{1,2})p?)( \(default\))?$', token)
+
+tests/test_services/test_voice_imports.py::TestRealtimeTTSImport::test_top_level_resolves_to_inner_package
+  $REPO/backend/.venv/lib/python3.13/site-packages/pydub/utils.py:310: SyntaxWarning: invalid escape sequence '\('
+    elif re.match('(flt)p?( \(default\))?$', token):
+
+tests/test_services/test_voice_imports.py::TestRealtimeTTSImport::test_top_level_resolves_to_inner_package
+  $REPO/backend/.venv/lib/python3.13/site-packages/pydub/utils.py:314: SyntaxWarning: invalid escape sequence '\('
+    elif re.match('(dbl)p?( \(default\))?$', token):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+2487 passed, 1 skipped, 5 deselected, 1 xfailed, 7 warnings in 149.92s (0:02:29)

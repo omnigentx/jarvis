@@ -1,20 +1,33 @@
 """The isolated team runner must install Jarvis's model hook before its first call."""
+
 from types import SimpleNamespace
 import json
 import sqlite3
 
 from fast_agent.spawn.isolated_runner import _install_tool_hooks
+from fast_agent.agents.agent_types import AgentConfig
+from fast_agent.agents.mcp_agent import McpAgent
+from fast_agent.context import Context
 
 
 def test_isolated_runner_installs_model_hook(tmp_path, monkeypatch):
     db_path = tmp_path / "registry.db"
     monkeypatch.setenv("SPAWN_REGISTRY_DB", str(db_path))
     with sqlite3.connect(db_path) as conn:
-        conn.execute("CREATE TABLE spawn_registry (run_id TEXT PRIMARY KEY, data_json TEXT NOT NULL)")
-        conn.execute("INSERT INTO spawn_registry VALUES (?, ?)", (
-            "run-1", json.dumps({"agent_name": "Member", "session_id": "team-1"}),
-        ))
-    child = SimpleNamespace(tool_runner_hooks=None, name="Member")
+        conn.execute(
+            "CREATE TABLE spawn_registry (run_id TEXT PRIMARY KEY, data_json TEXT NOT NULL)"
+        )
+        conn.execute(
+            "INSERT INTO spawn_registry VALUES (?, ?)",
+            (
+                "run-1",
+                json.dumps({"agent_name": "Member", "session_id": "team-1"}),
+            ),
+        )
+    child = McpAgent(
+        AgentConfig(name="Member", servers=[], skills=[]),
+        context=Context(no_shell=True),
+    )
 
     class App(dict):
         @property
@@ -27,7 +40,9 @@ def test_isolated_runner_installs_model_hook(tmp_path, monkeypatch):
     assert getattr(child, "_jarvis_model_hook", False)
 
 
-def test_isolated_runner_without_jarvis_registry_keeps_generic_hooks(tmp_path, monkeypatch):
+def test_isolated_runner_without_jarvis_registry_keeps_generic_hooks(
+    tmp_path, monkeypatch
+):
     monkeypatch.setenv("SPAWN_REGISTRY_DB", str(tmp_path / "empty.db"))
     child = SimpleNamespace(tool_runner_hooks=None, name="Member")
 

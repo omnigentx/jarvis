@@ -193,6 +193,7 @@ async def lifespan(app: FastAPI):
             team_template_rpc_handlers,
             team_work_rpc_handlers,
             model_rpc_handlers,
+            plugin_rpc_handlers,
         )
         from services.memory import rpc_handlers as memory_rpc_handlers
 
@@ -205,6 +206,7 @@ async def lifespan(app: FastAPI):
         team_work_rpc_handlers.register(runtime_rpc_server)
         memory_rpc_handlers.register(runtime_rpc_server)
         model_rpc_handlers.register(runtime_rpc_server)
+        plugin_rpc_handlers.register(runtime_rpc_server)
         await runtime_rpc_server.start()
         state.runtime_rpc_server = runtime_rpc_server
         logger.info(

@@ -1,0 +1,36 @@
+Captured local regression outcomes, 2026-10-01. Source tests are committed.
+Full third-party skill body and credential-bearing output are not included.
+
+Missing agent management
+ERROR tests/test_services/test_plugin_agent_management.py
+!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!
+1 error in 0.07s
+
+Self boundary
+FAILED tests/test_services/test_plugin_self_boundary.py::test_self_management_applies_and_refreshes_before_next_model_call
+FAILED tests/test_services/test_plugin_self_boundary.py::test_mixed_batch_fails_before_tools_and_retains_boundary
+FAILED tests/test_services/test_plugin_self_boundary.py::test_self_management_does_not_bypass_other_inflight_runner
+3 failed in 0.38s
+
+Team environment
+FAILED fast-agent/tests/unit/spawn/test_plugin_management_environment.py::test_plugin_management_receives_team_session_and_agent
+1 failed in 0.03s
+
+Review attribution
+FAILED tests/test_services/test_plugin_review_identity.py::test_content_review_identifies_requester_and_destination
+FAILED tests/test_services/test_plugin_review_identity.py::test_source_review_attribution_does_not_change_source_identity
+2 failed in 0.04s
+
+No-shell plugin adapter
+FAILED tests/test_services/test_plugin_runtime_integration.py::test_skill_install_cannot_implicitly_grant_shell
+1 failed, 1 passed in 0.49s
+
+No-shell framework reader
+FAILED fast-agent/tests/unit/fast_agent/agents/test_scoped_skill_shell_permissions.py::test_scoped_skill_reader_preserves_existing_shell_access[False]
+1 failed, 1 passed in 0.19s
+
+Full backend final
+2503 passed, 1 skipped, 5 deselected, 1 xfailed, 3 warnings in 125.51s (0:02:05)
+
+Framework relevant regressions
+48 passed in 0.77s

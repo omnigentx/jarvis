@@ -266,6 +266,13 @@ mcp:
       env:
         PYTHONUNBUFFERED: "1"
         JARVIS_RUNTIME_RPC_SOCKET: "${JARVIS_RUNTIME_RPC_SOCKET}"
+    plugin_management:
+      command: "python"
+      args: ["tools/plugin_management_server.py"]
+      read_timeout_seconds: 260
+      env:
+        PYTHONUNBUFFERED: "1"
+        JARVIS_RUNTIME_RPC_SOCKET: "${JARVIS_RUNTIME_RPC_SOCKET}"
     model_selection:
       command: "python"
       args: ["tools/model_selection_server.py"]

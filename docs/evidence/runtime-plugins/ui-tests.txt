@@ -1,0 +1,25 @@
+[WebServer] (node:42174) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+
+Running 6 tests using 6 workers
+
+(node:42181) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:42183) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:42186) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:42182) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:42184) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:42185) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  5 [chromium-desktop] › tests/e2e/flows/settings-plugins.spec.ts:45:1 › non-blocking plugin review does not claim agent paused or resumed (653ms)
+  ✓  3 [chromium-desktop] › tests/e2e/flows/approvals-mobile-responsive.spec.ts:24:1 › mobile: long approval title gets full width, not crushed into a column (644ms)
+  ✓  4 [chromium-desktop] › tests/e2e/flows/settings-plugins.spec.ts:86:1 › reviewed Ready MCP has no false blocker and shows explicit target placeholder (722ms)
+  ✓  2 [chromium-desktop] › tests/e2e/flows/settings-plugins.spec.ts:57:1 › MCP policy uses the host profile and clears entered credentials after save (735ms)
+  ✓  1 [chromium-desktop] › tests/e2e/flows/settings-plugins.spec.ts:10:3 › plugin content review and truthful activation (desktop) (789ms)
+  ✓  6 [chromium-desktop] › tests/e2e/flows/settings-plugins.spec.ts:10:3 › plugin content review and truthful activation (mobile) (885ms)
+
+  6 passed (2.1s)
