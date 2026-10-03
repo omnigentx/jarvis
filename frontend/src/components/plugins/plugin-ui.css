@@ -80,3 +80,26 @@
   .plugin-panel .package-actions button { justify-content:flex-start; text-align:left; white-space:normal; }
   .plugin-panel .actions { max-width:none; }
 }
+
+/* Reputation is separate from runtime state, with a text label and icon. */
+.plugin-panel .source-badge { display:inline-flex; flex-wrap:wrap; align-items:center; gap:6px; padding:4px 10px; border:1px solid var(--border-strong); border-radius:var(--r-full); color:var(--text-dim); background:var(--bg-3); font:500 12px/1.5 var(--font-body); max-width:100%; overflow-wrap:anywhere; }
+.plugin-panel .source-official { color:var(--primary-hover); background:var(--info-bg); }
+.plugin-panel .source-community, .plugin-panel .source-external { color:var(--warning); background:var(--warning-bg); }
+.plugin-panel .identity .source-badge { display:flex; width:fit-content; margin-bottom:12px; }
+.plugin-panel article > .source-badge { margin-top:16px; }
+.plugin-panel .source-review { margin:auto; width:min(560px, calc(100vw - 32px)); max-height:calc(100dvh - 32px); overflow:auto; box-sizing:border-box; padding:24px; color:var(--text); background:var(--bg-2); border:1px solid var(--border-strong); border-radius:var(--r-lg); }
+.plugin-panel .source-review::backdrop { background:rgba(0,0,0,.65); }
+.plugin-panel .source-review form, .plugin-panel .source-review .review-body { display:grid; gap:20px; }
+.plugin-panel .source-review .source-badge { justify-self:start; }
+.plugin-panel .source-review dl { margin:0; }
+.plugin-panel .source-advice { color:var(--text-dim); font-size:13px; line-height:1.7; }
+.plugin-panel .source-warning { border-left:3px solid var(--warning); padding:12px 16px; background:var(--warning-bg); border-radius:var(--r-md); }
+.plugin-panel .source-consent { display:flex; align-items:flex-start; gap:12px; font-size:13px; line-height:1.6; cursor:pointer; }
+.plugin-panel .source-consent input { width:20px; min-height:20px; flex-shrink:0; margin:0; accent-color:var(--primary); }
+.plugin-panel .source-next-step { color:var(--text-muted); font-size:12px; line-height:1.7; }
+.plugin-panel .source-review footer { display:flex; justify-content:flex-end; gap:12px; padding-top:16px; border-top:1px solid var(--border); }
+@media (max-width:600px) {
+  .plugin-panel .source-review { padding:16px; }
+  .plugin-panel .source-review footer { flex-direction:column-reverse; }
+  .plugin-panel .source-review footer button { width:100%; }
+}

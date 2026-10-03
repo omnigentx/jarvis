@@ -27,6 +27,7 @@ async def activate_binding(
     *,
     requested_by: str = "Jarvis",
     target_label: str | None = None,
+    manual_review: str | None = None,
 ) -> dict[str, Any]:
     policies = PluginPolicyStore(installer.lifecycle.engine)
     policy = None
@@ -45,6 +46,19 @@ async def activate_binding(
             if policy
             else None
         )
+        if manual_review is not None:
+            from services.plugins.manual_review import verify_review
+
+            verify_review(
+                manual_review,
+                {
+                    "id": identity,
+                    "digest": record["digest"],
+                    "target": binding,
+                    "policy_revision": policy["revision"] if policy else "",
+                },
+            )
+            return True
         return await approve_content(
             {
                 **record,
