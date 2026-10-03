@@ -15,7 +15,9 @@ onMounted(()=>dialog.value.showModal())
     <div class="review-body">
       <header><h2 id="activation-review-title">{{ t('settings.plugins.source.activationTitle') }}</h2><button type="button" @click="dialog.close()">{{ t('common.close') }}</button></header>
       <PluginSourceBadge :source="review.plugin.source_origin" />
-      <h3>{{ review.plugin.name }} → {{ review.target }}</h3>
+      <h3>{{ review.plugin.name }}</h3>
+      <p v-if="review.allCurrent" class="source-advice">{{ t('settings.plugins.activation.currentScope') }}</p>
+      <ul class="review-targets"><li v-for="target in (review.reviews || [review])" :key="target.run_id || target.target">{{ target.target_label || target.target }}</li></ul>
       <dl><dt>SHA-256</dt><dd>{{ review.plugin.digest }}</dd><dt>{{ t('settings.plugins.source.capabilities') }}</dt><dd>{{ [...review.plugin.skills.map(skill=>skill.name), ...(review.plugin.server_names || [])].join(', ') || '—' }}</dd></dl>
       <p class="source-advice">{{ t('settings.plugins.source.activationHint') }}</p>
       <PluginFilesReview :plugin="review.plugin" />

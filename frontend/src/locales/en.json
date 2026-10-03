@@ -670,8 +670,30 @@
         "activationTitle": "Review activation",
         "capabilities": "Skills and MCP servers",
         "activationHint": "Third-party instructions can influence the agent and its existing tools. Review package files and execution permissions before confirming.",
-        "confirmActivation": "I approve this content and these permissions for the displayed agent.",
+        "confirmActivation": "I approve this content and these permissions for the listed agents.",
         "activateNow": "Confirm and activate"
+      },
+      "activation": {
+        "allCurrent": "All available agents ({count})",
+        "currentScope": "Applies only to the agents listed below. Agents created later are excluded; each runtime must acknowledge activation.",
+        "blockedTitle": "This package cannot be activated yet",
+        "blockedHint": "Choosing an agent cannot resolve missing adapters. Use a compatible package or wait for adapter support. MCP-only packages require a saved execution policy.",
+        "unsupported": "Unsupported capability: {capability}",
+        "expired": "This package was removed. Download it again before activation.",
+        "noTargets": "No agent is available. Start or resume an agent, then refresh the list.",
+        "reviewHint": "Continue to review content, permissions and the exact target agents.",
+        "blockers": {
+          "agents": "Plugin-defined agents are not supported by this adapter.",
+          "host_connectors": "Host app connectors are not supported by this adapter.",
+          "mcp_requires_policy_review": "MCP needs a saved sandbox execution policy. Open Execution policy below.",
+          "hooks": "Plugin hooks are not supported.",
+          "commands": "Plugin commands are not supported.",
+          "lsp": "Language servers are not supported.",
+          "executable_content": "Executable skill resources cannot run on the host.",
+          "no_supported_capabilities": "No supported skills or MCP servers were found."
+        },
+        "reviewChanged": "Package or permissions changed during review. Refresh and review again.",
+        "blockedStatus": "Activation blocked"
       }
     }
   },

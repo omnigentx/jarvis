@@ -647,8 +647,30 @@
         "activationTitle": "Review kích hoạt",
         "capabilities": "Skills và MCP servers",
         "activationHint": "Chỉ dẫn bên thứ ba có thể tác động đến agent và các tool sẵn có. Hãy xem file package và quyền thực thi trước khi xác nhận.",
-        "confirmActivation": "Tôi duyệt nội dung và quyền này cho agent được hiển thị.",
+        "confirmActivation": "Tôi duyệt nội dung và các quyền này cho các agent được liệt kê.",
         "activateNow": "Xác nhận và kích hoạt"
+      },
+      "activation": {
+        "allCurrent": "Tất cả agent khả dụng ({count})",
+        "currentScope": "Chỉ áp dụng cho các agent liệt kê bên dưới. Không áp dụng cho agent tạo sau này; mỗi runtime phải xác nhận kích hoạt.",
+        "blockedTitle": "Package này chưa thể kích hoạt",
+        "blockedHint": "Chọn agent không giải quyết được khả năng chưa hỗ trợ. Hãy dùng package tương thích hoặc chờ adapter hỗ trợ. Package chỉ có MCP cần lưu policy thực thi.",
+        "unsupported": "Khả năng chưa hỗ trợ: {capability}",
+        "expired": "Package đã bị gỡ. Hãy tải lại trước khi kích hoạt.",
+        "noTargets": "Chưa có agent khả dụng. Khởi chạy hoặc resume agent rồi làm mới danh sách.",
+        "reviewHint": "Tiếp tục để review nội dung, quyền và danh sách agent đích.",
+        "blockers": {
+          "agents": "Adapter chưa hỗ trợ agent định nghĩa trong plugin.",
+          "host_connectors": "Adapter chưa hỗ trợ kết nối ứng dụng của host.",
+          "mcp_requires_policy_review": "MCP cần lưu policy sandbox. Mở Policy thực thi bên dưới.",
+          "hooks": "Chưa hỗ trợ hook của plugin.",
+          "commands": "Chưa hỗ trợ command của plugin.",
+          "lsp": "Chưa hỗ trợ language server.",
+          "executable_content": "Tài nguyên skill có mã thực thi không được chạy trên host.",
+          "no_supported_capabilities": "Không tìm thấy skill hoặc MCP được hỗ trợ."
+        },
+        "reviewChanged": "Package hoặc quyền đã thay đổi trong lúc review. Hãy làm mới và review lại.",
+        "blockedStatus": "Chưa thể kích hoạt"
       }
     }
   },

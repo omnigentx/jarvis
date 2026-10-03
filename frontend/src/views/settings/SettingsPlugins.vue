@@ -4,6 +4,7 @@ import { apiFetch } from '../../api'
 import { useLang } from '../../composables/useLang'
 import { useRealtimeStream } from '../../composables/useRealtimeStream'
 import { createPluginInventory } from '../../composables/pluginInventory'
+import { ALL_CURRENT_TARGETS, targetKey, blockingCapabilities, activationTargets, activateReviewedTargets } from '../../composables/pluginActivation'
 
 import PluginActivationReview from '../../components/plugins/PluginActivationReview.vue'
 import PluginSourceBadge from '../../components/plugins/PluginSourceBadge.vue'
@@ -28,6 +29,7 @@ const revisions = ref({})
 const review = ref(null)
 const sourceReview = ref(null)
 const activationReview = ref(null)
+const activationResults = ref({})
 const filtered = computed(() => catalog.value.filter(item => `${item.name} ${item.description}`.toLowerCase().includes(query.value.toLowerCase())))
 const label = status => t(`settings.plugins.status.${status}`)
 
@@ -55,29 +57,47 @@ async function refresh() {
   try { availableTargets.value = (await apiFetch('/api/plugins/targets')).targets }
   catch (cause) { error.value = cause.message }
 }
-function targetKey(target) { return target.run_id || target.agent }
-function selectedTarget(plugin) {
-  return availableTargets.value.find(target => targetKey(target) === targets.value[plugin.id])
+function selectedTargets(plugin) {
+  return activationTargets(targets.value[plugin.id], availableTargets.value)
 }
-function supported(plugin) {
-  const allowed = plugin.policy_configured ? ['mcp_requires_policy_review', ...(plugin.skills.length ? [] : ['executable_content'])] : []
-  return !(plugin.blockers || []).some(blocker => !allowed.includes(blocker))
+function supported(plugin) { return blockingCapabilities(plugin).length === 0 }
+function blockerLabel(blocker) {
+  const key = `settings.plugins.activation.blockers.${blocker}`
+  const translated = t(key)
+  return translated === key ? t('settings.plugins.activation.unsupported', { capability: blocker }) : translated
+}
+function activationReason(plugin) {
+  if (plugin.status === 'expired') return t('settings.plugins.activation.expired')
+  if (!supported(plugin)) return t('settings.plugins.activation.blockedHint')
+  if (!availableTargets.value.length) return t('settings.plugins.activation.noTargets')
+  if (!selectedTargets(plugin).length) return t('settings.plugins.selectTarget')
+  return t('settings.plugins.activation.reviewHint')
 }
 function prepareActivation(plugin) {
   return operation(async () => {
-    const target = selectedTarget(plugin)
-    if (!target) throw new Error(t('settings.plugins.selectTarget'))
-    activationReview.value = await apiFetch(`/api/plugins/${encodeURIComponent(plugin.id)}/manual-review`, { method: 'POST', body: JSON.stringify({ agent: target.agent, run_id: target.run_id }) })
+    const chosen = selectedTargets(plugin)
+    if (!chosen.length) throw new Error(t('settings.plugins.selectTarget'))
+    const reviews = []
+    // Resolve and sign every selected runtime before showing the exact scope.
+    // A failed review never causes a partial, unreviewed activation.
+    for (const target of chosen) {
+      const reviewed = await apiFetch(`/api/plugins/${encodeURIComponent(plugin.id)}/manual-review`, { method: 'POST', body: JSON.stringify({ agent: target.agent, run_id: target.run_id }) })
+      if (reviews.length && (reviewed.plugin.digest !== reviews[0].plugin.digest || JSON.stringify(reviewed.execution_policy) !== JSON.stringify(reviews[0].execution_policy))) {
+        throw new Error(t('settings.plugins.activation.reviewChanged'))
+      }
+      reviews.push({ ...reviewed, target_label: target.label })
+    }
+    activationReview.value = { ...reviews[0], reviews, allCurrent: targets.value[plugin.id] === ALL_CURRENT_TARGETS }
   })
 }
 function confirmActivation() {
   const reviewed = activationReview.value
   activationReview.value = null
   return operation(async () => {
-    const result = await apiFetch(`/api/plugins/${encodeURIComponent(reviewed.plugin.id)}/manual-activate`, { method:'POST', body:JSON.stringify({agent:reviewed.target,run_id:reviewed.run_id,review_token:reviewed.review_token}) })
-    const index = plugins.value.findIndex(item => item.id === result.id)
-    if (index !== -1) plugins.value[index] = result
-    notice.value = result.status
+    const id = reviewed.plugin.id
+    activationResults.value[id] = []
+    await activateReviewedTargets(reviewed.reviews, review => apiFetch(`/api/plugins/${encodeURIComponent(id)}/manual-activate`, { method:'POST', body:JSON.stringify({agent:review.target,run_id:review.run_id,review_token:review.review_token}) }), results => { activationResults.value[id] = results })
+    await inventory.reload()
   })
 }
 function deactivate(plugin, binding) {
@@ -144,17 +164,19 @@ function inspect(plugin, skill) {
       <p v-if="loading">{{ t('common.loading') }}</p>
       <p v-else-if="!plugins.length">{{ t('settings.plugins.empty') }}</p>
       <article v-for="plugin in plugins" :key="plugin.id" class="card" :data-testid="`plugin-${plugin.id}`">
-        <header><h3>{{ plugin.name }} <small v-if="plugin.version">{{ plugin.version }}</small></h3><span class="status" :class="{ ready: plugin.status === 'ready' }">{{ label(plugin.status) }}</span></header>
+        <header><h3>{{ plugin.name }} <small v-if="plugin.version">{{ plugin.version }}</small></h3><span class="status" :class="{ ready: plugin.status === 'ready' && supported(plugin) }">{{ plugin.status !== 'expired' && !supported(plugin) ? t('settings.plugins.activation.blockedStatus') : label(plugin.status) }}</span></header>
         <p v-if="plugin.global_enabled" class="support-note">{{ t('settings.plugins.sharedHint') }}</p>
         <PluginSourceBadge :source="plugin.source_origin" />
         <p class="repository-name">{{ plugin.repo }}</p>
         <details class="source-details"><summary>{{ t('settings.plugins.sourceDetails') }}</summary><dl><dt>{{ t('settings.plugins.sourceCommit') }}</dt><dd>{{ plugin.commit }}</dd><dt>SHA-256</dt><dd>{{ plugin.digest }}</dd></dl></details>
-        <ul v-if="plugin.blockers?.length && !supported(plugin)" class="blocked"><li v-for="blocker in plugin.blockers" :key="blocker">{{ blocker }}</li></ul>
+        <div v-if="!supported(plugin)" class="blocked" role="note"><strong>{{ t('settings.plugins.activation.blockedTitle') }}</strong><ul><li v-for="blocker in blockingCapabilities(plugin)" :key="blocker">{{ blockerLabel(blocker) }}</li></ul></div>
         <ul class="skills"><li v-for="skill in plugin.skills" :key="skill.name"><div class="skill-copy"><strong>{{ skill.name }}</strong><p>{{ skill.description }}</p></div><button :disabled="busy" @click="inspect(plugin, skill)">{{ t('settings.plugins.review') }}</button></li></ul>
         <PluginFilesReview :plugin="plugin" />
         <PluginExecutionPolicy v-if="plugin.server_names?.length" :plugin="plugin" @saved="inventory.reload" />
         <ul v-if="plugin.bindings?.length" class="bindings"><li v-for="binding in plugin.bindings" :key="binding.agent"><div class="binding-copy"><strong>{{ binding.agent_name || binding.agent }}</strong><span class="binding-status" :class="{ ready: binding.status === 'ready' }">{{ label(binding.status) }}</span></div><button v-if="!['disabled','expired'].includes(binding.status)" :disabled="busy" @click="deactivate(plugin, binding)">{{ t('settings.plugins.disable') }}</button></li></ul>
-        <div class="controls activation"><label>{{ t('settings.plugins.target') }}<select v-model="targets[plugin.id]"><option value="" disabled>{{ t('settings.plugins.selectTarget') }}</option><option v-for="target in availableTargets" :key="targetKey(target)" :value="targetKey(target)">{{ target.label }}</option></select></label><button class="primary-action" :disabled="busy || !selectedTarget(plugin) || !supported(plugin) || plugin.status === 'expired'" @click="prepareActivation(plugin)">{{ t('settings.plugins.activate') }}</button></div>
+        <div class="controls activation"><label>{{ t('settings.plugins.target') }}<select v-model="targets[plugin.id]" :disabled="busy" :aria-describedby="`activation-help-${plugin.id}`"><option value="" disabled>{{ t('settings.plugins.selectTarget') }}</option><option v-if="availableTargets.length" :value="ALL_CURRENT_TARGETS">{{ t('settings.plugins.activation.allCurrent', { count: activationTargets(ALL_CURRENT_TARGETS, availableTargets).length }) }}</option><option v-for="target in availableTargets" :key="targetKey(target)" :value="targetKey(target)">{{ target.label }}</option></select></label><button class="primary-action" :disabled="busy || !selectedTargets(plugin).length || !supported(plugin) || plugin.status === 'expired'" @click="prepareActivation(plugin)" :aria-describedby="`activation-help-${plugin.id}`">{{ t('settings.plugins.activate') }}</button></div>
+        <p class="activation-help" :id="`activation-help-${plugin.id}`">{{ activationReason(plugin) }}</p>
+        <ul v-if="activationResults[plugin.id]?.length" class="activation-results" aria-live="polite"><li v-for="result in activationResults[plugin.id]" :key="result.run_id || result.target"><strong>{{ result.label }}</strong><span :class="{ ready: result.status === 'ready' }">{{ label(result.status) }}</span><p v-if="result.error">{{ result.error }}</p></li></ul>
         <footer class="package-actions">
           <button :disabled="busy" @click="checkUpdate(plugin)">{{ t('settings.plugins.checkUpdate') }}</button>
           <button :disabled="busy || (!plugin.global_enabled && (!supported(plugin) || plugin.status === 'expired'))" @click="share(plugin)">{{ t(plugin.global_enabled ? 'settings.plugins.stopSharing' : 'settings.plugins.promote') }}</button>
