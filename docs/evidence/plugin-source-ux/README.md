@@ -28,7 +28,7 @@ Used the UI at localhost:3035 against an isolated local FastAPI application, rea
 
 Clicked Add, verified disabled confirmation before risk acknowledgement, downloaded the fixture, selected Jarvis, opened and read SKILL.md in the activation dialog, confirmed activation and observed Ready for Jarvis. The same runtime immediately returned `LOCAL_UI_IMMEDIATE_SKILL` from read_skill (see live-read-skill.json). Cancelled a second source review without installing.
 
-![Local UI ready](live-ready-desktop.png)
-![Local mobile source review](live-source-mobile.png)
+![Local UI ready](live-ready-desktop.jpg)
+![Local mobile source review](live-source-mobile.jpg)
 
 Tracking: SCRUM-52 (implemented source/manual UX); SCRUM-53 (agent approval continuation and pending request visibility follow-up).
