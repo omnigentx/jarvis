@@ -103,3 +103,12 @@
   .plugin-panel .source-review footer { flex-direction:column-reverse; }
   .plugin-panel .source-review footer button { width:100%; }
 }
+
+.plugin-panel .blocked ul { margin:12px 0; display:grid; gap:8px; }
+.plugin-panel .blocked p, .plugin-panel .activation-help { font-size:12px; line-height:1.7; }
+.plugin-panel .activation-help { margin-top:12px; color:var(--text-muted); }
+.plugin-panel .activation-results { margin-top:16px; display:grid; gap:8px; }
+.plugin-panel .activation-results li { padding:12px; border:1px solid var(--border); border-radius:var(--r-md); font-size:12px; display:flex; flex-wrap:wrap; gap:12px; }
+.plugin-panel .activation-results li p { flex-basis:100%; color:var(--danger); overflow-wrap:anywhere; }
+.plugin-panel .activation-results .ready { color:var(--success); }
+.plugin-panel .review-targets { display:grid; gap:8px; max-height:180px; overflow:auto; font-size:13px; }

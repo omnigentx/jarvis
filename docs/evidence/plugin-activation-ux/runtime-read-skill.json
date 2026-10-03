@@ -1,0 +1,14 @@
+{
+  "Jarvis": {
+    "isError": false,
+    "content": "---\nname: review\ndescription: Local acceptance fixture\n---\nLOCAL_UI_IMMEDIATE_SKILL"
+  },
+  "Dev": {
+    "isError": false,
+    "content": "---\nname: review\ndescription: Local acceptance fixture\n---\nLOCAL_UI_IMMEDIATE_SKILL"
+  },
+  "QA": {
+    "isError": false,
+    "content": "---\nname: review\ndescription: Local acceptance fixture\n---\nLOCAL_UI_IMMEDIATE_SKILL"
+  }
+}
