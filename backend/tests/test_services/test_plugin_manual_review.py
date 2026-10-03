@@ -99,7 +99,7 @@ async def test_manual_http_install_is_immediately_readable_by_real_runtime(
     from services.plugins.installation import PluginInstaller
     from services.plugins.lifecycle import PluginLifecycle
     from routes.plugins import router, get_installer
-    from core.auth import verify_api_key
+    from core import auth as core_auth
     from unittest.mock import AsyncMock
 
     installer = PluginInstaller(
@@ -136,11 +136,27 @@ async def test_manual_http_install_is_immediately_readable_by_real_runtime(
     app = FastAPI()
     app.include_router(router)
     app.dependency_overrides[get_installer] = lambda: installer
-    app.dependency_overrides[verify_api_key] = lambda: True
+    # Route dependencies retain their callable identity across auth module
+    # reloads in other tests. Exercise the real auth path with a test key.
+    api_key = "plugin-manual-review-fixture-key"
+    monkeypatch.setattr(core_auth, "JARVIS_API_KEY", api_key)
     try:
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test"
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://test",
+            headers={"Authorization": f"Bearer {api_key}"},
         ) as client:
+            unauthorized = await client.post(
+                "/api/plugins/install",
+                headers={"Authorization": ""},
+                json={
+                    "repo": "openai/plugins",
+                    "commit": "a" * 40,
+                    "source_confirmed": True,
+                },
+            )
+            assert unauthorized.status_code == 401
+            assert installer.lifecycle.list() == []
             result = await client.post(
                 "/api/plugins/install",
                 json={
