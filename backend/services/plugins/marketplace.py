@@ -9,6 +9,7 @@ import httpx
 
 from services.plugins.archive import COMMIT, REPOSITORY, _relative
 from services.plugins.package import NAME, PackageError
+from services.plugins.provenance import source_origin
 
 MAX_CATALOG_BYTES = 2 * 1024 * 1024
 
@@ -90,6 +91,7 @@ def normalize_marketplace(
                 "commit": source_commit,
                 "subdirectory": "" if directory == "." else directory,
                 "requires_source_approval": external,
+                "source_origin": source_origin(source_repo, marketplace_repo=repo),
             }
         )
     return items

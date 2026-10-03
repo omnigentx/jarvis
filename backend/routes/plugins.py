@@ -19,6 +19,7 @@ from services.plugins.installation import (
     approve_source,
 )
 from services.plugins.lifecycle import PluginStateError
+from services.plugins.manual_review import issue_review
 from services.plugins.marketplace import discover
 from services.plugins.package import PackageError
 from services.plugins.policy import PluginPolicyStore
@@ -36,6 +37,7 @@ class CatalogBody(BaseModel):
 
 
 class InstallBody(CatalogBody):
+    source_confirmed: bool = False
     commit: str = Field(pattern=r"^[a-f0-9]{40}$")
     subdirectory: str = Field(default="", max_length=512)
 
@@ -59,6 +61,9 @@ Installer = Annotated[PluginInstaller, Depends(get_installer)]
 def public_record(record: dict[str, Any]) -> dict[str, Any]:
     """Expose inventory, never MCP headers/environment/credentials."""
     result = {key: value for key, value in record.items() if key != "servers"}
+    from services.plugins.provenance import source_origin
+
+    result["source_origin"] = source_origin(record.get("repo", ""))
     result["server_names"] = list(record.get("servers", {}))
     result["credential_slots"] = sorted(
         {
@@ -236,7 +241,10 @@ async def plugin_catalog(body: CatalogBody):
 async def install_plugin(body: InstallBody, installer: Installer):
     try:
         result = await installer.install(
-            body.repo, body.commit, body.subdirectory, approve=approve_source
+            body.repo,
+            body.commit,
+            body.subdirectory,
+            approve=confirmed_source if body.source_confirmed else approve_source,
         )
         return public_record(result)
     except Exception as exc:
@@ -292,5 +300,65 @@ async def review_skill(identity: str, name: str, installer: Installer):
             (root / skill["path"]).read_text, encoding="utf-8"
         )
         return {"name": name, "digest": record["digest"], "content": content}
+    except Exception as exc:
+        raise api_error(exc) from exc
+
+
+async def confirmed_source(record: dict[str, Any]) -> bool:
+    """The authenticated user explicitly confirmed this exact install body."""
+    return True
+
+
+class ManualActivationBody(ActivationBody):
+    review_token: str = Field(min_length=1, max_length=4096)
+
+
+@router.post("/{identity}/manual-review")
+async def review_activation(identity: str, body: ActivationBody, installer: Installer):
+    try:
+        binding = resolve_target(body.agent, body.run_id)
+        record = installer.lifecycle.get(identity)
+        policy = PluginPolicyStore(installer.lifecycle.engine).get(identity)
+        claims = {
+            "id": identity,
+            "digest": record["digest"],
+            "target": binding,
+            "policy_revision": policy["revision"] if policy else "",
+        }
+        return {
+            "plugin": public_record(record),
+            "target": body.agent,
+            "run_id": body.run_id,
+            "execution_policy": {
+                "image": policy["image"],
+                "credential_slots": sorted(policy["credentials"]),
+                "network": "none",
+                "read_only": True,
+            }
+            if policy
+            else None,
+            "review_token": issue_review(claims),
+        }
+    except Exception as exc:
+        raise api_error(exc) from exc
+
+
+@router.post("/{identity}/manual-activate")
+async def confirm_activation(
+    identity: str, body: ManualActivationBody, installer: Installer
+):
+    try:
+        from services.plugins.operations import activate_binding
+
+        binding = resolve_target(body.agent, body.run_id)
+        result = await activate_binding(
+            identity,
+            binding,
+            installer,
+            requested_by="User",
+            target_label=body.agent,
+            manual_review=body.review_token,
+        )
+        return await verified_record(result, installer)
     except Exception as exc:
         raise api_error(exc) from exc

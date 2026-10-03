@@ -586,8 +586,8 @@
       "commit": "Pinned commit (40 characters)",
       "external": "External publisher — separate source approval required",
       "add": "Thêm plugin",
-      "installed": "Package đã cài",
-      "empty": "Chưa cài package nào.",
+      "installed": "Package đã tải",
+      "empty": "Chưa có package nào được tải.",
       "review": "Xem skill",
       "target": "Agent đích",
       "activate": "Kích hoạt",
@@ -595,7 +595,7 @@
       "untrusted": "Nội dung từ bên thứ ba, chỉ hiển thị dạng văn bản. Hãy đọc trước khi duyệt kích hoạt.",
       "status": {
         "ready": "Sẵn sàng",
-        "needs_approval": "Chờ duyệt nội dung",
+        "needs_approval": "Chờ review kích hoạt",
         "needs_source_approval": "Chờ duyệt nguồn",
         "unsupported": "Khả năng chưa được hỗ trợ",
         "activating": "Đang kích hoạt",
@@ -631,7 +631,25 @@
       "sourceCommit": "Commit đã cố định",
       "sourceDetails": "Thông tin xác minh nguồn",
       "pinnedSource": "Mở nguồn và giấy phép đã cố định",
-      "reviewChanged": "Package đã thay đổi; hãy làm mới và duyệt lại."
+      "reviewChanged": "Package đã thay đổi; hãy làm mới và duyệt lại.",
+      "source": {
+        "official": "Repository chính thức",
+        "community": "Cộng đồng · qua marketplace",
+        "external": "Nguồn ngoài · chưa xác minh",
+        "reviewTitle": "Kiểm tra nguồn plugin",
+        "path": "Đường dẫn package",
+        "officialHint": "Repository thuộc publisher được hiển thị. Nguồn uy tín không bảo đảm an toàn; cần review nội dung và quyền trước khi kích hoạt.",
+        "warning": "Jarvis chưa xác minh publisher bên ngoài này. Có mặt trong marketplace không đồng nghĩa được kiểm chứng bảo mật. Plugin có thể chứa mã độc hoặc chỉ dẫn thao túng agent. Chỉ cài sau khi xem nguồn và quyền yêu cầu. Bạn chịu trách nhiệm về quyết định cài đặt này.",
+        "acceptRisk": "Tôi hiểu rủi ro của nguồn bên ngoài này.",
+        "nextStep": "Tiếp tục để tải và kiểm tra đúng nguồn này. Kích hoạt cần review nội dung, quyền và agent đích ngay tại Settings.",
+        "continue": "Tải và kiểm tra",
+        "cancel": "Hủy",
+        "activationTitle": "Review kích hoạt",
+        "capabilities": "Skills và MCP servers",
+        "activationHint": "Chỉ dẫn bên thứ ba có thể tác động đến agent và các tool sẵn có. Hãy xem file package và quyền thực thi trước khi xác nhận.",
+        "confirmActivation": "Tôi duyệt nội dung và quyền này cho agent được hiển thị.",
+        "activateNow": "Xác nhận và kích hoạt"
+      }
     }
   },
   "memory": {

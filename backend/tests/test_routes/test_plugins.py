@@ -104,3 +104,42 @@ def test_download_timeout_is_actionable_and_redacted(client):
     assert response.status_code == 504
     assert "refresh inventory" in response.text
     assert "private key" not in response.text
+
+
+def test_manual_source_confirmation_does_not_create_approval(client, monkeypatch):
+    import asyncio
+    import routes.plugins as routes
+
+    browser, installer, _ = client
+    gate = AsyncMock(
+        side_effect=AssertionError("manual source must not request approval")
+    )
+    monkeypatch.setattr(routes, "approve_source", gate)
+    installer.install.return_value = {
+        "repo": "openai/plugins",
+        "status": "needs_approval",
+    }
+    response = browser.post(
+        "/api/plugins/install",
+        json={"repo": "openai/plugins", "commit": "a" * 40, "source_confirmed": True},
+    )
+    assert response.status_code == 200
+    callback = installer.install.call_args.kwargs["approve"]
+    assert asyncio.run(callback({"repo": "openai/plugins"})) is True
+    gate.assert_not_called()
+
+
+@pytest.mark.parametrize("operation", ["manual-review", "manual-activate"])
+def test_manual_routes_retain_authentication(client, operation):
+    browser, installer, app = client
+
+    async def unauthorized():
+        raise HTTPException(401, "Unauthorized")
+
+    app.dependency_overrides[verify_api_key] = unauthorized
+    response = browser.post(
+        "/api/plugins/sample/" + operation,
+        json={"agent": "Jarvis", "review_token": "invalid"},
+    )
+    assert response.status_code == 401
+    installer.lifecycle.get.assert_not_called()

@@ -19,7 +19,8 @@ for (const mobile of [false, true]) {
         ? {digest:candidate.digest,content:'<script>window.packageExecuted = true</script>'}
         : {digest:candidate.digest,files:[{path:'server.py',bytes:48}]}
       if (path.endsWith('/content')) result = { content: '<script>window.pluginExecuted = true</script>', digest: candidate.digest }
-      if (path.endsWith('/activate')) result = { ...candidate, status: 'activation_failed' }
+      if (path.endsWith('/manual-review')) result = { plugin: candidate, target:'Jarvis', run_id:null, review_token:'test-token', execution_policy:null }
+      if (path.endsWith('/manual-activate')) result = { ...candidate, status: 'activation_failed' }
       await route.fulfill({ json: result })
     })
     await page.goto('/settings')
@@ -35,6 +36,8 @@ for (const mobile of [false, true]) {
     expect(await page.evaluate(() => (window as any).packageExecuted)).toBeUndefined()
     await card.getByLabel('Target agent').selectOption('Jarvis')
     await card.getByRole('button', { name: 'Activate', exact: true }).click()
+    await page.getByRole('dialog').getByRole('checkbox').check()
+    await page.getByRole('dialog').getByRole('button',{name:'Confirm and activate',exact:true}).click()
     await expect(card).toContainText('Activation failed')
     await expect(card.getByText('Ready', { exact: true })).not.toBeVisible()
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy()
@@ -96,3 +99,50 @@ test('reviewed Ready MCP has no false blocker and shows explicit target placehol
   await expect(card.locator('.blocked')).not.toBeVisible()
   expect(await card.getByLabel('Target agent').evaluate((select:any)=>select.selectedIndex)).toBe(0)
 })
+
+for (const mobile of [false, true]) {
+  test(`source reputation and explicit external consent (${mobile ? 'mobile' : 'desktop'})`, async ({ page }, info) => {
+    if (mobile) await page.setViewportSize({ width: 390, height: 844 })
+    await seedApiKey(page)
+    await mockBackend(page, [noise])
+    let installs = 0
+    const entries = [
+      {...candidate, source_origin:{kind:'official',publisher:'OpenAI'}, subdirectory:'plugins/review'},
+      {...candidate,name:'community-review',repo:'community/review',source_origin:{kind:'community',marketplace:'OpenAI'}, subdirectory:'plugin'},
+      {...candidate,name:'external-review',repo:'unknown/review',source_origin:{kind:'external'}, subdirectory:'plugin'},
+    ]
+    await page.route('**/api/plugins**', async route => {
+      const path = new URL(route.request().url()).pathname
+      let json: any = { plugins: [] }
+      if (path.endsWith('/targets')) json = { targets: [] }
+      if (path.endsWith('/catalog')) json = { plugins: entries }
+      if (path.endsWith('/install')) { installs++; expect(route.request().postDataJSON().source_confirmed).toBe(true); json = { status:'needs_approval' } }
+      await route.fulfill({ json })
+    })
+    await page.goto('/settings')
+    await page.getByRole('button',{name:'Plugins',exact:true}).click()
+    await page.getByRole('button',{name:'Browse plugins',exact:true}).click()
+    await expect(page.locator('.catalog')).toContainText('Official repository')
+    await expect(page.locator('.catalog')).toContainText('Community · listed in marketplace')
+    await expect(page.locator('.catalog')).toContainText('External · unverified')
+    await page.locator('.catalog li').last().getByRole('button',{name:'Add plugin',exact:true}).click()
+    const dialog=page.getByRole('dialog')
+    await expect(dialog).toContainText('unknown/review')
+    await expect(dialog).toContainText('not a security endorsement')
+    const proceed=dialog.getByRole('button',{name:'Download and inspect',exact:true})
+    await expect(proceed).toBeDisabled()
+    expect(installs).toBe(0)
+    await page.screenshot({ path: info.outputPath(`source-review-${mobile ? 'mobile' : 'desktop'}.png`), fullPage:true })
+    await dialog.getByRole('checkbox').check()
+    await proceed.click()
+    await expect(dialog).not.toBeVisible()
+    await expect(page.getByRole('status')).toContainText('Awaiting activation review')
+    expect(installs).toBe(1)
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBeTruthy()
+    await page.locator('.catalog li').first().getByRole('button',{name:'Add plugin',exact:true}).click()
+    await expect(page.getByRole('dialog').getByRole('checkbox')).toHaveCount(0)
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('dialog')).not.toBeVisible()
+    expect(installs).toBe(1)
+  })
+}

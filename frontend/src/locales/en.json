@@ -609,8 +609,8 @@
       "commit": "Pinned commit (40 characters)",
       "external": "External publisher — separate source approval required",
       "add": "Add plugin",
-      "installed": "Installed packages",
-      "empty": "No packages installed.",
+      "installed": "Downloaded packages",
+      "empty": "No packages downloaded yet.",
       "review": "Review skill",
       "target": "Target agent",
       "activate": "Activate",
@@ -618,7 +618,7 @@
       "untrusted": "Third-party content, shown as text. Review before approving activation.",
       "status": {
         "ready": "Ready",
-        "needs_approval": "Awaiting content approval",
+        "needs_approval": "Awaiting activation review",
         "needs_source_approval": "Awaiting source approval",
         "unsupported": "Unsupported capabilities",
         "activating": "Activating",
@@ -654,7 +654,25 @@
       "sourceCommit": "Pinned commit",
       "sourceDetails": "Source verification",
       "pinnedSource": "Open pinned source and license",
-      "reviewChanged": "Package changed; refresh and review again."
+      "reviewChanged": "Package changed; refresh and review again.",
+      "source": {
+        "official": "Official repository",
+        "community": "Community · listed in marketplace",
+        "external": "External · unverified",
+        "reviewTitle": "Review plugin source",
+        "path": "Package path",
+        "officialHint": "This repository belongs to the listed publisher. Source reputation does not guarantee security; review content and permissions before activation.",
+        "warning": "Jarvis has not verified this external publisher. Marketplace inclusion is not a security endorsement. Plugins may contain malicious code or instructions that manipulate agents. Install only after reviewing the source and required permissions. You are responsible for this installation decision.",
+        "acceptRisk": "I understand the risks of this external source.",
+        "nextStep": "Continue to download and inspect this exact source. Activation requires a separate review of content, permissions and target agent here in Settings.",
+        "continue": "Download and inspect",
+        "cancel": "Cancel",
+        "activationTitle": "Review activation",
+        "capabilities": "Skills and MCP servers",
+        "activationHint": "Third-party instructions can influence the agent and its existing tools. Review package files and execution permissions before confirming.",
+        "confirmActivation": "I approve this content and these permissions for the displayed agent.",
+        "activateNow": "Confirm and activate"
+      }
     }
   },
   "memory": {
