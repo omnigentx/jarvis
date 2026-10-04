@@ -3,12 +3,15 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { apiFetch } from '../../api'
 import { useLang } from '../../composables/useLang'
 const props = defineProps({ plugin: { type: Object, required: true } })
+const emit = defineEmits(['readiness'])
 const { t } = useLang()
 const states = ref({})
 const flows = ref({})
 const busy = ref(false)
 const error = ref('')
 const connecting = computed(() => Object.values(states.value).includes('connecting'))
+const accountReady = computed(() => props.plugin.remote_servers.every(server => states.value[server.name] === 'connected'))
+watch(accountReady, ready => emit('readiness', ready), { immediate: true })
 const canDisconnect = computed(() => !props.plugin.global_enabled && !(props.plugin.bindings || []).some(binding => ['ready', 'activating', 'deactivating', 'activation_interrupted', 'detach_failed'].includes(binding.status)))
 async function load() {
   try {

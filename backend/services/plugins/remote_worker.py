@@ -19,6 +19,7 @@ from sqlalchemy import create_engine
 from services.plugins.lifecycle import PluginLifecycle
 from services.plugins.package import inspect_package
 from services.plugins.remote_auth import RemoteTokenStore, approved_endpoint, provider
+from services.plugins.remote_access import call_account_tool, require_account_tools
 
 
 async def serve(database: str, runtime_root: str, candidate: str, name: str):
@@ -43,12 +44,14 @@ async def serve(database: str, runtime_root: str, candidate: str, name: str):
 
                 @bridge.list_tools()
                 async def list_tools():
-                    return (await remote.list_tools()).tools
+                    observed = store.read().get("tokens")
+                    tools = (await remote.list_tools()).tools
+                    await require_account_tools(tools, store, observed)
+                    return tools
 
                 @bridge.call_tool()
                 async def call_tool(tool: str, arguments: dict):
-                    async with asyncio.timeout(60):
-                        return await remote.call_tool(tool, arguments)
+                    return await call_account_tool(remote, store, tool, arguments)
 
                 @bridge.list_resources()
                 async def list_resources():

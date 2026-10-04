@@ -1,0 +1,116 @@
+FFF                                                                      [100%]
+=================================== FAILURES ===================================
+__________ test_expired_token_refreshes_before_request_after_restart ___________
+
+tmp_path = PosixPath('/private/var/folders/41/fgmlgf2x74lghnnd9vdw9m7m0000gn/T/pytest-of-phucnguyenvan/pytest-389/test_expired_token_refreshes_b0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x107941f30>
+
+    @pytest.mark.asyncio
+    async def test_expired_token_refreshes_before_request_after_restart(tmp_path, monkeypatch):
+        monkeypatch.setenv("JARVIS_MASTER_KEY", "test-only")
+        engine = create_engine(f"sqlite:///{tmp_path / 'auth.db'}")
+        store = RemoteTokenStore(engine, "candidate", "rovo", URL)
+        store.write("redirect", "http://127.0.0.1:3038/api/plugins/oauth/callback")
+        await store.set_client_info(OAuthClientInformationFull(client_id="test-client", redirect_uris=[store.read()["redirect"]], token_endpoint_auth_method="none"))
+        store.oauth_settings = {"token_endpoint": TOKEN, "resource": "https://mcp.atlassian.com"}
+        await store.set_tokens(OAuthToken(access_token="old-access", token_type="Bearer", refresh_token="old-refresh", expires_in=0))
+        restarted = RemoteTokenStore(engine, "candidate", "rovo", URL)
+        requests = []
+    
+        def respond(request):
+            requests.append(request)
+            if str(request.url) == TOKEN:
+                assert b"old-refresh" in request.content
+                return httpx.Response(200, json={"access_token": "new-access", "refresh_token": "new-refresh", "token_type": "Bearer", "expires_in": 3600})
+            assert request.headers["Authorization"] == "Bearer new-access"
+            return httpx.Response(200, json={"ok": True})
+    
+        async with httpx.AsyncClient(auth=provider(restarted), transport=httpx.MockTransport(respond)) as client:
+>           assert (await client.get(URL)).status_code == 200
+                    ^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_services/test_plugin_remote_refresh.py:36: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.13/site-packages/httpx/_client.py:1768: in get
+    return await self.request(
+.venv/lib/python3.13/site-packages/httpx/_client.py:1540: in request
+    return await self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/httpx/_client.py:1629: in send
+    response = await self._send_handling_auth(
+.venv/lib/python3.13/site-packages/httpx/_client.py:1657: in _send_handling_auth
+    response = await self._send_handling_redirects(
+.venv/lib/python3.13/site-packages/httpx/_client.py:1694: in _send_handling_redirects
+    response = await self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/httpx/_client.py:1730: in _send_single_request
+    response = await transport.handle_async_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/httpx/_transports/mock.py:34: in handle_async_request
+    response = self.handler(request)
+               ^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+request = <Request('GET', 'https://mcp.atlassian.com/v1/mcp/authv2')>
+
+    def respond(request):
+        requests.append(request)
+        if str(request.url) == TOKEN:
+            assert b"old-refresh" in request.content
+            return httpx.Response(200, json={"access_token": "new-access", "refresh_token": "new-refresh", "token_type": "Bearer", "expires_in": 3600})
+>       assert request.headers["Authorization"] == "Bearer new-access"
+E       AssertionError: assert 'Bearer old-access' == 'Bearer new-access'
+E         
+E         - Bearer new-access
+E         ?        ^^^
+E         + Bearer old-access
+E         ?        ^^^
+
+tests/test_services/test_plugin_remote_refresh.py:32: AssertionError
+________________ test_refresh_denial_vs_transient_failure[400] _________________
+
+tmp_path = PosixPath('/private/var/folders/41/fgmlgf2x74lghnnd9vdw9m7m0000gn/T/pytest-of-phucnguyenvan/pytest-389/test_refresh_denial_vs_transie0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x107b3fbf0>
+status = 400
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", [400, 503])
+    async def test_refresh_denial_vs_transient_failure(tmp_path, monkeypatch, status):
+        monkeypatch.setenv("JARVIS_MASTER_KEY", "test-only")
+        store = RemoteTokenStore(create_engine(f"sqlite:///{tmp_path / 'auth.db'}"), "candidate", "rovo", URL)
+        store.write("redirect", "http://127.0.0.1:3038/api/plugins/oauth/callback")
+        await store.set_client_info(OAuthClientInformationFull(client_id="test-client", redirect_uris=[store.read()["redirect"]], token_endpoint_auth_method="none"))
+        store.oauth_settings = {"token_endpoint": TOKEN}
+        await store.set_tokens(OAuthToken(access_token="old", refresh_token="refresh-private", expires_in=0))
+        async with httpx.AsyncClient(auth=provider(store), transport=httpx.MockTransport(lambda _: httpx.Response(status, text="upstream-private"))) as client:
+>           with pytest.raises(PackageError) as error:
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: DID NOT RAISE <class 'services.plugins.package.PackageError'>
+
+tests/test_services/test_plugin_remote_refresh.py:54: Failed
+________________ test_refresh_denial_vs_transient_failure[503] _________________
+
+tmp_path = PosixPath('/private/var/folders/41/fgmlgf2x74lghnnd9vdw9m7m0000gn/T/pytest-of-phucnguyenvan/pytest-389/test_refresh_denial_vs_transie1')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x107b8a9c0>
+status = 503
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", [400, 503])
+    async def test_refresh_denial_vs_transient_failure(tmp_path, monkeypatch, status):
+        monkeypatch.setenv("JARVIS_MASTER_KEY", "test-only")
+        store = RemoteTokenStore(create_engine(f"sqlite:///{tmp_path / 'auth.db'}"), "candidate", "rovo", URL)
+        store.write("redirect", "http://127.0.0.1:3038/api/plugins/oauth/callback")
+        await store.set_client_info(OAuthClientInformationFull(client_id="test-client", redirect_uris=[store.read()["redirect"]], token_endpoint_auth_method="none"))
+        store.oauth_settings = {"token_endpoint": TOKEN}
+        await store.set_tokens(OAuthToken(access_token="old", refresh_token="refresh-private", expires_in=0))
+        async with httpx.AsyncClient(auth=provider(store), transport=httpx.MockTransport(lambda _: httpx.Response(status, text="upstream-private"))) as client:
+>           with pytest.raises(PackageError) as error:
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: DID NOT RAISE <class 'services.plugins.package.PackageError'>
+
+tests/test_services/test_plugin_remote_refresh.py:54: Failed
+=========================== short test summary info ============================
+FAILED tests/test_services/test_plugin_remote_refresh.py::test_expired_token_refreshes_before_request_after_restart
+FAILED tests/test_services/test_plugin_remote_refresh.py::test_refresh_denial_vs_transient_failure[400]
+FAILED tests/test_services/test_plugin_remote_refresh.py::test_refresh_denial_vs_transient_failure[503]
+3 failed in 0.19s

@@ -59,6 +59,11 @@ jobs:
       - name: Build (verify compilation)
         run: npm run build
 
+      - name: Verify production proxy privacy and cache headers
+        env:
+          RUN_DOCKER_TESTS: "1"
+        run: node --test tests/deployment/*.test.js
+
   e2e-frontend:
     runs-on: ubuntu-latest
     defaults:

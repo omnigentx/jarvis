@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcntl
+import json
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -42,6 +43,7 @@ class RemoteTokenStore(TokenStorage):
             server,
             endpoint,
         )
+        self.oauth_settings: dict[str, str] = {}
         with engine.begin() as db:
             db.execute(
                 text("""CREATE TABLE IF NOT EXISTS plugin_remote_auth (
@@ -93,8 +95,19 @@ class RemoteTokenStore(TokenStorage):
         value = self.read().get("tokens")
         return OAuthToken.model_validate_json(decrypt(value)) if value else None
 
+    def token_data(self) -> dict:
+        value = self.read().get("tokens")
+        return json.loads(decrypt(value)) if value else {}
+
     async def set_tokens(self, tokens):
-        self.write("tokens", tokens.model_dump_json())
+        payload = tokens.model_dump()
+        payload["_jarvis_expires_at"] = (
+            time.time() + tokens.expires_in if tokens.expires_in is not None else None
+        )
+        payload["_jarvis_oauth"] = self.oauth_settings or self.token_data().get(
+            "_jarvis_oauth", {}
+        )
+        self.write("tokens", json.dumps(payload))
 
     async def get_client_info(self):
         value = self.read().get("client")
@@ -115,6 +128,28 @@ class RemoteTokenStore(TokenStorage):
                 ),
                 self.params,
             )
+
+    def invalidate_tokens(
+        self, *, expected: str | None = None, compare: bool = False
+    ) -> bool:
+        """A rejected credential must not keep the account looking connected.
+
+        Keep the registration and redirect for a later human reconnect. Call
+        under serialized() so a stale worker cannot discard a rotated token.
+        """
+        with self.engine.begin() as db:
+            result = db.execute(
+                text(
+                    "UPDATE plugin_remote_auth SET tokens=NULL WHERE candidate=:c AND server=:s AND endpoint=:e AND tokens IS NOT NULL"
+                    + (" AND tokens=:expected" if compare else "")
+                ),
+                {**self.params, "expected": expected},
+            )
+        if result.rowcount:
+            from services.plugins.remote_events import notify_remote_disconnect
+
+            notify_remote_disconnect(self.candidate, self.server)
+        return bool(result.rowcount)
 
     @asynccontextmanager
     async def serialized(self):
@@ -143,13 +178,32 @@ class SerializedOAuthProvider(httpx.Auth):
         self.store, self.arguments = store, arguments
 
     async def async_auth_flow(self, request):
+        from services.plugins.remote_refresh import (
+            allowed_oauth_url,
+            complete_refresh,
+            observe_oauth,
+            refresh_request,
+        )
+
         async with self.store.serialized():
+            refresh = await refresh_request(self.store)
+            if refresh is not None:
+                response = yield refresh
+                await complete_refresh(self.store, response)
             auth = OAuthClientProvider(**self.arguments)
             flow = auth.async_auth_flow(request)
             try:
                 item = await flow.__anext__()
                 while True:
+                    allowed_oauth_url(str(item.url))
                     response = yield item
+                    if "/.well-known/oauth-authorization-server" in item.url.path:
+                        await response.aread()
+                    observe_oauth(self.store, item, response)
+                    if response.status_code == 401 and item.url == request.url:
+                        # The SDK handles consent/discovery. Invalidate our
+                        # persisted state before that flow can fail or cancel.
+                        self.store.invalidate_tokens()
                     try:
                         item = await flow.asend(response)
                     except StopAsyncIteration:

@@ -38,6 +38,8 @@ def connection_settings(
     env = {"PYTHONPATH": str(backend)}
     if os.environ.get("JARVIS_MASTER_KEY"):
         env["JARVIS_MASTER_KEY"] = os.environ["JARVIS_MASTER_KEY"]
+    if os.environ.get("SPAWN_EVENT_SOCKET"):
+        env["SPAWN_EVENT_SOCKET"] = os.environ["SPAWN_EVENT_SOCKET"]
     return MCPServerSettings(
         transport="stdio",
         command=sys.executable,

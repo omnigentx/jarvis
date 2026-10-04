@@ -1,0 +1,16 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_________ test_anonymous_catalog_invalidates_only_observed_credential __________
+
+tmp_path = PosixPath('/private/var/folders/41/fgmlgf2x74lghnnd9vdw9m7m0000gn/T/pytest-of-phucnguyenvan/pytest-386/test_anonymous_catalog_invalid0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1121d2060>
+
+    @pytest.mark.asyncio
+    async def test_anonymous_catalog_invalidates_only_observed_credential(tmp_path, monkeypatch):
+>       from services.plugins.remote_access import require_account_tools
+E       ModuleNotFoundError: No module named 'services.plugins.remote_access'
+
+tests/test_services/test_plugin_remote_access.py:14: ModuleNotFoundError
+=========================== short test summary info ============================
+FAILED tests/test_services/test_plugin_remote_access.py::test_anonymous_catalog_invalidates_only_observed_credential
+1 failed in 0.15s

@@ -1,0 +1,15 @@
+{
+  "kind": "real host stdio worker and vendor; local credential fault injection",
+  "valid_before": {
+    "catalog_count": 27,
+    "is_error": false,
+    "issue_seen": true
+  },
+  "fault_error_type": "ExceptionGroup",
+  "fault_tokens_removed": true,
+  "valid_after": {
+    "catalog_count": 27,
+    "is_error": false,
+    "issue_seen": true
+  }
+}

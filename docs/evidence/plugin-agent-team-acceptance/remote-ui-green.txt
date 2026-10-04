@@ -1,0 +1,48 @@
+
+[WebServer] (node:994) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+
+Running 17 tests using 6 workers
+
+
+(node:999) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+
+(node:998) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+
+(node:997) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+
+(node:996) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+
+(node:1000) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+
+(node:995) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+[1/17] [chromium-desktop] › tests/e2e/flows/plugin-remote-readiness.spec.ts:10:5 › remote account readiness overrides stale binding (mobile, disconnected)
+[2/17] [chromium-desktop] › tests/e2e/flows/settings-plugins.spec.ts:10:3 › plugin content review and truthful activation (desktop)
+[3/17] [chromium-desktop] › tests/e2e/flows/settings-plugins.spec.ts:10:3 › plugin content review and truthful activation (mobile)
+[4/17] [chromium-desktop] › tests/e2e/flows/plugin-remote-readiness.spec.ts:10:5 › remote account readiness overrides stale binding (desktop, connected)
+[5/17] [chromium-desktop] › tests/e2e/flows/plugin-remote-readiness.spec.ts:10:5 › remote account readiness overrides stale binding (mobile, connected)
+[6/17] [chromium-desktop] › tests/e2e/flows/plugin-remote-readiness.spec.ts:10:5 › remote account readiness overrides stale binding (desktop, disconnected)
+[7/17] [chromium-desktop] › tests/e2e/flows/settings-plugins.spec.ts:48:1 › non-blocking plugin review does not claim agent paused or resumed
+[8/17] [chromium-desktop] › tests/e2e/flows/settings-plugins.spec.ts:60:1 › MCP policy uses the host profile and clears entered credentials after save
+[9/17] [chromium-desktop] › tests/e2e/flows/settings-plugins.spec.ts:89:1 › reviewed Ready MCP has no false blocker and shows explicit target placeholder
+[10/17] [chromium-desktop] › tests/e2e/flows/settings-plugins.spec.ts:104:3 › source reputation and explicit external consent (desktop)
+[11/17] [chromium-desktop] › tests/e2e/flows/settings-plugins.spec.ts:104:3 › source reputation and explicit external consent (mobile)
+[12/17] [chromium-desktop] › tests/e2e/flows/settings-plugins.spec.ts:151:3 › all current agents and honest partial failure (desktop)
+[13/17] [chromium-desktop] › tests/e2e/flows/settings-plugins.spec.ts:188:3 › unsupported package explains disabled activation (desktop)
+[14/17] [chromium-desktop] › tests/e2e/flows/settings-plugins.spec.ts:151:3 › all current agents and honest partial failure (mobile)
+[15/17] [chromium-desktop] › tests/e2e/flows/settings-plugins.spec.ts:188:3 › unsupported package explains disabled activation (mobile)
+[16/17] [chromium-desktop] › tests/e2e/flows/settings-plugins.spec.ts:210:3 › bulk review fails closed when changed-package
+[17/17] [chromium-desktop] › tests/e2e/flows/settings-plugins.spec.ts:210:3 › bulk review fails closed when stopped-target
+  17 passed (3.4s)

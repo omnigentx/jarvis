@@ -15,6 +15,7 @@ from mcp.client.streamable_http import streamable_http_client
 
 from services.plugins.package import PackageError
 from services.plugins.remote_auth import RemoteTokenStore, provider, callback_origin
+from services.plugins.remote_access import require_account_tools
 
 
 @dataclass
@@ -92,7 +93,9 @@ class RemoteConnections:
                     ) as streams:
                         async with ClientSession(streams[0], streams[1]) as session:
                             await session.initialize()
+                            observed = flow.store.read().get("tokens")
                             tools = (await session.list_tools()).tools
+                            await require_account_tools(tools, flow.store, observed)
                             if not tools or not await flow.store.get_tokens():
                                 raise PackageError(
                                     "Remote account did not authorize tool access"

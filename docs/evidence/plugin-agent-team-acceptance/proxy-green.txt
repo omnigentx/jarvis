@@ -1,0 +1,26 @@
+TAP version 13
+# nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+# nginx: configuration file /etc/nginx/nginx.conf test is successful
+# Subtest: Nginx revalidates SPA entry documents while preserving hashed asset caching
+ok 1 - Nginx revalidates SPA entry documents while preserving hashed asset caching
+  ---
+  duration_ms: 529.368541
+  type: 'test'
+  ...
+# nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+# nginx: configuration file /etc/nginx/nginx.conf test is successful
+# Subtest: OAuth callback credentials never enter proxy logs, including unavailable upstream
+ok 2 - OAuth callback credentials never enter proxy logs, including unavailable upstream
+  ---
+  duration_ms: 642.617959
+  type: 'test'
+  ...
+1..2
+# tests 2
+# suites 0
+# pass 2
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 679.08125

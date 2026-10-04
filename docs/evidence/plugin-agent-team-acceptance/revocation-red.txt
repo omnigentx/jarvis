@@ -1,0 +1,54 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+________________ test_rejected_token_no_longer_looks_connected _________________
+
+tmp_path = PosixPath('/private/var/folders/41/fgmlgf2x74lghnnd9vdw9m7m0000gn/T/pytest-of-phucnguyenvan/pytest-383/test_rejected_token_no_longer_0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x118cae060>
+
+    @pytest.mark.asyncio
+    async def test_rejected_token_no_longer_looks_connected(tmp_path, monkeypatch):
+        monkeypatch.setenv("JARVIS_MASTER_KEY", "test-only")
+        store = RemoteTokenStore(
+            create_engine(f"sqlite:///{tmp_path / 'auth.db'}"), "candidate", "rovo", URL
+        )
+        redirect = "http://127.0.0.1:3038/api/plugins/oauth/callback"
+        store.write("redirect", redirect)
+        await store.set_tokens(OAuthToken(access_token="test-only-revoked", token_type="Bearer"))
+        await store.set_client_info(OAuthClientInformationFull(client_id="test-only-client", redirect_uris=[redirect]))
+        requests = []
+    
+        def respond(request):
+            requests.append(request.url.path)
+            if "oauth-protected-resource" in request.url.path:
+                return httpx.Response(200, json={"resource": "https://mcp.atlassian.com", "authorization_servers": ["https://mcp.atlassian.com"]})
+            if "oauth-authorization-server" in request.url.path:
+                return httpx.Response(200, json={"issuer": "https://mcp.atlassian.com", "authorization_endpoint": "https://mcp.atlassian.com/authorize", "token_endpoint": "https://mcp.atlassian.com/token", "response_types_supported": ["code"], "code_challenge_methods_supported": ["S256"]})
+            return httpx.Response(401)
+    
+        async with httpx.AsyncClient(auth=provider(store), transport=httpx.MockTransport(respond)) as client:
+            with pytest.raises(PackageError, match="reconnect"):
+                await client.get(URL)
+        assert len(requests) == 3  # one failed request and bounded discovery, no retry loop
+>       assert await store.get_tokens() is None
+E       AssertionError: assert OAuthToken(access_token='test-only-revoked', token_type='Bearer', expires_in=None, scope=None, refresh_token=None) is None
+
+tests/test_services/test_plugin_remote_revocation.py:38: AssertionError
+------------------------------ Captured log call -------------------------------
+ERROR    mcp.client.auth.oauth2:oauth2.py:600 OAuth flow error
+Traceback (most recent call last):
+  File "/Users/phucnguyenvan/.codex/worktrees/backlog-quick-fixes/jarvis/backend/.venv/lib/python3.13/site-packages/mcp/client/auth/oauth2.py", line 597, in async_auth_flow
+    token_response = yield await self._perform_authorization()
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/phucnguyenvan/.codex/worktrees/backlog-quick-fixes/jarvis/backend/.venv/lib/python3.13/site-packages/mcp/client/auth/oauth2.py", line 313, in _perform_authorization
+    auth_code, code_verifier = await self._perform_authorization_code_grant()
+                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/phucnguyenvan/.codex/worktrees/backlog-quick-fixes/jarvis/backend/.venv/lib/python3.13/site-packages/mcp/client/auth/oauth2.py", line 356, in _perform_authorization_code_grant
+    await self.context.redirect_handler(authorization_url)
+  File "/Users/phucnguyenvan/.codex/worktrees/backlog-quick-fixes/jarvis/backend/services/plugins/remote_auth.py", line 163, in unavailable
+    raise PackageError(
+        "Remote account authorization expired; reconnect in Settings"
+    )
+services.plugins.package.PackageError: Remote account authorization expired; reconnect in Settings
+=========================== short test summary info ============================
+FAILED tests/test_services/test_plugin_remote_revocation.py::test_rejected_token_no_longer_looks_connected
+1 failed in 0.17s
