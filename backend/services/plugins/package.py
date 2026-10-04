@@ -194,15 +194,20 @@ def _servers(
     root: Path, settings: dict[str, Any], ecosystem: str
 ) -> dict[str, dict[str, Any]]:
     configs: list[dict[str, Any]] = []
+    seen_paths: set[Path] = set()
     default = root / ("mcp.json" if ecosystem == "portable" else ".mcp.json")
     if default.is_file():
         configs.append(_json(default))
+        seen_paths.add(default.resolve())
     declared = settings.get("mcpServers")
     if declared is not None:
         declarations = declared if isinstance(declared, list) else [declared]
         for item in declarations:
             if isinstance(item, str):
-                configs.append(_json(_path(root, item)))
+                path = _path(root, item).resolve()
+                if path not in seen_paths:
+                    configs.append(_json(path))
+                    seen_paths.add(path)
             elif isinstance(item, dict):
                 configs.append({"mcpServers": item})
             else:
