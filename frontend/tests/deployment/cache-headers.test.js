@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -10,6 +10,9 @@ const nginxConfig = fileURLToPath(new URL('../../nginx.conf', import.meta.url))
 
 test('Nginx revalidates SPA entry documents while preserving hashed asset caching', { skip: !process.env.RUN_DOCKER_TESTS }, async () => {
   const root = mkdtempSync(join(tmpdir(), 'jarvis-cache-test-'))
+  // Linux nginx workers must traverse the synthetic document root. mkdtemp
+  // creates 0700; Docker Desktop file sharing can hide that permission bug.
+  chmodSync(root, 0o755)
   const name = `jarvis-cache-test-${process.pid}`
   const docker = (...args) => execFileSync('docker', args, { encoding: 'utf8' }).trim()
   try {

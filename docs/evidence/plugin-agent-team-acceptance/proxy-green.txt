@@ -4,7 +4,7 @@ TAP version 13
 # Subtest: Nginx revalidates SPA entry documents while preserving hashed asset caching
 ok 1 - Nginx revalidates SPA entry documents while preserving hashed asset caching
   ---
-  duration_ms: 529.368541
+  duration_ms: 681.292625
   type: 'test'
   ...
 # nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
@@ -12,7 +12,7 @@ ok 1 - Nginx revalidates SPA entry documents while preserving hashed asset cachi
 # Subtest: OAuth callback credentials never enter proxy logs, including unavailable upstream
 ok 2 - OAuth callback credentials never enter proxy logs, including unavailable upstream
   ---
-  duration_ms: 642.617959
+  duration_ms: 788.306667
   type: 'test'
   ...
 1..2
@@ -23,4 +23,4 @@ ok 2 - OAuth callback credentials never enter proxy logs, including unavailable 
 # cancelled 0
 # skipped 0
 # todo 0
-# duration_ms 679.08125
+# duration_ms 820.507417

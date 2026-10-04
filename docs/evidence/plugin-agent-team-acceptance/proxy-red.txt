@@ -3,7 +3,7 @@ TAP version 13
 # nginx: configuration file /etc/nginx/nginx.conf test is successful
 # 2026/10/04 09:35:49 [notice] 1\#1: using the "epoll" event method
 # 2026/10/04 09:35:49 [notice] 1\#1: nginx/1.27.5
-# 2026/10/04 09:35:49 [notice] 1\#1: built by gcc 14.2.0 (Alpine 14.2.0) 
+# 2026/10/04 09:35:49 [notice] 1\#1: built by gcc 14.2.0 (Alpine 14.2.0)
 # 2026/10/04 09:35:49 [notice] 1\#1: OS: Linux 6.12.72-linuxkit
 # 2026/10/04 09:35:49 [notice] 1\#1: getrlimit(RLIMIT_NOFILE): 1048576:1048576
 # 2026/10/04 09:35:49 [notice] 1\#1: start worker processes
@@ -30,7 +30,7 @@ not ok 1 - OAuth callback credentials never enter proxy logs, including unavaila
   failureType: 'testCodeFailure'
   error: |-
     The input was expected to not match the regular expression /test-only-sensitive-code|test-only-sensitive-state/. Input:
-    
+
     '/docker-entrypoint.sh: /docker-entrypoint.d/ is not empty, will attempt to perform configuration\n' +
       '/docker-entrypoint.sh: Looking for shell scripts in /docker-entrypoint.d/\n' +
       '/docker-entrypoint.sh: Launching /docker-entrypoint.d/10-listen-on-ipv6-by-default.sh\n' +
@@ -42,7 +42,7 @@ not ok 1 - OAuth callback credentials never enter proxy logs, including unavaila
       '172.17.0.1 - - [04/Oct/2026:09:35:49 +0000] "GET /api/plugins/oauth/callback?code=test-only-sensitive-code&state=test-only-sensitive-state HTTP/1.1" 502 150 "-" "node" "-"\n' +
       '172.17.0.1 - - [04/Oct/2026:09:35:49 +0000] "GET /api/plugins/oauth/callback/?code=test-only-sensitive-code&state=test-only-sensitive-state HTTP/1.1" 502 150 "-" "node" "-"\n' +
       '172.17.0.1 - - [04/Oct/2026:09:35:49 +0000] "GET /ordinary-observable-request HTTP/1.1" 200 409 "-" "node" "-"'
-    
+
   code: 'ERR_ASSERTION'
   name: 'AssertionError'
   expected:

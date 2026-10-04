@@ -16,11 +16,11 @@ monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x108e05f30>
         await store.set_tokens(OAuthToken(access_token="old-access", token_type="Bearer", refresh_token="old-refresh", expires_in=0))
         restarted = RemoteTokenStore(engine, "candidate", "rovo", URL)
         requests = []
-    
+
         class StreamedToken(httpx.AsyncByteStream):
             async def __aiter__(self):
                 yield b'{"access_token":"new-access","refresh_token":"new-refresh","token_type":"Bearer","expires_in":3600}'
-    
+
         def respond(request):
             requests.append(request)
             if str(request.url) == TOKEN:
@@ -28,13 +28,13 @@ monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x108e05f30>
                 return httpx.Response(200, stream=StreamedToken())
             assert request.headers["Authorization"] == "Bearer new-access"
             return httpx.Response(200, json={"ok": True})
-    
+
         async with httpx.AsyncClient(auth=provider(restarted), transport=httpx.MockTransport(respond)) as client:
 >           assert (await client.get(URL)).status_code == 200
                     ^^^^^^^^^^^^^^^^^^^^^
 
-tests/test_services/test_plugin_remote_refresh.py:40: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_services/test_plugin_remote_refresh.py:40:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 .venv/lib/python3.13/site-packages/httpx/_client.py:1768: in get
     return await self.request(
 .venv/lib/python3.13/site-packages/httpx/_client.py:1540: in request
@@ -52,7 +52,7 @@ services/plugins/remote_auth.py:173: in async_auth_flow
 services/plugins/remote_refresh.py:76: in complete_refresh
     token = OAuthToken.model_validate_json(response.content)
                                            ^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = <Response [200 OK]>
 

@@ -24,7 +24,7 @@ Running 4 tests using 4 workers
 [2/4] [chromium-desktop] › tests/e2e/flows/plugin-remote-readiness.spec.ts:10:5 › remote account readiness overrides stale binding (mobile, disconnected)
 [3/4] [chromium-desktop] › tests/e2e/flows/plugin-remote-readiness.spec.ts:10:5 › remote account readiness overrides stale binding (mobile, connected)
 [4/4] [chromium-desktop] › tests/e2e/flows/plugin-remote-readiness.spec.ts:10:5 › remote account readiness overrides stale binding (desktop, disconnected)
-  1) [chromium-desktop] › tests/e2e/flows/plugin-remote-readiness.spec.ts:10:5 › remote account readiness overrides stale binding (mobile, disconnected) 
+  1) [chromium-desktop] › tests/e2e/flows/plugin-remote-readiness.spec.ts:10:5 › remote account readiness overrides stale binding (mobile, disconnected)
 
     Error: expect(locator).not.toHaveText(expected) failed
 
@@ -68,7 +68,7 @@ Running 4 tests using 4 workers
     ────────────────────────────────────────────────────────────────────────────────────────────────
 
 
-  2) [chromium-desktop] › tests/e2e/flows/plugin-remote-readiness.spec.ts:10:5 › remote account readiness overrides stale binding (desktop, disconnected) 
+  2) [chromium-desktop] › tests/e2e/flows/plugin-remote-readiness.spec.ts:10:5 › remote account readiness overrides stale binding (desktop, disconnected)
 
     Error: expect(locator).not.toHaveText(expected) failed
 
@@ -113,6 +113,6 @@ Running 4 tests using 4 workers
 
 
   2 failed
-    [chromium-desktop] › tests/e2e/flows/plugin-remote-readiness.spec.ts:10:5 › remote account readiness overrides stale binding (desktop, disconnected) 
-    [chromium-desktop] › tests/e2e/flows/plugin-remote-readiness.spec.ts:10:5 › remote account readiness overrides stale binding (mobile, disconnected) 
+    [chromium-desktop] › tests/e2e/flows/plugin-remote-readiness.spec.ts:10:5 › remote account readiness overrides stale binding (desktop, disconnected)
+    [chromium-desktop] › tests/e2e/flows/plugin-remote-readiness.spec.ts:10:5 › remote account readiness overrides stale binding (mobile, disconnected)
   2 passed (7.1s)
