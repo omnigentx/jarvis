@@ -48,3 +48,12 @@ Repeated acknowledgments/status wakeups belong to SCRUM-11/18/21/16. A textual `
 ## Deployment preflight
 
 Production read-only inspection: `JARVIS_PUBLIC_URL` unset. Deployment copies `~/jarvis-data/.env` into `backend/.env`; configure the exact HTTPS public origin in that persistent file before deploying. Do not hardcode one deployment's origin in generic code. Local verified-TLS callback regression does not replace production consent smoke.
+
+
+## Follow-up credential race audit
+
+A deterministic regression reproduced rejected rotated credentials remaining in storage: the catalog's initial credential snapshot predates refresh or another worker's consent, so CAS correctly protects the newer token but the guard had not validated it. `list_account_tools` now performs exactly one extra catalog validation only when persisted credentials changed during the rejected request. An unchanged rejected token uses one call and is removed; a valid new credential is preserved; a rejected new credential is removed only after its own catalog fails. No tool operation is retried and repeated rotations cannot create an unbounded retry loop. This guard is shared by browser consent and remote-worker catalog/runtime calls.
+
+`catalog-rotation-red.txt` shows the persisted rejected token assertion failing before the fix; `catalog-rotation-green.txt` covers both recovery/denial and single-use refresh across two independent token stores. `catalog-rotation-regression.txt`: **243 passed, 3 skipped**, 5 warnings. These race tests use controlled transport/storage responses, not live external revocation; existing real vendor evidence establishes the anonymous-catalog contract. Full CI needs the new source HEAD after this fix.
+
+After backend restart with the race fix, direct chat UI called the actual Rovo `getJiraIssue` once and returned SCRUM-55 summary/status (tool duration 0.6s). See `rovo-after-catalog-race-fix.jpg`. Direct computer-use mobile evidence at 390×844 (document width 390): `rovo-mobile-connected.jpg` and `rovo-mobile-activation.jpg`; selecting existing authorized Jarvis enables the full-width Activate button. No additional agent grant was made.

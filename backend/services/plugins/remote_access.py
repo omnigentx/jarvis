@@ -26,6 +26,26 @@ async def require_account_tools(
     )
 
 
+async def list_account_tools(remote, store: RemoteTokenStore):
+    """Revalidate once if refresh/consent changed the in-flight credential.
+
+    Normal and unchanged rejected credentials use one catalog request. A newer
+    credential is never invalidated based on an older catalog response. This
+    bounded recovery is event-driven, not a polling loop.
+    """
+    for attempt in range(2):
+        observed = store.read().get("tokens")
+        tools = (await remote.list_tools()).tools
+        try:
+            await require_account_tools(tools, store, observed)
+            return tools
+        except PackageError:
+            current = store.read().get("tokens")
+            if attempt == 0 and current is not None and current != observed:
+                continue
+            raise
+
+
 async def call_account_tool(
     remote, store: RemoteTokenStore, tool: str, arguments: dict
 ):
@@ -35,13 +55,11 @@ async def call_account_tool(
     200. Do not retry the operation, and do not treat ordinary business errors
     or permission errors as account revocation.
     """
-    observed = store.read().get("tokens")
     async with asyncio.timeout(60):
         result = await remote.call_tool(tool, arguments)
         missing = f"MCP error -32602: Tool {tool} not found"
         if result.isError and any(
             getattr(block, "text", "") == missing for block in result.content
         ):
-            tools = (await remote.list_tools()).tools
-            await require_account_tools(tools, store, observed)
+            await list_account_tools(remote, store)
         return result
