@@ -146,3 +146,88 @@ for (const mobile of [false, true]) {
     expect(installs).toBe(1)
   })
 }
+
+for (const mobile of [false, true]) {
+  test(`all current agents and honest partial failure (${mobile ? 'mobile' : 'desktop'})`, async ({page}, info) => {
+    if(mobile) await page.setViewportSize({width:390,height:844})
+    await seedApiKey(page);await mockBackend(page,[noise])
+    const activated:string[]=[]
+    let approved=false
+    await page.route('**/api/plugins**',async route=>{
+      const path=new URL(route.request().url()).pathname
+      let json:any={plugins:[candidate]}
+      if(path.endsWith('/targets')) json={targets:[{agent:'Jarvis',label:'Jarvis'},{agent:'Dev',label:'Dev'},{agent:'QA',label:'QA'}]}
+      if(path.endsWith('/manual-review')) { const body=route.request().postDataJSON(); json={plugin:candidate,target:body.agent,review_token:body.agent,execution_policy:null} }
+      if(path.endsWith('/manual-activate')) {
+        expect(approved).toBe(true)
+        const body=route.request().postDataJSON();activated.push(body.agent)
+        if(body.agent==='Dev') {await route.fulfill({status:409,json:{detail:'Runtime stopped after review'}});return}
+        json={...candidate,status:'ready',bindings:[{agent:body.agent,status:'ready'}]}
+      }
+      await route.fulfill({json})
+    })
+    await page.goto('/settings');await page.getByRole('button',{name:'Plugins',exact:true}).click()
+    const card=page.getByTestId('plugin-sample')
+    await card.getByLabel('Target agent').selectOption('all:current')
+    await expect(card.getByRole('button',{name:'Activate',exact:true})).toBeEnabled()
+    await card.getByRole('button',{name:'Activate',exact:true}).click()
+    const dialog=page.getByRole('dialog')
+    await expect(dialog.locator('.review-targets')).toContainText('Jarvis')
+    await expect(dialog.locator('.review-targets')).toContainText('Dev')
+    await expect(dialog).toContainText('Agents created later are excluded')
+    await expect(dialog.getByRole('button',{name:'Confirm and activate'})).toBeDisabled()
+    expect(activated).toEqual([])
+    await dialog.getByRole('checkbox').check();approved=true
+    await dialog.getByRole('button',{name:'Confirm and activate'}).click()
+    await expect(card.locator('.activation-results')).toContainText('Runtime stopped after review')
+    await expect(card.locator('.activation-results li')).toHaveCount(3)
+    expect(activated).toEqual(['Jarvis','Dev','QA'])
+    await page.screenshot({path:info.outputPath(`all-targets-${mobile?'mobile':'desktop'}.png`),fullPage:true})
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBeTruthy()
+  })
+  test(`unsupported package explains disabled activation (${mobile ? 'mobile' : 'desktop'})`, async ({page}, info)=>{
+    if(mobile) await page.setViewportSize({width:390,height:844})
+    await seedApiKey(page);await mockBackend(page,[noise])
+    let requests=0
+    await page.route('**/api/plugins**',async route=>{
+      const path=new URL(route.request().url()).pathname
+      if(path.endsWith('/manual-review')||path.endsWith('/manual-activate')) requests++
+      await route.fulfill({json:path.endsWith('/targets')?{targets:[{agent:'Jarvis',label:'Jarvis'}]}:{plugins:[{...candidate,blockers:['agents','host_connectors','mcp_requires_policy_review']}]}})
+    })
+    await page.goto('/settings');await page.getByRole('button',{name:'Plugins',exact:true}).click()
+    const card=page.getByTestId('plugin-sample')
+    await card.getByLabel('Target agent').selectOption('Jarvis')
+    await expect(card.getByRole('button',{name:'Activate',exact:true})).toBeDisabled()
+    await expect(card.locator('.blocked')).toContainText('Plugin-defined agents are not supported')
+    await expect(card.locator('.blocked')).toContainText('Host app connectors are not supported')
+    await expect(card.locator('.activation-help')).toContainText('Choosing an agent cannot resolve missing adapters')
+    expect(requests).toBe(0)
+    await page.screenshot({path:info.outputPath(`unsupported-${mobile?'mobile':'desktop'}.png`),fullPage:true})
+  })
+}
+
+for (const failure of ['changed-package', 'stopped-target']) {
+  test(`bulk review fails closed when ${failure}`, async ({page})=>{
+    await seedApiKey(page);await mockBackend(page,[noise])
+    let reviewed=0;let activated=0
+    await page.route('**/api/plugins**',async route=>{
+      const path=new URL(route.request().url()).pathname
+      let json:any={plugins:[candidate]}
+      if(path.endsWith('/targets')) json={targets:[{agent:'Jarvis',label:'Jarvis'},{agent:'Dev',label:'Dev'}]}
+      if(path.endsWith('/manual-review')) {
+        reviewed++
+        if(reviewed===2 && failure==='stopped-target') {await route.fulfill({status:409,json:{detail:'Selected runtime stopped'}});return}
+        json={plugin:{...candidate,digest:reviewed===2?'changed':candidate.digest},target:route.request().postDataJSON().agent,review_token:'token',execution_policy:null}
+      }
+      if(path.endsWith('/manual-activate')) activated++
+      await route.fulfill({json})
+    })
+    await page.goto('/settings');await page.getByRole('button',{name:'Plugins',exact:true}).click()
+    const card=page.getByTestId('plugin-sample')
+    await card.getByLabel('Target agent').selectOption('all:current')
+    await card.getByRole('button',{name:'Activate',exact:true}).click()
+    await expect(page.getByRole('alert')).toContainText(failure==='changed-package'?'changed during review':'Selected runtime stopped')
+    await expect(page.getByRole('dialog')).not.toBeVisible()
+    expect(activated).toBe(0)
+  })
+}
