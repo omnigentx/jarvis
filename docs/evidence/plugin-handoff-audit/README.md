@@ -1,8 +1,10 @@
 # Plugin handoff audit — 2026-10-04
 
-## Current verdict
+## Historical verdict before the native Rovo adapter
 
-**The user's Atlassian Rovo workflow has NOT passed acceptance.** PR172/173 improved manual review and UI but did not make this package usable. Their successful skill-only fixtures and CI counts do not establish Rovo compatibility. This report corrects the product-level handoff, not the historical test results.
+**At the audited baseline, the user's Atlassian Rovo workflow had NOT passed acceptance.** PR172/173 improved manual review and UI but did not make this package usable. Their successful skill-only fixtures and CI counts do not establish Rovo compatibility. This report corrects the product-level handoff, not the historical test results.
+
+A subsequent localhost run installed and used the actual plugin through OAuth; see `docs/evidence/rovo-live-oauth/README.md`. Full team/production acceptance remains incomplete.
 
 ## Reproduction using the actual vendor package
 

@@ -78,6 +78,10 @@ async def plugin_policy(identity: str, installer: Installer):
 @router.put("/{identity}/policy")
 async def set_plugin_policy(identity: str, body: PolicyBody, installer: Installer):
     try:
+        from services.plugins.remote_auth import REMOTE_POLICY
+
+        if body.image == REMOTE_POLICY:
+            raise PluginStateError("Use the remote account connection flow")
         lifecycle = installer.lifecycle
         lifecycle.get(identity)
         root = lifecycle.package_path(identity)

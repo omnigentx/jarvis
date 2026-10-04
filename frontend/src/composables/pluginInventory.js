@@ -16,7 +16,9 @@ function mergeEvent(plugin, event) {
     if (index === -1) bindings.push(binding)
     else bindings[index] = { ...bindings[index], ...binding }
   }
-  return { ...plugin, status: event.status, bindings,
+  return { ...plugin, status: event.status || plugin.status, bindings,
+    ...(event.remote_status ? { remote_status: event.remote_status, remote_server: event.remote_server } : {}),
+    ...(typeof event.policy_configured === 'boolean' ? { policy_configured: event.policy_configured } : {}),
     ...(typeof event.global_enabled === 'boolean' ? { global_enabled: event.global_enabled } : {}) }
 }
 
@@ -69,7 +71,7 @@ export function createPluginInventory(fetch) {
       plugins.value = plugins.value.map(plugin => mergeEvent(plugin, data))
       return
     }
-    if (event.event_type !== 'plugin_status' || !event.data?.id || !event.data?.status) return
+    if (event.event_type !== 'plugin_status' || !event.data?.id || (!event.data?.status && !event.data?.remote_status)) return
     const bucket = events.get(event.data.id) || new Map()
     bucket.set(event.data.agent || '', { sequence: ++sequence, data: event.data })
     events.set(event.data.id, bucket)

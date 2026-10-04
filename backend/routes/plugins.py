@@ -65,6 +65,11 @@ def public_record(record: dict[str, Any]) -> dict[str, Any]:
 
     result["source_origin"] = source_origin(record.get("repo", ""))
     result["server_names"] = list(record.get("servers", {}))
+    result["remote_servers"] = [
+        {"name": name, "url": server.get("url"), "transport": server.get("transport")}
+        for name, server in record.get("servers", {}).items()
+        if server.get("transport") == "http"
+    ]
     result["credential_slots"] = sorted(
         {
             value[2:-1]
@@ -141,6 +146,21 @@ async def verified_record(
     record: dict[str, Any], installer: PluginInstaller
 ) -> dict[str, Any]:
     result = public_record(record)
+    # Reinspect semantic capabilities after adapter upgrades; package bytes
+    # and the reviewed digest remain immutable.
+    from services.plugins.package import inspect_package
+
+    if record.get("digest"):
+        try:
+            package = await asyncio.to_thread(
+                inspect_package, installer.lifecycle.package_path(record["id"])
+            )
+            if package.digest == record["digest"]:
+                result["blockers"] = list(package.blockers)
+            else:
+                result["status"] = "integrity_failed"
+        except (PackageError, OSError):
+            result["status"] = "integrity_failed"
     if record.get("servers"):
         try:
             configured = PluginPolicyStore(installer.lifecycle.engine).get(record["id"])
@@ -207,7 +227,7 @@ async def verified_record(
     for index, binding in enumerate(checked):
         if binding is not None:
             result["bindings"][index] = binding
-    if record["status"] == "ready":
+    if record["status"] == "ready" and result["status"] != "integrity_failed":
         result["status"] = (
             "ready"
             if not any(
@@ -319,6 +339,8 @@ async def review_activation(identity: str, body: ActivationBody, installer: Inst
         binding = resolve_target(body.agent, body.run_id)
         record = installer.lifecycle.get(identity)
         policy = PluginPolicyStore(installer.lifecycle.engine).get(identity)
+        from services.plugins.transport import policy_summary
+
         claims = {
             "id": identity,
             "digest": record["digest"],
@@ -329,14 +351,7 @@ async def review_activation(identity: str, body: ActivationBody, installer: Inst
             "plugin": public_record(record),
             "target": body.agent,
             "run_id": body.run_id,
-            "execution_policy": {
-                "image": policy["image"],
-                "credential_slots": sorted(policy["credentials"]),
-                "network": "none",
-                "read_only": True,
-            }
-            if policy
-            else None,
+            "execution_policy": policy_summary(policy, record.get("servers", {})),
             "review_token": issue_review(claims),
         }
     except Exception as exc:

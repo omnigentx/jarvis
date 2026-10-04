@@ -13,7 +13,7 @@ from fast_agent.mcp.mcp_aggregator import MCPAttachOptions
 
 from services.plugins.lifecycle import RuntimeUncertain
 from services.plugins.package import PluginPackage
-from services.plugins.sandbox import sandbox_settings
+from services.plugins.transport import connection_settings
 
 logger = logging.getLogger(__name__)
 
@@ -46,8 +46,8 @@ async def attach_servers(
     """
     names = server_names(package)
     settings = [
-        sandbox_settings(root, config, image, credentials=credentials)
-        for config in package.servers.values()
+        connection_settings(root, name, config, image, credentials)
+        for name, config in package.servers.items()
     ]
     live_before = agent.list_attached_mcp_servers()
     if len([name for name in live_before if name.startswith("plg-")]) + len(names) > 8:

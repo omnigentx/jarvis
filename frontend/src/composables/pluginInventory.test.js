@@ -74,3 +74,15 @@ test('runtime death during initial snapshot cannot restore a stale Ready', async
   assert.equal(inventory.plugins.value[0].status, 'needs_reactivation')
   assert.equal(inventory.plugins.value[0].bindings[0].status, 'needs_reactivation')
 })
+
+test('remote OAuth pushes update connection without inventing Ready or fetching REST', async () => {
+  let calls = 0
+  const inventory = createPluginInventory(async () => { calls++; return { plugins: [{ id:'one', status:'unsupported', policy_configured:false, bindings:[] }] } })
+  await inventory.reload()
+  inventory.onEvent({ event_type:'plugin_status', data:{ id:'one', remote_status:'connected', remote_server:'rovo', policy_configured:true } })
+  assert.equal(inventory.plugins.value[0].status, 'unsupported')
+  assert.equal(inventory.plugins.value[0].remote_status, 'connected')
+  assert.equal(inventory.plugins.value[0].policy_configured, true)
+  assert.deepEqual(inventory.plugins.value[0].bindings, [])
+  assert.equal(calls, 1)
+})

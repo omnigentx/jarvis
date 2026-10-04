@@ -671,6 +671,24 @@
         },
         "reviewChanged": "Package hoặc quyền đã thay đổi trong lúc review. Hãy làm mới và review lại.",
         "blockedStatus": "Chưa thể kích hoạt"
+      },
+      "remote": {
+        "title": "Kết nối tài khoản Atlassian",
+        "description": "Kết nối tài khoản qua OAuth của Atlassian. Không chạy mã plugin tải về trên máy chủ.",
+        "connect": "Kết nối tài khoản Atlassian",
+        "cancel": "Hủy kết nối",
+        "scopeHint": "Jarvis dùng tool MCP gốc của Rovo, không giả lập app Codex. Kiểm tra quyền tài khoản, sau đó kích hoạt cho các agent đã chọn.",
+        "popupBlocked": "Cho phép cửa sổ xác thực, rồi kết nối lại.",
+        "states": {
+          "connected": "Đã kết nối tài khoản",
+          "disconnected": "Chưa kết nối tài khoản",
+          "connecting": "Đang chờ xác thực tài khoản",
+          "cancelled": "Đã hủy kết nối",
+          "connection_failed": "Kết nối thất bại · hãy kết nối lại"
+        },
+        "connectRequired": "Kết nối tài khoản Atlassian bên dưới trước khi kích hoạt.",
+        "disconnect": "Ngắt kết nối tài khoản",
+        "disconnectHint": "Tắt các binding đang hoạt động và chia sẻ toàn hệ thống trước khi ngắt kết nối tài khoản."
       }
     }
   },

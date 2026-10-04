@@ -694,6 +694,24 @@
         },
         "reviewChanged": "Package or permissions changed during review. Refresh and review again.",
         "blockedStatus": "Activation blocked"
+      },
+      "remote": {
+        "title": "Remote account connection",
+        "description": "Authorize Atlassian account access through OAuth. No downloaded plugin code runs on this host.",
+        "connect": "Connect Atlassian account",
+        "cancel": "Cancel connection",
+        "scopeHint": "Rovo uses its native MCP tools in Jarvis; Codex app identity is not emulated. Review account permissions, then activate for selected agents.",
+        "popupBlocked": "Allow the authorization popup, then reconnect.",
+        "states": {
+          "connected": "Account connected",
+          "disconnected": "Account not connected",
+          "connecting": "Waiting for account consent",
+          "cancelled": "Connection cancelled",
+          "connection_failed": "Connection failed · reconnect"
+        },
+        "connectRequired": "Connect the Atlassian account below before activating.",
+        "disconnect": "Disconnect account",
+        "disconnectHint": "Disable active bindings and global sharing before disconnecting the account."
       }
     }
   },
