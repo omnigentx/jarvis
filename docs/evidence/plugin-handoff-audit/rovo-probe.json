@@ -1,0 +1,22 @@
+{
+  "repo": "openai/plugins",
+  "commit": "5fd93af4cd0c623e020d0cc7e9ce178b4ac1f70f",
+  "subdirectory": "plugins/atlassian-rovo",
+  "name": "atlassian-rovo",
+  "version": "1.0.6",
+  "digest": "8616fb097443c9f83f396f8e8aadf5b1994405ff5bcf5231de73c671df8356ce",
+  "skills": 0,
+  "transports": {
+    "atlassian-rovo": "http"
+  },
+  "blockers": [
+    "agents",
+    "host_connectors",
+    "mcp_requires_policy_review"
+  ],
+  "policy_validation": "This plugin needs an unsupported runtime adapter",
+  "plugin_executed": false,
+  "authorization_test": "NOT RUN",
+  "external_tool_call": "NOT RUN",
+  "functional_acceptance": "NOT PASSED"
+}
