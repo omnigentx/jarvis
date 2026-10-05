@@ -2090,5 +2090,42 @@
     "message": "Jarvis may have been updated, or the connection was interrupted. Save any unsent text before reloading the requested page.",
     "reload": "Reload page",
     "dismiss": "Keep working"
+  },
+  "storyImport": {
+    "open": "Import story",
+    "eyebrow": "LOCAL FILES",
+    "close": "Close",
+    "description": "Create a new story from UTF-8 .txt chapters. Only files directly in the selected folder are included. Up to 1,000 chapters, 2 MiB per file, 12 MiB total.",
+    "folder": "Choose folder",
+    "files": "Choose text files",
+    "title": "Story title",
+    "summary": "{count} chapters · {size} MiB",
+    "ignored": "Skipped {count} nested or unsupported files.",
+    "preview": "Chapter order",
+    "submit": "Import story",
+    "retry": "Retry import",
+    "progress": "Validating {completed} / {total} chapters…",
+    "retryHint": "Retry keeps the same import ID to avoid duplicates. Close and reopen to start a different import.",
+    "errors": {
+      "invalid_title": "Enter a valid title (1–255 characters).",
+      "invalid_request_id": "Close and reopen this dialog, then try again.",
+      "file_count": "Choose between 1 and 1,000 .txt chapters.",
+      "file_too_large": "Each file must be at most 2 MiB.",
+      "total_too_large": "The selected files exceed 12 MiB.",
+      "request_too_large": "Upload exceeds the request limit. Choose fewer files.",
+      "empty_file": "A chapter is empty. Remove it and try again.",
+      "invalid_encoding": "Chapter {index} is not UTF-8. Convert it before importing.",
+      "binary_file": "Chapter {index} contains binary data.",
+      "unsafe_path": "Chapter {index} has an unsafe path.",
+      "nested_folder": "Subfolders are not supported. Select only direct files.",
+      "unsupported_file": "Only .txt chapters are supported.",
+      "duplicate_file": "The same filename was selected twice.",
+      "retry_conflict": "This import ID was already used with different data. Close and start again.",
+      "invalid_fields": "Invalid upload. Close and start again.",
+      "invalid_multipart": "Invalid upload. Close and start again.",
+      "import_failed": "Import failed. Retry with the same selection.",
+      "connection": "Connection interrupted. Retry safely with the same selection.",
+      "auth": "Sign in again, then retry this import."
+    }
   }
 }

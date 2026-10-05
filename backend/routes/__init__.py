@@ -9,6 +9,7 @@ from routes.sessions import router as sessions_router
 from routes.tts import router as tts_router
 from routes.library import router as library_router
 from routes.stories import router as stories_router
+from routes.story_import import router as story_import_router
 from routes.chat import router as chat_router
 from routes.agents import router as agents_router
 from routes.agents import resources_router
@@ -43,6 +44,7 @@ all_routers: list[APIRouter] = [
     sessions_router,
     tts_router,
     library_router,
+    story_import_router,
     stories_router,
     chat_router,
     agents_router,

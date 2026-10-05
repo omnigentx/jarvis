@@ -13,6 +13,7 @@ import { useToast } from '../composables/useToast'
 import { useBreakpoint } from '../composables/useBreakpoint'
 import { useLang } from '../composables/useLang'
 import StoryCard from '../components/stories/StoryCard.vue'
+import StoryImportDialog from '../components/stories/StoryImportDialog.vue'
 import ChapterList from '../components/stories/ChapterList.vue'
 
 const { t } = useLang()
@@ -24,6 +25,7 @@ const toast = useToast()
 const { isMobile } = useBreakpoint()
 
 // ─── State ───
+const showImport = ref(false)
 const stories = ref([])
 const isLoading = ref(false)
 const error = ref(null)
@@ -73,6 +75,12 @@ async function fetchStories() {
   } finally {
     isLoading.value = false
   }
+}
+
+async function handleImported(result) {
+  showImport.value = false
+  await fetchStories()
+  handleSelect(result.id)
 }
 
 function handleSelect(storyId) {
@@ -130,7 +138,10 @@ watch(
           <code class="stories__inline-code">local_list_stories</code>{{ t('stories.descAfter') }}
         </p>
       </div>
+      <button class="btn btn-primary" @click="showImport = true">{{ t('storyImport.open') }}</button>
     </div>
+
+    <StoryImportDialog v-if="showImport" @close="showImport = false" @imported="handleImported" />
 
     <!-- ─── Loading skeleton ─── -->
     <div v-if="isLoading" class="stories__body stories__body--full">
