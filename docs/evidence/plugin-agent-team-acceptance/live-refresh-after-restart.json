@@ -1,0 +1,88 @@
+{
+  "kind": "live refresh after locally forced expiry; vendor token not naturally expired",
+  "refresh_token_present": true,
+  "token_auth_method": "none",
+  "events": [
+    {
+      "host": "auth.atlassian.com",
+      "kind": "refresh",
+      "status": 200
+    },
+    {
+      "host": "mcp.atlassian.com",
+      "kind": "mcp",
+      "status": 200
+    },
+    {
+      "host": "mcp.atlassian.com",
+      "kind": "mcp",
+      "status": 202
+    },
+    {
+      "host": "mcp.atlassian.com",
+      "kind": "mcp",
+      "status": 200
+    },
+    {
+      "host": "mcp.atlassian.com",
+      "kind": "mcp",
+      "status": 200
+    },
+    {
+      "host": "mcp.atlassian.com",
+      "kind": "mcp",
+      "status": 200
+    },
+    {
+      "host": "mcp.atlassian.com",
+      "kind": "mcp",
+      "status": 200
+    },
+    {
+      "host": "mcp.atlassian.com",
+      "kind": "mcp",
+      "status": 200
+    },
+    {
+      "host": "mcp.atlassian.com",
+      "kind": "mcp",
+      "status": 202
+    },
+    {
+      "host": "mcp.atlassian.com",
+      "kind": "mcp",
+      "status": 200
+    },
+    {
+      "host": "mcp.atlassian.com",
+      "kind": "mcp",
+      "status": 200
+    },
+    {
+      "host": "mcp.atlassian.com",
+      "kind": "mcp",
+      "status": 200
+    },
+    {
+      "host": "mcp.atlassian.com",
+      "kind": "mcp",
+      "status": 200
+    }
+  ],
+  "controls": [
+    {
+      "new_provider": 1,
+      "isError": false,
+      "expected_issue_seen": true
+    },
+    {
+      "new_provider": 2,
+      "isError": false,
+      "expected_issue_seen": true
+    }
+  ],
+  "access_rotated": true,
+  "refresh_rotated": true,
+  "absolute_expiry_persisted": true,
+  "refresh_requests": 1
+}

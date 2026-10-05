@@ -1,0 +1,68 @@
+F..                                                                      [100%]
+=================================== FAILURES ===================================
+__________ test_expired_token_refreshes_before_request_after_restart ___________
+
+tmp_path = PosixPath('/private/var/folders/41/fgmlgf2x74lghnnd9vdw9m7m0000gn/T/pytest-of-phucnguyenvan/pytest-391/test_expired_token_refreshes_b0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x108e05f30>
+
+    @pytest.mark.asyncio
+    async def test_expired_token_refreshes_before_request_after_restart(tmp_path, monkeypatch):
+        monkeypatch.setenv("JARVIS_MASTER_KEY", "test-only")
+        engine = create_engine(f"sqlite:///{tmp_path / 'auth.db'}")
+        store = RemoteTokenStore(engine, "candidate", "rovo", URL)
+        store.write("redirect", "http://127.0.0.1:3038/api/plugins/oauth/callback")
+        await store.set_client_info(OAuthClientInformationFull(client_id="test-client", redirect_uris=[store.read()["redirect"]], token_endpoint_auth_method="none"))
+        store.oauth_settings = {"token_endpoint": TOKEN, "resource": "https://mcp.atlassian.com"}
+        await store.set_tokens(OAuthToken(access_token="old-access", token_type="Bearer", refresh_token="old-refresh", expires_in=0))
+        restarted = RemoteTokenStore(engine, "candidate", "rovo", URL)
+        requests = []
+
+        class StreamedToken(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                yield b'{"access_token":"new-access","refresh_token":"new-refresh","token_type":"Bearer","expires_in":3600}'
+
+        def respond(request):
+            requests.append(request)
+            if str(request.url) == TOKEN:
+                assert b"old-refresh" in request.content
+                return httpx.Response(200, stream=StreamedToken())
+            assert request.headers["Authorization"] == "Bearer new-access"
+            return httpx.Response(200, json={"ok": True})
+
+        async with httpx.AsyncClient(auth=provider(restarted), transport=httpx.MockTransport(respond)) as client:
+>           assert (await client.get(URL)).status_code == 200
+                    ^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_services/test_plugin_remote_refresh.py:40:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.13/site-packages/httpx/_client.py:1768: in get
+    return await self.request(
+.venv/lib/python3.13/site-packages/httpx/_client.py:1540: in request
+    return await self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/httpx/_client.py:1629: in send
+    response = await self._send_handling_auth(
+.venv/lib/python3.13/site-packages/httpx/_client.py:1675: in _send_handling_auth
+    raise exc
+.venv/lib/python3.13/site-packages/httpx/_client.py:1664: in _send_handling_auth
+    next_request = await auth_flow.asend(response)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+services/plugins/remote_auth.py:173: in async_auth_flow
+    await complete_refresh(self.store, response)
+services/plugins/remote_refresh.py:76: in complete_refresh
+    token = OAuthToken.model_validate_json(response.content)
+                                           ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <Response [200 OK]>
+
+    @property
+    def content(self) -> bytes:
+        if not hasattr(self, "_content"):
+>           raise ResponseNotRead()
+E           httpx.ResponseNotRead: Attempted to access streaming response content, without having called `read()`.
+
+.venv/lib/python3.13/site-packages/httpx/_models.py:638: ResponseNotRead
+=========================== short test summary info ============================
+FAILED tests/test_services/test_plugin_remote_refresh.py::test_expired_token_refreshes_before_request_after_restart
+1 failed, 2 passed in 0.26s

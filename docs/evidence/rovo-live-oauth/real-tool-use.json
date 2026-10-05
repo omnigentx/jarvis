@@ -1,0 +1,57 @@
+{
+  "environment": "full localhost Jarvis backend8048/UI3038, actual Atlassian Cloud; no fixture/legacy-MCP fallback",
+  "package": {
+    "repo": "openai/plugins",
+    "commit": "5fd93af4cd0c623e020d0cc7e9ce178b4ac1f70f",
+    "path": "plugins/atlassian-rovo",
+    "version": "1.0.6",
+    "digest": "8616fb097443c9f83f396f8e8aadf5b1994405ff5bcf5231de73c671df8356ce"
+  },
+  "calls": [
+    {
+      "name": "plg-747d77396094fee4bcb3__getJiraIssue",
+      "arguments": {
+        "cloudId": "omnigentx.atlassian.net",
+        "issueIdOrKey": "SCRUM-55",
+        "fields": [
+          "summary",
+          "status"
+        ],
+        "fieldsByKeys": false,
+        "expand": "",
+        "properties": [],
+        "updateHistory": false,
+        "failFast": false,
+        "responseContentFormat": "markdown",
+        "actionSource": "model_tool_call"
+      }
+    }
+  ],
+  "llm_usage": [
+    {
+      "model": "coding-agent",
+      "input_tokens": 33133,
+      "output_tokens": 92,
+      "effective_input_tokens": 33133
+    },
+    {
+      "model": "coding-agent",
+      "input_tokens": 33568,
+      "output_tokens": 64,
+      "effective_input_tokens": 3104
+    }
+  ],
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\n  \"expand\": \"renderedFields,names,schema,operations,editmeta,changelog,versionedRepresentations\",\n  \"id\": \"10085\",\n  \"self\": \"https://api.atlassian.com/ex/jira/847421d4-43b0-49ce-8180-b0f9cd2b8ea7/rest/api/3/issue/10085\",\n  \"key\": \"SCRUM-55\",\n  \"fields\": {\n    \"summary\": \"Atlassian Rovo compatibility: metadata classification and remote MCP authorization\",\n    \"status\": {\n      \"self\": \"https://api.atlassian.com/ex/jira/847421d4-43b0-49ce-8180-b0f9cd2b8ea7/rest/api/3/status/10000\",\n      \"description\": \"\",\n      \"iconUrl\": \"https://omnigentx.atlassian.net/images/icons/statuses/generic.png\",\n      \"name\": \"To Do\",\n      \"id\": \"10000\",\n      \"statusCategory\": {\n        \"self\": \"https://api.atlassian.com/ex/jira/847421d4-43b0-49ce-8180-b0f9cd2b8ea7/rest/api/3/statuscategory/2\",\n        \"id\": 2,\n        \"key\": \"new\",\n        \"colorName\": \"blue-gray\",\n        \"name\": \"To Do\"\n      }\n    }\n  }\n}"
+      }
+    ],
+    "isError": false,
+    "statusCode": 200,
+    "tool_name": "plg-747d77396094fee4bcb3__getJiraIssue"
+  },
+  "tool_duration_seconds": 2.5,
+  "backlog": "SCRUM-57: unconfigured subordinate delegation"
+}

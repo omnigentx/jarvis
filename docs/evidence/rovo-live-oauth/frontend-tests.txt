@@ -1,0 +1,1556 @@
+
+> frontend@0.0.0 test:unit
+> node --test 'src/utils/*.test.js' 'src/auth/*.test.js' 'src/stores/*.test.js' 'src/composables/*.test.js' 'src/components/monitor/*.test.js' 'src/services/*.test.js' 'src/views/*.test.js'
+
+TAP version 13
+# Subtest: subscribe + emit delivers payload
+ok 1 - subscribe + emit delivers payload
+  ---
+  duration_ms: 0.704584
+  type: 'test'
+  ...
+# Subtest: multiple subscribers all fire in order
+ok 2 - multiple subscribers all fire in order
+  ---
+  duration_ms: 0.612208
+  type: 'test'
+  ...
+# Subtest: unsubscribe stops further deliveries
+ok 3 - unsubscribe stops further deliveries
+  ---
+  duration_ms: 0.096042
+  type: 'test'
+  ...
+# Subtest: emitter snapshots the listener set so unsubscribe-during-emit is safe
+ok 4 - emitter snapshots the listener set so unsubscribe-during-emit is safe
+  ---
+  duration_ms: 0.133
+  type: 'test'
+  ...
+# Subtest: handler that throws does not break other handlers
+ok 5 - handler that throws does not break other handlers
+  ---
+  duration_ms: 0.340458
+  type: 'test'
+  ...
+# Subtest: emit on event with no subscribers is a no-op
+ok 6 - emit on event with no subscribers is a no-op
+  ---
+  duration_ms: 0.117
+  type: 'test'
+  ...
+# Subtest: event-name constants exist for the three transitions
+ok 7 - event-name constants exist for the three transitions
+  ---
+  duration_ms: 0.050083
+  type: 'test'
+  ...
+# Subtest: buildRenderRows inserts a run separator at the first turn
+ok 8 - buildRenderRows inserts a run separator at the first turn
+  ---
+  duration_ms: 0.496417
+  type: 'test'
+  ...
+# Subtest: buildRenderRows adds a separator only when run_id changes
+ok 9 - buildRenderRows adds a separator only when run_id changes
+  ---
+  duration_ms: 0.36425
+  type: 'test'
+  ...
+# Subtest: buildRenderRows skips separator for turns missing run_id
+ok 10 - buildRenderRows skips separator for turns missing run_id
+  ---
+  duration_ms: 0.088417
+  type: 'test'
+  ...
+# Subtest: buildRenderRows handles empty input
+ok 11 - buildRenderRows handles empty input
+  ---
+  duration_ms: 0.044959
+  type: 'test'
+  ...
+# Subtest: textContent joins multi-block text with newlines
+ok 12 - textContent joins multi-block text with newlines
+  ---
+  duration_ms: 0.110416
+  type: 'test'
+  ...
+# Subtest: textContent ignores non-text blocks
+ok 13 - textContent ignores non-text blocks
+  ---
+  duration_ms: 0.039583
+  type: 'test'
+  ...
+# Subtest: textContent returns empty for missing content
+ok 14 - textContent returns empty for missing content
+  ---
+  duration_ms: 0.092875
+  type: 'test'
+  ...
+# Subtest: isTextTruncated true when any text block has _truncated
+ok 15 - isTextTruncated true when any text block has _truncated
+  ---
+  duration_ms: 0.046875
+  type: 'test'
+  ...
+# Subtest: isTextTruncated false when no block is truncated
+ok 16 - isTextTruncated false when no block is truncated
+  ---
+  duration_ms: 0.233208
+  type: 'test'
+  ...
+# Subtest: toolCallList extracts name and args from tool_calls dict
+ok 17 - toolCallList extracts name and args from tool_calls dict
+  ---
+  duration_ms: 0.307708
+  type: 'test'
+  ...
+# Subtest: toolCallList returns empty for non-assistant turns
+ok 18 - toolCallList returns empty for non-assistant turns
+  ---
+  duration_ms: 0.085333
+  type: 'test'
+  ...
+# Subtest: toolResultList carries _truncated/_full_size flags through
+ok 19 - toolResultList carries _truncated/_full_size flags through
+  ---
+  duration_ms: 0.075459
+  type: 'test'
+  ...
+# Subtest: toolResultList flags isError
+ok 20 - toolResultList flags isError
+  ---
+  duration_ms: 0.035208
+  type: 'test'
+  ...
+# Subtest: toolResultList concatenates multiple text blocks
+ok 21 - toolResultList concatenates multiple text blocks
+  ---
+  duration_ms: 0.033958
+  type: 'test'
+  ...
+# Subtest: summarizeArgs handles short string args
+ok 22 - summarizeArgs handles short string args
+  ---
+  duration_ms: 0.045958
+  type: 'test'
+  ...
+# Subtest: summarizeArgs truncates long string values to 60 chars + ellipsis
+ok 23 - summarizeArgs truncates long string values to 60 chars + ellipsis
+  ---
+  duration_ms: 0.087708
+  type: 'test'
+  ...
+# Subtest: summarizeArgs JSON-stringifies non-string values
+ok 24 - summarizeArgs JSON-stringifies non-string values
+  ---
+  duration_ms: 0.101208
+  type: 'test'
+  ...
+# Subtest: summarizeArgs lists at most 3 keys with "+N more" tail
+ok 25 - summarizeArgs lists at most 3 keys with "+N more" tail
+  ---
+  duration_ms: 0.058583
+  type: 'test'
+  ...
+# Subtest: summarizeArgs handles empty / non-object
+ok 26 - summarizeArgs handles empty / non-object
+  ---
+  duration_ms: 0.073
+  type: 'test'
+  ...
+# Subtest: statusLabel covers every pause-cycle state
+ok 27 - statusLabel covers every pause-cycle state
+  ---
+  duration_ms: 0.038292
+  type: 'test'
+  ...
+# Subtest: statusLabel covers spawn lifecycle statuses
+ok 28 - statusLabel covers spawn lifecycle statuses
+  ---
+  duration_ms: 0.024375
+  type: 'test'
+  ...
+# Subtest: statusLabel falls back to Unknown only for genuinely unknown states
+ok 29 - statusLabel falls back to Unknown only for genuinely unknown states
+  ---
+  duration_ms: 0.024333
+  type: 'test'
+  ...
+# Subtest: statusColor covers every pause-cycle state
+ok 30 - statusColor covers every pause-cycle state
+  ---
+  duration_ms: 0.049125
+  type: 'test'
+  ...
+# Subtest: bulk feedback surfaces each rejected target and 409 ambiguity text
+ok 31 - bulk feedback surfaces each rejected target and 409 ambiguity text
+  ---
+  duration_ms: 0.542875
+  type: 'test'
+  ...
+# Subtest: submit invokes translation callback and formats success without shadowing it
+ok 32 - submit invokes translation callback and formats success without shadowing it
+  ---
+  duration_ms: 0.621916
+  type: 'test'
+  ...
+# Subtest: submit produces no-target feedback using translation function
+ok 33 - submit produces no-target feedback using translation function
+  ---
+  duration_ms: 0.101916
+  type: 'test'
+  ...
+# Subtest: submit formats per-agent 409 failure and invokes translator for feedback
+ok 34 - submit formats per-agent 409 failure and invokes translator for feedback
+  ---
+  duration_ms: 0.08375
+  type: 'test'
+  ...
+# Subtest: useActivityStream selection retains same-name agents by session
+ok 35 - useActivityStream selection retains same-name agents by session
+  ---
+  duration_ms: 7.608292
+  type: 'test'
+  ...
+# [Store] Failed to fetch agents: TypeError: Failed to parse URL from /api/agents
+#     at node:internal/deps/undici/undici:14900:13
+#     at async apiFetch (file:///Users/phucnguyenvan/.codex/worktrees/backlog-quick-fixes/jarvis/frontend/src/api.js:138:20)
+#     at async fetchAgents (file:///Users/phucnguyenvan/.codex/worktrees/backlog-quick-fixes/jarvis/frontend/src/stores/agents.js:50:20) {
+#   [cause]: TypeError: Invalid URL
+#       at new URL (node:internal/url:827:25)
+#       at new Request (node:internal/deps/undici/undici:9776:25)
+#       at fetch (node:internal/deps/undici/undici:10505:25)
+#       at fetch (node:internal/deps/undici/undici:14898:10)
+#       at fetch (node:internal/bootstrap/web/exposed-window-or-worker:75:12)
+#       at apiFetch (file:///Users/phucnguyenvan/.codex/worktrees/backlog-quick-fixes/jarvis/frontend/src/api.js:138:26)
+#       at fetchAgents (file:///Users/phucnguyenvan/.codex/worktrees/backlog-quick-fixes/jarvis/frontend/src/stores/agents.js:50:26)
+#       at Timeout._onTimeout (file:///Users/phucnguyenvan/.codex/worktrees/backlog-quick-fixes/jarvis/frontend/src/stores/agents.js:106:7)
+#       at listOnTimeout (node:internal/timers:588:17)
+#       at process.processTimers (node:internal/timers:523:7) {
+#     code: 'ERR_INVALID_URL',
+#     input: '/api/agents'
+#   }
+# }
+# Subtest: agent identity distinguishes same-named agents from separate sessions
+ok 36 - agent identity distinguishes same-named agents from separate sessions
+  ---
+  duration_ms: 0.391791
+  type: 'test'
+  ...
+# Subtest: agent identity is stable for same session and name
+ok 37 - agent identity is stable for same session and name
+  ---
+  duration_ms: 0.060417
+  type: 'test'
+  ...
+# Subtest: roster event lookup fails closed for missing or wrong session on duplicate names
+ok 38 - roster event lookup fails closed for missing or wrong session on duplicate names
+  ---
+  duration_ms: 0.112
+  type: 'test'
+  ...
+# Subtest: message_turn SSE with missing or wrong session cannot assign turns across duplicate-name teams
+ok 39 - message_turn SSE with missing or wrong session cannot assign turns across duplicate-name teams
+  ---
+  duration_ms: 0.598083
+  type: 'test'
+  ...
+# Subtest: insertTurn appends in sorted order
+ok 40 - insertTurn appends in sorted order
+  ---
+  duration_ms: 1.34725
+  type: 'test'
+  ...
+# Subtest: insertTurn places out-of-order deltas in correct slot
+ok 41 - insertTurn places out-of-order deltas in correct slot
+  ---
+  duration_ms: 0.142334
+  type: 'test'
+  ...
+# Subtest: insertTurn replaces a duplicate turn_idx (idempotent SSE replay)
+ok 42 - insertTurn replaces a duplicate turn_idx (idempotent SSE replay)
+  ---
+  duration_ms: 0.068
+  type: 'test'
+  ...
+# Subtest: insertTurn drops oldest entries when above maxPerAgent
+ok 43 - insertTurn drops oldest entries when above maxPerAgent
+  ---
+  duration_ms: 0.082959
+  type: 'test'
+  ...
+# Subtest: insertTurn does not mutate the input array
+ok 44 - insertTurn does not mutate the input array
+  ---
+  duration_ms: 0.054792
+  type: 'test'
+  ...
+# Subtest: isResetSignal true: turn_idx=0 arriving while bucket has higher idx
+ok 45 - isResetSignal true: turn_idx=0 arriving while bucket has higher idx
+  ---
+  duration_ms: 0.052583
+  type: 'test'
+  ...
+# Subtest: isResetSignal false: turn_idx=0 on empty bucket (initial load)
+ok 46 - isResetSignal false: turn_idx=0 on empty bucket (initial load)
+  ---
+  duration_ms: 0.086792
+  type: 'test'
+  ...
+# Subtest: isResetSignal false: bucket only has turn_idx=0
+ok 47 - isResetSignal false: bucket only has turn_idx=0
+  ---
+  duration_ms: 0.034875
+  type: 'test'
+  ...
+# Subtest: isResetSignal false: non-zero turn_idx delta
+ok 48 - isResetSignal false: non-zero turn_idx delta
+  ---
+  duration_ms: 0.409166
+  type: 'test'
+  ...
+# Subtest: isResetSignal false: turn_idx=0 with new run_id (resume_spawn case)
+ok 49 - isResetSignal false: turn_idx=0 with new run_id (resume_spawn case)
+  ---
+  duration_ms: 0.547959
+  type: 'test'
+  ...
+# Subtest: isResetSignal true: turn_idx=0 with same run_id (real history reset)
+ok 50 - isResetSignal true: turn_idx=0 with same run_id (real history reset)
+  ---
+  duration_ms: 0.114583
+  type: 'test'
+  ...
+# Subtest: insertTurn dedups within same run, stacks across runs (resume case)
+ok 51 - insertTurn dedups within same run, stacks across runs (resume case)
+  ---
+  duration_ms: 0.077417
+  type: 'test'
+  ...
+# Subtest: insertTurn still replaces an exact (run_id, turn_idx) duplicate
+ok 52 - insertTurn still replaces an exact (run_id, turn_idx) duplicate
+  ---
+  duration_ms: 0.04225
+  type: 'test'
+  ...
+# Subtest: lastAssistantText returns text of latest assistant turn
+ok 53 - lastAssistantText returns text of latest assistant turn
+  ---
+  duration_ms: 0.051583
+  type: 'test'
+  ...
+# Subtest: lastAssistantText returns empty when no assistant turns
+ok 54 - lastAssistantText returns empty when no assistant turns
+  ---
+  duration_ms: 0.02725
+  type: 'test'
+  ...
+# Subtest: lastAssistantText handles missing content gracefully
+ok 55 - lastAssistantText handles missing content gracefully
+  ---
+  duration_ms: 0.026542
+  type: 'test'
+  ...
+# Subtest: lastAssistantText handles empty array
+ok 56 - lastAssistantText handles empty array
+  ---
+  duration_ms: 0.027334
+  type: 'test'
+  ...
+#   [i18n] vi: 92% translated (147/1911 keys fall back to English)
+# Subtest: every t() key used in source exists in en.json (base locale)
+ok 57 - every t() key used in source exists in en.json (base locale)
+  ---
+  duration_ms: 28.013834
+  type: 'test'
+  ...
+# Subtest: translation coverage report (informational — never fails)
+ok 58 - translation coverage report (informational — never fails)
+  ---
+  duration_ms: 3.2145
+  type: 'test'
+  ...
+# Subtest: does NOT fire while chunks are still playing (production not ended)
+ok 59 - does NOT fire while chunks are still playing (production not ended)
+  ---
+  duration_ms: 0.349208
+  type: 'test'
+  ...
+# Subtest: fires once after tts_end AND queue drains
+ok 60 - fires once after tts_end AND queue drains
+  ---
+  duration_ms: 0.102917
+  type: 'test'
+  ...
+# Subtest: idempotent — never sends twice for one turn
+ok 61 - idempotent — never sends twice for one turn
+  ---
+  duration_ms: 0.04575
+  type: 'test'
+  ...
+# Subtest: short reply: queue already drained before tts_end → fires on tts_end
+ok 62 - short reply: queue already drained before tts_end → fires on tts_end
+  ---
+  duration_ms: 0.799042
+  type: 'test'
+  ...
+# Subtest: flush (barge-in) suppresses playback_done for the interrupted turn
+ok 63 - flush (barge-in) suppresses playback_done for the interrupted turn
+  ---
+  duration_ms: 0.332667
+  type: 'test'
+  ...
+# Subtest: new turn re-arms after a completed turn
+ok 64 - new turn re-arms after a completed turn
+  ---
+  duration_ms: 0.120667
+  type: 'test'
+  ...
+# Subtest: new turn re-arms after a flushed (barged-in) turn
+ok 65 - new turn re-arms after a flushed (barged-in) turn
+  ---
+  duration_ms: 0.65275
+  type: 'test'
+  ...
+# Subtest: policy resolves MCP review only; unsupported adapters remain blocked
+ok 66 - policy resolves MCP review only; unsupported adapters remain blocked
+  ---
+  duration_ms: 0.610375
+  type: 'test'
+  ...
+# Subtest: all targets is an explicit snapshot, deduplicated by runtime and excludes future agents
+ok 67 - all targets is an explicit snapshot, deduplicated by runtime and excludes future agents
+  ---
+  duration_ms: 0.092959
+  type: 'test'
+  ...
+# Subtest: partial failure continues, target ACK overrides aggregate Ready, and no automatic retry
+ok 68 - partial failure continues, target ACK overrides aggregate Ready, and no automatic retry
+  ---
+  duration_ms: 0.151833
+  type: 'test'
+  ...
+# Subtest: an older snapshot cannot overwrite a pushed runtime ACK
+ok 69 - an older snapshot cannot overwrite a pushed runtime ACK
+  ---
+  duration_ms: 3.995375
+  type: 'test'
+  ...
+# Subtest: unrelated events make no request
+ok 70 - unrelated events make no request
+  ---
+  duration_ms: 0.09525
+  type: 'test'
+  ...
+# Subtest: a subsequent fresh snapshot replaces an older event
+ok 71 - a subsequent fresh snapshot replaces an older event
+  ---
+  duration_ms: 0.179875
+  type: 'test'
+  ...
+# Subtest: concurrent target ACKs both survive an older in-flight snapshot
+ok 72 - concurrent target ACKs both survive an older in-flight snapshot
+  ---
+  duration_ms: 0.234167
+  type: 'test'
+  ...
+# Subtest: sharing delta updates flag without adding an agent binding
+ok 73 - sharing delta updates flag without adding an agent binding
+  ---
+  duration_ms: 0.291292
+  type: 'test'
+  ...
+# Subtest: terminal runtime event invalidates only matching ready bindings without REST polling
+ok 74 - terminal runtime event invalidates only matching ready bindings without REST polling
+  ---
+  duration_ms: 0.241917
+  type: 'test'
+  ...
+# Subtest: runtime death during initial snapshot cannot restore a stale Ready
+ok 75 - runtime death during initial snapshot cannot restore a stale Ready
+  ---
+  duration_ms: 0.208792
+  type: 'test'
+  ...
+# Subtest: remote OAuth pushes update connection without inventing Ready or fetching REST
+ok 76 - remote OAuth pushes update connection without inventing Ready or fetching REST
+  ---
+  duration_ms: 0.162625
+  type: 'test'
+  ...
+# Subtest: same team names across sessions stay distinct with readable labels
+ok 77 - same team names across sessions stay distinct with readable labels
+  ---
+  duration_ms: 0.652625
+  type: 'test'
+  ...
+# [Vue warn]: onUnmounted is called when there is no active component instance to be associated with. Lifecycle injection APIs can only be used during execution of setup(). If you are using async setup(), make sure to register lifecycle hooks before the first await statement.
+# [Vue warn]: onUnmounted is called when there is no active component instance to be associated with. Lifecycle injection APIs can only be used during execution of setup(). If you are using async setup(), make sure to register lifecycle hooks before the first await statement.
+# Subtest: ingestMessageTurnEvent rejects missing/wrong sessions and inserts only into valid session bucket
+ok 78 - ingestMessageTurnEvent rejects missing/wrong sessions and inserts only into valid session bucket
+  ---
+  duration_ms: 0.681
+  type: 'test'
+  ...
+# Subtest: useAgentTurns watcher delegates incoming SSE events to production ingestion function
+ok 79 - useAgentTurns watcher delegates incoming SSE events to production ingestion function
+  ---
+  duration_ms: 8.580292
+  type: 'test'
+  ...
+# Subtest: live SSE stays visible when a slower initial history response arrives
+ok 80 - live SSE stays visible when a slower initial history response arrives
+  ---
+  duration_ms: 12.240417
+  type: 'test'
+  ...
+# Subtest: default UI locale stays vi; English is the complete fallback base
+ok 81 - default UI locale stays vi; English is the complete fallback base
+  ---
+  duration_ms: 1.080042
+  type: 'test'
+  ...
+# Subtest: toggling to vi uses the Vietnamese value
+ok 82 - toggling to vi uses the Vietnamese value
+  ---
+  duration_ms: 0.090083
+  type: 'test'
+  ...
+# Subtest: missing vi key falls back to English
+ok 83 - missing vi key falls back to English
+  ---
+  duration_ms: 0.053458
+  type: 'test'
+  ...
+# Subtest: interpolates {placeholders}
+ok 84 - interpolates {placeholders}
+  ---
+  duration_ms: 0.087875
+  type: 'test'
+  ...
+# Subtest: unknown key returns the key itself
+ok 85 - unknown key returns the key itself
+  ---
+  duration_ms: 0.050791
+  type: 'test'
+  ...
+# Subtest: single name-only delete rechecks live roster and aborts after modal-open collision
+ok 86 - single name-only delete rechecks live roster and aborts after modal-open collision
+  ---
+  duration_ms: 0.411917
+  type: 'test'
+  ...
+# Subtest: bulk name-only delete makes zero requests if any selected name collides
+ok 87 - bulk name-only delete makes zero requests if any selected name collides
+  ---
+  duration_ms: 0.086667
+  type: 'test'
+  ...
+# Subtest: inject always scopes request by encoded session and preserves 409
+ok 88 - inject always scopes request by encoded session and preserves 409
+  ---
+  duration_ms: 1.798417
+  type: 'test'
+  ...
+# Subtest: builtin agent uses explicit static target instead of team namesake
+ok 89 - builtin agent uses explicit static target instead of team namesake
+  ---
+  duration_ms: 0.110834
+  type: 'test'
+  ...
+# Subtest: bulk inject retains each rejected agent result
+ok 90 - bulk inject retains each rejected agent result
+  ---
+  duration_ms: 0.685291
+  type: 'test'
+  ...
+# Subtest: bulk inject feedback identifies each rejected target and 409 ambiguity
+ok 91 - bulk inject feedback identifies each rejected target and 409 ambiguity
+  ---
+  duration_ms: 0.101834
+  type: 'test'
+  ...
+# Subtest: barge-in before the first reply keeps the previous user message
+ok 92 - barge-in before the first reply keeps the previous user message
+  ---
+  duration_ms: 0.646625
+  type: 'test'
+  ...
+# Subtest: normal sequence (reply landed before next turn) is unaffected
+ok 93 - normal sequence (reply landed before next turn) is unaffected
+  ---
+  duration_ms: 0.073083
+  type: 'test'
+  ...
+# Subtest: failed → restarts immediately
+ok 94 - failed → restarts immediately
+  ---
+  duration_ms: 0.577084
+  type: 'test'
+  ...
+# Subtest: disconnected → waits grace, then restarts if not recovered
+ok 95 - disconnected → waits grace, then restarts if not recovered
+  ---
+  duration_ms: 34.553834
+  type: 'test'
+  ...
+# Subtest: disconnected → connected within grace cancels the restart
+ok 96 - disconnected → connected within grace cancels the restart
+  ---
+  duration_ms: 31.289208
+  type: 'test'
+  ...
+# Subtest: gives up via fail() after maxRetries consecutive failures
+ok 97 - gives up via fail() after maxRetries consecutive failures
+  ---
+  duration_ms: 0.389625
+  type: 'test'
+  ...
+# Subtest: connected resets the retry budget — only consecutive failures count
+ok 98 - connected resets the retry budget — only consecutive failures count
+  ---
+  duration_ms: 0.29625
+  type: 'test'
+  ...
+# Subtest: onRestartError consumes budget and eventually fails
+ok 99 - onRestartError consumes budget and eventually fails
+  ---
+  duration_ms: 0.12
+  type: 'test'
+  ...
+# Subtest: stop() silences everything, including a pending grace timer
+ok 100 - stop() silences everything, including a pending grace timer
+  ---
+  duration_ms: 32.64025
+  type: 'test'
+  ...
+# Subtest: isSupported reflects browserSupportsWebAuthn
+ok 101 - isSupported reflects browserSupportsWebAuthn
+  ---
+  duration_ms: 0.604208
+  type: 'test'
+  ...
+# Subtest: hasAnyPasskey returns true on {has_passkey:true}
+ok 102 - hasAnyPasskey returns true on {has_passkey:true}
+  ---
+  duration_ms: 12.232666
+  type: 'test'
+  ...
+# Subtest: hasAnyPasskey returns false on backend 5xx (graceful)
+ok 103 - hasAnyPasskey returns false on backend 5xx (graceful)
+  ---
+  duration_ms: 0.495209
+  type: 'test'
+  ...
+# Subtest: hasAnyPasskey returns false on network error (graceful)
+ok 104 - hasAnyPasskey returns false on network error (graceful)
+  ---
+  duration_ms: 0.234791
+  type: 'test'
+  ...
+# Subtest: registerPasskey unsupported short-circuits without fetching
+ok 105 - registerPasskey unsupported short-circuits without fetching
+  ---
+  duration_ms: 1.345417
+  type: 'test'
+  ...
+# Subtest: registerPasskey happy path returns credential id
+ok 106 - registerPasskey happy path returns credential id
+  ---
+  duration_ms: 1.488334
+  type: 'test'
+  ...
+# Subtest: registerPasskey surfaces 401 from begin as auth_failed
+ok 107 - registerPasskey surfaces 401 from begin as auth_failed
+  ---
+  duration_ms: 0.304292
+  type: 'test'
+  ...
+# Subtest: registerPasskey maps NotAllowedError → cancelled
+ok 108 - registerPasskey maps NotAllowedError → cancelled
+  ---
+  duration_ms: 0.261792
+  type: 'test'
+  ...
+# Subtest: registerPasskey surfaces 400 verify failure with reason
+ok 109 - registerPasskey surfaces 400 verify failure with reason
+  ---
+  duration_ms: 0.4135
+  type: 'test'
+  ...
+# Subtest: authenticateWithPasskey happy path returns csrf + expires
+ok 110 - authenticateWithPasskey happy path returns csrf + expires
+  ---
+  duration_ms: 0.952875
+  type: 'test'
+  ...
+# Subtest: authenticateWithPasskey maps 401 credential_unknown distinctly
+ok 111 - authenticateWithPasskey maps 401 credential_unknown distinctly
+  ---
+  duration_ms: 0.267834
+  type: 'test'
+  ...
+# Subtest: authenticateWithPasskey maps NotAllowedError → cancelled
+ok 112 - authenticateWithPasskey maps NotAllowedError → cancelled
+  ---
+  duration_ms: 0.116625
+  type: 'test'
+  ...
+# Subtest: authenticateWithPasskey maps 429 → rate_limited
+ok 113 - authenticateWithPasskey maps 429 → rate_limited
+  ---
+  duration_ms: 0.130834
+  type: 'test'
+  ...
+# Subtest: authenticateWithPasskey unsupported never reaches network
+ok 114 - authenticateWithPasskey unsupported never reaches network
+  ---
+  duration_ms: 0.053958
+  type: 'test'
+  ...
+# Subtest: listPasskeys returns rows on success
+ok 115 - listPasskeys returns rows on success
+  ---
+  duration_ms: 1.882666
+  type: 'test'
+  ...
+# Subtest: deletePasskey returns not_found on 404
+ok 116 - deletePasskey returns not_found on 404
+  ---
+  duration_ms: 0.408417
+  type: 'test'
+  ...
+# Subtest: deletePasskey url-encodes credential id
+ok 117 - deletePasskey url-encodes credential id
+  ---
+  duration_ms: 0.552
+  type: 'test'
+  ...
+# Subtest: teardown — restore _deps
+ok 118 - teardown — restore _deps
+  ---
+  duration_ms: 0.133292
+  type: 'test'
+  ...
+# Subtest: recognizes asset error: Failed to fetch dynamically imported module: /assets/MeetingsView-old.js
+ok 119 - recognizes asset error: Failed to fetch dynamically imported module: /assets/MeetingsView-old.js
+  ---
+  duration_ms: 0.494625
+  type: 'test'
+  ...
+# Subtest: recognizes asset error: error loading dynamically imported module: /assets/x.js
+ok 120 - recognizes asset error: error loading dynamically imported module: /assets/x.js
+  ---
+  duration_ms: 0.155417
+  type: 'test'
+  ...
+# Subtest: recognizes asset error: Importing a module script failed.
+ok 121 - recognizes asset error: Importing a module script failed.
+  ---
+  duration_ms: 0.036541
+  type: 'test'
+  ...
+# Subtest: recognizes asset error: Unable to preload CSS for /assets/x.css
+ok 122 - recognizes asset error: Unable to preload CSS for /assets/x.css
+  ---
+  duration_ms: 0.033666
+  type: 'test'
+  ...
+# Subtest: recognizes asset error: Loading chunk 42 failed.
+ok 123 - recognizes asset error: Loading chunk 42 failed.
+  ---
+  duration_ms: 0.038291
+  type: 'test'
+  ...
+# Subtest: does not treat API/network/runtime errors as obsolete routes
+ok 124 - does not treat API/network/runtime errors as obsolete routes
+  ---
+  duration_ms: 0.050958
+  type: 'test'
+  ...
+# Subtest: real router retains current route, preserves requested query/hash, reloads only on user action
+ok 125 - real router retains current route, preserves requested query/hash, reloads only on user action
+  ---
+  duration_ms: 2.221958
+  type: 'test'
+  ...
+# Subtest: dismiss/repeated failure and unrelated successful navigation
+ok 126 - dismiss/repeated failure and unrelated successful navigation
+  ---
+  duration_ms: 2.392292
+  type: 'test'
+  ...
+# Subtest: initial route failure surfaces recovery without automatic retry
+ok 127 - initial route failure surfaces recovery without automatic retry
+  ---
+  duration_ms: 0.672375
+  type: 'test'
+  ...
+# Subtest: message_turn final-turn does not clobber paused status
+ok 128 - message_turn final-turn does not clobber paused status
+  ---
+  duration_ms: 16.737458
+  type: 'test'
+  ...
+# Subtest: message_turn final-turn sets idle when not in pause cycle
+ok 129 - message_turn final-turn sets idle when not in pause cycle
+  ---
+  duration_ms: 0.620292
+  type: 'test'
+  ...
+# Subtest: message_turn does not clobber pausing or resuming states
+ok 130 - message_turn does not clobber pausing or resuming states
+  ---
+  duration_ms: 0.733333
+  type: 'test'
+  ...
+# Subtest: result event does not clobber paused status
+ok 131 - result event does not clobber paused status
+  ---
+  duration_ms: 0.462208
+  type: 'test'
+  ...
+# Subtest: idle event does not clobber paused status
+ok 132 - idle event does not clobber paused status
+  ---
+  duration_ms: 0.649875
+  type: 'test'
+  ...
+# Subtest: response event does not clobber paused status
+ok 133 - response event does not clobber paused status
+  ---
+  duration_ms: 0.595291
+  type: 'test'
+  ...
+# Subtest: result/idle/response set idle when not in pause cycle
+ok 134 - result/idle/response set idle when not in pause cycle
+  ---
+  duration_ms: 1.322667
+  type: 'test'
+  ...
+# Subtest: thinking event does not clobber paused status
+ok 135 - thinking event does not clobber paused status
+  ---
+  duration_ms: 0.371208
+  type: 'test'
+  ...
+# Subtest: tool_call event does not clobber paused status
+ok 136 - tool_call event does not clobber paused status
+  ---
+  duration_ms: 0.435041
+  type: 'test'
+  ...
+# Subtest: tool_result event does not clobber paused status
+ok 137 - tool_result event does not clobber paused status
+  ---
+  duration_ms: 0.338208
+  type: 'test'
+  ...
+# Subtest: started event does not clobber paused status
+ok 138 - started event does not clobber paused status
+  ---
+  duration_ms: 0.17725
+  type: 'test'
+  ...
+# Subtest: resumed event does not clobber paused status
+ok 139 - resumed event does not clobber paused status
+  ---
+  duration_ms: 0.156
+  type: 'test'
+  ...
+# Subtest: context_compaction_started sets inProgress without touching status
+ok 140 - context_compaction_started sets inProgress without touching status
+  ---
+  duration_ms: 0.234084
+  type: 'test'
+  ...
+# Subtest: context_compaction_completed records savings and clears inProgress
+ok 141 - context_compaction_completed records savings and clears inProgress
+  ---
+  duration_ms: 0.197375
+  type: 'test'
+  ...
+# Subtest: context_compaction_failed records error and clears inProgress
+ok 142 - context_compaction_failed records error and clears inProgress
+  ---
+  duration_ms: 0.163875
+  type: 'test'
+  ...
+# Subtest: compaction events do not clobber paused status
+ok 143 - compaction events do not clobber paused status
+  ---
+  duration_ms: 0.141375
+  type: 'test'
+  ...
+# Subtest: fetchAgents keeps duplicate names from different sessions in roster
+ok 144 - fetchAgents keeps duplicate names from different sessions in roster
+  ---
+  duration_ms: 0.753959
+  type: 'test'
+  ...
+# Subtest: same-named agents in separate sessions keep independent lifecycle updates
+ok 145 - same-named agents in separate sessions keep independent lifecycle updates
+  ---
+  duration_ms: 5.4035
+  type: 'test'
+  ...
+# Subtest: sessionless event does not mutate ambiguous duplicate-name roster entries
+ok 146 - sessionless event does not mutate ambiguous duplicate-name roster entries
+  ---
+  duration_ms: 0.157042
+  type: 'test'
+  ...
+# Subtest: playFromChat: story reply → story playback, ignores read-aloud toggle
+ok 147 - playFromChat: story reply → story playback, ignores read-aloud toggle
+  ---
+  duration_ms: 13.7285
+  type: 'test'
+  ...
+# Subtest: playFromChat: plain reply → chatTts when read-aloud is ON
+ok 148 - playFromChat: plain reply → chatTts when read-aloud is ON
+  ---
+  duration_ms: 0.816709
+  type: 'test'
+  ...
+# Subtest: playFromChat: plain reply is silent when read-aloud is OFF
+ok 149 - playFromChat: plain reply is silent when read-aloud is OFF
+  ---
+  duration_ms: 1.196458
+  type: 'test'
+  ...
+# Subtest: playFromChat: no audio and no story → no-op
+ok 150 - playFromChat: no audio and no story → no-op
+  ---
+  duration_ms: 3.623625
+  type: 'test'
+  ...
+# [auth/store] probe network error: TypeError: Failed to fetch
+#     at file:///Users/phucnguyenvan/.codex/worktrees/backlog-quick-fixes/jarvis/frontend/src/stores/auth.test.js:148:33
+#     at globalThis.fetch (file:///Users/phucnguyenvan/.codex/worktrees/backlog-quick-fixes/jarvis/frontend/src/stores/auth.test.js:40:33)
+#     at file:///Users/phucnguyenvan/.codex/worktrees/backlog-quick-fixes/jarvis/frontend/src/stores/auth.js:133:30
+#     at Proxy.probe (file:///Users/phucnguyenvan/.codex/worktrees/backlog-quick-fixes/jarvis/frontend/src/stores/auth.js:161:9)
+#     at Proxy.wrappedAction (file:///Users/phucnguyenvan/.codex/worktrees/backlog-quick-fixes/jarvis/frontend/node_modules/pinia/dist/pinia.mjs:1400:26)
+#     at TestContext.<anonymous> (file:///Users/phucnguyenvan/.codex/worktrees/backlog-quick-fixes/jarvis/frontend/src/stores/auth.test.js:157:14)
+#     at Test.runInAsyncScope (node:async_hooks:214:14)
+#     at Test.run (node:internal/test_runner/test:1047:25)
+#     at async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+# Subtest: initial state is unknown / not authenticated
+ok 151 - initial state is unknown / not authenticated
+  ---
+  duration_ms: 1.644791
+  type: 'test'
+  ...
+# Subtest: probe(): authenticated whoami → status=authenticated + RESTORED event
+ok 152 - probe(): authenticated whoami → status=authenticated + RESTORED event
+  ---
+  duration_ms: 12.396875
+  type: 'test'
+  ...
+# Subtest: probe(): unauthenticated whoami → status=unauthenticated + EXPIRED event
+ok 153 - probe(): unauthenticated whoami → status=unauthenticated + EXPIRED event
+  ---
+  duration_ms: 0.610417
+  type: 'test'
+  ...
+# Subtest: probe(): network error keeps current status (no false lockout)
+ok 154 - probe(): network error keeps current status (no false lockout)
+  ---
+  duration_ms: 0.8665
+  type: 'test'
+  ...
+# [auth/store] /refresh response missing expires_in; falling back to whoami
+# [auth/store] refresh got status 502
+# [auth/store] refresh network error: TypeError: Failed to fetch
+#     at file:///Users/phucnguyenvan/.codex/worktrees/backlog-quick-fixes/jarvis/frontend/src/stores/auth.test.js:583:13
+#     at globalThis.fetch (file:///Users/phucnguyenvan/.codex/worktrees/backlog-quick-fixes/jarvis/frontend/src/stores/auth.test.js:40:33)
+#     at Proxy.refresh (file:///Users/phucnguyenvan/.codex/worktrees/backlog-quick-fixes/jarvis/frontend/src/stores/auth.js:217:28)
+#     at Proxy.wrappedAction (file:///Users/phucnguyenvan/.codex/worktrees/backlog-quick-fixes/jarvis/frontend/node_modules/pinia/dist/pinia.mjs:1400:26)
+#     at Object.fn (file:///Users/phucnguyenvan/.codex/worktrees/backlog-quick-fixes/jarvis/frontend/src/stores/auth.js:77:18)
+#     at _fireTimer (file:///Users/phucnguyenvan/.codex/worktrees/backlog-quick-fixes/jarvis/frontend/src/stores/auth.test.js:78:11)
+#     at TestContext.<anonymous> (file:///Users/phucnguyenvan/.codex/worktrees/backlog-quick-fixes/jarvis/frontend/src/stores/auth.test.js:590:9)
+#     at async Test.run (node:internal/test_runner/test:1054:7)
+#     at async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+# Subtest: probe(): concurrent calls dedup to one HTTP request
+ok 155 - probe(): concurrent calls dedup to one HTTP request
+  ---
+  duration_ms: 13.228667
+  type: 'test'
+  ...
+# Subtest: login() success → status=authenticated + RESTORED + broadcast
+ok 156 - login() success → status=authenticated + RESTORED + broadcast
+  ---
+  duration_ms: 0.795584
+  type: 'test'
+  ...
+# Subtest: RESTORED from boot probe carries from=unknown (no reload path)
+ok 157 - RESTORED from boot probe carries from=unknown (no reload path)
+  ---
+  duration_ms: 0.389458
+  type: 'test'
+  ...
+# Subtest: RESTORED from modal login after lockout carries from=unauthenticated
+ok 158 - RESTORED from modal login after lockout carries from=unauthenticated
+  ---
+  duration_ms: 0.227375
+  type: 'test'
+  ...
+# Subtest: RESTORED from cross-tab transition carries THIS tab previous status
+ok 159 - RESTORED from cross-tab transition carries THIS tab previous status
+  ---
+  duration_ms: 0.42225
+  type: 'test'
+  ...
+# Subtest: login() 401 returns reason from backend, status stays unchanged
+ok 160 - login() 401 returns reason from backend, status stays unchanged
+  ---
+  duration_ms: 0.483583
+  type: 'test'
+  ...
+# Subtest: login() network error returns ok:false / status:0
+ok 161 - login() network error returns ok:false / status:0
+  ---
+  duration_ms: 0.12825
+  type: 'test'
+  ...
+# Subtest: on401() probes once before locking; probe-success keeps user authenticated
+ok 162 - on401() probes once before locking; probe-success keeps user authenticated
+  ---
+  duration_ms: 0.269625
+  type: 'test'
+  ...
+# Subtest: on401() locks UI when probe also says unauthenticated
+ok 163 - on401() locks UI when probe also says unauthenticated
+  ---
+  duration_ms: 0.780208
+  type: 'test'
+  ...
+# Subtest: on401() is a no-op when already unauthenticated
+ok 164 - on401() is a no-op when already unauthenticated
+  ---
+  duration_ms: 0.109417
+  type: 'test'
+  ...
+# Subtest: logout() clears state + broadcasts even if backend errors
+ok 165 - logout() clears state + broadcasts even if backend errors
+  ---
+  duration_ms: 0.1485
+  type: 'test'
+  ...
+# Subtest: cross-tab: receiving authenticated transition restores local state
+ok 166 - cross-tab: receiving authenticated transition restores local state
+  ---
+  duration_ms: 0.267542
+  type: 'test'
+  ...
+# Subtest: cross-tab: receiving unauthenticated transition locks local state
+ok 167 - cross-tab: receiving unauthenticated transition locks local state
+  ---
+  duration_ms: 0.262209
+  type: 'test'
+  ...
+# Subtest: login() schedules silent refresh ~5min before exp
+ok 168 - login() schedules silent refresh ~5min before exp
+  ---
+  duration_ms: 0.195083
+  type: 'test'
+  ...
+# Subtest: probe() also schedules silent refresh when authenticated
+ok 169 - probe() also schedules silent refresh when authenticated
+  ---
+  duration_ms: 0.140584
+  type: 'test'
+  ...
+# Subtest: schedule honours the 30s minimum delay for tiny expires_in
+ok 170 - schedule honours the 30s minimum delay for tiny expires_in
+  ---
+  duration_ms: 0.154375
+  type: 'test'
+  ...
+# Subtest: refresh() success extends session, sends X-CSRF-Token header, and reschedules
+ok 171 - refresh() success extends session, sends X-CSRF-Token header, and reschedules
+  ---
+  duration_ms: 0.250833
+  type: 'test'
+  ...
+# Subtest: refresh() falls back to probe() when response is missing expires_in
+ok 172 - refresh() falls back to probe() when response is missing expires_in
+  ---
+  duration_ms: 0.284959
+  type: 'test'
+  ...
+# Subtest: refresh() 401 (max_lifetime_exceeded) locks the UI
+ok 173 - refresh() 401 (max_lifetime_exceeded) locks the UI
+  ---
+  duration_ms: 0.204167
+  type: 'test'
+  ...
+# Subtest: refresh() 5xx keeps user authenticated and reschedules a short retry
+ok 174 - refresh() 5xx keeps user authenticated and reschedules a short retry
+  ---
+  duration_ms: 0.218125
+  type: 'test'
+  ...
+# Subtest: refresh() network error keeps user authenticated and reschedules a short retry
+ok 175 - refresh() network error keeps user authenticated and reschedules a short retry
+  ---
+  duration_ms: 1.054417
+  type: 'test'
+  ...
+# Subtest: logout() cancels the pending refresh timer
+ok 176 - logout() cancels the pending refresh timer
+  ---
+  duration_ms: 0.265167
+  type: 'test'
+  ...
+# Subtest: refresh() is a no-op when not authenticated
+ok 177 - refresh() is a no-op when not authenticated
+  ---
+  duration_ms: 0.089167
+  type: 'test'
+  ...
+# Subtest: cross-tab AUTHENTICATED with expiresIn schedules sibling refresh
+ok 178 - cross-tab AUTHENTICATED with expiresIn schedules sibling refresh
+  ---
+  duration_ms: 0.1545
+  type: 'test'
+  ...
+# Subtest: cross-tab UNAUTHENTICATED clears the local refresh timer
+ok 179 - cross-tab UNAUTHENTICATED clears the local refresh timer
+  ---
+  duration_ms: 0.121292
+  type: 'test'
+  ...
+# Subtest: showAuthGate is true ONLY when status is unauthenticated
+ok 180 - showAuthGate is true ONLY when status is unauthenticated
+  ---
+  duration_ms: 0.229708
+  type: 'test'
+  ...
+# [chat] approve memory failed: Error: network down
+#     at BOOM (file:///Users/phucnguyenvan/.codex/worktrees/backlog-quick-fixes/jarvis/frontend/src/stores/chat.test.js:184:28)
+#     at globalThis.fetch (file:///Users/phucnguyenvan/.codex/worktrees/backlog-quick-fixes/jarvis/frontend/src/stores/chat.test.js:179:12)
+#     at apiFetch (file:///Users/phucnguyenvan/.codex/worktrees/backlog-quick-fixes/jarvis/frontend/src/api.js:138:26)
+#     at Proxy.approveSavedMemory (file:///Users/phucnguyenvan/.codex/worktrees/backlog-quick-fixes/jarvis/frontend/src/stores/chat.js:517:13)
+#     at Proxy.wrappedAction (file:///Users/phucnguyenvan/.codex/worktrees/backlog-quick-fixes/jarvis/frontend/node_modules/pinia/dist/pinia.mjs:1400:26)
+#     at TestContext.<anonymous> (file:///Users/phucnguyenvan/.codex/worktrees/backlog-quick-fixes/jarvis/frontend/src/stores/chat.test.js:229:11)
+#     at Test.runInAsyncScope (node:async_hooks:214:14)
+#     at Test.run (node:internal/test_runner/test:1047:25)
+#     at async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+# Subtest: memory_recalled inserts a recall block before the streaming reply
+ok 181 - memory_recalled inserts a recall block before the streaming reply
+  ---
+  duration_ms: 3.57175
+  type: 'test'
+  ...
+# Subtest: memory_recalled is ignored when no turn is streaming
+ok 182 - memory_recalled is ignored when no turn is streaming
+  ---
+  duration_ms: 0.389375
+  type: 'test'
+  ...
+# Subtest: memory_recalled is ignored for a different agent
+ok 183 - memory_recalled is ignored for a different agent
+  ---
+  duration_ms: 0.385417
+  type: 'test'
+  ...
+# Subtest: memory_saved inserts a chip; same-turn saves batch into one block
+ok 184 - memory_saved inserts a chip; same-turn saves batch into one block
+  ---
+  duration_ms: 0.31575
+  type: 'test'
+  ...
+# Subtest: memory_saved transition pending→saved updates the same item in place
+ok 185 - memory_saved transition pending→saved updates the same item in place
+  ---
+  duration_ms: 1.219875
+  type: 'test'
+  ...
+# Subtest: memory_saved rejected for a never-seen candidate is ignored
+ok 186 - memory_saved rejected for a never-seen candidate is ignored
+  ---
+  duration_ms: 0.323166
+  type: 'test'
+  ...
+# Subtest: a new user turn starts a fresh saved block
+ok 187 - a new user turn starts a fresh saved block
+  ---
+  duration_ms: 0.316083
+  type: 'test'
+  ...
+# Subtest: memory_saved is ignored for a different agent
+ok 188 - memory_saved is ignored for a different agent
+  ---
+  duration_ms: 0.15075
+  type: 'test'
+  ...
+# Subtest: memory_recalled is dropped when conversation_id != the active conversation
+ok 189 - memory_recalled is dropped when conversation_id != the active conversation
+  ---
+  duration_ms: 0.447125
+  type: 'test'
+  ...
+# Subtest: memory_recalled is inserted when conversation_id matches
+ok 190 - memory_recalled is inserted when conversation_id matches
+  ---
+  duration_ms: 0.314834
+  type: 'test'
+  ...
+# Subtest: memory_recalled still shows on a fresh conversation (no backendConversationId yet)
+ok 191 - memory_recalled still shows on a fresh conversation (no backendConversationId yet)
+  ---
+  duration_ms: 0.177417
+  type: 'test'
+  ...
+# Subtest: memory_saved is dropped when conversation_id != the active conversation
+ok 192 - memory_saved is dropped when conversation_id != the active conversation
+  ---
+  duration_ms: 0.149208
+  type: 'test'
+  ...
+# Subtest: memory_saved is inserted when conversation_id matches
+ok 193 - memory_saved is inserted when conversation_id matches
+  ---
+  duration_ms: 0.155
+  type: 'test'
+  ...
+# Subtest: approveSavedMemory flips pending→saved and POSTs the approve route
+ok 194 - approveSavedMemory flips pending→saved and POSTs the approve route
+  ---
+  duration_ms: 7.137791
+  type: 'test'
+  ...
+# Subtest: rejectSavedMemory flips pending→rejected and POSTs the reject route
+ok 195 - rejectSavedMemory flips pending→rejected and POSTs the reject route
+  ---
+  duration_ms: 0.216666
+  type: 'test'
+  ...
+# Subtest: archiveSavedMemory flips saved→archived and POSTs the archive route
+ok 196 - archiveSavedMemory flips saved→archived and POSTs the archive route
+  ---
+  duration_ms: 0.183583
+  type: 'test'
+  ...
+# Subtest: a failed approve reverts the optimistic status (no silent loss)
+ok 197 - a failed approve reverts the optimistic status (no silent loss)
+  ---
+  duration_ms: 0.752166
+  type: 'test'
+  ...
+# Subtest: archiveSavedMemory is a no-op without a recordId (nothing to archive yet)
+ok 198 - archiveSavedMemory is a no-op without a recordId (nothing to archive yet)
+  ---
+  duration_ms: 0.247834
+  type: 'test'
+  ...
+# Subtest: memory_indexed bumps the index tick
+ok 199 - memory_indexed bumps the index tick
+  ---
+  duration_ms: 1.317084
+  type: 'test'
+  ...
+# Subtest: retrieval_degraded sets flag; retrieval_completed clears it
+ok 200 - retrieval_degraded sets flag; retrieval_completed clears it
+  ---
+  duration_ms: 0.25075
+  type: 'test'
+  ...
+# Subtest: events without agent_name are ignored
+ok 201 - events without agent_name are ignored
+  ---
+  duration_ms: 0.324042
+  type: 'test'
+  ...
+# Subtest: memory_reranker_loading drives the global rerankerLoad progress
+ok 202 - memory_reranker_loading drives the global rerankerLoad progress
+  ---
+  duration_ms: 0.278666
+  type: 'test'
+  ...
+# Subtest: memory_reranker_loading defaults progress to 0 when omitted
+ok 203 - memory_reranker_loading defaults progress to 0 when omitted
+  ---
+  duration_ms: 0.401167
+  type: 'test'
+  ...
+# Subtest: normalizeTs: Unix seconds float → ms (the bug case)
+ok 204 - normalizeTs: Unix seconds float → ms (the bug case)
+  ---
+  duration_ms: 0.503542
+  type: 'test'
+  ...
+# Subtest: normalizeTs: Unix seconds int → ms
+ok 205 - normalizeTs: Unix seconds int → ms
+  ---
+  duration_ms: 0.158333
+  type: 'test'
+  ...
+# Subtest: normalizeTs: Unix milliseconds → unchanged
+ok 206 - normalizeTs: Unix milliseconds → unchanged
+  ---
+  duration_ms: 0.048417
+  type: 'test'
+  ...
+# Subtest: normalizeTs: numeric string (seconds) → ms
+ok 207 - normalizeTs: numeric string (seconds) → ms
+  ---
+  duration_ms: 0.040958
+  type: 'test'
+  ...
+# Subtest: normalizeTs: numeric string (ms) → unchanged
+ok 208 - normalizeTs: numeric string (ms) → unchanged
+  ---
+  duration_ms: 0.0455
+  type: 'test'
+  ...
+# Subtest: normalizeTs: ISO 8601 string → ms
+ok 209 - normalizeTs: ISO 8601 string → ms
+  ---
+  duration_ms: 0.047
+  type: 'test'
+  ...
+# Subtest: normalizeTs: null/undefined/0/empty → null
+ok 210 - normalizeTs: null/undefined/0/empty → null
+  ---
+  duration_ms: 0.089083
+  type: 'test'
+  ...
+# Subtest: normalizeTs: NaN / non-finite → null
+ok 211 - normalizeTs: NaN / non-finite → null
+  ---
+  duration_ms: 0.037375
+  type: 'test'
+  ...
+# Subtest: normalizeTs: unparseable string → null
+ok 212 - normalizeTs: unparseable string → null
+  ---
+  duration_ms: 0.223042
+  type: 'test'
+  ...
+# Subtest: formatTimestamp: invalid input → empty string
+ok 213 - formatTimestamp: invalid input → empty string
+  ---
+  duration_ms: 0.286125
+  type: 'test'
+  ...
+# Subtest: formatTimestamp: Unix seconds renders correct year (not 1970)
+ok 214 - formatTimestamp: Unix seconds renders correct year (not 1970)
+  ---
+  duration_ms: 0.851958
+  type: 'test'
+  ...
+# Subtest: formatTimestamp: dateOnly returns dd/MM/yyyy
+ok 215 - formatTimestamp: dateOnly returns dd/MM/yyyy
+  ---
+  duration_ms: 0.1045
+  type: 'test'
+  ...
+# Subtest: formatTimestamp: timeOnly returns HH:mm:ss
+ok 216 - formatTimestamp: timeOnly returns HH:mm:ss
+  ---
+  duration_ms: 0.046375
+  type: 'test'
+  ...
+# Subtest: expandToolRequest yields one entry per tool when tools is an array
+ok 217 - expandToolRequest yields one entry per tool when tools is an array
+  ---
+  duration_ms: 0.888958
+  type: 'test'
+  ...
+# Subtest: expandToolRequest falls back to a single legacy entry when tools is missing
+ok 218 - expandToolRequest falls back to a single legacy entry when tools is missing
+  ---
+  duration_ms: 0.972083
+  type: 'test'
+  ...
+# Subtest: expandToolRequest falls back to server name when tool is also missing
+ok 219 - expandToolRequest falls back to server name when tool is also missing
+  ---
+  duration_ms: 0.113
+  type: 'test'
+  ...
+# Subtest: expandToolRequest uses "tool" placeholder when no name source is available
+ok 220 - expandToolRequest uses "tool" placeholder when no name source is available
+  ---
+  duration_ms: 0.090333
+  type: 'test'
+  ...
+# Subtest: expandToolRequest treats empty tools array like missing
+ok 221 - expandToolRequest treats empty tools array like missing
+  ---
+  duration_ms: 0.258916
+  type: 'test'
+  ...
+# Subtest: expandToolDone yields one result entry per tool in the batch
+ok 222 - expandToolDone yields one result entry per tool in the batch
+  ---
+  duration_ms: 0.211625
+  type: 'test'
+  ...
+# Subtest: expandToolDone gives each tool its OWN result_preview (per-tool fix)
+ok 223 - expandToolDone gives each tool its OWN result_preview (per-tool fix)
+  ---
+  duration_ms: 0.216125
+  type: 'test'
+  ...
+# Subtest: expandToolDone falls back to batch result_preview when a tool lacks its own
+ok 224 - expandToolDone falls back to batch result_preview when a tool lacks its own
+  ---
+  duration_ms: 0.090083
+  type: 'test'
+  ...
+# Subtest: expandToolDone omits duration when duration_ms missing
+ok 225 - expandToolDone omits duration when duration_ms missing
+  ---
+  duration_ms: 1.361792
+  type: 'test'
+  ...
+# Subtest: expandToolDone falls back to single legacy entry
+ok 226 - expandToolDone falls back to single legacy entry
+  ---
+  duration_ms: 0.598375
+  type: 'test'
+  ...
+# Subtest: paired parallel request + done batches yield matching entry counts
+ok 227 - paired parallel request + done batches yield matching entry counts
+  ---
+  duration_ms: 0.146959
+  type: 'test'
+  ...
+# Subtest: no tag → text unchanged, videoIds empty
+ok 228 - no tag → text unchanged, videoIds empty
+  ---
+  duration_ms: 1.129083
+  type: 'test'
+  ...
+# Subtest: single tag at end → tag stripped, id extracted
+ok 229 - single tag at end → tag stripped, id extracted
+  ---
+  duration_ms: 0.1825
+  type: 'test'
+  ...
+# Subtest: tag in middle of sentence → cleanly stripped
+ok 230 - tag in middle of sentence → cleanly stripped
+  ---
+  duration_ms: 0.059042
+  type: 'test'
+  ...
+# Subtest: multiple distinct tags → all ids in order
+ok 231 - multiple distinct tags → all ids in order
+  ---
+  duration_ms: 0.047
+  type: 'test'
+  ...
+# Subtest: duplicate ids are deduped while preserving order
+ok 232 - duplicate ids are deduped while preserving order
+  ---
+  duration_ms: 0.069083
+  type: 'test'
+  ...
+# Subtest: whitespace inside the tag is tolerated
+ok 233 - whitespace inside the tag is tolerated
+  ---
+  duration_ms: 0.043833
+  type: 'test'
+  ...
+# Subtest: id with hyphen and underscore (valid YouTube chars)
+ok 234 - id with hyphen and underscore (valid YouTube chars)
+  ---
+  duration_ms: 0.082625
+  type: 'test'
+  ...
+# Subtest: invalid id (too short) → tag NOT extracted, but text is left as-is
+ok 235 - invalid id (too short) → tag NOT extracted, but text is left as-is
+  ---
+  duration_ms: 0.041041
+  type: 'test'
+  ...
+# Subtest: other [[[TAG:...]]] tags are NOT stripped (only PLAY)
+ok 236 - other [[[TAG:...]]] tags are NOT stripped (only PLAY)
+  ---
+  duration_ms: 0.246709
+  type: 'test'
+  ...
+# Subtest: null / undefined / non-string input → safe fallback
+ok 237 - null / undefined / non-string input → safe fallback
+  ---
+  duration_ms: 0.266125
+  type: 'test'
+  ...
+# Subtest: trailing whitespace from stripped tag is trimmed
+ok 238 - trailing whitespace from stripped tag is trimmed
+  ---
+  duration_ms: 0.085625
+  type: 'test'
+  ...
+# Subtest: tag on its own line → leftover blank line is collapsed
+ok 239 - tag on its own line → leftover blank line is collapsed
+  ---
+  duration_ms: 0.040083
+  type: 'test'
+  ...
+# Subtest: youtubeEmbedUrl: first sighting → autoplay=1, second → autoplay=0
+ok 240 - youtubeEmbedUrl: first sighting → autoplay=1, second → autoplay=0
+  ---
+  duration_ms: 0.047042
+  type: 'test'
+  ...
+# Subtest: youtubeEmbedUrl: each distinct id gets its own first-sight autoplay
+ok 241 - youtubeEmbedUrl: each distinct id gets its own first-sight autoplay
+  ---
+  duration_ms: 0.025459
+  type: 'test'
+  ...
+# Subtest: youtubeEmbedUrl: autoplayIfFresh=false forces autoplay=0
+ok 242 - youtubeEmbedUrl: autoplayIfFresh=false forces autoplay=0
+  ---
+  duration_ms: 0.026625
+  type: 'test'
+  ...
+# Subtest: youtubeEmbedUrl encodes characters defensively
+ok 243 - youtubeEmbedUrl encodes characters defensively
+  ---
+  duration_ms: 0.02375
+  type: 'test'
+  ...
+# Subtest: built-in inject selects static target without a session
+ok 244 - built-in inject selects static target without a session
+  ---
+  duration_ms: 0.394791
+  type: 'test'
+  ...
+# Subtest: dynamic agent injects require an explicit session identity
+ok 245 - dynamic agent injects require an explicit session identity
+  ---
+  duration_ms: 0.183375
+  type: 'test'
+  ...
+# Subtest: inject request includes session_id and propagates 409
+ok 246 - inject request includes session_id and propagates 409
+  ---
+  duration_ms: 0.083833
+  type: 'test'
+  ...
+# Subtest: single-delete live guard blocks name collision before fetch
+ok 247 - single-delete live guard blocks name collision before fetch
+  ---
+  duration_ms: 0.391375
+  type: 'test'
+  ...
+# Subtest: bulk-delete preflight aborts all requests on any collision
+ok 248 - bulk-delete preflight aborts all requests on any collision
+  ---
+  duration_ms: 0.080208
+  type: 'test'
+  ...
+1..248
+# tests 248
+# suites 0
+# pass 248
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 469.378125

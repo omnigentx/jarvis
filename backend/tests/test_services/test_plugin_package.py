@@ -38,6 +38,14 @@ def test_three_formats_share_inventory(tmp_path, manifest, ecosystem):
     assert len(package.digest) == 64
 
 
+@pytest.mark.parametrize("manifest", [".codex-plugin/plugin.json", ".claude-plugin/plugin.json"])
+def test_manifest_can_reference_default_mcp_file(tmp_path, manifest):
+    write(tmp_path, manifest, {"name": "review", "mcpServers": ["./.mcp.json", ".mcp.json"]})
+    write(tmp_path, ".mcp.json", {"mcpServers": {"echo": {"command": "python"}}})
+    package = inspect_package(tmp_path)
+    assert list(package.servers) == ["echo"]
+
+
 def test_digest_covers_helper_not_just_manifest(tmp_path):
     write(tmp_path, "plugin.json", {"name": "review"})
     write(tmp_path, "skills/review/SKILL.md", "---\ndescription: Review\n---\nReview.")

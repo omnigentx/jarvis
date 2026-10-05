@@ -194,15 +194,20 @@ def _servers(
     root: Path, settings: dict[str, Any], ecosystem: str
 ) -> dict[str, dict[str, Any]]:
     configs: list[dict[str, Any]] = []
+    seen_paths: set[Path] = set()
     default = root / ("mcp.json" if ecosystem == "portable" else ".mcp.json")
     if default.is_file():
         configs.append(_json(default))
+        seen_paths.add(default.resolve())
     declared = settings.get("mcpServers")
     if declared is not None:
         declarations = declared if isinstance(declared, list) else [declared]
         for item in declarations:
             if isinstance(item, str):
-                configs.append(_json(_path(root, item)))
+                path = _path(root, item).resolve()
+                if path not in seen_paths:
+                    configs.append(_json(path))
+                    seen_paths.add(path)
             elif isinstance(item, dict):
                 configs.append({"mcpServers": item})
             else:
@@ -243,6 +248,9 @@ def inspect_package(root: Path, *, max_bytes: int = MAX_BYTES) -> PluginPackage:
         ):
             raise PackageError(f"Invalid plugin {key}")
     blockers: set[str] = set()
+    from services.plugins.compatibility import display_metadata, native_connector
+
+    servers = _servers(root, settings, ecosystem)
     for key, prefix, blocker in [
         ("hooks", "hooks/", "hooks"),
         ("agents", "agents/", "agents"),
@@ -250,7 +258,12 @@ def inspect_package(root: Path, *, max_bytes: int = MAX_BYTES) -> PluginPackage:
         ("apps", ".app.json", "host_connectors"),
         ("lspServers", ".lsp.json", "lsp"),
     ]:
-        if key in settings or any(p.startswith(prefix) for p in files):
+        matching = {p for p in files if p.startswith(prefix)}
+        if blocker == "agents" and ecosystem == "codex" and display_metadata(root):
+            matching.discard("agents/openai.yaml")
+        if blocker == "host_connectors" and ecosystem == "codex" and native_connector(root, servers):
+            continue
+        if key in settings or matching:
             blockers.add(blocker)
     if any(
         Path(p).suffix.lower() not in DATA_SUFFIXES
@@ -277,7 +290,6 @@ def inspect_package(root: Path, *, max_bytes: int = MAX_BYTES) -> PluginPackage:
     ]:
         if any(path.startswith(prefix) for path in files):
             blockers.add(f"unsupported_{key}")
-    servers = _servers(root, settings, ecosystem)
     if servers:
         blockers.add("mcp_requires_policy_review")
     skills = _skills(root, settings, ecosystem)

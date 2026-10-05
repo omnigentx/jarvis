@@ -10,6 +10,7 @@ from sqlalchemy import text
 from services.plugins.lifecycle import ApprovalRejected, PluginStateError
 from services.plugins.package import inspect_package
 from services.plugins.policy import PluginPolicyStore, validate_policy
+from services.plugins.transport import policy_summary
 
 
 def stop_sharing(lifecycle, identity: str) -> None:
@@ -63,17 +64,7 @@ async def promote(lifecycle, identity: str, targets: list[str], *, approve, appl
                 raise PluginStateError(
                     "This package cannot be shared with its current policy"
                 )
-            reviewed_policy = (
-                {
-                    "image": policy["image"],
-                    "credential_slots": sorted(policy["credentials"]),
-                    "revision": policy["revision"],
-                    "network": "none",
-                    "read_only": True,
-                }
-                if policy
-                else None
-            )
+            reviewed_policy = policy_summary(policy, package.servers)
             review = {
                 **record,
                 "target_agent": "global:all-current-and-future-agents",

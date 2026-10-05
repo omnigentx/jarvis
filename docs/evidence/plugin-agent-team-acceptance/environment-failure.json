@@ -1,0 +1,17 @@
+{
+  "case": "first team attempt",
+  "status": "FAIL",
+  "result": "activation_interrupted",
+  "root_cause": "local launcher configured JARVIS_DB_PATH but omitted matching SPAWN_REGISTRY_DB",
+  "plugin_database": "backend/data/rovo-e2e/jarvis.db",
+  "team_database": "backend/data/jarvis.db",
+  "plugin_socket_directory": "/tmp/jarvis-plugin-501-b09ee801d0acce14",
+  "team_socket_directory": "/tmp/jarvis-plugin-501-01f8965a091ff169",
+  "recovery": "launcher now sets both variables to isolated DB; copied only acceptance session c2bdc284 registry/context into isolated DB; stopped two acceptance processes for resumption; not a production migration or bug fix",
+  "historical_pid_recovery": "Restored terminated original PM PID 51661 and Dev PID 51872 after migration had accidentally set them to null, which correctly caused fail-closed runtime ambiguity.",
+  "current_runs": {
+    "Avery [PM]": "36d498db",
+    "Dakota [Dev]": "c891e1f6"
+  },
+  "retest": "PM subordinate activation and Dev self activation both ready; both immediately read real vendor skills."
+}

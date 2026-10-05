@@ -170,3 +170,21 @@ async def test_inventory_is_scoped_and_does_not_claim_historical_ready_is_live(
     assert plugin["bindings"] == [{"agent": "my-binding", "stored_status": "ready"}]
     assert "another-team" not in str(result)
     assert "secret" not in str(result)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("selected", ["resumed-run", None])
+async def test_inventory_returns_authoritative_current_identity(monkeypatch, selected):
+    monkeypatch.setattr(service, "authorized_target", lambda *_: ("Dev", selected))
+    monkeypatch.setattr(service, "resolve_target", lambda *_: "my-binding")
+    monkeypatch.setattr(
+        service,
+        "runtime_installer",
+        lambda: SimpleNamespace(lifecycle=SimpleNamespace(list=lambda: [])),
+    )
+    result = await service.inventory(
+        caller_agent="Dev", session_id="team" if selected else ""
+    )
+    assert result["target_agent"] == "Dev"
+    assert result["run_id"] == selected
+    assert result["binding"] == "my-binding"

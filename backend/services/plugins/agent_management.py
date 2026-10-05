@@ -131,6 +131,9 @@ async def inventory(*, caller_agent: str, session_id: str = "") -> dict:
         plugins.append(item)
     return {
         "plugins": plugins,
+        "target_agent": name,
+        "run_id": selected,
+        "binding": binding,
         "availability": "Activate to verify the live runtime ACK",
     }
 

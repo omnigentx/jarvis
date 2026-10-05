@@ -1,6 +1,7 @@
 # API route modules
 from fastapi import APIRouter
 
+from routes.plugin_remote import router as plugin_remote_router
 from routes.plugins import router as plugins_router
 from routes.plugin_management import router as plugin_management_router
 from routes.auth import router as auth_router
@@ -36,6 +37,7 @@ from routes.team_work import router as team_work_router
 
 all_routers: list[APIRouter] = [
     plugins_router,
+    plugin_remote_router,
     plugin_management_router,
     auth_router,
     sessions_router,

@@ -1,0 +1,118 @@
+
+[WebServer] (node:205) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+
+Running 4 tests using 4 workers
+
+
+(node:212) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+
+(node:213) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+
+(node:215) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+
+(node:214) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+[1/4] [chromium-desktop] › tests/e2e/flows/plugin-remote-readiness.spec.ts:10:5 › remote account readiness overrides stale binding (desktop, connected)
+[2/4] [chromium-desktop] › tests/e2e/flows/plugin-remote-readiness.spec.ts:10:5 › remote account readiness overrides stale binding (mobile, disconnected)
+[3/4] [chromium-desktop] › tests/e2e/flows/plugin-remote-readiness.spec.ts:10:5 › remote account readiness overrides stale binding (mobile, connected)
+[4/4] [chromium-desktop] › tests/e2e/flows/plugin-remote-readiness.spec.ts:10:5 › remote account readiness overrides stale binding (desktop, disconnected)
+  1) [chromium-desktop] › tests/e2e/flows/plugin-remote-readiness.spec.ts:10:5 › remote account readiness overrides stale binding (mobile, disconnected)
+
+    Error: expect(locator).not.toHaveText(expected) failed
+
+    Locator:  getByTestId('plugin-rovo').locator('header .status')
+    Expected: not "Ready"
+    Received: "Ready"
+    Timeout:  5000ms
+
+    Call log:
+      - Expect "not toHaveText" with timeout 5000ms
+      - waiting for getByTestId('plugin-rovo').locator('header .status')
+        14 × locator resolved to <span class="status ready">Ready</span>
+           - unexpected value "Ready"
+
+
+      31 |         await expect(card.getByRole('button', { name: 'Activate', exact: true })).toBeEnabled()
+      32 |       } else {
+    > 33 |         await expect(card.locator('header .status')).not.toHaveText('Ready')
+         |                                                          ^
+      34 |         await expect(card.getByRole('button', { name: 'Activate', exact: true })).toBeDisabled()
+      35 |         await expect(card.getByRole('button', { name: 'Connect Atlassian account', exact: true })).toBeVisible()
+      36 |       }
+        at /Users/phucnguyenvan/.codex/worktrees/backlog-quick-fixes/jarvis/frontend/tests/e2e/flows/plugin-remote-readiness.spec.ts:33:58
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/flows-plugin-remote-readin-468e4-inding-mobile-disconnected--chromium-desktop/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/flows-plugin-remote-readin-468e4-inding-mobile-disconnected--chromium-desktop/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/flows-plugin-remote-readin-468e4-inding-mobile-disconnected--chromium-desktop/error-context.md
+
+    attachment #4: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/flows-plugin-remote-readin-468e4-inding-mobile-disconnected--chromium-desktop/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/flows-plugin-remote-readin-468e4-inding-mobile-disconnected--chromium-desktop/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+  2) [chromium-desktop] › tests/e2e/flows/plugin-remote-readiness.spec.ts:10:5 › remote account readiness overrides stale binding (desktop, disconnected)
+
+    Error: expect(locator).not.toHaveText(expected) failed
+
+    Locator:  getByTestId('plugin-rovo').locator('header .status')
+    Expected: not "Ready"
+    Received: "Ready"
+    Timeout:  5000ms
+
+    Call log:
+      - Expect "not toHaveText" with timeout 5000ms
+      - waiting for getByTestId('plugin-rovo').locator('header .status')
+        14 × locator resolved to <span class="status ready">Ready</span>
+           - unexpected value "Ready"
+
+
+      31 |         await expect(card.getByRole('button', { name: 'Activate', exact: true })).toBeEnabled()
+      32 |       } else {
+    > 33 |         await expect(card.locator('header .status')).not.toHaveText('Ready')
+         |                                                          ^
+      34 |         await expect(card.getByRole('button', { name: 'Activate', exact: true })).toBeDisabled()
+      35 |         await expect(card.getByRole('button', { name: 'Connect Atlassian account', exact: true })).toBeVisible()
+      36 |       }
+        at /Users/phucnguyenvan/.codex/worktrees/backlog-quick-fixes/jarvis/frontend/tests/e2e/flows/plugin-remote-readiness.spec.ts:33:58
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/flows-plugin-remote-readin-bee1c-nding-desktop-disconnected--chromium-desktop/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/flows-plugin-remote-readin-bee1c-nding-desktop-disconnected--chromium-desktop/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/flows-plugin-remote-readin-bee1c-nding-desktop-disconnected--chromium-desktop/error-context.md
+
+    attachment #4: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/flows-plugin-remote-readin-bee1c-nding-desktop-disconnected--chromium-desktop/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/flows-plugin-remote-readin-bee1c-nding-desktop-disconnected--chromium-desktop/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+  2 failed
+    [chromium-desktop] › tests/e2e/flows/plugin-remote-readiness.spec.ts:10:5 › remote account readiness overrides stale binding (desktop, disconnected)
+    [chromium-desktop] › tests/e2e/flows/plugin-remote-readiness.spec.ts:10:5 › remote account readiness overrides stale binding (mobile, disconnected)
+  2 passed (7.1s)

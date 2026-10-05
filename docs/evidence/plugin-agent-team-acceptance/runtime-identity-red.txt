@@ -1,0 +1,46 @@
+......FF                                                                 [100%]
+=================================== FAILURES ===================================
+______ test_inventory_returns_authoritative_current_identity[resumed-run] ______
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b74e510>
+selected = 'resumed-run'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("selected", ["resumed-run", None])
+    async def test_inventory_returns_authoritative_current_identity(monkeypatch, selected):
+        monkeypatch.setattr(service, "authorized_target", lambda *_: ("Dev", selected))
+        monkeypatch.setattr(service, "resolve_target", lambda *_: "my-binding")
+        monkeypatch.setattr(
+            service, "runtime_installer",
+            lambda: SimpleNamespace(lifecycle=SimpleNamespace(list=lambda: [])),
+        )
+        result = await service.inventory(caller_agent="Dev", session_id="team" if selected else "")
+>       assert result["target_agent"] == "Dev"
+               ^^^^^^^^^^^^^^^^^^^^^^
+E       KeyError: 'target_agent'
+
+tests/test_services/test_plugin_agent_management.py:185: KeyError
+_________ test_inventory_returns_authoritative_current_identity[None] __________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b7c6bd0>
+selected = None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("selected", ["resumed-run", None])
+    async def test_inventory_returns_authoritative_current_identity(monkeypatch, selected):
+        monkeypatch.setattr(service, "authorized_target", lambda *_: ("Dev", selected))
+        monkeypatch.setattr(service, "resolve_target", lambda *_: "my-binding")
+        monkeypatch.setattr(
+            service, "runtime_installer",
+            lambda: SimpleNamespace(lifecycle=SimpleNamespace(list=lambda: [])),
+        )
+        result = await service.inventory(caller_agent="Dev", session_id="team" if selected else "")
+>       assert result["target_agent"] == "Dev"
+               ^^^^^^^^^^^^^^^^^^^^^^
+E       KeyError: 'target_agent'
+
+tests/test_services/test_plugin_agent_management.py:185: KeyError
+=========================== short test summary info ============================
+FAILED tests/test_services/test_plugin_agent_management.py::test_inventory_returns_authoritative_current_identity[resumed-run]
+FAILED tests/test_services/test_plugin_agent_management.py::test_inventory_returns_authoritative_current_identity[None]
+2 failed, 6 passed in 0.35s

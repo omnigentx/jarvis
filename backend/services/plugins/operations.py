@@ -35,17 +35,9 @@ async def activate_binding(
     async def approval(record: dict[str, Any]) -> bool:
         nonlocal policy
         policy = policies.get(identity)
-        reviewed = (
-            {
-                "image": policy["image"],
-                "credential_slots": sorted(policy["credentials"]),
-                "network": "none",
-                "read_only": True,
-                "revision": policy["revision"],
-            }
-            if policy
-            else None
-        )
+        from services.plugins.transport import policy_summary
+
+        reviewed = policy_summary(policy, record.get("servers", {}))
         if manual_review is not None:
             from services.plugins.manual_review import verify_review
 

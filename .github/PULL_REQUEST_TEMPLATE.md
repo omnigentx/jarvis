@@ -31,6 +31,15 @@ Be specific. "Looks good locally" is not enough.
 - Manual:            exact steps you ran
 -->
 
+## User outcome and evidence scope
+
+<!-- For user-visible changes, use docs/plugin-handoff-gates.md when plugins are involved. -->
+
+| Requested case | Exact package/version/commit + environment | PASS / FAIL / BLOCKED / NOT RUN | Artifact | Mock/replay/live substitutions |
+|---|---|---|---|---|
+
+<!-- State unresolved REQUIRED cases here. A partial fix does not complete the larger workflow. CI counts and screenshots of fixtures must not stand in for the requested plugin's successful actual tool use. -->
+
 ## Screenshots / recordings (UI changes only)
 
 <!-- Before/after screenshots, or a short screen recording. Required for any dashboard change. -->

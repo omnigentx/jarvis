@@ -1,0 +1,47 @@
+.F                                                                       [100%]
+=================================== FAILURES ===================================
+_____ test_catalog_rotation_revalidates_new_credential_before_invalidation _____
+
+tmp_path = PosixPath('/private/var/folders/41/fgmlgf2x74lghnnd9vdw9m7m0000gn/T/pytest-of-phucnguyenvan/pytest-399/test_catalog_rotation_revalida0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x107508b90>
+
+    @pytest.mark.asyncio
+    async def test_catalog_rotation_revalidates_new_credential_before_invalidation(tmp_path, monkeypatch):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+        from mcp.types import CallToolResult, TextContent, Tool
+        from services.plugins.package import PackageError
+        from services.plugins.remote_access import call_account_tool
+
+        monkeypatch.setenv('JARVIS_MASTER_KEY', 'test-only')
+        store = RemoteTokenStore(create_engine(f"sqlite:///{tmp_path / 'catalog.db'}"), 'candidate', 'rovo', 'https://mcp.atlassian.com/v1/mcp/authv2')
+        missing = CallToolResult(isError=True, content=[TextContent(type='text', text='MCP error -32602: Tool getJiraIssue not found')])
+        for recovered in [False, True]:
+            await store.set_tokens(OAuthToken(access_token='before-refresh'))
+            calls = 0
+
+            async def catalog():
+                nonlocal calls
+                calls += 1
+                if calls == 1:
+                    # Refresh in this request or consent in another worker changes
+                    # persisted credentials while the first catalog is in flight.
+                    await store.set_tokens(OAuthToken(access_token='after-refresh'))
+                    return SimpleNamespace(tools=[])
+                tools = [Tool(name='getAccessibleAtlassianResources', inputSchema={'type':'object'})] if recovered else []
+                return SimpleNamespace(tools=tools)
+
+            remote = SimpleNamespace(call_tool=AsyncMock(return_value=missing), list_tools=AsyncMock(side_effect=catalog))
+            if recovered:
+                assert await call_account_tool(remote, store, 'getJiraIssue', {}) == missing
+                assert (await store.get_tokens()).access_token == 'after-refresh'
+            else:
+                with pytest.raises(PackageError, match='reconnect'):
+                    await call_account_tool(remote, store, 'getJiraIssue', {})
+>               assert await store.get_tokens() is None
+E               AssertionError: assert OAuthToken(access_token='after-refresh', token_type='Bearer', expires_in=None, scope=None, refresh_token=None) is None
+
+tests/test_services/test_plugin_remote_concurrency.py:111: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_services/test_plugin_remote_concurrency.py::test_catalog_rotation_revalidates_new_credential_before_invalidation
+1 failed, 1 passed in 0.17s

@@ -1,0 +1,25 @@
+{
+  "repo": "openai/plugins",
+  "commit": "5fd93af4cd0c623e020d0cc7e9ce178b4ac1f70f",
+  "subdirectory": "plugins/atlassian-rovo",
+  "name": "atlassian-rovo",
+  "version": "1.0.6",
+  "digest": "8616fb097443c9f83f396f8e8aadf5b1994405ff5bcf5231de73c671df8356ce",
+  "skills": 0,
+  "servers": {
+    "atlassian-rovo": {
+      "type": "http",
+      "url": "https://mcp.atlassian.com/v1/mcp/authv2",
+      "transport": "http"
+    }
+  },
+  "blockers": [
+    "agents",
+    "host_connectors",
+    "mcp_requires_policy_review"
+  ],
+  "agent_file_kind": "agents/openai.yaml contains interface display metadata only",
+  "sandbox_validation": "This plugin needs an unsupported runtime adapter",
+  "executed": false,
+  "functional_acceptance": "FAIL: activation unavailable; no successful Rovo tool call"
+}

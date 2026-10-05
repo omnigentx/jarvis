@@ -12,7 +12,7 @@ from sqlalchemy.engine import Engine
 
 from core.secrets_crypto import decrypt, encrypt
 from services.plugins.package import PackageError, PluginPackage
-from services.plugins.sandbox import sandbox_settings
+from services.plugins.transport import connection_settings
 
 
 class PluginPolicyStore:
@@ -76,6 +76,16 @@ class PluginPolicyStore:
                 text("DELETE FROM plugin_execution_policies WHERE candidate=:id"),
                 {"id": candidate},
             )
+            # Older installations may not have remote-account storage yet.
+            if db.execute(
+                text(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='plugin_remote_auth'"
+                )
+            ).first():
+                db.execute(
+                    text("DELETE FROM plugin_remote_auth WHERE candidate=:id"),
+                    {"id": candidate},
+                )
 
 
 def validate_policy(root: Path, package: PluginPackage, policy: dict[str, Any]) -> bool:
@@ -87,8 +97,6 @@ def validate_policy(root: Path, package: PluginPackage, policy: dict[str, Any]) 
         allowed.add("executable_content")
     if set(package.blockers) - allowed or not package.servers:
         raise PackageError("This plugin needs an unsupported runtime adapter")
-    for config in package.servers.values():
-        sandbox_settings(
-            root, config, policy["image"], credentials=policy["credentials"]
-        )
+    for name, config in package.servers.items():
+        connection_settings(root, name, config, policy["image"], policy["credentials"])
     return True

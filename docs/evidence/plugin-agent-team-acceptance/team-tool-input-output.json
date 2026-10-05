@@ -1,0 +1,255 @@
+{
+  "team": "mr174-plugin-acceptance-01",
+  "session_id": "c2bdc284",
+  "vendor_fixture_used": false,
+  "cases": [
+    {
+      "agent": "Avery [PM]",
+      "run_id": "36d498db",
+      "timestamp": "2026-10-04T09:38:13.421334Z",
+      "tool": "plugin_management__plugin_list",
+      "arguments": {},
+      "result": {
+        "error": "Caller or target team runtime is absent or ambiguous",
+        "status": 403
+      }
+    },
+    {
+      "agent": "Avery [PM]",
+      "run_id": "36d498db",
+      "timestamp": "2026-10-04T09:44:12.085959Z",
+      "tool": "plugin_management__plugin_activate",
+      "arguments": {
+        "identity": "1eecee60-c5e6-44a6-8d80-d55ec815d712",
+        "target_agent": "Dakota [Dev]",
+        "run_id": "c891e1f6"
+      },
+      "result": {
+        "id": "1eecee60-c5e6-44a6-8d80-d55ec815d712",
+        "name": "frontend-design",
+        "version": "1.1.0",
+        "repo": "anthropics/claude-code",
+        "commit": "2bfb629dfaff0c8318047a4beb93cf1dc5b58b18",
+        "subdirectory": "plugins/frontend-design",
+        "digest": "b2e78c655ab3f098b982c5780fca0beba38b740a4a2827d7d01d8b6563febc3a",
+        "status": "ready",
+        "bindings": [
+          {
+            "agent": "team:edd8ef6d2e48042fe33a8513fd2079878f34fa8829a7b69ebec9e9b7de1b7e66",
+            "status": "ready"
+          }
+        ],
+        "skills": [
+          "frontend-design"
+        ],
+        "server_names": [],
+        "blockers": [],
+        "target_agent": "Dakota [Dev]",
+        "run_id": "c891e1f6"
+      }
+    },
+    {
+      "agent": "Dakota [Dev]",
+      "run_id": "c891e1f6",
+      "timestamp": "2026-10-04T09:37:58.239172Z",
+      "tool": "plugin_management__plugin_list",
+      "arguments": {},
+      "result": {
+        "error": "Caller or target team runtime is absent or ambiguous",
+        "status": 403
+      }
+    },
+    {
+      "agent": "Dakota [Dev]",
+      "run_id": "c891e1f6",
+      "timestamp": "2026-10-04T09:44:53.566059Z",
+      "tool": "read_skill",
+      "arguments": {
+        "path": "1eecee60-c5e6-44a6-8d80-d55ec815d712/package/skills/frontend-design/SKILL.md"
+      },
+      "result": {
+        "isError": false,
+        "characters": 9363,
+        "sha256": "d91970639e9f5c37682ac7ab60094d35f1c7c1f38d731bd56396563aee10c1d3",
+        "frontend_design_seen": true,
+        "migration_target_seen": false,
+        "haiku_exclusion_seen": false
+      }
+    },
+    {
+      "agent": "Dakota [Dev]",
+      "run_id": "c891e1f6",
+      "timestamp": "2026-10-04T09:45:32.957884Z",
+      "tool": "plugin_management__plugin_activate",
+      "arguments": {
+        "identity": "1eecee60-c5e6-44a6-8d80-d55ec815d712",
+        "target_agent": "Avery [PM]",
+        "run_id": "36d498db"
+      },
+      "result": {
+        "error": "Only the team orchestrator may manage a subordinate",
+        "status": 403
+      }
+    },
+    {
+      "agent": "Dakota [Dev]",
+      "run_id": "c891e1f6",
+      "timestamp": "2026-10-04T09:45:37.822246Z",
+      "tool": "plugin_management__plugin_add",
+      "arguments": {
+        "repo": "anthropics/claude-code",
+        "commit": "2bfb629dfaff0c8318047a4beb93cf1dc5b58b18",
+        "subdirectory": "plugins/claude-opus-4-5-migration",
+        "target_agent": "",
+        "run_id": null
+      },
+      "result": {
+        "repo": "anthropics/claude-code",
+        "commit": "2bfb629dfaff0c8318047a4beb93cf1dc5b58b18",
+        "subdirectory": "plugins/claude-opus-4-5-migration",
+        "status": "needs_source_approval",
+        "skills": [],
+        "server_names": [],
+        "blockers": []
+      }
+    },
+    {
+      "agent": "Dakota [Dev]",
+      "run_id": "c891e1f6",
+      "timestamp": "2026-10-04T09:47:33.899595Z",
+      "tool": "plugin_management__plugin_add",
+      "arguments": {
+        "repo": "anthropics/claude-code",
+        "commit": "2bfb629dfaff0c8318047a4beb93cf1dc5b58b18",
+        "subdirectory": "plugins/claude-opus-4-5-migration",
+        "target_agent": "",
+        "run_id": "c891e1f6"
+      },
+      "result": {
+        "id": "4961fc20-3897-4318-a482-a771ba2111f0",
+        "name": "claude-opus-4-5-migration",
+        "version": "1.0.0",
+        "repo": "anthropics/claude-code",
+        "commit": "2bfb629dfaff0c8318047a4beb93cf1dc5b58b18",
+        "subdirectory": "plugins/claude-opus-4-5-migration",
+        "digest": "4bdbe7aa85f38585c0c44bbb051608f40f5cff055fe9bff2ca44d2dec94666aa",
+        "status": "needs_approval",
+        "bindings": [
+          {
+            "agent": "team:edd8ef6d2e48042fe33a8513fd2079878f34fa8829a7b69ebec9e9b7de1b7e66",
+            "status": "needs_approval"
+          }
+        ],
+        "skills": [
+          "claude-opus-4-5-migration"
+        ],
+        "server_names": [],
+        "blockers": [],
+        "target_agent": "Dakota [Dev]",
+        "run_id": "c891e1f6"
+      }
+    },
+    {
+      "agent": "Dakota [Dev]",
+      "run_id": "c891e1f6",
+      "timestamp": "2026-10-04T09:49:04.637408Z",
+      "tool": "plugin_management__plugin_activate",
+      "arguments": {
+        "identity": "4961fc20-3897-4318-a482-a771ba2111f0",
+        "target_agent": "",
+        "run_id": "c891e1f6"
+      },
+      "result": {
+        "id": "4961fc20-3897-4318-a482-a771ba2111f0",
+        "name": "claude-opus-4-5-migration",
+        "version": "1.0.0",
+        "repo": "anthropics/claude-code",
+        "commit": "2bfb629dfaff0c8318047a4beb93cf1dc5b58b18",
+        "subdirectory": "plugins/claude-opus-4-5-migration",
+        "digest": "4bdbe7aa85f38585c0c44bbb051608f40f5cff055fe9bff2ca44d2dec94666aa",
+        "status": "ready",
+        "bindings": [
+          {
+            "agent": "team:edd8ef6d2e48042fe33a8513fd2079878f34fa8829a7b69ebec9e9b7de1b7e66",
+            "status": "ready"
+          }
+        ],
+        "skills": [
+          "claude-opus-4-5-migration"
+        ],
+        "server_names": [],
+        "blockers": [],
+        "target_agent": "Dakota [Dev]",
+        "run_id": "c891e1f6"
+      }
+    },
+    {
+      "agent": "Dakota [Dev]",
+      "run_id": "c891e1f6",
+      "timestamp": "2026-10-04T09:49:08.112970Z",
+      "tool": "read_skill",
+      "arguments": {
+        "path": "4961fc20-3897-4318-a482-a771ba2111f0/package/skills/claude-opus-4-5-migration/SKILL.md"
+      },
+      "result": {
+        "isError": false,
+        "characters": 4734,
+        "sha256": "ec3f9c16195aaae88003a5ed831f6a66c8fd7b2e0fbd039071107dc788247761",
+        "frontend_design_seen": false,
+        "migration_target_seen": true,
+        "haiku_exclusion_seen": true
+      }
+    }
+  ],
+  "usage": [
+    {
+      "agent": "Avery [PM]",
+      "run_id": "36d498db",
+      "llm_turns": 18,
+      "input_tokens": 176542,
+      "output_tokens": 1612,
+      "effective_input_tokens": 66974,
+      "max_context_tokens": 11678,
+      "includes_harness_failure_and_recovery": true,
+      "pricing_not_estimated": true
+    },
+    {
+      "agent": "Dakota [Dev]",
+      "run_id": "c891e1f6",
+      "llm_turns": 19,
+      "input_tokens": 167205,
+      "output_tokens": 1396,
+      "effective_input_tokens": 65573,
+      "max_context_tokens": 13054,
+      "includes_harness_failure_and_recovery": true,
+      "pricing_not_estimated": true
+    }
+  ],
+  "bindings": [
+    {
+      "candidate": "beed8509-f929-472e-be88-199e1a1f0093",
+      "agent": "Jarvis",
+      "status": "ready"
+    },
+    {
+      "candidate": "1eecee60-c5e6-44a6-8d80-d55ec815d712",
+      "agent": "Jarvis",
+      "status": "ready"
+    },
+    {
+      "candidate": "4961fc20-3897-4318-a482-a771ba2111f0",
+      "agent": "Jarvis",
+      "status": "ready"
+    },
+    {
+      "candidate": "1eecee60-c5e6-44a6-8d80-d55ec815d712",
+      "agent": "team:edd8ef6d2e48042fe33a8513fd2079878f34fa8829a7b69ebec9e9b7de1b7e66",
+      "status": "ready"
+    },
+    {
+      "candidate": "4961fc20-3897-4318-a482-a771ba2111f0",
+      "agent": "team:edd8ef6d2e48042fe33a8513fd2079878f34fa8829a7b69ebec9e9b7de1b7e66",
+      "status": "ready"
+    }
+  ]
+}

@@ -59,3 +59,8 @@ UI/team/MCP evidence, tests, A/B results and tracked limitations. Local acceptan
 is complete. PR168 remains Draft until its final CI passes; dependency PR19 must
 be merged first. Unsupported host contributions fail closed rather than being
 silently omitted. Production deployment remains a separate operator action.
+
+
+## Handoff correction — 2026-10-04
+
+The user's `atlassian-rovo` 1.0.6 workflow has **not passed**. Previous acceptance covered supported skills and sandboxed stdio MCP, not this zero-skill HTTP/host-connector package. See `docs/evidence/plugin-handoff-audit/README.md` for exact-source reproduction and `docs/plugin-handoff-gates.md` for required outcome-specific gates. UI fixes and passing fixtures do not close this functional gap.
