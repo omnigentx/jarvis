@@ -1951,5 +1951,42 @@
     "message": "Jarvis có thể vừa được cập nhật hoặc kết nối bị gián đoạn. Hãy lưu nội dung chưa gửi trước khi tải lại màn hình vừa chọn.",
     "reload": "Tải lại màn hình",
     "dismiss": "Tiếp tục làm việc"
+  },
+  "storyImport": {
+    "open": "Nhập truyện",
+    "eyebrow": "FILE LOCAL",
+    "close": "Đóng",
+    "description": "Tạo truyện mới từ các chương .txt UTF-8. Chỉ lấy file trực tiếp trong thư mục đã chọn. Tối đa 1.000 chương, 2 MiB/file, 12 MiB tổng cộng.",
+    "folder": "Chọn thư mục",
+    "files": "Chọn file văn bản",
+    "title": "Tên truyện",
+    "summary": "{count} chương · {size} MiB",
+    "ignored": "Bỏ qua {count} file trong thư mục con hoặc không hỗ trợ.",
+    "preview": "Thứ tự chương",
+    "submit": "Nhập truyện",
+    "retry": "Thử nhập lại",
+    "progress": "Đang kiểm tra {completed} / {total} chương…",
+    "retryHint": "Thử lại giữ nguyên mã import để tránh tạo trùng. Đóng và mở lại để bắt đầu import khác.",
+    "errors": {
+      "invalid_title": "Nhập tên truyện hợp lệ (1–255 ký tự).",
+      "invalid_request_id": "Đóng rồi mở lại hộp thoại để thử lại.",
+      "file_count": "Chọn từ 1 đến 1.000 chương .txt.",
+      "file_too_large": "Mỗi file không được vượt quá 2 MiB.",
+      "total_too_large": "Tổng các file đã chọn vượt quá 12 MiB.",
+      "request_too_large": "Upload vượt giới hạn. Hãy chọn ít file hơn.",
+      "empty_file": "Có chương rỗng. Bỏ file đó rồi thử lại.",
+      "invalid_encoding": "Chương {index} không phải UTF-8. Hãy chuyển mã trước khi nhập.",
+      "binary_file": "Chương {index} chứa dữ liệu nhị phân.",
+      "unsafe_path": "Đường dẫn chương {index} không an toàn.",
+      "nested_folder": "Không hỗ trợ thư mục con. Chỉ chọn file trực tiếp.",
+      "unsupported_file": "Chỉ hỗ trợ chương .txt.",
+      "duplicate_file": "Có file trùng tên được chọn hai lần.",
+      "retry_conflict": "Mã import đã được dùng với dữ liệu khác. Đóng rồi bắt đầu lại.",
+      "invalid_fields": "Upload không hợp lệ. Đóng rồi bắt đầu lại.",
+      "invalid_multipart": "Upload không hợp lệ. Đóng rồi bắt đầu lại.",
+      "import_failed": "Nhập truyện thất bại. Thử lại với lựa chọn hiện tại.",
+      "connection": "Kết nối bị gián đoạn. Có thể thử lại an toàn với lựa chọn hiện tại.",
+      "auth": "Đăng nhập lại rồi thử nhập truyện lần nữa."
+    }
   }
 }
