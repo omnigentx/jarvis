@@ -98,7 +98,7 @@ test('switching chapter clears old duration, time and pending seek', async () =>
   store.pendingSeekPosition = 10
   await store.playChapter('new', 'Synthetic', '02.txt', ['02.txt'])
   assert.equal(store.currentTime, 0)
-  assert.equal(store.duration, 0)
+  assert.equal(store.duration, 12) // New source metadata, never the old 31s duration
   assert.equal(store.pendingSeekPosition, null)
 })
 test('restored same chapter keeps its saved seek position', async () => {
@@ -108,4 +108,63 @@ test('restored same chapter keeps its saved seek position', async () => {
   store.pendingSeekPosition = 12
   await store.playChapter('saved', 'Synthetic', '01.txt', ['01.txt'])
   assert.equal(store.pendingSeekPosition, 12)
+})
+
+
+test('resume from mini-player reloads missing playlist without opening Stories', async () => {
+  const oldFetch = globalThis.fetch
+  globalThis.fetch = async path => new Response(JSON.stringify(
+    path.endsWith('/chapters') ? [{file:'01.txt'}, {file:'02.txt'}] :
+      {audio_url:'/api/tts/resume_01',status:'ready'}
+  ), {headers:{'content-type':'application/json'}})
+  try {
+    const store = useAudioPlayerStore()
+    store.currentStoryId = 'synthetic'
+    store.currentChapterFile = '01.txt'
+    store.pendingSeekPosition = 4
+    await store.playChapter('synthetic','Synthetic','01.txt')
+    assert.deepEqual(store.chapterFiles,['01.txt','02.txt'])
+    assert.equal(store.canPlayNext,true)
+    assert.equal(store.pendingSeekPosition,4)
+  } finally { globalThis.fetch = oldFetch }
+})
+
+test('prepared next chapter switches source synchronously without a boundary request', async () => {
+  const oldFetch = globalThis.fetch
+  const calls = []
+  globalThis.fetch = async path => {
+    calls.push(path)
+    return new Response(JSON.stringify({audio_url:path.includes('02.txt')?'/api/tts/second':'/api/tts/first',status:'ready'}),
+      {headers:{'content-type':'application/json'}})
+  }
+  try {
+    const store = useAudioPlayerStore()
+    await store.playChapter('synthetic','Synthetic','01.txt',['01.txt','02.txt'])
+    await new Promise(resolve=>setImmediate(resolve))
+    const before = calls.length
+    const next = store.nextChapter()
+    assert.equal(store.currentAudioUrl,'/api/tts/second')
+    assert.equal(calls.length,before)
+    await next
+  } finally { globalThis.fetch = oldFetch }
+})
+
+test('late play response cannot replace a newer selected chapter or restart after stop', async () => {
+  const oldFetch=globalThis.fetch
+  const pending=[]
+  globalThis.fetch = path => new Promise(resolve=>pending.push({path,resolve}))
+  const reply = url=>new Response(JSON.stringify({audio_url:url,status:'ready'}),{headers:{'content-type':'application/json'}})
+  try {
+    const store=useAudioPlayerStore()
+    const one=store.playChapter('synthetic','Synthetic','01.txt',['01.txt','02.txt'])
+    const two=store.playChapter('synthetic','Synthetic','02.txt',['01.txt','02.txt'])
+    pending[1].resolve(reply('/api/tts/two'));await two
+    pending[0].resolve(reply('/api/tts/one'));await one
+    assert.equal(store.currentAudioUrl,'/api/tts/two')
+    const again=store.playChapter('synthetic','Synthetic','01.txt',['01.txt','02.txt'])
+    store.stopAndReset()
+    pending.at(-1).resolve(reply('/api/tts/old'));await again
+    assert.equal(store.currentAudioUrl,null)
+    assert.equal(store.playbackType,'none')
+  } finally {globalThis.fetch=oldFetch}
 })
