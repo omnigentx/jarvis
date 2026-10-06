@@ -31,7 +31,7 @@ import logging
 import os
 import time
 
-from sqlalchemy import func
+from sqlalchemy import func, select, case
 
 from core.database import StoryChapter, StoryProgress
 from sqlalchemy import or_
@@ -201,9 +201,32 @@ def _active_story(db) -> StoryProgress | None:
             .order_by(StoryProgress.last_played_at.desc()).first())
 
 
+def _completion_window(db):
+    """Two unresolved chapters by user priority, BEFORE filtering cooldowns.
+
+    A pair of upstream failures pauses speculation until one can resume. This
+    is persisted implicitly by chapter/retry rows and survives process restarts.
+    Changing listening position immediately moves the frontier; on-demand plays
+    are not gated by this background policy.
+    """
+    prog = _active_story(db)
+    last_num = _chapter_num(db, prog.story_title, prog.last_chapter_file) if prog else None
+    ready_stories = select(StoryChapter.story_id).where(StoryChapter.status == STATUS_READY)
+    active_tail = (StoryChapter.story_id == prog.story_title) & (StoryChapter.chapter_num > last_num) if last_num is not None else False
+    priority = case((active_tail, 0), (StoryChapter.story_id.not_in(ready_stories), 2), else_=3)
+    return (db.query(StoryChapter)
+            .filter(StoryChapter.status.in_([STATUS_PENDING, 'failed']),
+                    StoryChapter.content_hash.is_not(None))
+            .order_by(priority, StoryChapter.story_id, StoryChapter.chapter_num)
+            .limit(2).all())
+
+
 def _eligible(db):
+    window = _completion_window(db)
     return (
         StoryChapter.status.in_([STATUS_PENDING, 'failed']),
+        or_(*[(StoryChapter.story_id == row.story_id) &
+              (StoryChapter.chapter_file == row.chapter_file) for row in window], False),
         or_(StoryChapter.content_hash.is_(None), StoryChapter.content_hash.not_in(
             blocked_hashes(db, DEFAULT_EDGE_VOICE, DEFAULT_EDGE_RATE))),
     )

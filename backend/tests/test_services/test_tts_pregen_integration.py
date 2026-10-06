@@ -239,3 +239,47 @@ async def test_on_demand_failure_survives_restart_and_only_fetches_missing_chunk
     assert data == b'AUAUAU'
     assert calls[before:] == ['C']
     assert retry.retry_after('chapter body', job.VOICE, job.RATE) == 0
+
+
+@pytest.mark.asyncio
+async def test_progress_events_are_truthful_and_filtered(_job):
+    from services.pregen_stream import PregenStreamManager
+    stream = PregenStreamManager()
+    mine, queue = stream.subscribe('S')
+    other, other_queue = stream.subscribe('other')
+    job, _ = _job
+    job.set_pregen_stream(stream)
+    assert await job.execute_task({'story_title': 'S', 'chapter_file': 'c.txt'})
+    events = []
+    while not queue.empty():
+        events.append(queue.get_nowait())
+    assert [(e['completed_chunks'], e['total_chunks']) for e in events if e['type'] == 'chapter_progress'] == [(1, 3), (2, 3), (3, 3)]
+    assert events[-1]['type'] == 'chapter_ready'
+    assert stream.active_snapshot('S') == []
+    assert other_queue.empty()
+    stream.unsubscribe(mine)
+    stream.unsubscribe(other)
+
+
+@pytest.mark.asyncio
+async def test_on_demand_emits_progress_and_ready_on_shared_story_channel(_job, monkeypatch):
+    from unittest.mock import MagicMock
+    from fastapi import Request
+    import services.tts_audio_response as delivery
+    from services.pregen_stream import pregen_stream_manager as stream
+    monkeypatch.setattr(delivery, 'chapter_targets', lambda _: [{'story_id': 'synthetic', 'chapter_file': '01.txt'}])
+    subscriber, queue = stream.subscribe('synthetic')
+    job, path = _job
+    response = await delivery.audio_response(path, 'chapter body', 'story_synthetic_01.txt',
+        Request({'type': 'http', 'method': 'GET', 'headers': []}),
+        tts_mod.EdgeTTSProvider(), {}, MagicMock(), None, None)
+    if hasattr(response, 'body_iterator'):
+        assert b''.join([chunk async for chunk in response.body_iterator]) == b'AUAUAU'
+    events = []
+    while not queue.empty():
+        events.append(queue.get_nowait())
+    assert events[0]['type'] == 'chapter_generating'
+    assert events[-1]['type'] == 'chapter_ready'
+    assert len([e for e in events if e['type'] == 'chapter_progress']) == 3
+    assert stream.active_snapshot('synthetic') == []
+    stream.unsubscribe(subscriber)

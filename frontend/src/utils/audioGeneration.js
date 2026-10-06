@@ -1,7 +1,7 @@
 import { buildSSEUrl } from '../api.js'
 
 /** Wait for authoritative completion using push, with bounded reconnects. */
-export function waitForAudioReady(audioUrl, { signal, timeoutMs = 100_000 } = {}) {
+export function waitForAudioReady(audioUrl, { signal, timeoutMs = 282_000 } = {}) {
   return new Promise((resolve, reject) => {
     let source, retryTimer, attempts = 0, settled = false
     let timeout = setTimeout(() => finish(new Error('Audio generation timed out')), timeoutMs)

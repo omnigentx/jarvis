@@ -58,6 +58,8 @@ class TTSPreGenJob(BackgroundJobRunner):
             "disk_usage_mb": 0,
             "errors": 0,
             "last_error": None,
+            "completed_chunks": 0,
+            "total_chunks": 0,
         }
         self._last_sig = None  # last reconciled story-tree fingerprint (change-detection)
         # Serialise reconciles: rescan() (stories route) and _maybe_reconcile()
@@ -84,7 +86,9 @@ class TTSPreGenJob(BackgroundJobRunner):
         story = self._stats.get("current_story")
         chapter = self._stats.get("current_chapter")
         if story and chapter:
-            return {"story_title": story, "chapter_file": chapter}
+            return {"story_title": story, "chapter_file": chapter,
+                    "completed_chunks": self._stats["completed_chunks"],
+                    "total_chunks": self._stats["total_chunks"]}
         return None
     
     def rescan(self):
@@ -210,6 +214,7 @@ class TTSPreGenJob(BackgroundJobRunner):
             return False  # On-demand owns it; reconcile will observe its result.
         self._stats["current_story"] = story_title
         self._stats["current_chapter"] = chapter_file
+        self._stats["completed_chunks"] = self._stats["total_chunks"] = 0
 
         # Emit chapter_generating event
         self._emit({
@@ -236,9 +241,16 @@ class TTSPreGenJob(BackgroundJobRunner):
             from services.tts import EdgeTTSProvider
             from services.tts_checkpoints import stream_story_audio
             provider = EdgeTTSProvider(voice=self.VOICE, rate=self.RATE)
+            def report_progress(completed: int, total: int) -> None:
+                self._stats.update(completed_chunks=completed, total_chunks=total)
+                self._emit({"type": "chapter_progress", "story_id": story_title,
+                            "chapter_file": chapter_file, "completed_chunks": completed,
+                            "total_chunks": total})
+
             with open(tmp_path, "wb") as audio_file:
                 async for data in stream_story_audio(
                     provider, text, cache_path, self.scheduler.check_pause_point,
+                    on_progress=report_progress,
                 ):
                     audio_file.write(data)
                     bytes_written += len(data)
@@ -296,6 +308,8 @@ class TTSPreGenJob(BackgroundJobRunner):
                 os.remove(tmp_path)
             if os.path.exists(lock_path):
                 os.remove(lock_path)
+            self._emit({"type": "chapter_pending", "story_id": story_title,
+                        "chapter_file": chapter_file})
             raise  # Let scheduler handle
             
         except Exception as e:
@@ -324,6 +338,9 @@ class TTSPreGenJob(BackgroundJobRunner):
                 "chapter_file": chapter_file,
                 "error": "Speech generation failed; retry is temporarily delayed",
                 "retry_after": retry_seconds,
+                "retry_at": time.time() + retry_seconds,
+                "completed_chunks": self._stats["completed_chunks"],
+                "total_chunks": self._stats["total_chunks"],
             })
             return False
         finally:

@@ -35,13 +35,12 @@ DEFAULT_EDGE_RATE = "+20%"
 # chapters stutter/cut out mid-playback. Capping every chunk keeps each request small, fast
 # and reliable. Tier 1/2 stay far below this for low time-to-first-byte.
 EDGE_MAX_CHUNK = 500
-# Hard wall-clock cap on ONE chunk's synthesis. A <=500-char chunk returns in a
-# few seconds normally; if a request stalls (throttled / dropped WebSocket) it
-# must NOT block forever — without this, a stuck pre-gen request blocks the
-# cooperative cancel point, so switching chapters mid-pre-gen would hang. On
-# timeout the attempt is aborted and retried; a freed slot lets the user's new
-# chapter proceed.
-EDGE_CHUNK_TIMEOUT = 30  # seconds
+# No audio for this long means a stalled request; receiving metadata does not
+# count as progress. A separate total cap bounds slow-but-live upstream streams.
+EDGE_CHUNK_TIMEOUT = 30
+EDGE_CHUNK_TOTAL_TIMEOUT = 90
+EDGE_CHUNK_ATTEMPTS = 3
+EDGE_CHUNK_RETRY_BUDGET = EDGE_CHUNK_TOTAL_TIMEOUT * EDGE_CHUNK_ATTEMPTS + 2
 
 
 class TTSProvider(ABC):
@@ -166,17 +165,32 @@ class EdgeTTSProvider(TTSProvider):
         """One edge_tts request → all audio bytes for ``chunk_text``."""
         buf = bytearray()
         communicate = edge_tts.Communicate(chunk_text, self.voice, rate=self.rate)
-        async for chunk in communicate.stream():
-            if chunk.get("type") == "audio" and chunk.get("data"):
-                buf.extend(chunk["data"])
+        stream = communicate.stream()
+        loop = asyncio.get_running_loop()
+        audio_deadline = loop.time() + EDGE_CHUNK_TIMEOUT
+        try:
+            async with asyncio.timeout(EDGE_CHUNK_TOTAL_TIMEOUT):
+                while True:
+                    remaining = audio_deadline - loop.time()
+                    if remaining <= 0:
+                        raise asyncio.TimeoutError
+                    try:
+                        chunk = await asyncio.wait_for(anext(stream), remaining)
+                    except StopAsyncIteration:
+                        break
+                    if chunk.get("type") == "audio" and chunk.get("data"):
+                        buf.extend(chunk["data"])
+                        audio_deadline = loop.time() + EDGE_CHUNK_TIMEOUT
+        finally:
+            await stream.aclose()
         return bytes(buf)
 
-    async def _synth_chunk(self, chunk_text: str, *, attempts: int = 3) -> bytes:
+    async def _synth_chunk(self, chunk_text: str, *, attempts: int = EDGE_CHUNK_ATTEMPTS) -> bytes:
         """Synthesize ONE text chunk to audio bytes, retrying transient
         empty/failed/stalled responses with linear backoff.
 
-        Each attempt is wall-clock bounded by ``EDGE_CHUNK_TIMEOUT`` so a
-        stalled WebSocket can't hang forever. Buffered (not streamed) on
+        Audio inactivity and total duration are bounded separately, so live
+        streams can finish without letting stalled WebSockets hang forever. Buffered (not streamed) on
         purpose: a failed attempt can then be retried cleanly without
         duplicating already-emitted audio. Chunks are <= ``EDGE_MAX_CHUNK``
         chars so the buffering cost is negligible. Returns ``b''`` only if
@@ -185,15 +199,13 @@ class EdgeTTSProvider(TTSProvider):
         last = "no audio received"
         for attempt in range(1, attempts + 1):
             try:
-                data = await asyncio.wait_for(
-                    self._synth_once(chunk_text), timeout=EDGE_CHUNK_TIMEOUT
-                )
+                data = await self._synth_once(chunk_text)
                 if data:
                     return data
             except asyncio.CancelledError:
                 raise
             except asyncio.TimeoutError:
-                last = f"timed out after {EDGE_CHUNK_TIMEOUT}s"
+                last = "audio inactivity or total synthesis deadline exceeded"
             except Exception as exc:
                 last = str(exc)
             if attempt < attempts:

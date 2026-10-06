@@ -1,0 +1,38 @@
+{
+  "voice": "vi-VN-NamMinhNeural",
+  "rate": "+20%",
+  "local_app": true,
+  "edge_egress": "production SSH CONNECT relay, test-only; no application code deployed to production",
+  "chapters": [
+    {
+      "synthetic_chapter": 1,
+      "bytes": 506448,
+      "audio_duration_s": 84.408,
+      "sha256": "a718295ac21dad0602646023c0699e7cf888c6977e0d0401d9666e91cd3255ce"
+    },
+    {
+      "synthetic_chapter": 2,
+      "bytes": 506592,
+      "audio_duration_s": 84.432,
+      "sha256": "85feda88aff731b86414683ceecb7b3719b36e1441af5552d8913f8adfaafd1c"
+    },
+    {
+      "synthetic_chapter": 3,
+      "bytes": 506448,
+      "audio_duration_s": 84.408,
+      "sha256": "9b6b263ed57322e3374f467d0d9cca330e6960f0fb39472200e94da6836f1be8"
+    },
+    {
+      "synthetic_chapter": 4,
+      "bytes": 1684512,
+      "audio_duration_s": 280.752,
+      "sha256": "521addc38c56bfb5ed19922012a535fbba5b7b295ec9daebf8d5af58b8551341"
+    }
+  ],
+  "database_statuses": [
+    "ready",
+    "ready",
+    "ready",
+    "ready"
+  ]
+}

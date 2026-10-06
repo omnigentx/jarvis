@@ -12,8 +12,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import BinaryIO, AsyncIterator
 
-# Longer than the Edge provider's three bounded chunk attempts + backoff.
-PROGRESS_TIMEOUT = 100.0
+from services.tts import EDGE_CHUNK_RETRY_BUDGET
+
+# Reader must not abandon a healthy producer between completed chunks.
+PROGRESS_TIMEOUT = float(EDGE_CHUNK_RETRY_BUDGET + 10)
 
 
 class GenerationBusy(RuntimeError):
