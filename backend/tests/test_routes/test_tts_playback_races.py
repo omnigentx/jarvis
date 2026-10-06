@@ -171,24 +171,24 @@ async def test_other_process_lease_returns_retryable_503(playback):
 async def test_http_static_ranges_and_auth(playback, monkeypatch):
     import httpx
     from fastapi import FastAPI
-    from core.auth import verify_api_key
     import core.auth as auth
     monkeypatch.setattr(auth, "JARVIS_API_KEY", "synthetic-playback-test-key")
     env = playback
     env.cache.write_bytes(b'A' * 100000)
     app = FastAPI()
     app.include_router(env.route.router)
-    app.dependency_overrides[verify_api_key] = lambda: True
+    # Other auth tests reload core.auth; exercise real credentials rather than
+    # overriding a function identity captured when the route was imported.
+    bearer = {"Authorization": "Bearer synthetic-playback-test-key"}
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as client:
-        res = await client.get('/api/tts/story_ranges_01.txt', headers={'Range': 'bytes=10-19'})
+        res = await client.get('/api/tts/story_ranges_01.txt', headers={**bearer, 'Range': 'bytes=10-19'})
         assert res.status_code == 206
         assert res.content == b'A' * 10
         assert res.headers['content-range'] == 'bytes 10-19/100000'
-        suffix = await client.get('/api/tts/story_ranges_01.txt', headers={'Range': 'bytes=-7'})
+        suffix = await client.get('/api/tts/story_ranges_01.txt', headers={**bearer, 'Range': 'bytes=-7'})
         assert suffix.status_code == 206 and suffix.content == b'A' * 7
-        invalid = await client.get('/api/tts/story_ranges_01.txt', headers={'Range': 'bytes=100000-'})
+        invalid = await client.get('/api/tts/story_ranges_01.txt', headers={**bearer, 'Range': 'bytes=100000-'})
         assert invalid.status_code == 416
-        app.dependency_overrides.clear()
         unauth = await client.get('/api/tts/story_ranges_01.txt')
         assert unauth.status_code in (401, 403)
     assert not env.calls
