@@ -64,3 +64,26 @@ test('visibility/pageshow recovers a missed native ended event once',async()=>{
   assert.equal(calls.filter(c=>c[0]==='play').length,2)
   await new Promise(resolve=>setImmediate(resolve))
 })
+
+test('an unknown live-source HEAD stall times out and leaves playback paused',async t=>{
+  const store=start()
+  t.mock.timers.enable({apis:['setTimeout']})
+  globalThis.EventSource=class extends EventTarget {close() {}}
+  let headSignal
+  globalThis.fetch=async(url,options={})=>{
+    if(options.method==='HEAD') return new Promise((resolve,reject)=>{
+      headSignal=options.signal
+      headSignal.addEventListener('abort',()=>reject(new DOMException('Timeout','AbortError')),{once:true})
+    })
+    return new Response(JSON.stringify({audio_url:'/api/tts/live',status:'none'}),{headers:{'content-type':'application/json'}})
+  }
+  await store.playChapter('synthetic','Synthetic','01.txt',['01.txt'])
+  audio.ended=true;audio.paused=true
+  audio.dispatchEvent(new Event('ended'))
+  assert.equal(headSignal.aborted,false)
+  t.mock.timers.tick(15_000)
+  await new Promise(resolve=>setImmediate(resolve))
+  assert.equal(headSignal.aborted,true)
+  assert.equal(store.isPlaying,false)
+  assert.equal(store.isPaused,true)
+})

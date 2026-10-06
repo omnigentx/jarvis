@@ -23,7 +23,7 @@ Before implementation, the two new store regressions failed (6 passed, 2 failed)
 
 | Gate | Result | What it establishes |
 | --- | --- | --- |
-| Frontend unit suite | 266 passed | Same-task native play, restored playlist, stale responses, scoped queue and optional media actions |
+| Frontend unit suite | 267 passed | Same-task native play, restored playlist, stale responses, scoped queue, bounded HEAD stalls and optional media actions |
 | Focused backend regression/integration | 23 passed | Prepare side effects, cache validation/path boundaries, existing writer and pre-generation races |
 | Browser matrix | 30 passed | Audio/import flows on Chromium desktop, Chromium Pixel 5 and WebKit iPhone 13 emulation |
 | Frontend production build | Passed | Compilation with new playback modules |
