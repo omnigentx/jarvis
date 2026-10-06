@@ -73,3 +73,47 @@ test('queue failure plus fallback failure stops spinner and deliberate retry wor
   await expect(page.locator('.mini-player__chapter')).toContainText('Ch.2')
   await expect(page.locator('.mini-player__spinner')).toHaveCount(0)
 })
+
+// This verifies browser JS suspension/recovery, not an iOS/Android lock screen.
+test('Chromium resumes a real audio playlist after JavaScript suspension',async({page,context,browserName})=>{
+  test.skip(browserName!=='chromium','Debugger CDP command is Chromium-specific')
+  await boot(page)
+  await page.addInitScript(()=>{
+    const state={ticks:0,plays:0}
+    ;(window as any).__audioLifecycle=state
+    setInterval(()=>state.ticks++,100)
+    const play=HTMLMediaElement.prototype.play
+    HTMLMediaElement.prototype.play=function(){state.plays++;return play.call(this)}
+  })
+  let prepared=false
+  await page.route('**/api/stories/alpha_story/*/prepare',async route=>{
+    prepared=true
+    await route.fulfill({json:{audio_url:'/api/tts/synthetic_2',status:'ready',duration:12}})
+  })
+  await page.route('**/api/stories/alpha_story/*/play',route=>route.fulfill({json:{audio_url:route.request().url().includes('0001')?'/api/tts/synthetic_1':'/api/tts/synthetic_2',status:'ready',duration:12}}))
+  await page.route('**/api/tts/**',route=>route.fulfill({contentType:'audio/wav',body:tone(route.request().url().includes('_1')?2:12)}))
+  await page.goto('/stories/alpha_story')
+  await page.locator('#chapter-0001_prologue\\.txt [data-testid="chapter-play"]').click()
+  await expect.poll(()=>prepared).toBe(true)
+  await expect(page.locator('.mini-player__spinner')).toHaveCount(0)
+  const session=await context.newCDPSession(page)
+  await session.send('Debugger.enable')
+  const before=await page.evaluate(()=>(window as any).__audioLifecycle.ticks)
+  try {
+    const paused=new Promise<void>(resolve=>session.once('Debugger.paused',()=>resolve()))
+    await session.send('Debugger.pause')
+    await paused
+    // Host-side wait spans the first track's end while renderer timers freeze.
+    await new Promise(resolve=>setTimeout(resolve,4000))
+    await session.send('Debugger.resume')
+    const after=await page.evaluate(()=>(window as any).__audioLifecycle.ticks)
+    expect(after-before).toBeLessThan(5)
+    await page.bringToFront()
+    await expect(page.locator('.mini-player__chapter')).toContainText('Ch.2',{timeout:10000})
+    expect(await page.evaluate(()=>(window as any).__audioLifecycle.plays)).toBe(2)
+    await expect(page.locator('.mini-player__spinner')).toHaveCount(0)
+  } finally {
+    await session.send('Debugger.disable')
+    await session.detach()
+  }
+})

@@ -61,3 +61,13 @@ A separate fresh-generation attempt hit an Edge provider failure on chapter 2 af
 The design removes the application's awaited control requests at a completed-track boundary. It does not guarantee next-chapter availability with lost network, failed Edge generation, or suspended JavaScript. These limits must remain explicit in review and release notes.
 
 Relevant primary browser references: [WebKit ended/background issue 173332](https://bugs.webkit.org/show_bug.cgi?id=173332), [WebKit PWA background playback issue 261858](https://bugs.webkit.org/show_bug.cgi?id=261858), [Chrome Media Session](https://developer.chrome.com/blog/media-session/). These document browser constraints; they are not proof that the user's device has those specific browser defects.
+
+## Device-free JavaScript suspension test
+
+The additional Chromium E2E test pauses the renderer through CDP Debugger for 4 seconds, spanning a 2-second native decoded audio track. It checks a 100 ms timer actually stopped, resumes JavaScript, and asserts exactly one transition/native play for chapter 2 and no lingering spinner. Desktop Chromium and mobile Chromium: **2 passed**. WebKit is explicitly skipped because it does not expose this CDP command; this is not a three-browser suspension result.
+
+An earlier experiment with Page.setWebLifecycleState(frozen) did not actually suspend the playing foreground page: the 100 ms timer ran 40 times during the 4-second window. Its assertions failed on both Chromium projects. It was replaced with the verified Debugger suspension experiment; the failed freeze is not counted as successful suspension evidence.
+
+This validates delayed JavaScript/event recovery with real browser audio. It does not reproduce the OS power policy or prove uninterrupted playback during iOS/Android screen lock. Playback may pause while the renderer is suspended and recover when it resumes.
+
+Primary API references: [CDP Debugger.pause](https://chromedevtools.github.io/devtools-protocol/tot/Debugger/#method-pause), [Playwright emulation scope](https://playwright.dev/docs/emulation).
