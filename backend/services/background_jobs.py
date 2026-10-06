@@ -167,6 +167,7 @@ class BackgroundJobScheduler:
                 logger.info(f"[SCHEDULER] Task completed: {task_desc}")
             else:
                 logger.warning(f"[SCHEDULER] Task returned False: {task_desc}")
+                self._increment_error_count(job.job_name)
                 
         except asyncio.CancelledError:
             logger.debug(f"[SCHEDULER] Task cancelled: {task_desc} (reason: user_request)")

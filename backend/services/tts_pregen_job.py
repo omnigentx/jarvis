@@ -170,17 +170,6 @@ class TTSPreGenJob(BackgroundJobRunner):
         priority = task.get("priority", 9)
         
         logger.debug(f"[PRE-GEN] Generating: {story_title}/{chapter_file} (priority: P{priority})")
-        self._stats["current_story"] = story_title
-        self._stats["current_chapter"] = chapter_file
-        
-        # Emit chapter_generating event
-        self._emit({
-            "type": "chapter_generating",
-            "story_id": story_title,
-            "chapter_file": chapter_file,
-            "priority": priority,
-        })
-        
         # Read and clean text
         text = self._read_chapter_text(story_title, chapter_file)
         if not text:
@@ -202,6 +191,9 @@ class TTSPreGenJob(BackgroundJobRunner):
             })
             return True
         
+        from services.audio_retry import retry_after
+        if retry_after(text, self.VOICE, self.RATE):
+            return False
         lock_path = cache_path + ".lock"
         # Write to a temp file and atomically rename to cache_path ONLY after
         # every chunk succeeds. A present cache_path then always means "complete
@@ -216,6 +208,17 @@ class TTSPreGenJob(BackgroundJobRunner):
             return False
         if not owns_generation:
             return False  # On-demand owns it; reconcile will observe its result.
+        self._stats["current_story"] = story_title
+        self._stats["current_chapter"] = chapter_file
+
+        # Emit chapter_generating event
+        self._emit({
+            "type": "chapter_generating",
+            "story_id": story_title,
+            "chapter_file": chapter_file,
+            "priority": priority,
+        })
+
         success = False
         start_time = time.time()
         bytes_written = 0
@@ -230,64 +233,31 @@ class TTSPreGenJob(BackgroundJobRunner):
                     "started_at": time.time(),
                 }))
             
-            # Generate TTS in bounded chunks (<= EDGE_MAX_CHUNK) with per-chunk
-            # retry + timeout. A single whole-chapter edge_tts request streams
-            # slower than playback and intermittently returns no audio /
-            # truncates (stuttering playback); small chunks are fast + reliable. Each
-            # chunk is buffered so a retried attempt can't duplicate audio.
-            from services.tts import EdgeTTSProvider, EDGE_CHUNK_TIMEOUT
-            text_chunks = EdgeTTSProvider._split_tiered(text)
-
+            from services.tts import EdgeTTSProvider
+            from services.tts_checkpoints import stream_story_audio
+            provider = EdgeTTSProvider(voice=self.VOICE, rate=self.RATE)
             with open(tmp_path, "wb") as audio_file:
-                for ci, ctext in enumerate(text_chunks):
-                    if not ctext.strip():
-                        continue
-                    # Pause/cancel checked BETWEEN chunks, NOT inside the
-                    # wait_for below: a pause must block here indefinitely until
-                    # resume, whereas the per-chunk timeout only guards a stalled
-                    # network request. Chunks are small so a cancel (user
-                    # switched chapter) lands within a few seconds — this is what
-                    # stops a stuck pre-gen from hanging the new chapter.
-                    await self.scheduler.check_pause_point()
-
-                    buf = bytearray()
-                    for attempt in range(1, 4):
-                        buf.clear()
-
-                        async def _consume():
-                            communicate = edge_tts.Communicate(ctext, self.VOICE, rate=self.RATE)
-                            async for chunk in communicate.stream():
-                                if chunk["type"] == "audio" and chunk["data"]:
-                                    buf.extend(chunk["data"])
-
-                        try:
-                            await asyncio.wait_for(_consume(), timeout=EDGE_CHUNK_TIMEOUT)
-                            if buf:
-                                break
-                        except asyncio.CancelledError:
-                            raise  # pause/cancel — let scheduler handle, never retry
-                        except Exception as exc:  # incl. TimeoutError (stalled request)
-                            if attempt >= 3:
-                                raise
-                            logger.warning(
-                                f"[PRE-GEN] {story_title}/{chapter_file} chunk "
-                                f"{ci + 1}/{len(text_chunks)} attempt {attempt} "
-                                f"failed ({exc}) — retrying"
-                            )
-                            await asyncio.sleep(0.4 * attempt)
-                    if not buf:
-                        raise RuntimeError(
-                            f"No audio for chunk {ci + 1}/{len(text_chunks)} after retries"
-                        )
-                    audio_file.write(buf)
-                    bytes_written += len(buf)
+                async for data in stream_story_audio(
+                    provider, text, cache_path, self.scheduler.check_pause_point,
+                ):
+                    audio_file.write(data)
+                    bytes_written += len(data)
                     audio_file.flush()
                     generation.notify(bytes_written)
 
             # All chunks succeeded — atomically publish. Until this point only
             # tmp_path exists, so any earlier failure leaves no servable file.
+            if not bytes_written:
+                raise RuntimeError("Provider returned no audio")
             os.replace(tmp_path, cache_path)
             success = True
+            from services.audio_retry import clear_failure
+            from services.tts_checkpoints import discard_checkpoints
+            try:
+                clear_failure(text, self.VOICE, self.RATE)
+                await asyncio.to_thread(discard_checkpoints, provider, text, cache_path)
+            except Exception:
+                logger.warning('[PRE-GEN] Audio ready; checkpoint housekeeping failed', exc_info=True)
             generation.finish(True)
 
             # Done — remove lock
@@ -331,6 +301,12 @@ class TTSPreGenJob(BackgroundJobRunner):
         except Exception as e:
             logger.error(f"[PRE-GEN] Error: {story_title}/{chapter_file}: {e}",
                         exc_info=True)
+            from services.audio_retry import record_failure
+            try:
+                retry_seconds = record_failure(text, self.VOICE, self.RATE, type(e).__name__)
+            except Exception:
+                logger.warning("[PRE-GEN] Unable to persist retry delay", exc_info=True)
+                retry_seconds = 0
             self._stats["errors"] += 1
             self._stats["last_error"] = f"{story_title}/{chapter_file}: {str(e)}"
             # Clean up the partial temp file. cache_path is only created on full
@@ -346,11 +322,14 @@ class TTSPreGenJob(BackgroundJobRunner):
                 "type": "chapter_error",
                 "story_id": story_title,
                 "chapter_file": chapter_file,
-                "error": str(e),
+                "error": "Speech generation failed; retry is temporarily delayed",
+                "retry_after": retry_seconds,
             })
             return False
         finally:
             generation.finish(success)
+            self._stats["current_story"] = None
+            self._stats["current_chapter"] = None
     
     def get_status(self) -> dict:
         """Return status for /api/background/status — counts come from the SSoT

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { createRenderer } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { useAudioPlayerStore } from '../stores/audioPlayer.js'
-import { useAudioPlayer } from './useAudioPlayer.js'
+
 
 const storage = new Map()
 globalThis.localStorage = {getItem:k=>storage.get(k)??null,setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)}
@@ -12,6 +12,7 @@ globalThis.document = Object.assign(new EventTarget(), {cookie:'',visibilityStat
 Object.defineProperty(globalThis,'navigator',{value:{sendBeacon:()=>true},configurable:true})
 globalThis.BroadcastChannel = class {postMessage() {} close() {}}
 globalThis.MediaError = {MEDIA_ERR_NETWORK:2}
+const { useAudioPlayer } = await import('./useAudioPlayer.js')
 let engine, app, audio, calls
 class NativeAudio extends EventTarget {
   constructor() {super();audio=this;this.paused=true;this.ended=false;this.currentTime=0;this.duration=12}

@@ -7,7 +7,9 @@ import os
 
 from fastapi import HTTPException, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
-from services.tts import TTSProvider
+from services.tts import TTSProvider, EdgeTTSProvider
+from services.audio_retry import retry_after, record_failure, clear_failure
+from services.tts_checkpoints import stream_story_audio, discard_checkpoints
 from services.library_manager import LibraryManager, AudioBook
 from services.background_jobs import BackgroundJobScheduler
 from services.audio_generation import GenerationBusy, active_generation, claim_generation, PROGRESS_TIMEOUT
@@ -43,6 +45,12 @@ async def audio_response(
             scheduler.request_cancel()
         else:
             scheduler.request_resume()
+    checkpointed = isinstance(provider, EdgeTTSProvider) and not wait_complete
+    if checkpointed and text and not generation:
+        delay = retry_after(text, provider.voice, provider.rate)
+        if delay:
+            raise HTTPException(503, 'Speech generation failed; please retry later',
+                                headers={'Retry-After': str(delay)})
     try:
         generation, owns = claim_generation(path)
     except GenerationBusy as exc:
@@ -59,7 +67,8 @@ async def audio_response(
             try:
                 if book:
                     library_manager.set_status(book.id, 'generating')
-                iterator = provider.stream_audio(text).__aiter__()
+                iterator = (stream_story_audio(provider, text, path) if checkpointed
+                            else provider.stream_audio(text)).__aiter__()
                 try:
                     with open(generation.temporary_path, 'wb') as audio:
                         while True:
@@ -77,11 +86,24 @@ async def audio_response(
                     raise RuntimeError('Provider returned no audio')
                 os.replace(generation.temporary_path, path)
                 success = True
+                if checkpointed:
+                    try:
+                        clear_failure(text, provider.voice, provider.rate)
+                        await asyncio.to_thread(discard_checkpoints, provider, text, path)
+                    except Exception:
+                        logger.warning('[TTS] Audio ready; retry/checkpoint housekeeping failed', exc_info=True)
                 if book:
                     library_manager.set_status(book.id, 'ready')
             except asyncio.CancelledError:
+                if book:
+                    library_manager.set_status(book.id, 'ready' if success else 'pending')
                 raise
-            except Exception:
+            except Exception as exc:
+                if checkpointed and not success:
+                    try:
+                        record_failure(text, provider.voice, provider.rate, type(exc).__name__)
+                    except Exception:
+                        logger.warning("[TTS] Unable to persist retry delay", exc_info=True)
                 logger.error('[TTS] Audio producer failed', exc_info=True)
                 if book:
                     library_manager.set_status(book.id, 'error')

@@ -39,6 +39,15 @@ class _ScriptedCommunicate:
 
 @pytest.fixture()
 def _job(tmp_path, monkeypatch):
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+    from core.database import Base
+    from services import audio_retry
+    engine = create_engine('sqlite:///:memory:', connect_args={'check_same_thread': False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    monkeypatch.setattr(audio_retry, 'get_db_session', Session)
     # Deterministic chunking so the "3rd chunk" is identifiable.
     monkeypatch.setattr(
         tts_mod.EdgeTTSProvider, "_split_tiered",
@@ -136,3 +145,97 @@ async def test_on_demand_joins_pregen_without_second_writer(_job):
     assert data == b'AUAUAU'
     assert calls == ['A', 'B', 'C']
     provider.stream_audio.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_failed_chapter_reuses_successful_chunks_after_cooldown(_job, monkeypatch):
+    job, cache_path = _job
+    calls = []
+    class Counting(_ScriptedCommunicate):
+        async def stream(self):
+            calls.append(self.text)
+            async for event in super().stream():
+                yield event
+    monkeypatch.setattr(pg.edge_tts, 'Communicate', Counting)
+    Counting.fail_on = 'C'
+    task = {'story_title': 'Synthetic', 'chapter_file': '01.txt'}
+    assert await job.execute_task(task) is False
+    first_calls = list(calls)
+    Counting.fail_on = None
+    # Simulate passage of the persisted per-chapter cooldown without sleeping.
+    import services.audio_retry as retry
+    monkeypatch.setattr(retry.time, 'time', lambda: 2_000_000_000.0)
+    assert await job.execute_task(task) is True
+    assert calls[len(first_calls):] == ['C']
+    from pathlib import Path
+    assert Path(cache_path).read_bytes() == b'AUAUAU'
+    assert not list(Path(cache_path).parent.glob('.chunks/*/*.mp3'))
+
+
+@pytest.mark.asyncio
+async def test_housekeeping_error_does_not_invalidate_published_audio(_job, monkeypatch):
+    from services import tts_checkpoints
+    job, path = _job
+    def fail(*_): raise OSError('synthetic cleanup failure')
+    monkeypatch.setattr(tts_checkpoints, 'discard_checkpoints', fail)
+    assert await job.execute_task({'story_title': 'Synthetic', 'chapter_file': '01.txt'}) is True
+    from pathlib import Path
+    assert Path(path).read_bytes() == b'AUAUAU'
+    assert job.get_currently_generating() is None
+
+@pytest.mark.asyncio
+async def test_cooldown_skip_does_not_report_generating(_job):
+    from services.audio_retry import record_failure
+    job, _ = _job
+    record_failure('chapter body', job.VOICE, job.RATE, 'TimeoutError')
+    assert await job.execute_task({'story_title': 'Synthetic', 'chapter_file': '01.txt'}) is False
+    assert job.get_currently_generating() is None
+
+
+@pytest.mark.asyncio
+async def test_on_demand_failure_survives_restart_and_only_fetches_missing_chunks(_job, monkeypatch):
+    import asyncio
+    from pathlib import Path
+    from starlette.requests import Request
+    from unittest.mock import MagicMock
+    from fastapi import HTTPException
+    from services.tts_audio_response import audio_response
+    import services.audio_retry as retry
+    job, cache_path = _job
+    calls = []
+    class Counting(_ScriptedCommunicate):
+        async def stream(self):
+            calls.append(self.text)
+            async for event in super().stream():
+                yield event
+    Counting.fail_on = 'C'
+    monkeypatch.setattr(pg.edge_tts, 'Communicate', Counting)
+    provider = tts_mod.EdgeTTSProvider(voice=job.VOICE, rate=job.RATE)
+    req = Request({'type': 'http', 'method': 'GET', 'headers': []})
+    tasks = {}
+    response = await audio_response(cache_path, 'chapter body', 'synthetic', req,
+                                    provider, tasks, MagicMock(), None, None)
+    with pytest.raises(RuntimeError, match='Audio generation failed'):
+        async for _ in response.body_iterator:
+            pass
+    assert not Path(cache_path).exists()
+    with pytest.raises(HTTPException) as blocked:
+        await audio_response(cache_path, 'chapter body', 'synthetic', req,
+                             provider, {}, MagicMock(), None, None)
+    assert blocked.value.status_code == 503
+    assert int(blocked.value.headers['Retry-After']) > 0
+    # New provider/request task map represent a restarted runtime; durable
+    # checkpoints and cooldown are read from disk/DB, never process memory.
+    before = len(calls)
+    Counting.fail_on = None
+    monkeypatch.setattr(retry.time, 'time', lambda: 2_000_000_000.0)
+    new_provider = tts_mod.EdgeTTSProvider(voice=job.VOICE, rate=job.RATE)
+    response = await audio_response(cache_path, 'chapter body', 'synthetic2', req,
+                                    new_provider, {}, MagicMock(), None, None)
+    if hasattr(response, 'body_iterator'):
+        data = b''.join([chunk async for chunk in response.body_iterator])
+    else:
+        data = Path(cache_path).read_bytes()
+    assert data == b'AUAUAU'
+    assert calls[before:] == ['C']
+    assert retry.retry_after('chapter body', job.VOICE, job.RATE) == 0

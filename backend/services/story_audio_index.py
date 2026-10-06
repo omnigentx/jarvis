@@ -34,6 +34,9 @@ import time
 from sqlalchemy import func
 
 from core.database import StoryChapter, StoryProgress
+from sqlalchemy import or_
+from services.audio_retry import blocked_hashes
+from services.tts import DEFAULT_EDGE_VOICE, DEFAULT_EDGE_RATE
 from helpers.audio_cache import AUDIO_CACHE_DIR, get_content_hash
 from helpers.path_safety import safe_story_path
 from helpers.text_processing import clean_text_for_tts
@@ -198,13 +201,21 @@ def _active_story(db) -> StoryProgress | None:
             .order_by(StoryProgress.last_played_at.desc()).first())
 
 
+def _eligible(db):
+    return (
+        StoryChapter.status.in_([STATUS_PENDING, 'failed']),
+        or_(StoryChapter.content_hash.is_(None), StoryChapter.content_hash.not_in(
+            blocked_hashes(db, DEFAULT_EDGE_VOICE, DEFAULT_EDGE_RATE))),
+    )
+
+
 def _first_story_without_ready(db) -> str | None:
     """First (alphabetical) story that has a pending chapter and NO ready chapter —
     i.e. a story with no audio at all yet (P2)."""
     ready = {s for (s,) in db.query(StoryChapter.story_id)
              .filter(StoryChapter.status == STATUS_READY).distinct()}
     for (sid,) in (db.query(StoryChapter.story_id)
-                   .filter(StoryChapter.status == STATUS_PENDING)
+                   .filter(*_eligible(db))
                    .order_by(StoryChapter.story_id).distinct()):
         if sid not in ready:
             return sid
@@ -222,7 +233,7 @@ def next_task(db) -> dict | None:
         if last_num is not None:
             row = (db.query(StoryChapter)
                    .filter(StoryChapter.story_id == prog.story_title,
-                           StoryChapter.status == STATUS_PENDING,
+                           *_eligible(db),
                            StoryChapter.chapter_num > last_num)
                    .order_by(StoryChapter.chapter_num).first())
             if row is not None:
@@ -231,12 +242,12 @@ def next_task(db) -> dict | None:
     story = _first_story_without_ready(db)
     if story is not None:
         row = (db.query(StoryChapter)
-               .filter(StoryChapter.story_id == story, StoryChapter.status == STATUS_PENDING)
+               .filter(StoryChapter.story_id == story, *_eligible(db))
                .order_by(StoryChapter.chapter_num).first())
         if row is not None:
             return _task(row, 2)
 
-    row = (db.query(StoryChapter).filter(StoryChapter.status == STATUS_PENDING)
+    row = (db.query(StoryChapter).filter(*_eligible(db))
            .order_by(StoryChapter.story_id, StoryChapter.chapter_num).first())
     return _task(row, 3) if row is not None else None
 
@@ -261,7 +272,7 @@ def preview_queue(db, story_id: str | None = None, limit: int = 10) -> list[dict
         if last_num is not None:
             active = (db.query(StoryChapter)
                       .filter(StoryChapter.story_id == prog.story_title,
-                              StoryChapter.status == STATUS_PENDING,
+                              *_eligible(db),
                               StoryChapter.chapter_num > last_num)
                       .order_by(StoryChapter.chapter_num).limit(limit).all())
             if active:
@@ -273,11 +284,11 @@ def preview_queue(db, story_id: str | None = None, limit: int = 10) -> list[dict
     story = _first_story_without_ready(db)
     if story is not None:
         _push((db.query(StoryChapter)
-               .filter(StoryChapter.story_id == story, StoryChapter.status == STATUS_PENDING)
+               .filter(StoryChapter.story_id == story, *_eligible(db))
                .order_by(StoryChapter.chapter_num).limit(1).all()), 2)
 
     if len(queue) < limit:
-        _push((db.query(StoryChapter).filter(StoryChapter.status == STATUS_PENDING)
+        _push((db.query(StoryChapter).filter(*_eligible(db))
                .order_by(StoryChapter.story_id, StoryChapter.chapter_num)
                .limit(limit).all()), 3)
 

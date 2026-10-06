@@ -71,3 +71,5 @@ An earlier experiment with Page.setWebLifecycleState(frozen) did not actually su
 This validates delayed JavaScript/event recovery with real browser audio. It does not reproduce the OS power policy or prove uninterrupted playback during iOS/Android screen lock. Playback may pause while the renderer is suspended and recover when it resumes.
 
 Primary API references: [CDP Debugger.pause](https://chromedevtools.github.io/devtools-protocol/tot/Debugger/#method-pause), [Playwright emulation scope](https://playwright.dev/docs/emulation).
+
+The full audio matrix (three auto-next scenarios across the three browser projects) passed **8 tests, 1 explicitly skipped WebKit CDP suspension test**. A parallel run initially exposed a test precondition error: canplay/spinner completion occurred before native playback actually began. The suspension test now waits for native currentTime > 0.2 seconds before pausing JS, so it suspends active decoded audio rather than an unfinished start/download.

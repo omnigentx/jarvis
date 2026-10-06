@@ -165,3 +165,21 @@ def test_preview_queue_orders_by_priority(env):
     db.commit()
     q = sai.preview_queue(db, limit=10)
     assert [(x["chapter_file"], x["priority"]) for x in q] == [("02.txt", 0), ("03.txt", 1)]
+
+
+def test_failure_cooldown_survives_session_and_queue_does_not_starve(env, monkeypatch):
+    from services import audio_retry as retry
+    _chapter(env, 'storyA', '01.txt', 'first synthetic chapter')
+    _chapter(env, 'storyA', '02.txt', 'second synthetic chapter')
+    db = env.Session()
+    sai.reconcile(db)
+    now = 1000.0
+    monkeypatch.setattr(retry.time, 'time', lambda: now)
+    retry.record_failure('first synthetic chapter', 'vi-VN-NamMinhNeural', '+20%', 'TimeoutError', db=db)
+    db.close()
+    db = env.Session()
+    assert sai.next_task(db)['chapter_file'] == '02.txt'
+    assert [x['chapter_file'] for x in sai.preview_queue(db)] == ['02.txt']
+    now += 61
+    assert sai.next_task(db)['chapter_file'] == '01.txt'
+    db.close()

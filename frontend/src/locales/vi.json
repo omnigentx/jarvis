@@ -1,4 +1,5 @@
 {
+  "audio": {"playbackFailed": "Không thể phát âm thanh", "playbackRetry": "Tạo hoặc tải âm thanh thất bại. Chờ một lát rồi chọn lại chương để thử lại."},
   "common": {
     "loading": "Đang tải…",
     "save": "Lưu thay đổi",

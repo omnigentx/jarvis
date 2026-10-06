@@ -79,11 +79,11 @@ test('Chromium resumes a real audio playlist after JavaScript suspension',async(
   test.skip(browserName!=='chromium','Debugger CDP command is Chromium-specific')
   await boot(page)
   await page.addInitScript(()=>{
-    const state={ticks:0,plays:0}
+    const state:{ticks:number,plays:number,audio?:HTMLMediaElement}={ticks:0,plays:0}
     ;(window as any).__audioLifecycle=state
     setInterval(()=>state.ticks++,100)
     const play=HTMLMediaElement.prototype.play
-    HTMLMediaElement.prototype.play=function(){state.plays++;return play.call(this)}
+    HTMLMediaElement.prototype.play=function(){state.plays++;state.audio=this;return play.call(this)}
   })
   let prepared=false
   await page.route('**/api/stories/alpha_story/*/prepare',async route=>{
@@ -96,6 +96,8 @@ test('Chromium resumes a real audio playlist after JavaScript suspension',async(
   await page.locator('#chapter-0001_prologue\\.txt [data-testid="chapter-play"]').click()
   await expect.poll(()=>prepared).toBe(true)
   await expect(page.locator('.mini-player__spinner')).toHaveCount(0)
+  // canplay/spinner state alone does not prove decoding/playback has started.
+  await expect.poll(()=>page.evaluate(()=>(window as any).__audioLifecycle.audio?.currentTime||0)).toBeGreaterThan(0.2)
   const session=await context.newCDPSession(page)
   await session.send('Debugger.enable')
   const before=await page.evaluate(()=>(window as any).__audioLifecycle.ticks)
@@ -116,4 +118,22 @@ test('Chromium resumes a real audio playlist after JavaScript suspension',async(
     await session.send('Debugger.disable')
     await session.detach()
   }
+})
+
+
+test('audio HTTP failure shows a useful error and deliberate retry decodes', async ({page}) => {
+  await boot(page)
+  await page.route('**/api/stories/alpha_story/*/play', route => route.fulfill({json:{audio_url:'/api/tts/synthetic_retry',status:'generating'}}))
+  let failed = true
+  await page.route('**/api/tts/synthetic_retry*', route => failed
+    ? route.fulfill({status:503,headers:{'Retry-After':'60'},json:{detail:'Synthetic cooldown'}})
+    : route.fulfill({contentType:'audio/wav',body:tone(12)}))
+  await page.goto('/stories/alpha_story')
+  await page.getByTestId('chapter-play').first().click()
+  await expect(page.getByText('Unable to play audio', {exact:true})).toBeVisible()
+  await expect(page.locator('.mini-player__spinner')).toHaveCount(0)
+  failed = false
+  await page.getByTestId('chapter-play').first().click()
+  await expect(page.locator('.mini-player__spinner')).toHaveCount(0)
+  await expect(page.locator('.mini-player__time')).not.toContainText('0:00 /')
 })

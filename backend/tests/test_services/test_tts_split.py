@@ -86,8 +86,9 @@ class TestRouteDispatchSourceLevel:
         assert "tts_provider" not in first_import
 
     def test_pregen_job_still_uses_edge_directly(self):
-        # Story pre-gen has always called edge_tts directly; documenting it
-        # here so anyone "consolidating" through the new factory thinks twice.
+        # Checkpoint sharing must preserve the dedicated Edge story provider.
+        # Chat engine factories must never consume long-form story quota.
         src = _read("services/tts_pregen_job.py")
-        assert "import edge_tts" in src
-        assert "edge_tts.Communicate" in src
+        assert "EdgeTTSProvider(voice=self.VOICE, rate=self.RATE)" in src
+        assert "stream_story_audio(" in src
+        assert "tts_chat_provider" not in src

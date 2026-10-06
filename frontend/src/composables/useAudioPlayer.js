@@ -1,5 +1,7 @@
 /** Singleton HTML audio + store sync, progress persistence and media controls. */
 import { watch, onUnmounted } from 'vue'
+import { useToast } from './useToast.js'
+import { useLang } from './useLang.js'
 import { useAudioPlayerStore } from '../stores/audioPlayer.js'
 import { waitForAudioReady } from '../utils/audioGeneration.js'
 import { configureAudioMediaSession } from '../utils/audioMediaSession.js'
@@ -16,6 +18,8 @@ const MAX_NETWORK_RETRIES = 3
 
 export function useAudioPlayer() {
   const store = useAudioPlayerStore()
+  const toast = useToast()
+  const { t } = useLang()
   let generationWait = null
   let retryTimer = null
   let completionObservation = null
@@ -300,6 +304,9 @@ export function useAudioPlayer() {
         store.currentAudioUrl = null
       } else {
         store.currentAudioUrl = null
+      }
+      if (!store.currentAudioUrl) {
+        toast.error(t('audio.playbackFailed'), { description: t('audio.playbackRetry'), duration: 8000 })
       }
     })
   }
