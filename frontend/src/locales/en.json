@@ -1,4 +1,5 @@
 {
+  "audio": {"playbackFailed": "Unable to play audio", "playbackRetry": "Audio generation or download failed. Wait a moment, then select the chapter to retry."},
   "common": {
     "loading": "Loading…",
     "save": "Save changes",

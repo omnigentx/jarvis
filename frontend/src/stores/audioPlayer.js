@@ -1,23 +1,13 @@
-/**
- * Audio Player Pinia Store
- *
- * Manages all story audio playback state:
- * - Playback state (play/pause/buffering)
- * - Playlist (chapter list, current position)
- * - Progress saving (localStorage + API every 15s)
- * - TTS generation status tracking
- * - Speed control (persists across chapters)
- */
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { defineStore } from 'pinia'
 import { apiFetch } from '../api.js'
+import { createChapterQueue } from '../utils/chapterQueue.js'
 
 const STORAGE_KEY = 'jarvis_audio_progress'
 const SPEED_STORAGE_KEY = 'jarvis_audio_speed'
 const API_SAVE_INTERVAL = 15_000 // 15s
 
 export const useAudioPlayerStore = defineStore('audioPlayer', () => {
-  // ─── Playback state ───
   const playbackType = ref('none') // 'none' | 'story' | 'chatTts' | 'libraryBook' | 'notifTts'
   const isPlaying = ref(false)
   const isPaused = ref(false)
@@ -26,37 +16,39 @@ export const useAudioPlayerStore = defineStore('audioPlayer', () => {
   const duration = ref(0) // seconds (0 = unknown)
   const playbackSpeed = ref(_loadSpeed())
 
-  // ─── Story playlist ───
   const currentStoryId = ref(null)
   const currentStoryTitle = ref(null)
   const currentChapterFile = ref(null)
   const chapterFiles = ref([]) // ordered list of chapter filenames
   const currentIndex = ref(-1)
 
-  // ─── Audio source ───
   const currentAudioUrl = ref(null)
+  const currentAudioReady = ref(false)
   const currentRequestId = ref(null) // TTS request ID for the audio URL
 
-  // ─── NotifTts state (interrupt-able by story) ───
   const notifTtsUrl = ref(null)         // active notifTts audio URL
   const notifTtsState = ref('idle')     // 'idle' | 'loading' | 'playing' | 'paused' | 'error'
   // Snapshot of interrupted story so we can offer resume
   const _interruptedStory = ref(null)   // { storyId, storyTitle, chapterFile, chapterFiles, index }
 
-  // ─── TTS generation status ───
   const generationStatus = ref({}) // { [chapterFile]: 'generating' | 'ready' | 'none' }
 
-  // ─── UI ───
   const isFullPlayerOpen = ref(false)
   const isMiniPlayerVisible = ref(false)
 
-  // ─── Resume support ───
   const pendingSeekPosition = ref(null) // Set when a seek is needed after audio loads
 
-  // ─── API progress timer ───
   let _apiSaveTimer = null
 
-  // ─── Computed ───
+  let selectionRevision = 0
+  const queue = createChapterQueue((storyId, file, signal) =>
+    apiFetch(`/api/stories/${encodeURIComponent(storyId)}/${encodeURIComponent(file)}/prepare`, { method: 'POST', signal }),
+    error => console.warn('[AudioStore] Next chapter preparation failed:', error))
+  watch([currentStoryId, currentChapterFile, playbackType], () => {
+    selectionRevision++
+    queue.clear()
+  }, { flush: 'sync' })
+
   const canPlayPrev = computed(() => currentIndex.value > 0)
   const canPlayNext = computed(() => currentIndex.value < chapterFiles.value.length - 1)
 
@@ -80,24 +72,21 @@ export const useAudioPlayerStore = defineStore('audioPlayer', () => {
     return `${currentIndex.value + 1} / ${chapterFiles.value.length}`
   })
 
-  // ─── Actions ───
-
-  /**
-   * Play a story chapter.
-   * @param {string} storyId - Story folder ID
-   * @param {string} storyTitle - Display title of the story
-   * @param {string} filename - Chapter filename (.txt)
-   * @param {string[]} allChapterFiles - Full list of chapter files
-   * @returns {Promise<{audioUrl: string}>}
-   */
-  async function playChapter(storyId, storyTitle, filename, allChapterFiles = []) {
-    // Cancel previous if different
+  async function playChapter(storyId, storyTitle, filename, allChapterFiles = [], prepared = null) {
+    const restorePlaylist = !allChapterFiles.length &&
+      (currentStoryId.value !== storyId || !chapterFiles.value.includes(filename))
+    queue.clear()
     if (currentRequestId.value && currentChapterFile.value !== filename) {
       isPlaying.value = false
       isPaused.value = false
     }
 
-    // Update playlist state
+    if (currentStoryId.value !== storyId || currentChapterFile.value !== filename) {
+      currentTime.value = 0
+      duration.value = 0
+      pendingSeekPosition.value = null
+    }
+
     playbackType.value = 'story'
     currentStoryId.value = storyId
     currentStoryTitle.value = storyTitle
@@ -109,20 +98,43 @@ export const useAudioPlayerStore = defineStore('audioPlayer', () => {
     isBuffering.value = true
     isMiniPlayerVisible.value = true
 
+    const revision = ++selectionRevision
+    currentAudioReady.value = false
+
     // Update generation status to 'generating' optimistically
     generationStatus.value = { ...generationStatus.value, [filename]: 'generating' }
 
     try {
-      const data = await apiFetch(`/api/stories/${encodeURIComponent(storyId)}/${encodeURIComponent(filename)}/play`, {
+      if (restorePlaylist) {
+        const chapters = await apiFetch(`/api/stories/${encodeURIComponent(storyId)}/chapters`)
+        if (revision !== selectionRevision) return null
+        if (!Array.isArray(chapters) || !chapters.some(ch => ch.file === filename)) throw new Error('Chapter is unavailable')
+        chapterFiles.value = chapters.map(ch => ch.file)
+        currentIndex.value = chapterFiles.value.indexOf(filename)
+      }
+      const data = prepared || await apiFetch(`/api/stories/${encodeURIComponent(storyId)}/${encodeURIComponent(filename)}/play`, {
         method: 'POST',
       })
+      if (revision !== selectionRevision) return null
 
       if (data.error) {
         throw new Error(data.error)
       }
 
-      currentAudioUrl.value = data.audio_url
+      if (!data.audio_url) throw new Error('Audio source is unavailable')
       currentRequestId.value = data.audio_url.replace('/api/tts/', '')
+      currentAudioReady.value = data.status === 'ready'
+      if (Number.isFinite(data.duration)) duration.value = data.duration
+      // Publish the source LAST: the engine's synchronous watcher sees a
+      // complete chapter snapshot and calls native play in this same task.
+      currentAudioUrl.value = data.audio_url
+      queue.prepare(storyId, filename, chapterFiles.value[currentIndex.value + 1])
+      if (prepared) {
+        // Progress is bookkeeping after native play, never a transition gate.
+        Promise.resolve().then(() => {
+          if (revision === selectionRevision) return apiFetch(`/api/stories/${encodeURIComponent(storyId)}/${encodeURIComponent(filename)}/play`, { method: 'POST' })
+        }).catch(error => console.warn('[AudioStore] Progress update failed:', error))
+      }
 
       // Update generation status
       if (data.status === 'ready') {
@@ -134,22 +146,17 @@ export const useAudioPlayerStore = defineStore('audioPlayer', () => {
 
       return { audioUrl: data.audio_url, duration: data.duration }
     } catch (err) {
+      if (revision !== selectionRevision) return null
       isBuffering.value = false
+      isPlaying.value = false
+      isPaused.value = true
+      currentAudioUrl.value = null
+      currentRequestId.value = null
       console.error('[AudioStore] playChapter error:', err)
       throw err
     }
   }
 
-  /**
-   * Play a one-off chat-TTS reply through the singleton element.
-   *
-   * Unlike playChapter this is ephemeral: no playlist, no chapter nav, and
-   * no progress persistence (currentRequestId stays null so the save timer
-   * is never armed and saveProgress() no-ops). It still funnels through the
-   * one audio element so a reply can never overlap a story.
-   *
-   * @param {string} audioUrl - /api/tts/{id} url from the chat 'done' event
-   */
   function playChatTts(audioUrl) {
     playbackType.value = 'chatTts'
     currentStoryId.value = null
@@ -166,17 +173,6 @@ export const useAudioPlayerStore = defineStore('audioPlayer', () => {
     currentAudioUrl.value = audioUrl
   }
 
-  /**
-   * Single entry point for audio coming from a chat 'done' event — the one
-   * place that decides story vs plain reply, shared by every chat surface.
-   *
-   * Story replies (event.story present) become full story playback: the user
-   * explicitly asked to listen, so they play regardless of the read-aloud
-   * toggle. Plain replies are chat-TTS, gated by that toggle.
-   *
-   * @param {{audio?: string, story?: object}} event
-   * @param {boolean} ttsEnabled - user's "read replies aloud" preference
-   */
   function playFromChat(event, ttsEnabled) {
     const s = event?.story
     if (s && s.story_id && s.chapter_file) {
@@ -186,9 +182,6 @@ export const useAudioPlayerStore = defineStore('audioPlayer', () => {
     }
   }
 
-  /**
-   * Play from playlist — next chapter.
-   */
   async function nextChapter() {
     if (!canPlayNext.value) {
       // End of playlist
@@ -196,23 +189,16 @@ export const useAudioPlayerStore = defineStore('audioPlayer', () => {
       return null
     }
     const nextFile = chapterFiles.value[currentIndex.value + 1]
-    return playChapter(currentStoryId.value, currentStoryTitle.value, nextFile, chapterFiles.value)
+    const prepared = queue.take(currentStoryId.value, currentChapterFile.value, nextFile)
+    return playChapter(currentStoryId.value, currentStoryTitle.value, nextFile, chapterFiles.value, prepared)
   }
 
-  /**
-   * Play previous chapter.
-   */
   async function prevChapter() {
     if (!canPlayPrev.value) return null
     const prevFile = chapterFiles.value[currentIndex.value - 1]
     return playChapter(currentStoryId.value, currentStoryTitle.value, prevFile, chapterFiles.value)
   }
 
-  /**
-   * Toggle play/pause. The useAudioPlayer composable listens to this state.
-   * If in a restored state (has storyId but no audioUrl yet),
-   * call playChapter() instead of merely toggling.
-   */
   function togglePlayPause() {
     if (isPlaying.value) {
       isPlaying.value = false
@@ -230,10 +216,6 @@ export const useAudioPlayerStore = defineStore('audioPlayer', () => {
     }
   }
 
-  /**
-   * Seek to a specific position (seconds).
-   * The composable will watch and apply this to the audio element.
-   */
   const seekTarget = ref(null)
   function seekTo(seconds) {
     const clamped = Math.max(0, Math.min(seconds, duration.value || Infinity))
@@ -251,9 +233,6 @@ export const useAudioPlayerStore = defineStore('audioPlayer', () => {
     seekTo(currentTime.value - seconds)
   }
 
-  /**
-   * Change playback speed. Persists to localStorage.
-   */
   const SPEED_OPTIONS = [0.75, 1.0, 1.25, 1.5, 2.0]
   function setSpeed(rate) {
     playbackSpeed.value = rate
@@ -266,9 +245,6 @@ export const useAudioPlayerStore = defineStore('audioPlayer', () => {
     setSpeed(next)
   }
 
-  /**
-   * Stop playback, reset state, hide player.
-   */
   function stopAndReset() {
     _stopApiSaveTimer()
     // Explicit close (X button, end-of-playlist, audio-type swap) — drop
@@ -303,10 +279,6 @@ export const useAudioPlayerStore = defineStore('audioPlayer', () => {
     _interruptedStory.value = null
   }
 
-  /**
-   * Update time from audio element events.
-   * Called by the useAudioPlayer composable.
-   */
   function updateTime(time) {
     currentTime.value = time
   }
@@ -332,9 +304,6 @@ export const useAudioPlayerStore = defineStore('audioPlayer', () => {
     isBuffering.value = buffering
   }
 
-  /**
-   * Update generation status for chapter list display.
-   */
   function updateChapterStatus(filename, status) {
     generationStatus.value = { ...generationStatus.value, [filename]: status }
   }
@@ -347,23 +316,12 @@ export const useAudioPlayerStore = defineStore('audioPlayer', () => {
     generationStatus.value = updated
   }
 
-  // ─── NotifTts: play notification content as TTS ───
-
-  /**
-   * Priority logic — mirrors Flutter AudioService._shouldInterrupt().
-   * story > notifTts: never interrupt a playing story.
-   */
   function _notifShouldInterrupt() {
     if (playbackType.value === 'none') return true
     if (playbackType.value === 'story' && isPlaying.value) return false // story wins
     return true // chatTts, libraryBook, idle → allow
   }
 
-  /**
-   * Kick off notifTts playback.
-   * @param {string} audioUrl - relative URL returned by /api/tts/prepare
-   * Returns false if skipped because story is playing.
-   */
   function startNotifTts(audioUrl) {
     if (!_notifShouldInterrupt()) {
       // Story is playing → don't interrupt, just surface a hint
@@ -396,10 +354,6 @@ export const useAudioPlayerStore = defineStore('audioPlayer', () => {
     return true
   }
 
-  /**
-   * Stop notifTts, clean up URL. Composable will stop audio element.
-   * If a story was interrupted, it remains paused — user can resume from mini-player.
-   */
   function stopNotifTts() {
     notifTtsUrl.value = null
     notifTtsState.value = 'idle'
@@ -408,7 +362,7 @@ export const useAudioPlayerStore = defineStore('audioPlayer', () => {
       if (_interruptedStory.value) {
         const snap = _interruptedStory.value
         _interruptedStory.value = null
-        playbackType.value = 'story'
+      playbackType.value = 'story'
         currentStoryId.value = snap.storyId
         currentStoryTitle.value = snap.storyTitle
         currentChapterFile.value = snap.chapterFile
@@ -424,26 +378,15 @@ export const useAudioPlayerStore = defineStore('audioPlayer', () => {
     }
   }
 
-  /**
-   * Called by composable when notifTts audio naturally ends.
-   */
   function onNotifTtsEnded() {
     stopNotifTts()
   }
 
-  /**
-   * Called by composable when notifTts audio errors.
-   */
   function onNotifTtsError() {
     notifTtsState.value = 'error'
     stopNotifTts()
   }
 
-  // ─── Progress saving ───
-
-  /**
-   * Save progress to localStorage + call API (every 15s).
-   */
   function saveProgress() {
     if (!currentStoryId.value || !currentChapterFile.value) return
 
@@ -464,9 +407,6 @@ export const useAudioPlayerStore = defineStore('audioPlayer', () => {
     } catch (_) { /* quota exceeded — ignore */ }
   }
 
-  /**
-   * Call API to save progress (for cross-device resume).
-   */
   async function _saveProgressToApi() {
     if (!currentRequestId.value) return
     try {
@@ -497,10 +437,6 @@ export const useAudioPlayerStore = defineStore('audioPlayer', () => {
     }
   }
 
-  /**
-   * Restore progress from localStorage at initialization.
-   * Returns the data so composable can resume.
-   */
   function restoreProgress() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY)
@@ -514,11 +450,6 @@ export const useAudioPlayerStore = defineStore('audioPlayer', () => {
     }
   }
 
-  /**
-   * Restore UI state from localStorage on page load.
-   * Shows the mini player in paused state, ready to resume.
-   * Called once by the useAudioPlayer composable.
-   */
   function initFromSavedProgress() {
     const saved = restoreProgress()
     if (!saved) return null
@@ -547,8 +478,6 @@ export const useAudioPlayerStore = defineStore('audioPlayer', () => {
 
     return saved
   }
-
-  // ─── Helpers ───
 
   function _formatTime(seconds) {
     if (!seconds || isNaN(seconds)) return '0:00'
@@ -593,6 +522,7 @@ export const useAudioPlayerStore = defineStore('audioPlayer', () => {
     chapterFiles,
     currentIndex,
     currentAudioUrl,
+    currentAudioReady,
     currentRequestId,
     generationStatus,
     isFullPlayerOpen,

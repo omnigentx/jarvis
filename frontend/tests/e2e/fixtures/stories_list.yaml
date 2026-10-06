@@ -57,6 +57,13 @@ responses:
       content-type: "audio/mpeg"
     text: ""
 
+  "POST /api/stories/alpha_story/0002_chapter_two.txt/prepare":
+    status: 200
+    json: {audio_url: "/api/tts/story_alpha_story_0002_chapter_two.txt", status: "none"}
+  "POST /api/stories/alpha_story/0003_chapter_three.txt/prepare":
+    status: 200
+    json: {audio_url: "/api/tts/story_alpha_story_0003_chapter_three.txt", status: "none"}
+
 sse_streams:
   # ChapterList connects to pregen-stream on mount. Send a single queue_update
   # with an empty queue so the UI just renders the static preload state.

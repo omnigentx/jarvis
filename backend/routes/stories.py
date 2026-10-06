@@ -362,63 +362,22 @@ async def get_chapter_text(story_id: str, filename: str, _=Depends(verify_api_ke
         return {"error": str(e)}
 
 
+@router.post("/{story_id}/{filename}/prepare")
+async def prepare_local_chapter(story_id: str, filename: str, _=Depends(verify_api_key)):
+    """Register one queued source; do not advance progress or cancel pre-gen."""
+    from services.story_playback import prepare_story_source
+    return await asyncio.to_thread(prepare_story_source, story_id, filename)
+
+
 @router.post("/{story_id}/{filename}/play")
 async def play_local_chapter(story_id: str, filename: str, _=Depends(verify_api_key)):
-    path = os.path.join("data/stories", story_id, filename)
-    if not os.path.exists(path): return {"error": "Not found"}
-    
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            text = f.read()
-        
-        text = clean_text_for_tts(text)
-        safe_fname = re.sub(r'[^\w\-\.]', '_', filename)
-        unique_id = f"story_{story_id}_{safe_fname}"
-        
-        cache_path = get_audio_cache_path(text)
-        mp3_exists = os.path.exists(cache_path)
-        
-        title = "Story"
-        chapter = filename.replace(".txt", "")
-        if "_" in filename:
-             parts = filename.split("_", 1)
-             if len(parts) > 1: chapter = parts[1].replace(".txt", "").replace("_", " ")
-
-        library_manager.add_book(title, chapter, url=f"local://{story_id}/{filename}", 
-                                 id_override=unique_id)
-        
-        tts_cache.save_tts_text(unique_id, text)
-        _update_story_progress(story_id, filename)
-        
-        response = {"audio_url": f"/api/tts/{unique_id}"}
-        
-        if mp3_exists:
-            try:
-                from mutagen.mp3 import MP3
-                audio = MP3(cache_path)
-                duration = int(audio.info.length)
-                library_manager.set_status(unique_id, "ready", duration=duration)
-                response["duration"] = duration
-                response["status"] = "ready"
-                logger.debug(f"Pre-gen play: {filename}, duration={duration}s")
-            except Exception as e:
-                library_manager.set_status(unique_id, "ready")
-                logger.warning(f"Could not extract duration for {filename}: {e}")
-        else:
-            if _state.bg_scheduler and _state.bg_scheduler.is_running():
-                _state.bg_scheduler.notify_tts_activity()
-                # Only cancel pre-gen if it's working a DIFFERENT chapter.
-                # Cancelling the chapter the user just clicked would delete its
-                # half-written mp3 + lock mid-stream → the live stream closes at
-                # ~11s and the player auto-advances. The .lock on this exact
-                # cache_path means pre-gen already owns it → hand over instead.
-                if not os.path.exists(cache_path + ".lock"):
-                    _state.bg_scheduler.request_cancel()
-        
-        return response
-    except Exception as e:
-        logger.error(f"Play error: {e}")
-        return {"error": str(e)}
+    from services.story_playback import prepare_story_source
+    response = await asyncio.to_thread(prepare_story_source, story_id, filename)
+    await asyncio.to_thread(_update_story_progress, story_id, filename)
+    if response['status'] != 'ready' and _state.bg_scheduler and _state.bg_scheduler.is_running():
+        _state.bg_scheduler.notify_tts_activity()
+        # The TTS route joins an existing producer or cancels a different job.
+    return response
 
 
 @router.get("/{story_id}/progress")

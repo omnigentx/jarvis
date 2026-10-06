@@ -1,21 +1,10 @@
-/**
- * useAudioPlayer — Composable wrap HTML5 Audio API
- *
- * Responsibilities:
- * - Create and manage HTML5 Audio element
- * - Sync events (timeupdate, ended, error, etc.) → Pinia store
- * - Watch store.seekTarget → apply seek on audio
- * - Watch store.playbackSpeed → apply playbackRate
- * - BroadcastChannel multi-tab sync
- * - MediaSession API (lock screen controls)
- * - Interval to save progress to localStorage
- * - Beforeunload to save progress + sendBeacon API
- *
- * Usage:
- *   const { play, pause, resume, destroy } = useAudioPlayer()
- */
-import { watch, onUnmounted, nextTick } from 'vue'
-import { useAudioPlayerStore } from '../stores/audioPlayer'
+/** Singleton HTML audio + store sync, progress persistence and media controls. */
+import { watch, onUnmounted } from 'vue'
+import { useToast } from './useToast.js'
+import { useLang } from './useLang.js'
+import { useAudioPlayerStore } from '../stores/audioPlayer.js'
+import { waitForAudioReady } from '../utils/audioGeneration.js'
+import { configureAudioMediaSession } from '../utils/audioMediaSession.js'
 
 // Singleton audio element — only one audio playback at a time
 let _audio = null
@@ -29,6 +18,12 @@ const MAX_NETWORK_RETRIES = 3
 
 export function useAudioPlayer() {
   const store = useAudioPlayerStore()
+  const toast = useToast()
+  const { t } = useLang()
+  let generationWait = null
+  let retryTimer = null
+  let completionObservation = null
+  let endedSource = null
 
   // ─── BroadcastChannel: multi-tab sync ───
   _initBroadcastChannel()
@@ -47,6 +42,7 @@ export function useAudioPlayer() {
         _playUrl(url)
       }
     },
+    { flush: 'sync' },
   )
 
   // ─── Watch: notifTtsUrl → play inline TTS without touching story state ───
@@ -105,6 +101,7 @@ export function useAudioPlayer() {
   const stopWatchType = watch(
     () => store.playbackType,
     (type) => {
+      if (type === 'none') { generationWait?.abort(); completionObservation?.abort(); clearTimeout(retryTimer) }
       if (type === 'none' && _audio) {
         _audio.pause()
         _audio.src = ''
@@ -114,7 +111,12 @@ export function useAudioPlayer() {
   )
 
   // ─── Core: Play a URL (story / chatTts) ───
-  function _playUrl(url) {
+  function _playUrl(url, retry = false) {
+    generationWait?.abort()
+    completionObservation?.abort()
+    completionObservation = null
+    endedSource = null
+    if (!retry) { clearTimeout(retryTimer); _networkRetries = 0 }
     // ``<audio src>`` cannot set headers; auth rides on the cookie that
     // ``credentials: 'include'`` would attach to a fetch. For same-origin
     // GETs the browser attaches the cookie automatically, so we just
@@ -132,17 +134,21 @@ export function useAudioPlayer() {
     _audio.src = fullUrl
     _audio.playbackRate = store.playbackSpeed
     _audio.play().then(() => {
-      _networkRetries = 0 // fresh successful start → reset the retry budget
+      if (store.currentAudioUrl !== url) return
       store.setPlayingState(true)
       _setupMediaSession()
       _startProgressSaver()
       _broadcastPlay()
     }).catch(err => {
       console.error('[AudioPlayer] Play failed:', err)
+      if (store.currentAudioUrl !== url || err.name === 'AbortError') return
+      store.setPlayingState(false)
       // iOS Safari: requires user gesture
       if (err.name === 'NotAllowedError') {
         store.setBuffering(false)
         store.isPaused = true
+      } else {
+        store.currentAudioUrl = null // Next user retry reopens the source.
       }
     })
   }
@@ -152,30 +158,33 @@ export function useAudioPlayer() {
   // end-of-chapter — the backend signals in-progress generation via the
   // X-TTS-Generating header on a HEAD. Returns true = still generating.
   async function _isStillGenerating(url) {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 15_000)
     try {
-      const res = await fetch(url, { method: 'HEAD', credentials: 'include', cache: 'no-store' })
+      const res = await fetch(url, { method: 'HEAD', credentials: 'include', cache: 'no-store', signal: controller.signal })
+      if (!res.ok) throw new Error(`Audio status ${res.status}`)
       return res.headers.get('X-TTS-Generating') === '1'
     } catch (_) {
-      // Network blip — assume NOT generating so we don't loop forever; the
-      // 'ended' path's real-end branch will then advance/stop normally.
-      return false
-    }
+      throw new Error('Unable to determine audio generation status')
+    } finally { clearTimeout(timer) }
   }
 
-  // A live-stream chapter underran (played all bytes written so far, but the
-  // server is still generating). Resume from the current position once more
-  // bytes — eventually the full file — are available, WITHOUT replaying from
-  // the start. Re-probes until generation completes.
+  // On underrun, await pushed completion and resume from the saved position.
   async function _resumeAfterUnderrun() {
     const url = store.currentAudioUrl
     const resumeAt = store.currentTime
     store.setBuffering(true)
-    // Poll HEAD every 500ms until generation finishes (≈60s ceiling), letting
-    // the next chunks land before we reload.
-    for (let i = 0; i < 120; i++) {
-      await new Promise(r => setTimeout(r, 500))
-      if (store.currentAudioUrl !== url) return // user moved on (next/prev/close)
-      if (!(await _isStillGenerating(url))) break
+    generationWait?.abort()
+    const controller = new AbortController()
+    generationWait = controller
+    try {
+      await waitForAudioReady(url, { signal: controller.signal })
+    } catch (error) {
+      if (error.name !== 'AbortError' && store.currentAudioUrl === url) {
+        store.setPlayingState(false)
+        console.error('[AudioPlayer] Generation recovery failed:', error)
+      }
+      return
     }
     if (store.currentAudioUrl !== url) return
     // Reload the now-complete file and seek back to where we left off, so the
@@ -246,6 +255,16 @@ export function useAudioPlayer() {
         return
       }
       store.setPlayingState(true)
+      if (store.playbackType === 'story' && !store.currentAudioReady && !completionObservation) {
+        const url = store.currentAudioUrl
+        const controller = new AbortController()
+        completionObservation = controller
+        waitForAudioReady(url, { signal: controller.signal }).then(() => {
+          if (store.currentAudioUrl === url) store.currentAudioReady = true
+        }).catch(error => {
+          if (error.name !== 'AbortError') console.warn('[AudioPlayer] Completion observation failed:', error)
+        })
+      }
     })
 
     audio.addEventListener('pause', () => {
@@ -259,37 +278,7 @@ export function useAudioPlayer() {
       }
     })
 
-    audio.addEventListener('ended', () => {
-      if (store.playbackType === 'notifTts') {
-        store.onNotifTtsEnded()
-        return
-      }
-      // A story chapter can fire 'ended' prematurely while its TTS is still
-      // streaming live — the player simply ran out of buffered bytes (the
-      // ~11s "plays then jumps to next chapter" bug). Probe the server: if
-      // generation is still in progress, this is an underrun → resume from
-      // here, DON'T advance. Only a true end (generation finished) advances.
-      if (store.playbackType === 'story' && store.currentAudioUrl) {
-        _isStillGenerating(store.currentAudioUrl).then(generating => {
-          if (generating && store.currentAudioUrl) {
-            _resumeAfterUnderrun()
-          } else {
-            store.isPlaying = false
-            store.isPaused = false
-            store.saveProgress()
-            nextTick(() => store.nextChapter())
-          }
-        })
-        return
-      }
-      store.isPlaying = false
-      store.isPaused = false
-      store.saveProgress()
-      // Auto-next chapter
-      nextTick(() => {
-        store.nextChapter()
-      })
-    })
+    audio.addEventListener('ended', _handleEnded)
 
     audio.addEventListener('error', (e) => {
       if (store.playbackType === 'notifTts') {
@@ -298,24 +287,66 @@ export function useAudioPlayer() {
       }
       const err = audio.error
       console.error('[AudioPlayer] Audio error:', err?.code, err?.message)
-      store.setBuffering(false)
+      store.setPlayingState(false)
       // Retry on network errors, but cap it — a permanently-broken URL must
       // not retry every 2s forever. After the budget is spent, surface the
       // failure (pause) instead of silently looping.
       if (err?.code === MediaError.MEDIA_ERR_NETWORK && _networkRetries < MAX_NETWORK_RETRIES) {
         _networkRetries++
-        setTimeout(() => {
-          if (store.currentAudioUrl) {
-            _playUrl(store.currentAudioUrl)
-          }
+        const failedUrl = store.currentAudioUrl
+        retryTimer = setTimeout(() => {
+          if (failedUrl && store.currentAudioUrl === failedUrl) _playUrl(failedUrl, true)
         }, 2000)
       } else if (err?.code === MediaError.MEDIA_ERR_NETWORK) {
         console.error('[AudioPlayer] Network retries exhausted — stopping playback')
         store.isPlaying = false
         store.isPaused = true
+        store.currentAudioUrl = null
+      } else {
+        store.currentAudioUrl = null
+      }
+      if (!store.currentAudioUrl) {
+        toast.error(t('audio.playbackFailed'), { description: t('audio.playbackRetry'), duration: 8000 })
       }
     })
   }
+
+  function _advanceChapter() {
+    store.isPlaying = false
+    store.isPaused = false
+    store.saveProgress()
+    // Prepared source + sync URL watcher: native play happens in this task.
+    const result = store.nextChapter()
+    result?.catch(error => console.error('[AudioPlayer] Next chapter failed:', error))
+  }
+
+  function _handleEnded() {
+    if (store.playbackType === 'notifTts') { store.onNotifTtsEnded(); return }
+    if (!_audio?.ended) return
+    const url = store.currentAudioUrl
+    if (!url || endedSource === url) return
+    endedSource = url
+    if (store.playbackType !== 'story' || store.currentAudioReady) {
+      _advanceChapter()
+      return
+    }
+    // Only unknown/live sources need a network probe. Cached chapters never
+    // give the OS an idle network round trip before starting the next track.
+    _isStillGenerating(url).then(generating => {
+      if (store.currentAudioUrl !== url) return
+      if (generating) _resumeAfterUnderrun()
+      else _advanceChapter()
+    }).catch(error => {
+      if (store.currentAudioUrl === url) store.setPlayingState(false)
+      console.error('[AudioPlayer] Status probe failed:', error)
+    })
+  }
+
+  function _onVisible() {
+    if (document.visibilityState === 'visible' && _audio?.ended && store.playbackType === 'story') _handleEnded()
+  }
+  document.addEventListener('visibilitychange', _onVisible)
+  window.addEventListener('pageshow', _onVisible)
 
   // ─── BroadcastChannel: pause other tabs ───
   function _initBroadcastChannel() {
@@ -367,49 +398,7 @@ export function useAudioPlayer() {
 
   // ─── MediaSession API (lock screen controls) ───
   function _setupMediaSession() {
-    if (!('mediaSession' in navigator)) return
-
-    navigator.mediaSession.metadata = new MediaMetadata({
-      title: store.currentChapterLabel || store.currentChapterFile || 'Audio',
-      artist: store.currentStoryTitle || 'Jarvis Stories',
-      album: 'Jarvis Audio Reader',
-    })
-
-    navigator.mediaSession.setActionHandler('play', () => {
-      _audio?.play()
-      store.setPlayingState(true)
-    })
-
-    navigator.mediaSession.setActionHandler('pause', () => {
-      _audio?.pause()
-      store.isPlaying = false
-      store.isPaused = true
-    })
-
-    navigator.mediaSession.setActionHandler('previoustrack', () => {
-      store.prevChapter()
-    })
-
-    navigator.mediaSession.setActionHandler('nexttrack', () => {
-      store.nextChapter()
-    })
-
-    navigator.mediaSession.setActionHandler('seekto', (details) => {
-      if (details.seekTime != null && _audio) {
-        _audio.currentTime = details.seekTime
-        store.updateTime(details.seekTime)
-      }
-    })
-
-    navigator.mediaSession.setActionHandler('seekbackward', (details) => {
-      const offset = details.seekOffset || 10
-      store.skipBackward(offset)
-    })
-
-    navigator.mediaSession.setActionHandler('seekforward', (details) => {
-      const offset = details.seekOffset || 30
-      store.skipForward(offset)
-    })
+    configureAudioMediaSession(store, () => _audio)
   }
 
   // ─── Progress saving interval (localStorage every 10s) ───
@@ -466,6 +455,11 @@ export function useAudioPlayer() {
   }
 
   function destroy() {
+    generationWait?.abort()
+    completionObservation?.abort()
+    document.removeEventListener('visibilitychange', _onVisible)
+    window.removeEventListener('pageshow', _onVisible)
+    clearTimeout(retryTimer)
     _stopProgressSaver()
     stopWatchUrl()
     stopWatchNotifTts()
