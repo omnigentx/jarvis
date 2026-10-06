@@ -97,6 +97,12 @@ export const useAudioPlayerStore = defineStore('audioPlayer', () => {
       isPaused.value = false
     }
 
+    if (currentStoryId.value !== storyId || currentChapterFile.value !== filename) {
+      currentTime.value = 0
+      duration.value = 0
+      pendingSeekPosition.value = null
+    }
+
     // Update playlist state
     playbackType.value = 'story'
     currentStoryId.value = storyId

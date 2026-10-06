@@ -209,6 +209,14 @@ class TTSPreGenJob(BackgroundJobRunner):
         # a truncated file that the cache-hit short-circuit above would serve
         # forever (the stuttering/cut-out playback this PR fixes).
         tmp_path = cache_path + ".tmp"
+        from services.audio_generation import claim_generation, GenerationBusy
+        try:
+            generation, owns_generation = claim_generation(cache_path)
+        except GenerationBusy:
+            return False
+        if not owns_generation:
+            return False  # On-demand owns it; reconcile will observe its result.
+        success = False
         start_time = time.time()
         bytes_written = 0
         
@@ -273,10 +281,14 @@ class TTSPreGenJob(BackgroundJobRunner):
                         )
                     audio_file.write(buf)
                     bytes_written += len(buf)
+                    audio_file.flush()
+                    generation.notify(bytes_written)
 
             # All chunks succeeded — atomically publish. Until this point only
             # tmp_path exists, so any earlier failure leaves no servable file.
             os.replace(tmp_path, cache_path)
+            success = True
+            generation.finish(True)
 
             # Done — remove lock
             if os.path.exists(lock_path):
@@ -337,6 +349,8 @@ class TTSPreGenJob(BackgroundJobRunner):
                 "error": str(e),
             })
             return False
+        finally:
+            generation.finish(success)
     
     def get_status(self) -> dict:
         """Return status for /api/background/status — counts come from the SSoT

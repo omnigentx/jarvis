@@ -88,3 +88,24 @@ test('playFromChat: no audio and no story → no-op', () => {
   store.playFromChat({}, true)
   assert.equal(store.playbackType, 'none')
 })
+
+test('switching chapter clears old duration, time and pending seek', async () => {
+  const store = useAudioPlayerStore()
+  store.currentStoryId = 'old'
+  store.currentChapterFile = '01.txt'
+  store.currentTime = 10
+  store.duration = 31
+  store.pendingSeekPosition = 10
+  await store.playChapter('new', 'Synthetic', '02.txt', ['02.txt'])
+  assert.equal(store.currentTime, 0)
+  assert.equal(store.duration, 0)
+  assert.equal(store.pendingSeekPosition, null)
+})
+test('restored same chapter keeps its saved seek position', async () => {
+  const store = useAudioPlayerStore()
+  store.currentStoryId = 'saved'
+  store.currentChapterFile = '01.txt'
+  store.pendingSeekPosition = 12
+  await store.playChapter('saved', 'Synthetic', '01.txt', ['01.txt'])
+  assert.equal(store.pendingSeekPosition, 12)
+})

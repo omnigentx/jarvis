@@ -92,3 +92,47 @@ async def test_midchapter_failure_leaves_no_cached_file(_job):
     )
     assert not os.path.exists(cache_path + ".tmp"), "temp file must be cleaned up"
     assert not os.path.exists(cache_path + ".lock")
+
+
+@pytest.mark.asyncio
+async def test_on_demand_joins_pregen_without_second_writer(_job):
+    import asyncio
+    from starlette.requests import Request
+    from unittest.mock import MagicMock
+    from services.tts_audio_response import audio_response
+    from services.audio_generation import active_generation
+
+    job, cache_path = _job
+    gate = asyncio.Event()
+    first = asyncio.Event()
+    calls = []
+
+    class Communicate:
+        def __init__(self, text, voice, rate=None):
+            self.text = text
+        async def stream(self):
+            calls.append(self.text)
+            if self.text == 'B':
+                first.set()
+                await gate.wait()
+            yield {'type': 'audio', 'data': b'AU'}
+
+    pg.edge_tts.Communicate = Communicate
+    producer = asyncio.create_task(job.execute_task({'story_title': 'Synthetic', 'chapter_file': '01.txt'}))
+    await first.wait()
+    generation = active_generation(cache_path)
+    assert generation and generation.size == 2
+    provider = MagicMock()
+    response = await audio_response(
+        cache_path, 'Synthetic body', 'story_synthetic_01.txt',
+        Request({'type': 'http', 'method': 'GET', 'headers': []}),
+        provider, {}, MagicMock(), None, None,
+    )
+    first_bytes = await anext(response.body_iterator)
+    assert first_bytes == b'AU'
+    gate.set()
+    data = first_bytes + b''.join([c async for c in response.body_iterator])
+    assert await producer
+    assert data == b'AUAUAU'
+    assert calls == ['A', 'B', 'C']
+    provider.stream_audio.assert_not_called()

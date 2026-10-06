@@ -56,7 +56,7 @@ async function handlePlay(filename) {
   // restarted the chapter from 0s. Only a different chapter starts fresh.
   const isCurrent = audioStore.currentStoryId === props.storyId
     && audioStore.currentChapterFile === filename
-  if (isCurrent) {
+  if (isCurrent && audioStore.currentAudioUrl) {
     audioStore.togglePlayPause()
     return
   }

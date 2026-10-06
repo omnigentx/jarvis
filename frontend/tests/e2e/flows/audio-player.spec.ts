@@ -160,3 +160,37 @@ test('negative control: missing chapter renders error text, not blank content', 
 
   expect(backend.unexpected.length).toBe(0)
 })
+
+// A failing TTS endpoint must stop buffering, keep the selected chapter and
+// let a deliberate retry open the source again (without auto-advancing).
+test('TTS failure clears spinner and user retry requests audio again', async ({ page }) => {
+  await seedApiKey(page)
+  await mockBackend(page, [NOISE, join(FIXTURES, 'stories_list.yaml')])
+  let audioRequests = 0
+  await page.route('**/api/tts/**', async route => {
+    audioRequests++
+    await route.fulfill({ status: 502, contentType: 'application/json', body: '{"detail":"Synthetic provider failure"}' })
+  })
+  await page.goto('/stories/alpha_story')
+  const play = page.locator('#chapter-0001_prologue\\.txt [data-testid="chapter-play"]')
+  await play.click()
+  await expect.poll(() => audioRequests).toBe(1)
+  await expect(page.locator('.mini-player__spinner')).toHaveCount(0)
+  await expect(page.locator('.mini-player__chapter')).toContainText('Ch.1')
+  await play.click()
+  await expect.poll(() => audioRequests).toBe(2)
+  await expect(page.locator('.mini-player__spinner')).toHaveCount(0)
+  await expect(page.locator('.mini-player__chapter')).toContainText('Ch.1')
+})
+
+test('restored chapter reloads its playlist and supports next chapter', async ({ page }) => {
+  await seedApiKey(page)
+  await mockBackend(page, [NOISE, join(FIXTURES, 'stories_list.yaml')])
+  await page.addInitScript(() => localStorage.setItem('jarvis_audio_progress', JSON.stringify({
+    playbackType: 'story', storyId: 'alpha_story', storyTitle: 'Alpha Story',
+    chapterFile: '0001_prologue.txt', position: 1, duration: 12, timestamp: Date.now(),
+  })))
+  await page.goto('/stories/alpha_story')
+  await page.locator('#chapter-0001_prologue\\.txt [data-testid="chapter-play"]').click()
+  await expect(page.locator('.mini-player button[title="Next chapter"]')).toBeEnabled()
+})

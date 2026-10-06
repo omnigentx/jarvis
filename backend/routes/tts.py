@@ -5,12 +5,11 @@ import uuid
 import asyncio
 import logging
 
-import aiofiles
 from fastapi import APIRouter, Request, Depends
-from fastapi.responses import StreamingResponse, Response
+from fastapi.responses import Response
 from pydantic import BaseModel
 
-from core.auth import verify_api_key, verify_optional_api_key
+from core.auth import verify_api_key
 from helpers.text_processing import clean_text_for_tts
 from helpers.audio_cache import get_audio_cache_path
 from services.shared_state import (
@@ -59,7 +58,7 @@ async def cancel_tts(request_id: str, _=Depends(verify_api_key)):
 
 
 @router.api_route("/{request_id}", methods=["GET", "HEAD"])
-async def tts_endpoint(request_id: str, request: Request, _auth=Depends(verify_optional_api_key)):
+async def tts_endpoint(request_id: str, request: Request, _auth=Depends(verify_api_key)):
     # Notify scheduler of on-demand activity. The cancel-vs-handover decision
     # is DEFERRED until we've resolved cache_path + lock state below. The old
     # is_generating(request_id) check never matched — pre-gen keys its tasks by
@@ -129,261 +128,44 @@ async def tts_endpoint(request_id: str, request: Request, _auth=Depends(verify_o
             return {"error": "Text not found or expired"}
         cache_path = get_audio_cache_path(text)
 
-    # Check file states
-    mp3_exists = os.path.exists(cache_path)
-    part_path = cache_path + ".part"
-    part_exists = os.path.exists(part_path)
-    
-    if not text and not mp3_exists and not part_exists:
-         return {"error": "Text missing for generation"}
+    from services.tts_audio_response import audio_response
+    provider = _state.tts_chat_provider if is_notification else _state.tts_stories_provider
+    return await audio_response(
+        cache_path, text, request_id, request, provider, generation_tasks,
+        library_manager, book, _state.bg_scheduler, wait_complete=is_notification,
+    )
 
-    # Handle HEAD request
-    if request.method == "HEAD":
-        file_size = 0
-        if mp3_exists:
-             file_size = os.path.getsize(cache_path)
 
-        headers = {"Accept-Ranges": "bytes", "Content-Type": "audio/mpeg"}
-        if file_size > 0:
-            headers["Content-Length"] = str(file_size)
-        # Tell the player whether this audio is still being generated. The
-        # frontend uses this on a premature 'ended' to tell a live-stream
-        # buffer underrun (resume) apart from a real end-of-chapter (advance).
-        if os.path.exists(cache_path + ".lock"):
-            headers["X-TTS-Generating"] = "1"
-        return Response(status_code=200, headers=headers)
+@router.get('/{request_id}/status-stream')
+async def audio_status_stream(request_id: str, _=Depends(verify_api_key)):
+    """Snapshot + pushed completion for underrun recovery; never poll HEAD."""
+    import json
+    from sse_starlette.sse import EventSourceResponse
+    from services.audio_generation import active_generation
+    from fastapi import HTTPException
 
-    # Check/Start Background Generation
-    lock_path = cache_path + ".lock"
-    meta_path = cache_path + ".part.json"
+    text = tts_cache.get_tts_text(request_id)
+    if not text:
+        raise HTTPException(404, 'Audio source is unavailable')
+    path = get_audio_cache_path(text)
+    generation = active_generation(path)
 
-    # Handover vs cancel (deferred from the top of the handler). The .lock on
-    # THIS cache_path is the single source of truth: if it exists, something is
-    # already generating this exact audio — hand over and stream its output. If
-    # not and the scheduler is busy, it's working a DIFFERENT chapter, so cancel
-    # it to free the Edge quota for this on-demand request.
-    if _state.bg_scheduler and _state.bg_scheduler.is_running():
-        if os.path.exists(lock_path):
-            logger.debug(f"[KB1] Handover: pre-gen owns {request_id}, streaming its output")
-        else:
-            logger.debug(f"[KB2] Cancel pre-gen (different chapter): user requested {request_id}")
-            _state.bg_scheduler.request_cancel()
-    
-    is_generating = False
-    if os.path.exists(lock_path):
-        if request_id in generation_tasks:
-            logger.debug(f"Task {request_id} already running (internal).")
-            is_generating = True
-        else:
-            logger.debug(f"Found lock file but no task (Interrupted/Stale): {lock_path}")
-            is_generating = True
-    
-    if mp3_exists:
-        if text:
-            file_size = os.path.getsize(cache_path)
-            expected_min = len(text) * 3
-            if file_size < expected_min:
-                logger.warning(f"Truncated file detected: {file_size}B < min {expected_min}B. Removing.")
-                os.remove(cache_path)
-                mp3_exists = False
-
-    if mp3_exists:
-        if book and book.status != "ready":
+    async def events():
+        while True:
+            revision = generation.revision if generation else 0
+            if generation and not generation.done:
+                status = 'generating'
+            elif generation and generation.error:
+                status = 'error'
+            else:
+                status = 'ready' if os.path.isfile(path) else 'error'
+            yield {'event': 'status', 'data': json.dumps({'status': status})}
+            if status != 'generating':
+                return
             try:
-                from mutagen.mp3 import MP3
-                audio = MP3(cache_path)
-                duration = int(audio.info.length)
-                library_manager.set_status(book.id, "ready", duration=duration)
-                logger.debug(f"Pre-gen ready: {request_id}, duration={duration}s")
-            except Exception as e:
-                library_manager.set_status(book.id, "ready")
-                logger.warning(f"Could not extract duration: {e}")
-        
-    elif is_generating or not mp3_exists:
-         if request_id not in generation_tasks:
-             if book: library_manager.set_status(book.id, "generating")
-             logger.debug(f"Starting/Resuming generation for {request_id}...")
-             
-             # Provider dispatch — protect stories quota by hardcoding Edge for
-             # story / library audio, while letting chat + cron notifications use
-             # whichever engine the user picked in the registry.
-             provider = (
-                 _state.tts_chat_provider if is_notification else _state.tts_stories_provider
-             )
+                await generation.wait(revision)
+            except asyncio.TimeoutError:
+                yield {'event': 'status', 'data': json.dumps({'status': 'error'})}
+                return
 
-             async def generate_worker(start_idx=0):
-                 task_id = request_id
-                 generation_tasks[task_id] = asyncio.current_task()
-
-                 try:
-                     with open(lock_path, 'w') as lf: lf.write("locked")
-                 except: pass
-
-                 try:
-                     async with aiofiles.open(cache_path, "wb") as f:
-                         async for chunk in provider.stream_audio(text):
-                             if chunk:
-                                 await f.write(chunk)
-                                 await f.flush()
-
-                     logger.debug(f"Generation Complete for {cache_path}")
-                     if os.path.exists(lock_path): os.remove(lock_path)
-                     if os.path.exists(meta_path): os.remove(meta_path)
-                     if book: library_manager.set_status(book.id, "ready")
-
-                 except asyncio.CancelledError:
-                     logger.debug(f"Generation task {task_id} cancelled.")
-                 except Exception as e:
-                     logger.error(f"Generation task {task_id} failed: {e}")
-                     if os.path.exists(cache_path):
-                         try:
-                             os.remove(cache_path)
-                             logger.debug(f"Removed partial file: {cache_path}")
-                         except Exception as rm_err:
-                             logger.error(f"Failed to remove partial: {rm_err}")
-                 finally:
-                     if task_id in generation_tasks: del generation_tasks[task_id]
-                     if os.path.exists(lock_path): os.remove(lock_path)
-
-             asyncio.create_task(generate_worker())
-
-    # Stream appropriate file
-    target_file = cache_path
-
-    # Give the newly-created task a chance to start and write the lock file.
-    # Without this yield, is_generating / is_live_mode checks below fire before
-    # the coroutine runs even one iteration, giving is_live_mode=False + file_size=0.
-    await asyncio.sleep(0)  # yield to event loop so generate_worker can start
-
-    # Wait for lock to appear (up to 1s) before deciding live vs static mode
-    for _ in range(10):
-        if os.path.exists(lock_path) or os.path.exists(target_file):
-            break
-        await asyncio.sleep(0.1)
-
-    # For notification TTS, wait for full generation to complete before serving.
-    # Prevents the browser from firing 'ended' early due to gaps between chunks
-    # during live streaming. Story/library requests keep live streaming for fast
-    # TTFB (they can be very large).
-    if is_notification and os.path.exists(lock_path):
-        logger.debug(f"[TTS] Waiting for full generation before serving notification TTS: {request_id}")
-        for _ in range(300):  # up to 30s
-            if not os.path.exists(lock_path):
-                break
-            await asyncio.sleep(0.1)
-        logger.debug(f"[TTS] Generation done, serving static: {request_id}")
-
-    for _ in range(50):
-        if os.path.exists(target_file): break
-        await asyncio.sleep(0.1)
-        
-    if not os.path.exists(target_file):
-        return {"error": "File not created yet"}
-
-    async def file_tailer(offset=0):
-        try:
-             async with aiofiles.open(target_file, "rb") as f:
-                 if offset > 0: await f.seek(offset)
-                 
-                 while True:
-                     chunk = await f.read(8192)
-                     if chunk:
-                         yield chunk
-                     else:
-                         is_still_generating = os.path.exists(lock_path)
-                         if not is_still_generating:
-                             break
-                         await asyncio.sleep(0.1)
-             if _state.bg_scheduler:
-                  _state.bg_scheduler.request_resume()
-                  _state.bg_scheduler.notify_tts_done()
-        except Exception as e:
-            logger.error(f"Stream error: {e}")
-
-    headers = {
-        "Accept-Ranges": "bytes",
-        "Content-Type": "audio/mpeg",
-        "Cache-Control": "no-cache, no-store, must-revalidate"
-    }
-
-    status_code = 200
-    file_size = 0
-    is_live_mode = os.path.exists(lock_path)
-    
-    if is_live_mode:
-        status_code = 200
-        logger.debug("Serving Live Stream (Lock exists)")
-    else:
-        try:
-            file_size = os.path.getsize(cache_path)
-            logger.debug(f"Serving Method: MP3 (Static). Size: {file_size}")
-        except:
-             logger.error("MP3 size check failed")
-             status_code = 200
-
-    start_byte = 0
-    end_byte = None
-    length_to_serve = None
-    
-    range_header = request.headers.get('Range')
-    if range_header:
-        if not is_live_mode:
-            status_code = 206
-            try:
-                logger.debug(f"Received Range Header: {range_header}")
-                range_match = re.search(r'bytes=(\d+)-(\d*)', range_header, re.IGNORECASE)
-                if not range_match:
-                     raise ValueError("Invalid Range Format")
-                
-                start_byte = int(range_match.group(1))
-                end_byte = int(range_match.group(2)) if range_match.group(2) else None
-                
-                if start_byte >= file_size:
-                    logger.warning(f"Range Request Out of Bounds: {start_byte} >= {file_size}")
-                    return Response(status_code=416, headers={"Content-Range": f"bytes */{file_size}"})
-
-                actual_end = end_byte if end_byte is not None else file_size - 1
-                if actual_end >= file_size: actual_end = file_size - 1
-                
-                length_to_serve = actual_end - start_byte + 1
-                
-                headers["Content-Range"] = f"bytes {start_byte}-{actual_end}/{file_size}"
-                headers["Content-Length"] = str(length_to_serve)
-                logger.debug(f"Handling Range Request: {headers['Content-Range']} (Size: {length_to_serve})")
-            except Exception as e:
-                logger.error(f"Failed to parse range header '{range_header}': {e}")
-                status_code = 200
-                pass 
-        else:
-             status_code = 200
-             logger.debug("Ignoring Range header for Active Stream (Live Mode)")
-    else:
-        if not is_live_mode:
-            headers["Content-Length"] = str(file_size)
-            logger.debug("Serving Full MP3 (200 OK)")
-
-    if is_live_mode:
-        return StreamingResponse(
-            file_tailer(0),
-            status_code=200,
-            headers=headers,
-            media_type="audio/mpeg"
-        )
-    else:
-        async def limited_stream():
-            count = 0
-            async for chunk in file_tailer(start_byte):
-                if length_to_serve:
-                    if count + len(chunk) > length_to_serve:
-                        yield chunk[:length_to_serve - count]
-                        break
-                yield chunk
-                count += len(chunk)
-                if length_to_serve and count >= length_to_serve: break
-        
-        return StreamingResponse(
-            limited_stream(),
-            status_code=status_code,
-            headers=headers,
-            media_type="audio/mpeg"
-        )
+    return EventSourceResponse(events())

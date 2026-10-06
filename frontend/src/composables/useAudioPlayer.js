@@ -1,21 +1,7 @@
-/**
- * useAudioPlayer — Composable wrap HTML5 Audio API
- *
- * Responsibilities:
- * - Create and manage HTML5 Audio element
- * - Sync events (timeupdate, ended, error, etc.) → Pinia store
- * - Watch store.seekTarget → apply seek on audio
- * - Watch store.playbackSpeed → apply playbackRate
- * - BroadcastChannel multi-tab sync
- * - MediaSession API (lock screen controls)
- * - Interval to save progress to localStorage
- * - Beforeunload to save progress + sendBeacon API
- *
- * Usage:
- *   const { play, pause, resume, destroy } = useAudioPlayer()
- */
+/** Singleton HTML audio + store sync, progress persistence and media controls. */
 import { watch, onUnmounted, nextTick } from 'vue'
 import { useAudioPlayerStore } from '../stores/audioPlayer'
+import { waitForAudioReady } from '../utils/audioGeneration.js'
 
 // Singleton audio element — only one audio playback at a time
 let _audio = null
@@ -29,6 +15,8 @@ const MAX_NETWORK_RETRIES = 3
 
 export function useAudioPlayer() {
   const store = useAudioPlayerStore()
+  let generationWait = null
+  let retryTimer = null
 
   // ─── BroadcastChannel: multi-tab sync ───
   _initBroadcastChannel()
@@ -105,6 +93,7 @@ export function useAudioPlayer() {
   const stopWatchType = watch(
     () => store.playbackType,
     (type) => {
+      if (type === 'none') { generationWait?.abort(); clearTimeout(retryTimer) }
       if (type === 'none' && _audio) {
         _audio.pause()
         _audio.src = ''
@@ -114,7 +103,9 @@ export function useAudioPlayer() {
   )
 
   // ─── Core: Play a URL (story / chatTts) ───
-  function _playUrl(url) {
+  function _playUrl(url, retry = false) {
+    generationWait?.abort()
+    if (!retry) { clearTimeout(retryTimer); _networkRetries = 0 }
     // ``<audio src>`` cannot set headers; auth rides on the cookie that
     // ``credentials: 'include'`` would attach to a fetch. For same-origin
     // GETs the browser attaches the cookie automatically, so we just
@@ -132,17 +123,20 @@ export function useAudioPlayer() {
     _audio.src = fullUrl
     _audio.playbackRate = store.playbackSpeed
     _audio.play().then(() => {
-      _networkRetries = 0 // fresh successful start → reset the retry budget
       store.setPlayingState(true)
       _setupMediaSession()
       _startProgressSaver()
       _broadcastPlay()
     }).catch(err => {
       console.error('[AudioPlayer] Play failed:', err)
+      if (store.currentAudioUrl !== url || err.name === 'AbortError') return
+      store.setPlayingState(false)
       // iOS Safari: requires user gesture
       if (err.name === 'NotAllowedError') {
         store.setBuffering(false)
         store.isPaused = true
+      } else {
+        store.currentAudioUrl = null // Next user retry reopens the source.
       }
     })
   }
@@ -154,28 +148,29 @@ export function useAudioPlayer() {
   async function _isStillGenerating(url) {
     try {
       const res = await fetch(url, { method: 'HEAD', credentials: 'include', cache: 'no-store' })
+      if (!res.ok) throw new Error(`Audio status ${res.status}`)
       return res.headers.get('X-TTS-Generating') === '1'
     } catch (_) {
-      // Network blip — assume NOT generating so we don't loop forever; the
-      // 'ended' path's real-end branch will then advance/stop normally.
-      return false
+      throw new Error('Unable to determine audio generation status')
     }
   }
 
-  // A live-stream chapter underran (played all bytes written so far, but the
-  // server is still generating). Resume from the current position once more
-  // bytes — eventually the full file — are available, WITHOUT replaying from
-  // the start. Re-probes until generation completes.
+  // On underrun, await pushed completion and resume from the saved position.
   async function _resumeAfterUnderrun() {
     const url = store.currentAudioUrl
     const resumeAt = store.currentTime
     store.setBuffering(true)
-    // Poll HEAD every 500ms until generation finishes (≈60s ceiling), letting
-    // the next chunks land before we reload.
-    for (let i = 0; i < 120; i++) {
-      await new Promise(r => setTimeout(r, 500))
-      if (store.currentAudioUrl !== url) return // user moved on (next/prev/close)
-      if (!(await _isStillGenerating(url))) break
+    generationWait?.abort()
+    const controller = new AbortController()
+    generationWait = controller
+    try {
+      await waitForAudioReady(url, { signal: controller.signal })
+    } catch (error) {
+      if (error.name !== 'AbortError' && store.currentAudioUrl === url) {
+        store.setPlayingState(false)
+        console.error('[AudioPlayer] Generation recovery failed:', error)
+      }
+      return
     }
     if (store.currentAudioUrl !== url) return
     // Reload the now-complete file and seek back to where we left off, so the
@@ -270,7 +265,9 @@ export function useAudioPlayer() {
       // generation is still in progress, this is an underrun → resume from
       // here, DON'T advance. Only a true end (generation finished) advances.
       if (store.playbackType === 'story' && store.currentAudioUrl) {
-        _isStillGenerating(store.currentAudioUrl).then(generating => {
+        const endedUrl = store.currentAudioUrl
+        _isStillGenerating(endedUrl).then(generating => {
+          if (store.currentAudioUrl !== endedUrl) return
           if (generating && store.currentAudioUrl) {
             _resumeAfterUnderrun()
           } else {
@@ -279,6 +276,9 @@ export function useAudioPlayer() {
             store.saveProgress()
             nextTick(() => store.nextChapter())
           }
+        }).catch(error => {
+          if (store.currentAudioUrl === endedUrl) store.setPlayingState(false)
+          console.error('[AudioPlayer] Status probe failed:', error)
         })
         return
       }
@@ -298,21 +298,23 @@ export function useAudioPlayer() {
       }
       const err = audio.error
       console.error('[AudioPlayer] Audio error:', err?.code, err?.message)
-      store.setBuffering(false)
+      store.setPlayingState(false)
       // Retry on network errors, but cap it — a permanently-broken URL must
       // not retry every 2s forever. After the budget is spent, surface the
       // failure (pause) instead of silently looping.
       if (err?.code === MediaError.MEDIA_ERR_NETWORK && _networkRetries < MAX_NETWORK_RETRIES) {
         _networkRetries++
-        setTimeout(() => {
-          if (store.currentAudioUrl) {
-            _playUrl(store.currentAudioUrl)
-          }
+        const failedUrl = store.currentAudioUrl
+        retryTimer = setTimeout(() => {
+          if (failedUrl && store.currentAudioUrl === failedUrl) _playUrl(failedUrl, true)
         }, 2000)
       } else if (err?.code === MediaError.MEDIA_ERR_NETWORK) {
         console.error('[AudioPlayer] Network retries exhausted — stopping playback')
         store.isPlaying = false
         store.isPaused = true
+        store.currentAudioUrl = null
+      } else {
+        store.currentAudioUrl = null
       }
     })
   }
@@ -466,6 +468,8 @@ export function useAudioPlayer() {
   }
 
   function destroy() {
+    generationWait?.abort()
+    clearTimeout(retryTimer)
     _stopProgressSaver()
     stopWatchUrl()
     stopWatchNotifTts()
