@@ -1,5 +1,8 @@
 {
-  "audio": {"playbackFailed": "Unable to play audio", "playbackRetry": "Audio generation or download failed. Wait a moment, then select the chapter to retry."},
+  "audio": {
+    "playbackFailed": "Unable to play audio",
+    "playbackRetry": "Audio generation or download failed. Wait a moment, then select the chapter to retry."
+  },
   "common": {
     "loading": "Loading…",
     "save": "Save changes",
@@ -2084,7 +2087,12 @@
     "pause": "Pause",
     "loadingContent": "Loading content…",
     "previous": "Previous",
-    "next": "Next"
+    "next": "Next",
+    "generationRetry": "Incomplete · Progress saved, retry scheduled",
+    "generationProgress": "Generating audio · {done}/{total} chunks",
+    "generationStarting": "Connecting to speech service…",
+    "progressDisconnected": "Updates disconnected · Reconnecting…",
+    "waitingRecovery": "Waiting to retry incomplete chapters before preparing more."
   },
   "routeRecovery": {
     "title": "This page could not be loaded",

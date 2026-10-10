@@ -8,6 +8,7 @@ import os
 from fastapi import HTTPException, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from services.tts import TTSProvider, EdgeTTSProvider
+from services.story_generation_events import StoryGenerationEvents, chapter_targets
 from services.audio_retry import retry_after, record_failure, clear_failure
 from services.tts_checkpoints import stream_story_audio, discard_checkpoints
 from services.library_manager import LibraryManager, AudioBook
@@ -64,10 +65,15 @@ async def audio_response(
 
         async def produce() -> None:
             success = False
+            events = StoryGenerationEvents([])
             try:
+                if checkpointed and request_id.startswith('story_'):
+                    targets = await asyncio.to_thread(chapter_targets, text)
+                    events = StoryGenerationEvents(targets)
+                    events.emit('chapter_generating')
                 if book:
                     library_manager.set_status(book.id, 'generating')
-                iterator = (stream_story_audio(provider, text, path) if checkpointed
+                iterator = (stream_story_audio(provider, text, path, on_progress=events.progress) if checkpointed
                             else provider.stream_audio(text)).__aiter__()
                 try:
                     with open(generation.temporary_path, 'wb') as audio:
@@ -92,16 +98,19 @@ async def audio_response(
                         await asyncio.to_thread(discard_checkpoints, provider, text, path)
                     except Exception:
                         logger.warning('[TTS] Audio ready; retry/checkpoint housekeeping failed', exc_info=True)
+                events.emit('chapter_ready')
                 if book:
                     library_manager.set_status(book.id, 'ready')
             except asyncio.CancelledError:
+                events.emit('chapter_ready' if success else 'chapter_pending')
                 if book:
                     library_manager.set_status(book.id, 'ready' if success else 'pending')
                 raise
             except Exception as exc:
                 if checkpointed and not success:
                     try:
-                        record_failure(text, provider.voice, provider.rate, type(exc).__name__)
+                        delay = record_failure(text, provider.voice, provider.rate, type(exc).__name__)
+                        events.failed(delay)
                     except Exception:
                         logger.warning("[TTS] Unable to persist retry delay", exc_info=True)
                 logger.error('[TTS] Audio producer failed', exc_info=True)
@@ -109,6 +118,9 @@ async def audio_response(
                     library_manager.set_status(book.id, 'error')
             finally:
                 generation.finish(success)
+                # Errors before cooldown persistence must still clear active UI state.
+                if not success and not events.terminal:
+                    events.emit('chapter_error')
                 task = asyncio.current_task()
                 for alias in [key for key, value in generation_tasks.items() if value is task]:
                     del generation_tasks[alias]

@@ -88,3 +88,17 @@ test('an unknown live-source HEAD stall times out and leaves playback paused',as
   assert.equal(store.isPlaying,false)
   assert.equal(store.isPaused,true)
 })
+
+test('closing player ignores native error from clearing the audio source', async () => {
+  const { useToastState } = await import('./useToast.js')
+  const store = start()
+  const toastState = useToastState()
+  for (const toast of toastState.toasts.value) toastState.dismissToast(toast.id)
+  await store.playChapter('synthetic', 'Synthetic', '01.txt', ['01.txt'])
+  await new Promise(resolve => setImmediate(resolve))
+  store.stopAndReset()
+  audio.error = { code: 4, message: 'Source cleared intentionally' }
+  audio.dispatchEvent(new Event('error'))
+  assert.equal(toastState.toasts.value.length, 0)
+  assert.equal(store.playbackType, 'none')
+})

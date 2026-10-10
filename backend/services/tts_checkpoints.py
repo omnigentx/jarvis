@@ -143,7 +143,8 @@ async def _disk_operation(function, *args, cleanup=None):
 
 
 async def stream_story_audio(provider: TTSProvider, text: str, path: str,
-                             before_chunk: Callable[[], Awaitable[None]] | None = None
+                             before_chunk: Callable[[], Awaitable[None]] | None = None,
+                             on_progress: Callable[[int, int], None] | None = None
                              ) -> AsyncIterator[bytes]:
     if not isinstance(provider, EdgeTTSProvider):
         async for data in provider.stream_audio(text):
@@ -162,6 +163,8 @@ async def stream_story_audio(provider: TTSProvider, text: str, path: str,
                 if not data:
                     raise RuntimeError(f'Edge TTS failed at chunk {index + 1}/{len(chunks)}')
                 await _disk_operation(store.save, index, data)
+            if on_progress:
+                on_progress(index + 1, len(chunks))
             yield data
     finally:
         store.close()

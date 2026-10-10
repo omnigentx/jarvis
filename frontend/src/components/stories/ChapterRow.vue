@@ -18,7 +18,18 @@ const props = defineProps({
   isCurrent: { type: Boolean, default: false },
   index: { type: Number, required: true },
   effectivePreload: { type: String, default: null },
+  generationProgress: { type: Object, default: () => ({}) },
   queuePosition: { type: Number, default: -1 },
+})
+
+const statusLabel = computed(() => {
+  const p = props.generationProgress
+  const status = props.effectivePreload || props.chapter.preload
+  if (status === 'error') return t('stories.generationRetry')
+  if (status === 'generating') return p.total_chunks
+    ? t('stories.generationProgress', { done: p.completed_chunks || 0, total: p.total_chunks })
+    : t('stories.generationStarting')
+  return ''
 })
 
 const emit = defineEmits(['play', 'read'])
@@ -36,7 +47,7 @@ const chapterTitle = computed(() => {
 })
 
 const statusType = computed(() => {
-  if (props.isCurrent) return 'playing'
+  if (props.isPlaying) return 'playing'
   return props.effectivePreload || props.chapter.preload || 'none'
 })
 </script>
@@ -50,7 +61,7 @@ const statusType = computed(() => {
     <span class="ch-row__num">Ch.{{ String(chapterNum).padStart(2, '0') }}</span>
 
     <!-- Status indicator -->
-    <span class="ch-row__status" :data-status="statusType">
+    <span class="ch-row__status" :data-status="statusType" :title="statusLabel">
       <template v-if="isPlaying">
         <span class="ch-row__eq"><span></span><span></span><span></span></span>
       </template>
@@ -59,6 +70,9 @@ const statusType = computed(() => {
       </template>
       <template v-else-if="statusType === 'ready'">
         <span class="ch-row__dot ch-row__dot--ready"></span>
+      </template>
+      <template v-else-if="statusType === 'error'">
+        <span class="ch-row__dot ch-row__dot--error"></span>
       </template>
       <template v-else-if="statusType === 'queued'">
         <span class="ch-row__queue">{{ queuePosition > 0 ? '#' + queuePosition : '…' }}</span>
@@ -69,7 +83,10 @@ const statusType = computed(() => {
     </span>
 
     <!-- Title -->
-    <span class="ch-row__title">{{ chapterTitle }}</span>
+    <span class="ch-row__title">
+      <span class="ch-row__name">{{ chapterTitle }}</span>
+      <span v-if="statusLabel" class="ch-row__detail" :class="{ 'ch-row__detail--error': effectivePreload === 'error' }" role="status">{{ statusLabel }}</span>
+    </span>
 
     <!-- Actions -->
     <span class="ch-row__actions">
@@ -134,6 +151,7 @@ const statusType = computed(() => {
   border-radius: 50%;
 }
 .ch-row__dot--ready { background: var(--success); box-shadow: 0 0 6px rgba(16,185,129,0.45); }
+.ch-row__dot--error { background: var(--warning); }
 .ch-row__dot--none { background: var(--bg-4); border: 1px solid var(--border-bright); }
 
 .ch-row__eq {
@@ -191,6 +209,11 @@ const statusType = computed(() => {
   color: var(--primary-hover);
   font-weight: 500;
 }
+
+.ch-row__title { display: flex; flex-direction: column; gap: 4px; }
+.ch-row__name { overflow: hidden; text-overflow: ellipsis; }
+.ch-row__detail { font-size: 11px; color: var(--text-muted); white-space: normal; line-height: 1.4; }
+.ch-row__detail--error { color: var(--warning); }
 
 /* Actions */
 .ch-row__actions {

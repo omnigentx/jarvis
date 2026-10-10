@@ -183,3 +183,33 @@ def test_failure_cooldown_survives_session_and_queue_does_not_starve(env, monkey
     now += 61
     assert sai.next_task(db)['chapter_file'] == '01.txt'
     db.close()
+
+
+def test_two_blocked_chapters_do_not_spread_failures_to_fresh_chapters(env, monkeypatch):
+    from services import audio_retry as retry
+    for i in range(1, 6):
+        _chapter(env, 'storyA', f'{i:02d}.txt', f'synthetic chapter {i}')
+    db = env.Session()
+    sai.reconcile(db)
+    now = 1000.0
+    monkeypatch.setattr(retry.time, 'time', lambda: now)
+    for i in (1, 2):
+        retry.record_failure(f'synthetic chapter {i}', 'vi-VN-NamMinhNeural', '+20%', 'TimeoutError', db=db)
+    db.close()
+    db = env.Session()
+    assert sai.next_task(db) is None
+    assert sai.preview_queue(db) == []
+    now += 61
+    assert sai.next_task(db)['chapter_file'] == '01.txt'
+    sai.mark_ready(db, 'storyA', '01.txt')
+    assert sai.next_task(db)['chapter_file'] == '02.txt'
+    db.close()
+
+
+def test_empty_source_does_not_hold_completion_frontier(env):
+    _chapter(env, 'storyA', '01.txt', '')
+    _chapter(env, 'storyA', '02.txt', '')
+    _chapter(env, 'storyA', '03.txt', 'synthetic valid source')
+    with env.Session() as db:
+        sai.reconcile(db)
+        assert sai.next_task(db)['chapter_file'] == '03.txt'

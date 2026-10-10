@@ -1,5 +1,8 @@
 {
-  "audio": {"playbackFailed": "Không thể phát âm thanh", "playbackRetry": "Tạo hoặc tải âm thanh thất bại. Chờ một lát rồi chọn lại chương để thử lại."},
+  "audio": {
+    "playbackFailed": "Không thể phát âm thanh",
+    "playbackRetry": "Tạo hoặc tải âm thanh thất bại. Chờ một lát rồi chọn lại chương để thử lại."
+  },
   "common": {
     "loading": "Đang tải…",
     "save": "Lưu thay đổi",
@@ -1934,7 +1937,12 @@
     "pause": "Tạm dừng",
     "loadingContent": "Đang tải nội dung…",
     "previous": "Trước",
-    "next": "Tiếp theo"
+    "next": "Tiếp theo",
+    "generationRetry": "Chưa hoàn tất · Đã giữ tiến độ, sẽ tự thử lại",
+    "generationProgress": "Đang tạo âm thanh · {done}/{total} đoạn",
+    "generationStarting": "Đang kết nối dịch vụ giọng đọc…",
+    "progressDisconnected": "Mất kết nối cập nhật · Đang kết nối lại…",
+    "waitingRecovery": "Đang chờ thử lại các chương chưa hoàn tất trước khi tạo thêm."
   },
   "noAgenda": "Chưa có agenda",
   "noAgendaParen": "(chưa có agenda)",

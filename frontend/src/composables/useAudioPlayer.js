@@ -281,6 +281,8 @@ export function useAudioPlayer() {
     audio.addEventListener('ended', _handleEnded)
 
     audio.addEventListener('error', (e) => {
+      // Clearing src during close/destroy can emit a native error.
+      if (store.playbackType === 'none') return
       if (store.playbackType === 'notifTts') {
         store.onNotifTtsError()
         return

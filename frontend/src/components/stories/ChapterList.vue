@@ -24,11 +24,14 @@ const audioStore = useAudioPlayerStore()
 const toast = useToast()
 
 const storyIdRef = toRef(props, 'storyId')
-const { getQueuePosition, getEffectiveStatus } = usePregenStream(storyIdRef)
+const { isConnected, queue, generating, chapterStatuses, getQueuePosition, getEffectiveStatus, getChapterProgress } = usePregenStream(storyIdRef)
 
 const chapters = ref([])
 const isLoading = ref(false)
 const error = ref(null)
+
+const awaitingRecovery = computed(() => !generating.value && queue.value.length === 0
+  && [...chapterStatuses.value.values()].filter(row => row.status === 'error').length >= 2)
 
 const chapterFiles = computed(() => chapters.value.map(c => c.file))
 const readyCount = computed(() =>
@@ -120,12 +123,15 @@ watch(
       <div class="chapter-list__heading">
         <div class="mono-label" style="font-size: 10px;">{{ t('stories.chaptersLabel') }}</div>
         <h3 class="chapter-list__title">{{ storyTitle || storyId }}</h3>
+        <span v-if="!isConnected" class="chapter-list__stream-status" role="status">{{ t('stories.progressDisconnected') }}</span>
       </div>
       <div class="chapter-list__counts" v-if="chapters.length">
         <span class="chapter-list__count">{{ t('stories.nChapters', { n: chapters.length }) }}</span>
         <span class="chapter-list__count chapter-list__count--ok">{{ t('stories.nReady', { n: readyCount }) }}</span>
       </div>
     </div>
+
+    <p v-if="awaitingRecovery" class="chapter-list__recovery" role="status">{{ t('stories.waitingRecovery') }}</p>
 
     <!-- Loading -->
     <div v-if="isLoading" class="chapter-list__skeleton">
@@ -157,6 +163,7 @@ watch(
           :is-current="isChapterCurrent(ch.file)"
           :effective-preload="chapterPreload(ch)"
           :queue-position="chapterQueuePos(ch.file)"
+          :generation-progress="getChapterProgress(ch.file)"
           @play="handlePlay"
           @read="handleRead"
         />
@@ -213,6 +220,9 @@ watch(
   border-color: rgba(16,185,129,0.25);
   background: var(--success-bg);
 }
+
+.chapter-list__stream-status { font-size: 11px; color: var(--warning); }
+.chapter-list__recovery { margin: 0; padding: 12px 18px; font-size: 12px; line-height: 1.5; color: var(--warning); border-bottom: 1px solid var(--border); background: var(--warning-bg); }
 
 .chapter-list__body {
   flex: 1;

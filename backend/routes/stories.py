@@ -7,7 +7,7 @@ import time
 import shutil
 import logging
 
-from fastapi import APIRouter, Request, Depends, Query
+from fastapi import APIRouter, Request, Depends, Query, HTTPException
 from fastapi.responses import JSONResponse
 from sse_starlette.sse import EventSourceResponse
 
@@ -421,15 +421,32 @@ async def pregen_stream(
     
     # Send initial queue snapshot
     initial_queue = []
+    generating = None
     if _state.bg_scheduler:
         for job in _state.bg_scheduler._jobs:
             if hasattr(job, 'preview_queue'):
                 initial_queue = job.preview_queue(story_id=story_id, limit=10)
+                current = job.get_currently_generating() if hasattr(job, 'get_currently_generating') else None
+                if current and (not story_id or current['story_title'] == story_id):
+                    generating = {**current, 'story_id': current['story_title']}
                 break
+    from services.pregen_snapshot import failure_snapshot, ready_snapshot
+    try:
+        failures = await asyncio.to_thread(failure_snapshot, story_id)
+        ready = await asyncio.to_thread(ready_snapshot, story_id)
+    except (Exception, asyncio.CancelledError) as exc:
+        pregen_stream_manager.unsubscribe(sub_id)
+        if isinstance(exc, asyncio.CancelledError):
+            raise
+        logger.error('[PREGEN-STREAM] Snapshot unavailable', exc_info=True)
+        raise HTTPException(503, 'Speech status temporarily unavailable') from exc
     
     async def event_generator():
         try:
-            # Initial snapshot
+            # Subscribe before snapshot: concurrent changes remain queued.
+            yield {"event": "snapshot", "data": json.dumps({
+                "generating": generating, "failures": failures, "ready": ready,
+                "active": pregen_stream_manager.active_snapshot(story_id)})}
             yield {
                 "event": "queue_update",
                 "data": json.dumps({"type": "queue_update", "queue": initial_queue}),

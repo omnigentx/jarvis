@@ -33,6 +33,7 @@ class PregenStreamManager:
     def __init__(self):
         self._subscribers: dict[str, asyncio.Queue] = {}
         self._counter = 0
+        self._active_chapters: dict[tuple[str, str], dict] = {}
 
     def subscribe(self, story_id: Optional[str] = None) -> tuple[str, asyncio.Queue]:
         """Create a new subscriber. Returns (subscriber_id, queue).
@@ -62,17 +63,29 @@ class PregenStreamManager:
         event_type = event.get("type", "")
         story_id = event.get("story_id", "")
 
+        if event_type.startswith('chapter_'):
+            key = (story_id, event.get('chapter_file', ''))
+            if event_type in ('chapter_generating', 'chapter_progress'):
+                self._active_chapters[key] = dict(event)
+            else:
+                self._active_chapters.pop(key, None)
+
         for sub_id, q in list(self._subscribers.items()):
             # Apply per-subscriber filter (skip for global events)
             story_filter = getattr(q, '_story_filter', None)
             if story_filter and story_id and story_id != story_filter:
                 # Only filter chapter-specific events, not queue_update/idle
-                if event_type in ("chapter_generating", "chapter_ready", "chapter_error"):
+                if event_type in ("chapter_generating", "chapter_ready", "chapter_error",
+                                  "chapter_progress", "chapter_pending"):
                     continue
             try:
                 q.put_nowait(event)
             except asyncio.QueueFull:
                 logger.warning(f"[PREGEN-STREAM] Queue full for {sub_id}, dropping event")
+
+    def active_snapshot(self, story_id: str | None = None) -> list[dict]:
+        return [dict(event) for (sid, _), event in self._active_chapters.items()
+                if not story_id or sid == story_id]
 
     @property
     def subscriber_count(self) -> int:
